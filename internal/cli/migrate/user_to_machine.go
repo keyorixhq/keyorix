@@ -2,9 +2,10 @@
 //
 // Converts a service-account-shaped human user into a project machine identity.
 // Local mode only (operator tool): resolves the acting admin via --by, the
-// project via --project / KEYORIX_PROJECT / the active project, then delegates to
-// core.MigrateUserToMachine. By default the source user is suspended so it can no
-// longer log in; --keep-user leaves it active.
+// project via --project / KEYORIX_PROJECT / the active project, verifies --by
+// actually holds the authority the equivalent HTTP route requires (#264), then
+// delegates to core.MigrateUserToMachine. By default the source user is
+// suspended so it can no longer log in; --keep-user leaves it active.
 package migrate
 
 import (
@@ -66,6 +67,10 @@ func runUserToMachine(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := requireMigrationAuthority(ctx, svc, admin.ID, projectID); err != nil {
+		return err
+	}
+
 	m, err := svc.MigrateUserToMachine(ctx, username, projectID, u2mType, u2mName, admin.ID, !u2mKeepUser)
 	if err != nil {
 		return fmt.Errorf("migration failed: %w", err)
@@ -75,6 +80,37 @@ func runUserToMachine(cmd *cobra.Command, args []string) error {
 		username, m.ID, m.Name, m.IdentityType, m.State)
 	if !u2mKeepUser {
 		fmt.Println("Source user suspended (login blocked). Use `keyorix user reactivate` to restore.")
+	}
+	return nil
+}
+
+// requireMigrationAuthority verifies that actorID — the user resolved from
+// --by — actually holds the authority the equivalent HTTP route requires for
+// this exact operation: POST .../machine-identities/migrate-from-user needs
+// BOTH roles.assign (scoped to the target project, for creating the machine
+// identity) AND users.write (global, for suspending the source user). The
+// local CLI has no session/middleware to enforce this, so --by resolving ANY
+// email — with zero authority check — would let an operator attribute a
+// destructive migration to an arbitrary or unprivileged account purely for
+// what appears in the audit trail (#264). MigrateUserToMachine itself does not
+// check permissions (like its sibling CreateMachineIdentity/SuspendUser, it
+// assumes the caller already authorized — the HTTP handler's job is done by
+// router middleware), so this must be verified here, at the CLI entrypoint,
+// before the resolved actor is credited with the action.
+func requireMigrationAuthority(ctx context.Context, svc *core.KeyorixCore, actorID, projectID uint) error {
+	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{ProjectID: projectID})
+	if err != nil {
+		return fmt.Errorf("failed to verify --by authority: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("--by actor does not hold roles.assign at project %d; refusing to attribute this migration to them", projectID)
+	}
+	ok, err = svc.Authorize(ctx, actorID, "users.write", core.Scope{})
+	if err != nil {
+		return fmt.Errorf("failed to verify --by authority: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("--by actor does not hold users.write; refusing to attribute this migration to them")
 	}
 	return nil
 }
