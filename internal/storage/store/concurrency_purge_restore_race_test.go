@@ -52,7 +52,7 @@ func TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace(t *testing.T) {
 		Update("deleted_at", time.Now().AddDate(0, 0, -40)).Error)
 
 	var fired bool
-	db.Callback().Delete().Before("gorm:delete").Register(
+	require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(
 		"test:simulate-concurrent-restore-before-secret-version-delete",
 		func(tx *gorm.DB) {
 			if fired {
@@ -72,7 +72,7 @@ func TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace(t *testing.T) {
 			// even see the same database at all.
 			require.NoError(t, tx.Exec("UPDATE secret_nodes SET deleted_at = NULL WHERE id = ?", 1).Error)
 		},
-	)
+	))
 
 	purgedCount, purgeErr := ls.PurgeDeletedSecretsBefore(ctx, time.Now().AddDate(0, 0, -30))
 	require.NoError(t, purgeErr)
