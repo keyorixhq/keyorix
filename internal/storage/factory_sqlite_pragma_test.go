@@ -38,7 +38,7 @@ func TestSQLitePragmas_EnabledOnFreshConnection(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 
 	var foreignKeys int
 	require.NoError(t, sqlDB.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys))
@@ -91,7 +91,7 @@ func TestSQLiteForeignKeyEnforcement_RejectsOrphanInsert(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 
 	require.NoError(t, db.Exec(`CREATE TABLE fk_parent (id INTEGER PRIMARY KEY)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE fk_child (
