@@ -12,8 +12,10 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,4 +88,63 @@ func TestGenerateComplianceEvidence_DegradesOnBreakGlassQueryError(t *testing.T)
 	require.NotNil(t, ev.Posture)
 	assert.True(t, ev.Posture.Degraded)
 	assert.True(t, containsSubstring(ev.Posture.DegradedReasons, "evidence:break_glass:project=1"), "got %v", ev.Posture.DegradedReasons)
+}
+
+// divergingRiskExceptionsStore wraps LocalStorage and returns an EMPTY risk-exception
+// list on its FIRST call, then the real (non-empty) rows on every call after —
+// simulating a risk exception being created/approved CONCURRENTLY, landing in the gap
+// between what used to be GetCompliancePosture's own read of the table and
+// GenerateComplianceEvidence's independent re-read of the same table (#256). It also
+// counts how many times the query actually ran, so a test can pin that the fix
+// collapses what used to be several independent reads into one.
+type divergingRiskExceptionsStore struct {
+	*store.LocalStorage
+	calls int
+}
+
+func (s *divergingRiskExceptionsStore) ListRiskExceptions(ctx context.Context, activeOnly bool) ([]*models.RiskException, error) {
+	s.calls++
+	rows, err := s.LocalStorage.ListRiskExceptions(ctx, activeOnly)
+	if err != nil || s.calls > 1 {
+		return rows, err
+	}
+	// First read: report as if the exception hadn't landed yet — the state a second,
+	// independently-timed pass would NOT have seen.
+	return nil, nil
+}
+
+// #256: GenerateComplianceEvidence used to compute the posture via
+// GetCompliancePosture, then independently re-query the SAME underlying signals a
+// second time (risk exceptions among them) with no transaction or snapshot isolation
+// between the two passes. A real concurrent write landing between them — here
+// simulated by divergingRiskExceptionsStore returning a different result on its
+// second call — could make the embedded Posture.Risk rollup and the evidence pack's
+// own RiskExceptions field describe two DIFFERENT instants, even though both ship
+// inside the one HMAC-signed pack an auditor trusts as a single atomic snapshot.
+//
+// The fix collapses the whole generation onto one shared complianceSnapshot fetched
+// once at the top, so there is only one read left for divergingRiskExceptionsStore to
+// serve — this test pins both (a) the underlying query now runs exactly once, and
+// (b) the pack's two views of risk exceptions are therefore always mutually
+// consistent, where before the fix they could diverge.
+func TestGenerateComplianceEvidence_RiskExceptionsConsistentWithPostureAcrossConcurrentChange(t *testing.T) {
+	c, db := compliancePostureCoreDB(t)
+	require.NoError(t, db.AutoMigrate(&models.RiskException{}))
+	require.NoError(t, db.Create(&models.RiskException{
+		Title: "accepted gap", Category: "other", Justification: "test",
+		CreatedBy: 1, CreatedAt: c.now(), ExpiresAt: c.now().Add(30 * 24 * time.Hour),
+	}).Error)
+
+	mock := &divergingRiskExceptionsStore{LocalStorage: c.storage.(*store.LocalStorage)}
+	c.storage = mock
+
+	ev, err := c.GenerateComplianceEvidence(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, ev.Posture)
+
+	assert.Equal(t, 1, mock.calls, "the shared snapshot must read risk exceptions exactly once, not once per section that needs them")
+	assert.Equal(t, len(ev.RiskExceptions), ev.Posture.Risk.ActiveExceptions,
+		"the evidence pack's own risk-exceptions register and its embedded posture rollup must describe the SAME snapshot, not two independently-timed reads")
+	assert.Empty(t, ev.RiskExceptions, "both views must reflect the FIRST read (pre-change) consistently, not a torn mix of before/after state")
+	assert.Equal(t, 0, ev.Posture.Risk.ActiveExceptions)
 }

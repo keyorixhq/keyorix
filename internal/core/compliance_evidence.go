@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -64,11 +63,24 @@ type ComplianceEvidence struct {
 
 // GenerateComplianceEvidence assembles the evidence pack. Like the posture, it is an
 // on-demand admin export that walks every project.
+//
+// #256: this used to compute the posture via GetCompliancePosture, then
+// INDEPENDENTLY re-query every one of the same underlying signals a second time
+// below (risk exceptions, SoD violations, the audit chain, rotation status,
+// per-project campaigns/break-glass) with no transaction or snapshot isolation
+// between the two passes. A concurrent write landing between them (a role granted,
+// a secret rotated, an SoD violation created/resolved) could make the resulting
+// pack's sections mutually inconsistent, even though it gets HMAC-signed as one
+// atomic point-in-time attestation. Both the posture and every section below now
+// come from ONE complianceSnapshot fetched once at the top — there is no second,
+// independently-timed query left to diverge from the first.
 func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*ComplianceEvidence, error) {
-	posture, err := c.GetCompliancePosture(ctx)
+	snap, err := c.buildComplianceSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
+	posture := c.compliancePostureFromSnapshot(ctx, snap)
+
 	ev := &ComplianceEvidence{
 		GeneratedAt:     c.now(),
 		Posture:         posture,
@@ -80,49 +92,53 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 		RiskExceptions:  []*RiskExceptionView{},
 	}
 
-	// Active risk exceptions (the governed-acceptance register).
+	// Active risk exceptions (the governed-acceptance register) — the snapshot's one
+	// ListRiskExceptions(ctx, true) read, shared with the posture's own risk rollup
+	// and its SoD-exception suppression above, not a second query.
 	//
-	// #136: each evidence sub-query below is independently re-queried from the posture
-	// rollup (e.g. ListRiskExceptions here vs. CountActiveRiskExceptions in
-	// GetCompliancePosture) and previously had the same no-else fail-open shape: a
-	// query error silently left the evidence-pack slice empty, indistinguishable from
-	// "queried, found none" in the HMAC-signed pack an auditor trusts. Every failure
-	// here now flips the shared posture.Degraded signal via posture.degrade, so a
-	// consumer checking ev.Posture.Degraded catches evidence-pack-level failures too,
-	// not just posture-rollup ones.
-	if exceptions, err := c.ListRiskExceptions(ctx, true); err == nil {
-		ev.RiskExceptions = exceptions
+	// #136: each evidence section below previously had the same no-else fail-open
+	// shape: a query error silently left the evidence-pack slice empty,
+	// indistinguishable from "queried, found none" in the HMAC-signed pack an
+	// auditor trusts. Every failure here still flips the shared posture.Degraded
+	// signal via posture.degrade, so a consumer checking ev.Posture.Degraded catches
+	// evidence-pack-level failures too, not just posture-rollup ones.
+	if snap.riskExceptionsErr == nil {
+		ev.RiskExceptions = snap.riskExceptionsActive
 	} else {
-		posture.degrade("evidence:risk_exceptions", err)
+		posture.degrade("evidence:risk_exceptions", snap.riskExceptionsErr)
 	}
 
-	// Separation-of-duties violations (the toxic-combination register).
-	if sod, err := c.DetectSoDViolations(ctx); err == nil {
-		ev.SoDViolations = sod.Violations
+	// Separation-of-duties violations (the toxic-combination register) — shared with
+	// the posture's own SoD rollup, not a second DetectSoDViolations scan.
+	if snap.sodErr == nil {
+		ev.SoDViolations = snap.sodReport.Violations
 		// #420: a principal whose permissions couldn't be read means this register
 		// may be missing a violation for them — flip the shared posture.Degraded
 		// signal so an evidence-pack consumer catches it, same as every other
 		// sub-query above.
-		for _, reason := range sod.DegradedReasons {
+		for _, reason := range snap.sodReport.DegradedReasons {
 			posture.degrade("evidence:sod_violations", fmt.Errorf("%s", reason))
 		}
 	} else {
-		posture.degrade("evidence:sod_violations", err)
+		posture.degrade("evidence:sod_violations", snap.sodErr)
 	}
 
-	// Audit anchor.
-	if v, err := c.VerifyAuditChain(ctx); err == nil && v != nil {
+	// Audit anchor — shared with the posture's own AuditIntegrity, not a second
+	// VerifyAuditChain call.
+	if snap.auditChainErr == nil && snap.auditChain != nil {
+		v := snap.auditChain
 		ev.AuditAnchor = AuditAnchor{
 			Valid: v.Valid, ChainedEvents: v.ChainedEvents,
 			HeadID: v.HeadID, HeadHash: v.HeadHash, Checkpointed: v.Checkpointed,
 		}
-	} else if err != nil {
-		posture.degrade("evidence:audit_anchor", err)
+	} else if snap.auditChainErr != nil {
+		posture.degrade("evidence:audit_anchor", snap.auditChainErr)
 	}
 
-	// Overdue rotations (deployment-wide).
-	if statuses, err := c.GetRotationStatus(ctx, nil, nil); err == nil {
-		for _, s := range statuses {
+	// Overdue rotations (deployment-wide) — shared with the posture's own Rotation
+	// rollup, not a second GetRotationStatus scan.
+	if snap.rotationErr == nil {
+		for _, s := range snap.rotationStatuses {
 			if s.Status == RotationStatusOverdue {
 				ev.RotationOverdue = append(ev.RotationOverdue, EvidenceRotation{
 					SecretID: s.SecretID, SecretName: s.SecretName,
@@ -131,17 +147,15 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 			}
 		}
 	} else {
-		posture.degrade("evidence:rotation_overdue", err)
+		posture.degrade("evidence:rotation_overdue", snap.rotationErr)
 	}
 
-	// Campaigns + break-glass register, per project.
-	projects, err := c.ListProjects(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	for _, proj := range projects {
+	// Campaigns + break-glass register, per project — shared with the posture's own
+	// AccessGovernance/EmergencyAccess per-project loop, not a second query per
+	// project.
+	for _, proj := range snap.projects {
 		pid := proj.ID
-		if camps, err := c.ListAccessReviewCampaigns(ctx, pid); err == nil {
+		if camps, err := snap.campaignsByProject[pid], snap.campaignsErrByProject[pid]; err == nil {
 			for _, cw := range camps {
 				ev.Campaigns = append(ev.Campaigns, EvidenceCampaign{
 					ProjectID: pid, ID: cw.Campaign.ID, Name: cw.Campaign.Name,
@@ -153,7 +167,7 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 		} else {
 			posture.degrade(fmt.Sprintf("evidence:campaigns:project=%d", pid), err)
 		}
-		if acts, err := c.ListBreakGlassActivations(ctx, pid); err == nil {
+		if acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]; err == nil {
 			ev.BreakGlass = append(ev.BreakGlass, acts...)
 		} else {
 			posture.degrade(fmt.Sprintf("evidence:break_glass:project=%d", pid), err)
