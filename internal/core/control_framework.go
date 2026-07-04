@@ -180,6 +180,21 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15"}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.4", "op.exp.7"}},
 		},
 		{
+			ID: "access-request-hygiene", Name: "Access-request approval hygiene (no stale, unresolved lapses)", Area: "Access governance",
+			// A pending access request (ADR-024's dual-control workflow, #257) that
+			// lapses with no explicit approve/reject/withdraw decision is the same
+			// shape of gap as #395's stale risk exceptions: an access decision that was
+			// supposed to be made never was — it just silently expired. RequiredApprovals
+			// (the configured N-of-M dual-control threshold; ApproveAccessRequestWithExpiry
+			// already enforces maker != checker) is surfaced in Detail for auditor
+			// context, but only Expired drives the verdict — a deployment with zero
+			// requests, or requests that were all explicitly resolved, must stay Pass
+			// rather than gapping on an unconfigured/default posture.
+			Status:     controlStatus(p.DegradedArea("access_requests:"), p.AccessRequests.Expired > 0),
+			Detail:     fmt.Sprintf("%d expired without resolution, %d pending of %d total request(s); required approvers=%d", p.AccessRequests.Expired, p.AccessRequests.Pending, p.AccessRequests.TotalRequests, p.AccessRequests.RequiredApprovals),
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.3"}, SOC2: []string{"CC6.2", "CC5.1"}, ENS: []string{"op.acc.3"}},
+		},
+		{
 			ID: "data-retention", Name: "Data-retention / storage limitation", Area: "Data governance",
 			Status:     statusFromBool(p.Retention.Enabled),
 			Detail:     retentionDetail(p.Retention),

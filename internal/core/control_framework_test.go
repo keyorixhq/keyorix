@@ -207,6 +207,41 @@ func TestEvaluateControls_RiskExceptionHygiene(t *testing.T) {
 	assert.Equal(t, ControlStatusUnknown, rd.Status)
 }
 
+// #767 added AccessRequestPosture (dual-control access-request/approval workflow,
+// ADR-024/#257) to the posture, but nothing evaluated it as a control. A request
+// that lapses (expires) with no explicit approve/reject/withdraw decision is the
+// same shape of gap as #395's stale risk exceptions: zero requests, or requests that
+// were all explicitly resolved, must pass; any expired-but-unresolved request must
+// surface as a gap naming the count.
+func TestEvaluateControls_AccessRequestHygiene(t *testing.T) {
+	none := EvaluateControls(&CompliancePosture{})
+	an := findControl(t, none, "access-request-hygiene")
+	assert.Equal(t, ControlStatusPass, an.Status)
+
+	resolved := EvaluateControls(&CompliancePosture{
+		AccessRequests: AccessRequestPosture{TotalRequests: 5, Approved: 3, Rejected: 1, Withdrawn: 1, RequiredApprovals: 2},
+	})
+	ar := findControl(t, resolved, "access-request-hygiene")
+	assert.Equal(t, ControlStatusPass, ar.Status, "all-resolved requests must not gap the control")
+
+	lapsed := EvaluateControls(&CompliancePosture{
+		AccessRequests: AccessRequestPosture{TotalRequests: 4, Pending: 1, Expired: 3, RequiredApprovals: 1},
+	})
+	al := findControl(t, lapsed, "access-request-hygiene")
+	assert.Equal(t, ControlStatusGap, al.Status)
+	assert.Contains(t, al.Detail, "3 expired without resolution")
+	assert.Contains(t, al.Detail, "1 pending of 4 total request(s)")
+	assert.Contains(t, al.Detail, "required approvers=1")
+
+	// A degraded access-request collection must surface as unknown, never a false
+	// pass just because Expired's zero value looks clean (#136).
+	degraded := EvaluateControls(&CompliancePosture{
+		DegradedReasons: []string{"access_requests:project=1: simulated db failure"},
+	})
+	ad := findControl(t, degraded, "access-request-hygiene")
+	assert.Equal(t, ControlStatusUnknown, ad.Status)
+}
+
 // Once the scan has evaluated at least one certificate, the control reflects the real
 // data: pass when none are expired, gap when at least one is.
 func TestEvaluateControls_CertificateHygiene_ScanningEnabled(t *testing.T) {
