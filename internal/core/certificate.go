@@ -42,9 +42,15 @@ type CertificateInfo struct {
 
 // InspectCertificate decrypts the secret's current value, parses the leaf X.509
 // certificate, and returns its public metadata. actorID is the inspecting principal.
-// Authorization (scoped secrets.read) is enforced at the transport layer, mirroring
-// the other per-secret read endpoints.
+// Authorization is enforced here via EnforceSecretReadPermission — the same
+// ownership/share-aware permission check every other per-secret value-derived read
+// goes through — on top of whatever project-scoped secrets.read the transport layer
+// already required. Holding project-wide secrets.read is not enough on its own: the
+// actor must also own the secret or hold an active share on it.
 func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID uint) (*CertificateInfo, error) {
+	if _, err := c.EnforceSecretReadPermission(ctx, secretID, actorID); err != nil {
+		return nil, err
+	}
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: secret %d not found", i18n.T("ErrorNotFound", nil), secretID)

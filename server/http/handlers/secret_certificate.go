@@ -35,6 +35,8 @@ func (h *SecretHandler) GetSecretCertificate(w http.ResponseWriter, r *http.Requ
 			status = http.StatusNotFound
 		case strings.Contains(msg, "not a parseable"), strings.Contains(msg, "suspended"):
 			status = http.StatusBadRequest
+		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+			status = http.StatusForbidden
 		}
 		h.sendError(w, "Error", msg, status, nil)
 		return
