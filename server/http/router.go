@@ -683,10 +683,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// User roles endpoints
 		r.Route("/user-roles", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("roles.assign"))
-			r.Post("/", rbacHandler.AssignRole)
-			r.Delete("/", rbacHandler.RemoveRole)
-			r.Get("/user/{userId}", rbacHandler.GetUserRoles)
+			// Assign/remove are gated on roles.assign AT THE REQUEST BODY'S TARGET
+			// scope (project_id/environment_id, 0 = global) — mirroring
+			// RoleGRPCService.AssignRole/RemoveRole, which authorize at the target
+			// scope rather than a flat global permission. Before this (#342), these
+			// routes used the group-level RequirePermission("roles.assign"), which
+			// always checked the GLOBAL scope regardless of the body's actual
+			// target, a parity gap with the gRPC path.
+			r.With(customMiddleware.RequireScopedPermission("roles.assign", customMiddleware.ScopeFromRoleAssignmentBody)).Post("/", rbacHandler.AssignRole)
+			r.With(customMiddleware.RequireScopedPermission("roles.assign", customMiddleware.ScopeFromRoleAssignmentBody)).Delete("/", rbacHandler.RemoveRole)
+			r.With(customMiddleware.RequirePermission("roles.assign")).Get("/user/{userId}", rbacHandler.GetUserRoles)
 		})
 
 		// Audit logs endpoints

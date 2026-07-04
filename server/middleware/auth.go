@@ -1,11 +1,13 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -585,6 +587,42 @@ func ScopeFromRotationPolicyParam(param string) ScopeResolver {
 			EnvironmentID: derefUint(policy.EnvironmentID),
 		}, nil
 	}
+}
+
+// roleAssignmentBodyScope is the subset of the user-roles assign/remove request
+// body (both share the same project_id/environment_id shape) needed to resolve
+// the target scope ahead of the handler's own decode.
+type roleAssignmentBodyScope struct {
+	ProjectID     uint `json:"project_id"`
+	EnvironmentID uint `json:"environment_id"`
+}
+
+// ScopeFromRoleAssignmentBody resolves the target scope of a POST/DELETE
+// /api/v1/user-roles request from its own JSON body's "project_id"/
+// "environment_id" fields (0 = global) — mirroring
+// RoleGRPCService.AssignRole/RemoveRole (server/grpc/services/role_service.go),
+// which authorize roles.assign at the request's TARGET scope rather than a flat
+// global permission (#342). Before this, the HTTP route gated on RequirePermission
+// ("roles.assign"), which always checked the GLOBAL scope regardless of the
+// body's actual project/environment target — a parity gap with the gRPC path.
+//
+// The body is read and re-buffered onto r.Body (via a fresh io.NopCloser) so the
+// handler's own json.Decode of the same body still succeeds afterward.
+func ScopeFromRoleAssignmentBody(r *http.Request, _ *core.KeyorixCore) (core.Scope, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return core.Scope{}, errInvalidTarget
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	var s roleAssignmentBodyScope
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &s); err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+	}
+	return core.Scope{ProjectID: s.ProjectID, EnvironmentID: s.EnvironmentID}, nil
 }
 
 func scopePathUint(r *http.Request, param string) (uint, error) {
