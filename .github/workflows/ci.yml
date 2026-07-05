@@ -127,7 +127,11 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # Full history: a secret committed and later deleted is still leaked.
+          # Full history: a secret committed and later deleted on THIS branch
+          # is still leaked. `fetch-depth: 0` is actions/checkout's documented
+          # way to say that — but it fetches full history for every branch in
+          # the repo, not just the checked-out one (its own docs: "0 indicates
+          # all history for all branches and tags").
           fetch-depth: 0
 
       # Pinned binary instead of gitleaks-action (the action requires a
@@ -139,7 +143,19 @@ jobs:
           curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_LINUX_X64_SHA256}  gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum -c -
           tar -xz -f "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-          ./gitleaks detect --source . --verbose --redact
+          # --log-opts="HEAD" restricts gitleaks to commits reachable from the
+          # checked-out ref only. Without it, gitleaks' own default git-log
+          # invocation walks every branch present in the fetch-depth:0 clone
+          # above — verified empirically: on an unrelated branch with zero
+          # commits in common with this one, the default scan still reported
+          # a "leak" that only existed on a completely different, unmerged
+          # branch elsewhere in the repo, and scanned ~1500 commits instead of
+          # the ~900 actually reachable from HEAD. That means any PR could be
+          # failed by a secret-shaped string on someone else's unrelated,
+          # unmerged branch — this scopes the scan back to what this specific
+          # PR/branch's own history actually contains, which is what the
+          # "full history" comment above was always meant to check.
+          ./gitleaks detect --source . --verbose --redact --log-opts="HEAD"
 
   helm-chart:
     runs-on: ubuntu-latest
