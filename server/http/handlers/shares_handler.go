@@ -32,7 +32,7 @@ func NewShareHandler(coreService *core.KeyorixCore) (*ShareHandler, error) {
 func (h *ShareHandler) sendSuccess(w http.ResponseWriter, data interface{}, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if err := json.NewEncoder(w).Encode(SuccessResponse{Data: data, Message: message}); err != nil {
+	if err := json.NewEncoder(w).Encode(SuccessResponse{Success: true, Data: data, Message: message}); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}

@@ -7,12 +7,24 @@ import (
 )
 
 // sendSuccess sends a successful JSON response
+//
+// The envelope always carries "success": true (in addition to the implicit 2xx
+// status code). Every internal/storage/store/remote_*.go method backing
+// storage.type: remote decodes the upstream body into
+// internal/storage/remote.APIResponse and branches on its Success field, NOT
+// the HTTP status — before this field was added, that field silently defaulted
+// to Go's zero value (false) for every genuinely successful response from a
+// real (non-test-mock) production server, so the entire storage.type: remote
+// deployment mode misreported every successful proxied read/write as a
+// failure. This is a purely additive JSON key: existing consumers of the
+// "data"/"message" keys are unaffected.
 func sendSuccess(w http.ResponseWriter, data interface{}, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	response := map[string]interface{}{
-		"data": data,
+		"success": true,
+		"data":    data,
 	}
 	if message != "" {
 		response["message"] = message
@@ -65,12 +77,23 @@ func goSafe(fn func()) {
 }
 
 // sendError sends an error JSON response
+//
+// Explicitly carries "success": false. This is not strictly load-bearing for
+// internal/storage/remote.HTTPClient today: this body's "error" key is a bare
+// string, which doesn't unmarshal into APIResponse.Error's *APIError struct
+// type, so json.Unmarshal already fails and makeRequest's parse-failure branch
+// synthesizes its own Success:false/Error response instead of ever reading
+// this body's fields. That's an accidental, fragile safety net (it would stop
+// working the moment this "error" key were ever reshaped into an object to
+// match APIError) — writing the field explicitly here means the error path no
+// longer depends on that coincidence.
 func sendError(w http.ResponseWriter, errorType, message string, statusCode int, details interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(statusCode)
 
 	response := map[string]interface{}{
+		"success": false,
 		"error":   errorType,
 		"message": message,
 		"code":    statusCode,
