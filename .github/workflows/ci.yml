@@ -186,7 +186,38 @@ jobs:
       - name: Lint + render keyorix-operator chart
         run: |
           helm lint deploy/helm/keyorix-operator
-          # CRDs ship under crds/ (not templated); validate the rendered controller
-          # resources. -skip the CRD-defined kind is unnecessary here (none rendered).
+          helm lint deploy/helm/keyorix-operator --set 'watchNamespaces={team-a,team-b}'
+
+          # Default (cluster-wide) mode: kubeconform-validate the rendered controller
+          # resources (CRDs ship under crds/, not templated, so none rendered here), and
+          # prove the Secret/KeyorixSecret RBAC is still bound via the existing
+          # cluster-wide ClusterRoleBinding — the #327/#427 backward-compatibility
+          # guarantee for deployments that don't opt into namespace scoping.
           helm template kx deploy/helm/keyorix-operator --set leaderElection=true \
-            | ./kubeconform -strict -summary -kubernetes-version 1.29.0
+            > default-render.yaml
+          ./kubeconform -strict -summary -kubernetes-version 1.29.0 < default-render.yaml
+          if ! grep -q '^kind: ClusterRoleBinding$' default-render.yaml; then
+            echo "expected a ClusterRoleBinding in the default (unscoped) render"; exit 1
+          fi
+          if grep -A2 '^kind: RoleBinding$' default-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
+            echo "unexpected namespace-scoped RoleBinding for the main Secret/CRD grant in the default render"
+            exit 1
+          fi
+
+          # Namespace-scoped mode (opt-in, #327/#427): prove the same RBAC is instead
+          # bound via a RoleBinding in each watchNamespaces entry, with NO cluster-wide
+          # ClusterRoleBinding — least privilege for a per-namespace deployment model.
+          helm template kx deploy/helm/keyorix-operator --set 'watchNamespaces={team-a,team-b}' \
+            > scoped-render.yaml
+          ./kubeconform -strict -summary -kubernetes-version 1.29.0 < scoped-render.yaml
+          if grep -q '^kind: ClusterRoleBinding$' scoped-render.yaml; then
+            echo "did not expect a ClusterRoleBinding when watchNamespaces is set"; exit 1
+          fi
+          for ns in team-a team-b; do
+            if ! grep -B2 "  namespace: $ns\$" scoped-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
+              echo "expected a RoleBinding named kx-keyorix-operator in namespace $ns"; exit 1
+            fi
+          done
+          if ! grep -q -- '-watch-namespaces=team-a,team-b' scoped-render.yaml; then
+            echo "expected the -watch-namespaces flag on the manager Deployment"; exit 1
+          fi
