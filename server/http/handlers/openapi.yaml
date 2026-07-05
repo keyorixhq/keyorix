@@ -16,7 +16,8 @@ info:
     setup-token flow, health, and Prometheus metrics) need no token.
 
     ## Response envelope
-    Unless noted, success responses wrap the payload as `{ "data": <…>, "message": "<…>" }`.
+    Unless noted, success responses wrap the payload as
+    `{ "success": true, "data": <…>, "message": "<…>" }`.
     Errors use `{ "error": { "code": <int>, "message": <string>, "type": <string> } }`.
 
     ## Authorization
