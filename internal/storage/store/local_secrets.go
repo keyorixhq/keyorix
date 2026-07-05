@@ -343,6 +343,22 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 	return &secret, nil
 }
 
+// GetSecretsByIDs batch-fetches secrets by ID in one query — the batch form of
+// GetSecret. IDs with no matching (non-deleted) row are simply absent from the
+// result, in whatever order GORM returns them (callers needing a specific order
+// must sort/index by ID themselves). Used by the rotation planner's risk-scoring
+// batch (#409) so scoring N candidate secrets costs one query, not N.
+func (ls *LocalStorage) GetSecretsByIDs(ctx context.Context, ids []uint) ([]*models.SecretNode, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var secrets []*models.SecretNode
+	if err := ls.db.WithContext(ctx).Where("id IN ?", ids).Find(&secrets).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return secrets, nil
+}
+
 // GetSecretByName retrieves a secret by name and scope.
 func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
 	var secret models.SecretNode

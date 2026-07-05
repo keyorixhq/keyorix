@@ -138,3 +138,121 @@ func TestComputeSecretRiskScore_DegradedOnListGroupMembersError(t *testing.T) {
 	assert.Contains(t, got.DegradedReasons[0], "exposure:group_members:group=7")
 	assert.Equal(t, 90, factorByKey(got, "exposure").Score, "an incomplete exposure count must fail toward the worst-case score")
 }
+
+// #409: ComputeSecretRiskScoresBatch must produce byte-for-byte the same score as
+// ComputeSecretRiskScore for the same underlying data — batching how the inputs
+// are fetched must not change the scoring logic.
+func TestComputeSecretRiskScoresBatch_MatchesSingleSecretScore(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	expired := now.AddDate(0, 0, -3)
+	store := new(MockStorage)
+
+	secret := &models.SecretNode{ID: 1, Name: "stripe-key", OwnerID: 9, Expiration: &expired, CreatedAt: now.AddDate(0, 0, -400)}
+	store.On("GetSecretsByIDs", mock.Anything, []uint{1}).Return([]*models.SecretNode{secret}, nil)
+	store.On("CountSecretReadsBySecretIDs", mock.Anything, []uint{1}, mock.Anything).Return(map[uint]int{}, nil)
+	store.On("ListSharesBySecretIDs", mock.Anything, []uint{1}).Return([]*models.ShareRecord{{SecretID: 1, IsGroup: true, RecipientID: 5}}, nil)
+	members := make([]*models.User, 20)
+	for i := range members {
+		members[i] = &models.User{ID: uint(100 + i)}
+	}
+	store.On("ListGroupMembersByGroupIDs", mock.Anything, []uint{5}).Return(map[uint][]*models.User{5: members}, nil)
+
+	c := NewKeyorixCore(store)
+	c.now = func() time.Time { return now }
+
+	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1})
+	require.NoError(t, err)
+	require.Contains(t, got, uint(1))
+	require.Equal(t, RiskBandHigh, got[1].Band)
+	require.Equal(t, 100, factorByKey(got[1], "expiry").Score)
+	require.Equal(t, 100, factorByKey(got[1], "rotation").Score)
+	require.Equal(t, 80, factorByKey(got[1], "usage").Score)
+	require.Equal(t, 90, factorByKey(got[1], "exposure").Score)
+	require.GreaterOrEqual(t, got[1].Score, 90)
+	assert.False(t, got[1].Degraded)
+}
+
+// A batch-wide ListSharesBySecretIDs failure must degrade EVERY secret in the
+// batch's exposure factor to the worst case (#407's "never under-count" invariant,
+// widened from one secret to the whole batch — never the other direction).
+func TestComputeSecretRiskScoresBatch_DegradedOnSharesErrorAffectsWholeBatch(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	future := now.AddDate(0, 0, 200)
+	rotated := now.AddDate(0, 0, -5)
+	store := new(MockStorage)
+
+	secrets := []*models.SecretNode{
+		{ID: 1, Name: "a", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10)},
+		{ID: 2, Name: "b", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10)},
+	}
+	store.On("GetSecretsByIDs", mock.Anything, []uint{1, 2}).Return(secrets, nil)
+	store.On("CountSecretReadsBySecretIDs", mock.Anything, []uint{1, 2}, mock.Anything).Return(map[uint]int{}, nil)
+	store.On("ListSharesBySecretIDs", mock.Anything, []uint{1, 2}).Return(nil, errors.New("simulated shares query failure"))
+
+	c := NewKeyorixCore(store)
+	c.now = func() time.Time { return now }
+
+	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1, 2})
+	require.NoError(t, err)
+	for _, id := range []uint{1, 2} {
+		require.Contains(t, got, id)
+		assert.True(t, got[id].Degraded, "secret %d must degrade on a batch-wide shares failure", id)
+		assert.Equal(t, 90, factorByKey(got[id], "exposure").Score)
+	}
+}
+
+// A batch-wide ListGroupMembersByGroupIDs failure degrades only the secrets that
+// actually have a group share — a secret with only a direct-user share (or no
+// shares at all) is unaffected, since it never depended on that failed lookup.
+func TestComputeSecretRiskScoresBatch_GroupMembersErrorOnlyAffectsGroupSharedSecrets(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	future := now.AddDate(0, 0, 200)
+	rotated := now.AddDate(0, 0, -5)
+	store := new(MockStorage)
+
+	secrets := []*models.SecretNode{
+		{ID: 1, Name: "group-shared", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10)},
+		{ID: 2, Name: "user-shared-only", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10)},
+	}
+	store.On("GetSecretsByIDs", mock.Anything, []uint{1, 2}).Return(secrets, nil)
+	store.On("CountSecretReadsBySecretIDs", mock.Anything, []uint{1, 2}, mock.Anything).Return(map[uint]int{}, nil)
+	store.On("ListSharesBySecretIDs", mock.Anything, []uint{1, 2}).Return([]*models.ShareRecord{
+		{SecretID: 1, IsGroup: true, RecipientID: 7},
+		{SecretID: 2, IsGroup: false, RecipientID: 42},
+	}, nil)
+	store.On("ListGroupMembersByGroupIDs", mock.Anything, []uint{7}).Return(nil, errors.New("simulated group-members query failure"))
+
+	c := NewKeyorixCore(store)
+	c.now = func() time.Time { return now }
+
+	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1, 2})
+	require.NoError(t, err)
+	require.Contains(t, got, uint(1))
+	require.Contains(t, got, uint(2))
+	assert.True(t, got[1].Degraded, "the group-shared secret must degrade on the failed group lookup")
+	assert.False(t, got[2].Degraded, "the direct-user-only-shared secret never depended on the failed group lookup")
+}
+
+// A secretID missing from GetSecretsByIDs' result (e.g. deleted concurrently) is
+// simply absent from ComputeSecretRiskScoresBatch's result — callers must treat
+// that the same as ComputeSecretRiskScore's own "secret not found" error for that
+// one ID (see planSecret's #486 handling), not crash or silently zero the whole
+// batch.
+func TestComputeSecretRiskScoresBatch_MissingSecretIsAbsentFromResult(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	store := new(MockStorage)
+
+	store.On("GetSecretsByIDs", mock.Anything, []uint{1, 999}).Return([]*models.SecretNode{
+		{ID: 1, Name: "a", OwnerID: 9, CreatedAt: now.AddDate(0, 0, -10)},
+	}, nil)
+	store.On("CountSecretReadsBySecretIDs", mock.Anything, []uint{1, 999}, mock.Anything).Return(map[uint]int{}, nil)
+	store.On("ListSharesBySecretIDs", mock.Anything, []uint{1, 999}).Return([]*models.ShareRecord{}, nil)
+
+	c := NewKeyorixCore(store)
+	c.now = func() time.Time { return now }
+
+	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1, 999})
+	require.NoError(t, err)
+	assert.Contains(t, got, uint(1))
+	assert.NotContains(t, got, uint(999), "a secretID with no matching row must be absent, not a zero-value entry")
+}

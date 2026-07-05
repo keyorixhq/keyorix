@@ -506,6 +506,14 @@ func (m *MockStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 	return args.Get(0).(*models.SecretNode), args.Error(1)
 }
 
+func (m *MockStorage) GetSecretsByIDs(ctx context.Context, ids []uint) ([]*models.SecretNode, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.SecretNode), args.Error(1)
+}
+
 func (m *MockStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
 	args := m.Called(ctx, name, projectID, environmentID)
 	if args.Get(0) == nil {
@@ -694,6 +702,14 @@ func (m *MockStorage) DeleteShareRecord(ctx context.Context, shareID uint) error
 
 func (m *MockStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, secretID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.ShareRecord), args.Error(1)
+}
+
+func (m *MockStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error) {
+	args := m.Called(ctx, secretIDs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -963,6 +979,14 @@ func (m *MockStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*mo
 	return args.Get(0).([]*models.User), args.Error(1)
 }
 
+func (m *MockStorage) ListGroupMembersByGroupIDs(ctx context.Context, groupIDs []uint) (map[uint][]*models.User, error) {
+	args := m.Called(ctx, groupIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint][]*models.User), args.Error(1)
+}
+
 // Role Management
 
 func (m *MockStorage) CreateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
@@ -1129,6 +1153,14 @@ func (m *MockStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, s
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]models.SecretAccessLog), args.Error(1)
+}
+
+func (m *MockStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretIDs []uint, since time.Time) (map[uint]int, error) {
+	args := m.Called(ctx, secretIDs, since)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]int), args.Error(1)
 }
 
 func (m *MockStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {

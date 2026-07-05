@@ -93,9 +93,18 @@ func (c *KeyorixCore) GenerateRotationPlan(ctx context.Context, projectID uint) 
 	}
 
 	candidateSet := make(map[uint]bool, len(candidates))
+	candidateIDs := make([]uint, 0, len(candidates))
 	for id := range candidates {
 		candidateSet[id] = true
+		candidateIDs = append(candidateIDs, id)
 	}
+
+	// #409: risk-score every candidate secret with a small constant number of
+	// batched storage queries (see ComputeSecretRiskScoresBatch), not by calling
+	// ComputeSecretRiskScore fresh — with its own several queries — once per
+	// candidate. planSecret below never touches storage itself; it only reads
+	// from riskScores/riskErr computed here, once, for the whole project.
+	riskScores, riskErr := c.ComputeSecretRiskScoresBatch(ctx, candidateIDs)
 
 	edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
 	if err != nil {
@@ -119,7 +128,7 @@ func (c *KeyorixCore) GenerateRotationPlan(ctx context.Context, projectID uint) 
 		wave := RotationWave{Index: wi, Secrets: make([]PlannedRotation, 0, len(ids))}
 		for _, id := range ids {
 			entry := candidates[id]
-			pr := c.planSecret(ctx, entry, dependsOnInPlan[id], candidates)
+			pr := c.planSecret(entry, dependsOnInPlan[id], candidates, riskScores, riskErr)
 			wave.Secrets = append(wave.Secrets, pr)
 			if entry.Status == RotationStatusOverdue {
 				plan.OverdueCount++
@@ -221,25 +230,38 @@ func (c *KeyorixCore) GenerateDeploymentRotationPlan(ctx context.Context) (*Depl
 	return dp, nil
 }
 
-// planSecret turns a candidate entry into a PlannedRotation with urgency and reasons.
-func (c *KeyorixCore) planSecret(ctx context.Context, e *RotationStatusEntry, deps []uint, candidates map[uint]*RotationStatusEntry) PlannedRotation {
+// planSecret turns a candidate entry into a PlannedRotation with urgency and
+// reasons. It never touches storage itself — riskScores/riskErr are computed once
+// for every candidate in the project by ComputeSecretRiskScoresBatch (#409), not
+// freshly per secret here.
+func (c *KeyorixCore) planSecret(e *RotationStatusEntry, deps []uint, candidates map[uint]*RotationStatusEntry, riskScores map[uint]*SecretRiskScore, riskErr error) PlannedRotation {
 	riskScore, riskBand := 0, ""
 	riskDegraded := false
 	riskDegradedReason := "risk score based on incomplete exposure data (treated as worst-case, not deprioritized)"
-	if r, err := c.ComputeSecretRiskScore(ctx, e.SecretID); err != nil {
-		// #486: an outright failure to compute the risk score (e.g. a storage
-		// flake on the secret lookup) must NOT read the same as a genuine,
+	switch {
+	case riskErr != nil:
+		// #486: an outright failure to compute risk scores (e.g. a storage flake
+		// on the batched secret lookup) must NOT read the same as a genuine,
 		// fully-resolved zero-risk score — that would silently under-rank an
 		// actually-risky overdue secret, since rotationUrgency shifts intra-wave
 		// ordering by risk score. Degrade the same way ComputeSecretRiskScore's
 		// own incomplete-exposure case does below, so callers can't tell the two
 		// "the score is 0" cases apart from a real, verified low-risk secret.
-		log.Printf("rotation plan: risk score for secret %d (%s): %v — treating as degraded, not silently zero", e.SecretID, e.SecretName, err)
+		log.Printf("rotation plan: risk score for secret %d (%s): %v — treating as degraded, not silently zero", e.SecretID, e.SecretName, riskErr)
 		riskDegraded = true
-		riskDegradedReason = fmt.Sprintf("risk score: %v (treated as worst-case, not deprioritized)", err)
-	} else if r != nil {
+		riskDegradedReason = fmt.Sprintf("risk score: %v (treated as worst-case, not deprioritized)", riskErr)
+	case riskScores[e.SecretID] != nil:
+		r := riskScores[e.SecretID]
 		riskScore, riskBand = r.Score, r.Band
 		riskDegraded = r.Degraded
+	default:
+		// The secret is a candidate (it exists in RotationStatusEntry form) but has
+		// no entry in the batch result — e.g. deleted between candidate listing and
+		// the risk-score batch call. Same #486 treatment as an outright per-secret
+		// error: never silently zero.
+		log.Printf("rotation plan: risk score for secret %d (%s): not found in batch result — treating as degraded, not silently zero", e.SecretID, e.SecretName)
+		riskDegraded = true
+		riskDegradedReason = "risk score: secret not found (treated as worst-case, not deprioritized)"
 	}
 
 	pr := PlannedRotation{

@@ -97,6 +97,27 @@ func (rs *RemoteStorage) ListSharesBySecret(ctx context.Context, secretID uint) 
 	return result, nil
 }
 
+// ListSharesBySecretIDs is the batch form of ListSharesBySecret. There is no bulk
+// by-secret-IDs REST endpoint, so this issues one ListSharesBySecret call per
+// secret — but unlike GetSecretsByIDs, a failure here fails the WHOLE batch
+// (returns immediately) rather than skipping the affected secret: silently
+// treating a failed shares lookup as "no shares" would under-count that secret's
+// exposure, exactly the #407 bug (a widely-shared secret incorrectly reading as
+// low-exposure) this method must not reintroduce. Failing the batch degrades
+// every secret's exposure factor to the worst case instead — never fewer
+// principals than reality, only ever more caution than strictly necessary.
+func (rs *RemoteStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error) {
+	var out []*models.ShareRecord
+	for _, id := range secretIDs {
+		shares, err := rs.ListSharesBySecret(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("list shares by secret %d: %w", id, err)
+		}
+		out = append(out, shares...)
+	}
+	return out, nil
+}
+
 // ListSharesByUser lists all share records where userID is the recipient via remote API.
 func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/users/%d/shares", userID)

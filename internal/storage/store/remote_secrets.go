@@ -53,6 +53,26 @@ func (rs *RemoteStorage) GetSecret(ctx context.Context, id uint) (*models.Secret
 	return &result, nil
 }
 
+// GetSecretsByIDs is the batch form of GetSecret. There is no bulk by-ID REST
+// endpoint, so this issues one GetSecret call per ID (the same per-secret network
+// cost remote mode already pays today) rather than adding a new one — it only lets
+// callers batch at the Go-API level. An ID whose lookup fails is skipped rather
+// than failing the whole batch: the caller (the rotation planner's risk-scoring
+// batch, #409) already treats an ID missing from the result the same conservative
+// way GetSecret's own error is treated for a single secret — never a silent
+// zero-risk score, so skipping here loses no safety margin.
+func (rs *RemoteStorage) GetSecretsByIDs(ctx context.Context, ids []uint) ([]*models.SecretNode, error) {
+	out := make([]*models.SecretNode, 0, len(ids))
+	for _, id := range ids {
+		secret, err := rs.GetSecret(ctx, id)
+		if err != nil {
+			continue
+		}
+		out = append(out, secret)
+	}
+	return out, nil
+}
+
 // GetSecretByName retrieves a secret by name and scope context via remote API.
 func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
 	path := fmt.Sprintf("/api/v1/secrets/by-name/%s?project_id=%d&environment_id=%d",
