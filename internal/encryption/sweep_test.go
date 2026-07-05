@@ -154,7 +154,7 @@ func TestRotateDEKWithSweep_ReEncryptsAllRows(t *testing.T) {
 	oldDEK := captureCurrentDEK(t, svc)
 
 	// Run rotation with sweep
-	if err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
+	if _, err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
 		t.Fatalf("RotateDEKWithSweep failed: %v", err)
 	}
 
@@ -216,7 +216,7 @@ func TestRotateDEKWithSweep_MultipleBatches(t *testing.T) {
 	}
 
 	oldDEK := captureCurrentDEK(t, svc)
-	if err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
+	if _, err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
 		t.Fatalf("RotateDEKWithSweep failed: %v", err)
 	}
 	if string(oldDEK) == string(captureCurrentDEK(t, svc)) {
@@ -271,7 +271,7 @@ func TestRotateDEKWithSweep_ReEncryptsAuthSecretTables(t *testing.T) {
 	require.NoError(t, db.Create(&models.DynamicSecretLease{LeaseID: "l-1", ConfigID: 9, CredentialEnc: credEnc, CredentialMeta: credMeta}).Error)
 
 	oldDEK := captureCurrentDEK(t, svc)
-	if err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
+	if _, err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
 		t.Fatalf("RotateDEKWithSweep failed: %v", err)
 	}
 	oldEncSvc, err := NewEncryptionService(oldDEK)
@@ -316,7 +316,8 @@ func TestRotateDEKWithSweep_SoftDeletedSecretDoesNotBlock(t *testing.T) {
 	require.NoError(t, db.Delete(&models.SecretNode{}, nodeID).Error)
 
 	// Rotation must still succeed (previously aborted with "no project found").
-	require.NoError(t, svc.RotateDEKWithSweep("test-passphrase", db))
+	_, rotErr := svc.RotateDEKWithSweep("test-passphrase", db)
+	require.NoError(t, rotErr)
 
 	var v models.SecretVersion
 	require.NoError(t, db.First(&v, versionID).Error)
@@ -350,7 +351,7 @@ func TestRotateDEKWithSweep_UpgradesLegacyAAD(t *testing.T) {
 	}
 
 	// Run sweep
-	if err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
+	if _, err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
 		t.Fatalf("RotateDEKWithSweep failed: %v", err)
 	}
 
@@ -403,7 +404,7 @@ func TestRotateDEKWithSweep_RollbackOnError(t *testing.T) {
 		t.Fatalf("failed to drop table: %v", err)
 	}
 
-	err := svc.RotateDEKWithSweep("test-passphrase", db)
+	_, err := svc.RotateDEKWithSweep("test-passphrase", db)
 	if err == nil {
 		t.Fatal("expected RotateDEKWithSweep to fail, but it succeeded")
 	}

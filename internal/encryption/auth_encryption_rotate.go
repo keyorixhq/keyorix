@@ -22,7 +22,7 @@ func (ae *AuthEncryption) RotateAuthEncryption(passphrase string) error {
 	if !ae.service.IsEnabled() {
 		return fmt.Errorf("encryption is disabled")
 	}
-	if err := ae.service.RotateDEKWithSweep(passphrase, ae.db); err != nil {
+	if _, err := ae.service.RotateDEKWithSweep(passphrase, ae.db); err != nil {
 		return fmt.Errorf("failed to rotate auth encryption keys: %w", err)
 	}
 	return nil

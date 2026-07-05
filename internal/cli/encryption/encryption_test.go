@@ -21,7 +21,7 @@ func TestRotateWithConfig_RequiresConfirm(t *testing.T) {
 		},
 	}
 
-	err := rotateWithConfig(cfg, false)
+	err := rotateWithConfig(cfg, false, false)
 	if err == nil {
 		t.Fatal("expected error when --confirm is not passed, got nil")
 	}
@@ -43,7 +43,7 @@ func TestRotateWithConfig_RejectsRemoteStorage(t *testing.T) {
 		},
 	}
 
-	err := rotateWithConfig(cfg, true)
+	err := rotateWithConfig(cfg, true, false)
 	if err == nil {
 		t.Fatal("expected error for remote storage type, got nil")
 	}
@@ -65,7 +65,7 @@ func TestRotateWithConfig_RejectsDisabledEncryption(t *testing.T) {
 		},
 	}
 
-	err := rotateWithConfig(cfg, true)
+	err := rotateWithConfig(cfg, true, false)
 	if err == nil {
 		t.Fatal("expected error when encryption is disabled, got nil")
 	}

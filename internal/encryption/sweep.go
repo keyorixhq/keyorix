@@ -39,35 +39,42 @@ type SweepResult struct {
 
 // SweepAllTables re-encrypts every DEK-encrypted row within a single DB transaction.
 // oldSvc decrypts; newSvc re-encrypts. Called while both DEK services are live in memory.
-func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (*SweepResult, error) {
+//
+// dryRun gates ONLY the final per-row write (tx.Model(...).Updates(...)) in each
+// sweeper: every SELECT, decrypt, re-encrypt, and count still runs exactly as a real
+// sweep would, so the returned SweepResult is an accurate preview of what a real
+// rotation would touch (including catching any row that would fail to decrypt), but
+// nothing here is ever persisted — the caller is expected to always roll back the
+// transaction when dryRun is true (see Service.PreviewRotationSweep).
+func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (*SweepResult, error) {
 	result := &SweepResult{}
 
-	sweptVersions, legacyUpgraded, err := sweepSecretVersions(tx, oldSvc, newSvc, newKeyVersion)
+	sweptVersions, legacyUpgraded, err := sweepSecretVersions(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("secret_versions sweep failed: %w", err)
 	}
 	result.SecretVersionsSwept = sweptVersions
 	result.LegacyAADUpgraded = legacyUpgraded
 
-	sweptSessions, err := sweepSessions(tx, oldSvc, newSvc, newKeyVersion)
+	sweptSessions, err := sweepSessions(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("sessions sweep failed: %w", err)
 	}
 	result.SessionsSwept = sweptSessions
 
-	sweptAPITokens, err := sweepAPITokens(tx, oldSvc, newSvc, newKeyVersion)
+	sweptAPITokens, err := sweepAPITokens(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("api_tokens sweep failed: %w", err)
 	}
 	result.APITokensSwept = sweptAPITokens
 
-	sweptClients, err := sweepAPIClients(tx, oldSvc, newSvc, newKeyVersion)
+	sweptClients, err := sweepAPIClients(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("api_clients sweep failed: %w", err)
 	}
 	result.APIClientsSwept = sweptClients
 
-	sweptResets, err := sweepPasswordResets(tx, oldSvc, newSvc, newKeyVersion)
+	sweptResets, err := sweepPasswordResets(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("password_resets sweep failed: %w", err)
 	}
@@ -79,21 +86,21 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	// MFA login and dynamic-secret access irrecoverably. They are also AAD-bound
 	// (#94) as of this fix, so — like sweepSecretVersions — each also upgrades any
 	// still-legacy (no-AAD) row it encounters, contributing to LegacyAADUpgraded.
-	sweptMFA, legacyMFA, err := sweepMFASecrets(tx, oldSvc, newSvc, newKeyVersion)
+	sweptMFA, legacyMFA, err := sweepMFASecrets(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("mfa_secrets sweep failed: %w", err)
 	}
 	result.MFASecretsSwept = sweptMFA
 	result.LegacyAADUpgraded += legacyMFA
 
-	sweptDynConfigs, legacyDynConfigs, err := sweepDynamicSecretConfigs(tx, oldSvc, newSvc, newKeyVersion)
+	sweptDynConfigs, legacyDynConfigs, err := sweepDynamicSecretConfigs(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("dynamic_secret_configs sweep failed: %w", err)
 	}
 	result.DynamicSecretConfigsSwept = sweptDynConfigs
 	result.LegacyAADUpgraded += legacyDynConfigs
 
-	sweptDynLeases, legacyDynLeases, err := sweepDynamicSecretLeases(tx, oldSvc, newSvc, newKeyVersion)
+	sweptDynLeases, legacyDynLeases, err := sweepDynamicSecretLeases(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("dynamic_secret_leases sweep failed: %w", err)
 	}
@@ -111,8 +118,10 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 //   - Legacy rows (no aad_version): decrypt without AAD, re-encrypt with new
 //     DEK + correct AAD (completes the M2 AAD migration).
 //
+// dryRun skips the final Updates() write only — every other step (fetch, decrypt,
+// re-encrypt, counting) still runs, so callers get an accurate preview.
 // Returns (rowsSwept, legacyRowsUpgraded, error).
-func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, int, error) {
+func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) {
 	var offset int
 	var totalSwept, totalLegacyUpgraded int
 
@@ -188,11 +197,13 @@ func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *Encrypt
 				return totalSwept, totalLegacyUpgraded, fmt.Errorf("failed to marshal metadata for secret_version id=%d: %w", version.ID, err)
 			}
 
-			if err := tx.Model(&models.SecretVersion{}).Where("id = ?", version.ID).Updates(map[string]interface{}{
-				"encrypted_value":     newEncryptedBytes,
-				"encryption_metadata": models.JSON(metadataBytes),
-			}).Error; err != nil {
-				return totalSwept, totalLegacyUpgraded, fmt.Errorf("failed to update re-encrypted secret_version id=%d: %w", version.ID, err)
+			if !dryRun {
+				if err := tx.Model(&models.SecretVersion{}).Where("id = ?", version.ID).Updates(map[string]interface{}{
+					"encrypted_value":     newEncryptedBytes,
+					"encryption_metadata": models.JSON(metadataBytes),
+				}).Error; err != nil {
+					return totalSwept, totalLegacyUpgraded, fmt.Errorf("failed to update re-encrypted secret_version id=%d: %w", version.ID, err)
+				}
 			}
 
 			totalSwept++

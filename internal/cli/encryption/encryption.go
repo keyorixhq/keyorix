@@ -54,7 +54,10 @@ var rotateCmd = &cobra.Command{
 the database within a single transaction (ADR-010).
 
 This is a write-locking operation. Stop write traffic to the database before
-running. Requires --confirm.`,
+running. Requires --confirm.
+
+Pass --dry-run to preview which tables/rows a rotation would re-encrypt WITHOUT
+making any changes to the database or the DEK — no --confirm needed for a dry run.`,
 	RunE: runRotate,
 }
 
@@ -75,6 +78,7 @@ for the duration of the sweep (typically brief; they are not high-row-count tabl
 }
 
 var rotateConfirm bool
+var rotateDryRun bool
 
 func init() {
 	EncryptionCmd.AddCommand(initCmd)
@@ -93,6 +97,8 @@ func init() {
 
 	rotateCmd.Flags().BoolVar(&rotateConfirm, "confirm", false,
 		"required acknowledgement that the database will be write-locked during the sweep")
+	rotateCmd.Flags().BoolVar(&rotateDryRun, "dry-run", false,
+		"preview which tables/rows a rotation would re-encrypt, without making any changes to the database or the DEK (does not require --confirm)")
 }
 
 var validateCmd = &cobra.Command{
@@ -216,20 +222,24 @@ func runRotate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return rotateWithConfig(cfg, rotateConfirm)
+	return rotateWithConfig(cfg, rotateConfirm, rotateDryRun)
 }
 
 // rotateWithConfig is the testable core of runRotate. It does no config loading
-// and no flag parsing — callers pass an explicit confirm bool. Returns early
+// and no flag parsing — callers pass explicit confirm/dryRun bools. Returns early
 // (before any DB or encryption work) on the validation gates so tests don't
 // need a real database or key files.
-func rotateWithConfig(cfg *config.Config, confirm bool) error {
+func rotateWithConfig(cfg *config.Config, confirm bool, dryRun bool) error {
 	if !cfg.Storage.Encryption.Enabled {
 		return fmt.Errorf("encryption is disabled in configuration")
 	}
 
 	if cfg.Storage.Type == "remote" {
 		return fmt.Errorf("DEK rotation must run on the server host. Current storage type is 'remote' — connect to the server and run this command there")
+	}
+
+	if dryRun {
+		return dryRunRotation(cfg)
 	}
 
 	if !confirm {
@@ -263,13 +273,66 @@ func rotateWithConfig(cfg *config.Config, confirm bool) error {
 	defer closeDB(db)
 
 	fmt.Println("🔄 Rotating DEK with full re-encryption sweep...")
-	if err := service.RotateDEKWithSweep(passphrase, db); err != nil {
+	result, err := service.RotateDEKWithSweep(passphrase, db)
+	if err != nil {
 		return fmt.Errorf("DEK rotation failed: %w", err)
 	}
 
 	fmt.Println("✅ DEK rotated successfully")
 	fmt.Printf("📋 New key version: %s\n", service.GetKeyVersion())
+	printSweepResult(result)
 	return nil
+}
+
+// dryRunRotation previews what a real "rotate" would touch — table names and row
+// counts — WITHOUT making any changes to the database or the DEK, and without
+// requiring --confirm. It uses the SAME shared-key-lock local-CLI-op pattern as
+// status/validate/fix-perms/upgrade-aad (refused only while a live server or an
+// in-progress rotation/migrate-provider holds the key directory exclusively), not
+// the exclusive lock a real rotation takes — a dry run never writes the DEK, so it
+// does not need to exclude a live server the way an actual rotation does.
+func dryRunRotation(cfg *config.Config) error {
+	baseDir, _ := os.Getwd()
+	passphrase, err := masterPassphrase(cfg)
+	if err != nil {
+		return err
+	}
+
+	service, err := initLocalKeyOpService(cfg, baseDir, passphrase, false)
+	if err != nil {
+		return err
+	}
+	defer service.Shutdown()
+
+	db, err := storage.OpenGormDB(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to open database for dry-run rotation preview: %w", err)
+	}
+	defer closeDB(db)
+
+	fmt.Println("🔍 Dry run: previewing what a DEK rotation would re-encrypt — no changes will be made to the database or the DEK...")
+	result, err := service.PreviewRotationSweep(db)
+	if err != nil {
+		return fmt.Errorf("dry-run rotation preview failed: %w", err)
+	}
+
+	fmt.Println("✅ Dry run complete — no changes were made")
+	printSweepResult(result)
+	return nil
+}
+
+// printSweepResult prints every field of a SweepResult — all 8 per-table "Swept"
+// counts plus LegacyAADUpgraded — so an operator sees the FULL sweep outcome
+// (real or previewed), not a partial one. Before this, the CLI printed no
+// per-table detail from a rotation at all, and even the underlying service log
+// line covered only 5 of these 8 fields — silently omitting mfa_secrets,
+// dynamic_secret_configs, and dynamic_secret_leases, the exact three tables
+// #422's sweep-gap fix added.
+func printSweepResult(result *encryption.SweepResult) {
+	fmt.Printf("📋 secret_versions: %d, sessions: %d, api_tokens: %d, api_clients: %d, password_resets: %d, mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d (legacy AAD upgraded: %d)\n",
+		result.SecretVersionsSwept, result.SessionsSwept, result.APITokensSwept, result.APIClientsSwept,
+		result.PasswordResetsSwept, result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept,
+		result.LegacyAADUpgraded)
 }
 
 func runUpgradeAAD(cmd *cobra.Command, args []string) error {

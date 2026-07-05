@@ -123,7 +123,7 @@ func TestRewrapAndRotate_ConcurrentRace_FinalDEKMatchesDB(t *testing.T) {
 	var rotateErr, rewrapErr error
 	go func() {
 		defer wg.Done()
-		rotateErr = svcA.RotateDEKWithSweep("test-passphrase", db)
+		_, rotateErr = svcA.RotateDEKWithSweep("test-passphrase", db)
 	}()
 	go func() {
 		defer wg.Done()

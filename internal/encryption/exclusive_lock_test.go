@@ -42,7 +42,7 @@ func TestRotateDEKWithSweep_RefusesWhileServerHoldsLock(t *testing.T) {
 	rotSvc := newTestServiceAtDir(t, dir, lockTestPassphrase)
 	defer rotSvc.Shutdown()
 
-	err := rotSvc.RotateDEKWithSweep(lockTestPassphrase, db)
+	_, err := rotSvc.RotateDEKWithSweep(lockTestPassphrase, db)
 	if err == nil {
 		t.Fatal("expected rotation to be refused while the server holds the key lock")
 	}
@@ -64,7 +64,7 @@ func TestRotateDEKWithSweep_SucceedsAfterServerLockReleased(t *testing.T) {
 	rotSvc := newTestServiceAtDir(t, dir, lockTestPassphrase)
 	defer rotSvc.Shutdown()
 
-	if err := rotSvc.RotateDEKWithSweep(lockTestPassphrase, db); err != nil {
+	if _, err := rotSvc.RotateDEKWithSweep(lockTestPassphrase, db); err != nil {
 		t.Fatalf("rotation should succeed once the server's lock is released: %v", err)
 	}
 }
