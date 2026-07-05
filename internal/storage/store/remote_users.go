@@ -278,6 +278,16 @@ func (rs *RemoteStorage) ListGroupMembers(_ context.Context, _ uint) ([]*models.
 	return nil, remoteUnsupported("ListGroupMembers")
 }
 
+// ListGroupMembersByGroupIDs is the batch form of ListGroupMembers, which is itself
+// unsupported in remote mode — so is this, for the same reason (group membership is
+// server-side only). Matches ListGroupMembers' existing per-group unsupported error:
+// a caller (the rotation planner's risk-scoring batch, #409) already degrades a
+// secret's exposure factor to the worst case on this error, exactly as it already
+// does today when a group share's ListGroupMembers call fails in remote mode.
+func (rs *RemoteStorage) ListGroupMembersByGroupIDs(_ context.Context, _ []uint) (map[uint][]*models.User, error) {
+	return nil, remoteUnsupported("ListGroupMembersByGroupIDs")
+}
+
 // --- Password history (ADR-025) ---
 // Password changes are processed server-side in remote mode, so history is
 // recorded and checked there; these are stubs.

@@ -338,6 +338,13 @@ type Storage interface {
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	GetSecret(ctx context.Context, id uint) (*models.SecretNode, error)
+	// GetSecretsByIDs is the batch form of GetSecret: every secret in ids, in one
+	// query, instead of one GetSecret call per ID. IDs with no matching row are
+	// simply absent from the result (no error) — same as GetSecret's own
+	// not-found case, just without the per-ID error wrapping. Used by the rotation
+	// planner's risk-scoring batch (#409) so scoring N candidate secrets costs a
+	// small constant number of queries, not N.
+	GetSecretsByIDs(ctx context.Context, ids []uint) ([]*models.SecretNode, error)
 	GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error)
 	UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	DeleteSecret(ctx context.Context, id uint) error
@@ -401,6 +408,11 @@ type Storage interface {
 	UpdateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
 	DeleteShareRecord(ctx context.Context, shareID uint) error
 	ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error)
+	// ListSharesBySecretIDs is the batch form of ListSharesBySecret: currently-active
+	// share records for every secret in secretIDs, in one query — used by the
+	// rotation planner's risk-scoring batch (#409) instead of one ListSharesBySecret
+	// call per candidate secret.
+	ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error)
 	ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error)
 	ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error)
 	ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error)
@@ -534,6 +546,11 @@ type Storage interface {
 	AddUserToGroup(ctx context.Context, userID, groupID uint) error
 	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error
 	ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error)
+	// ListGroupMembersByGroupIDs is the batch form of ListGroupMembers: the members
+	// of every group in groupIDs, keyed by group ID, in one query — used by the
+	// rotation planner's risk-scoring batch (#409) instead of one ListGroupMembers
+	// call per group share, per candidate secret.
+	ListGroupMembersByGroupIDs(ctx context.Context, groupIDs []uint) (map[uint][]*models.User, error)
 
 	// Permission Management
 	CreatePermission(ctx context.Context, permission *models.Permission) (*models.Permission, error)
@@ -637,6 +654,13 @@ type Storage interface {
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
+	// CountSecretReadsBySecretIDs returns, for every secret in secretIDs with at
+	// least one qualifying row, the number of "read" access-log entries at or
+	// after since — aggregated in SQL (GROUP BY + COUNT), not one
+	// ListSecretAccessLogs call per secret. Used by the rotation planner's
+	// risk-scoring batch (#409); a secret absent from the result had zero
+	// qualifying reads, same as ListSecretAccessLogs returning an empty slice.
+	CountSecretReadsBySecretIDs(ctx context.Context, secretIDs []uint, since time.Time) (map[uint]int, error)
 	// PrincipalSecretFirstSeen returns, for every non-empty accessed_by with at least
 	// one access log row at or after `since`, the earliest access time per secret it
 	// touched in that range — aggregated in SQL (GROUP BY + MIN), not loaded as full

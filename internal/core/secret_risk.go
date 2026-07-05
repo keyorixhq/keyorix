@@ -70,11 +70,22 @@ func (c *KeyorixCore) ComputeSecretRiskScore(ctx context.Context, secretID uint)
 	}
 	now := c.now()
 
+	reads := c.countReads(ctx, secretID, now.AddDate(0, 0, -30))
+	principalCount, expoDegraded, expoReasons := c.countPrincipals(ctx, secret)
+	return scoreSecret(secret, now, reads, principalCount, expoDegraded, expoReasons), nil
+}
+
+// scoreSecret builds a SecretRiskScore from a secret row plus its already-resolved
+// usage (read count) and exposure (principal count) inputs — the pure composite-
+// scoring logic shared by ComputeSecretRiskScore (which resolves those inputs one
+// secret at a time) and ComputeSecretRiskScoresBatch (which resolves them for many
+// secrets at once via batched queries, #409), so both produce byte-for-byte the
+// same score for the same inputs.
+func scoreSecret(secret *models.SecretNode, now time.Time, reads, principalCount int, expoDegraded bool, expoReasons []string) *SecretRiskScore {
 	expScore, expDetail := expiryRisk(secret.Expiration, now)
 	rotScore, rotDetail := rotationRisk(secret.LastRotatedAt, secret.CreatedAt, now)
-	usageScore, usageDetail := usageRisk(c.countReads(ctx, secretID, now.AddDate(0, 0, -30)))
+	usageScore, usageDetail := usageRisk(reads)
 
-	principalCount, expoDegraded, expoReasons := c.countPrincipals(ctx, secret)
 	expoScore, expoDetail := exposureRisk(principalCount)
 	if expoDegraded {
 		// #407: a share/group-membership lookup failed, so principalCount is an
@@ -113,7 +124,139 @@ func (c *KeyorixCore) ComputeSecretRiskScore(ctx context.Context, secretID uint)
 			out.DegradedReasons = append(out.DegradedReasons, "exposure:"+r)
 		}
 	}
+	return out
+}
+
+// ComputeSecretRiskScoresBatch computes the risk score for every secret in
+// secretIDs with a small, constant number of storage queries regardless of how
+// many secrets are being scored — instead of ComputeSecretRiskScore's ~3+ queries
+// called fresh for each one.
+//
+// #409: GenerateDeploymentRotationPlan called ComputeSecretRiskScore once per
+// candidate secret, per project — an O(projects × candidates × groups-per-secret)
+// unbounded fan-out on a single request (the same bug family as #238/#393). Each
+// input ComputeSecretRiskScore needs is now fetched once for the whole batch: one
+// GetSecretsByIDs, one CountSecretReadsBySecretIDs (GROUP BY), one
+// ListSharesBySecretIDs, and (only if any share is a group share) one
+// ListGroupMembersByGroupIDs — four queries total, not up to 3+N.
+//
+// Returns a map from secret ID to its score; a secretID with no matching row
+// (e.g. deleted between candidate listing and this call) is simply absent from
+// the result — callers must treat a missing entry the same as ComputeSecretRiskScore
+// returning a "secret not found" error for that one ID.
+//
+// Batching changes failure GRANULARITY, not the scoring logic or the worst-case
+// degrade bias (#407): a single failed grouped query now affects every secret in
+// the batch whose score depends on that data, instead of only the one secret whose
+// individual per-secret query happened to fail — strictly more conservative than
+// before, never less:
+//   - GetSecretsByIDs failing outright fails the whole batch (returns an error) —
+//     mirrors ComputeSecretRiskScore's own GetSecret failure, just widened from one
+//     secret to every secret requested in this call.
+//   - CountSecretReadsBySecretIDs failing falls back to zero reads for every
+//     secret, same as countReads' own per-secret fallback (never an error, never a
+//     Degraded flag — usage was never part of the exposure-degrade contract).
+//   - ListSharesBySecretIDs failing degrades every secret's exposure factor to the
+//     worst case, same as countPrincipals' own per-secret "shares:" failure.
+//   - ListGroupMembersByGroupIDs failing degrades only the secrets that actually
+//     have a group share (secrets with only direct-user shares, or no shares, are
+//     unaffected) — the query covers every group referenced by any candidate, so a
+//     failure there means every one of those groups' membership is unresolved.
+func (c *KeyorixCore) ComputeSecretRiskScoresBatch(ctx context.Context, secretIDs []uint) (map[uint]*SecretRiskScore, error) {
+	out := make(map[uint]*SecretRiskScore, len(secretIDs))
+	if len(secretIDs) == 0 {
+		return out, nil
+	}
+
+	secrets, err := c.storage.GetSecretsByIDs(ctx, secretIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get secrets: %w", err)
+	}
+	now := c.now()
+
+	readCounts, err := c.storage.CountSecretReadsBySecretIDs(ctx, secretIDs, now.AddDate(0, 0, -30))
+	if err != nil {
+		// Same fallback as countReads: an unreadable read count is treated as zero
+		// reads, not an error and not a Degraded flag.
+		readCounts = map[uint]int{}
+	}
+
+	sharesBySecret := map[uint][]*models.ShareRecord{}
+	sharesFailed := false
+	var sharesErr error
+	if shares, err := c.storage.ListSharesBySecretIDs(ctx, secretIDs); err != nil {
+		sharesFailed = true
+		sharesErr = err
+	} else {
+		for _, sh := range shares {
+			sharesBySecret[sh.SecretID] = append(sharesBySecret[sh.SecretID], sh)
+		}
+	}
+
+	groupIDSet := map[uint]struct{}{}
+	for _, shares := range sharesBySecret {
+		for _, sh := range shares {
+			if sh.IsGroup {
+				groupIDSet[sh.RecipientID] = struct{}{}
+			}
+		}
+	}
+	membersByGroup := map[uint][]*models.User{}
+	groupsFailed := false
+	var groupsErr error
+	if len(groupIDSet) > 0 {
+		groupIDs := make([]uint, 0, len(groupIDSet))
+		for id := range groupIDSet {
+			groupIDs = append(groupIDs, id)
+		}
+		if m, err := c.storage.ListGroupMembersByGroupIDs(ctx, groupIDs); err != nil {
+			groupsFailed = true
+			groupsErr = err
+		} else {
+			membersByGroup = m
+		}
+	}
+
+	for _, secret := range secrets {
+		principalCount, expoDegraded, expoReasons := principalsFromBatch(
+			secret, sharesBySecret[secret.ID], membersByGroup, sharesFailed, sharesErr, groupsFailed, groupsErr,
+		)
+		out[secret.ID] = scoreSecret(secret, now, readCounts[secret.ID], principalCount, expoDegraded, expoReasons)
+	}
 	return out, nil
+}
+
+// principalsFromBatch is the batch-friendly equivalent of countPrincipals: same
+// owner+shares+group-members counting logic, but reading from data already
+// fetched for the whole candidate batch instead of issuing its own per-secret
+// queries. See ComputeSecretRiskScoresBatch for how sharesFailed/groupsFailed
+// (batch-wide) map onto countPrincipals' original per-secret failure reasons.
+func principalsFromBatch(
+	secret *models.SecretNode, shares []*models.ShareRecord, membersByGroup map[uint][]*models.User,
+	sharesFailed bool, sharesErr error, groupsFailed bool, groupsErr error,
+) (count int, degraded bool, reasons []string) {
+	principals := map[uint]struct{}{}
+	if secret.OwnerID != 0 {
+		principals[secret.OwnerID] = struct{}{}
+	}
+	if sharesFailed {
+		return len(principals), true, []string{fmt.Sprintf("shares: %v", sharesErr)}
+	}
+	for _, sh := range shares {
+		if sh.IsGroup {
+			if groupsFailed {
+				degraded = true
+				reasons = append(reasons, fmt.Sprintf("group_members:group=%d: %v", sh.RecipientID, groupsErr))
+				continue
+			}
+			for _, m := range membersByGroup[sh.RecipientID] {
+				principals[m.ID] = struct{}{}
+			}
+		} else {
+			principals[sh.RecipientID] = struct{}{}
+		}
+	}
+	return len(principals), degraded, reasons
 }
 
 func expiryRisk(exp *time.Time, now time.Time) (int, string) {

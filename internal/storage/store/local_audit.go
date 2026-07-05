@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -39,6 +40,36 @@ func (ls *LocalStorage) ListSecretAccessLogs(ctx context.Context, secretID uint,
 		Limit(maxSecretAccessLogRows).
 		Find(&logs)
 	return logs, result.Error
+}
+
+// CountSecretReadsBySecretIDs returns, for every secret in secretIDs with at least
+// one qualifying row, the number of "read" access-log entries at or after since —
+// aggregated in SQL (GROUP BY + COUNT), not one ListSecretAccessLogs call (plus a
+// Go-side action=="read" filter) per secret. Used by the rotation planner's
+// risk-scoring batch (#409) instead of one such call per candidate secret. A
+// secret absent from the result had zero qualifying reads.
+func (ls *LocalStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretIDs []uint, since time.Time) (map[uint]int, error) {
+	out := make(map[uint]int, len(secretIDs))
+	if len(secretIDs) == 0 {
+		return out, nil
+	}
+	type row struct {
+		SecretNodeID uint
+		Count        int
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).Model(&models.SecretAccessLog{}).
+		Select("secret_node_id, COUNT(*) AS count").
+		Where("secret_node_id IN ? AND access_time >= ? AND action = ?", secretIDs, since, "read").
+		Group("secret_node_id").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+	}
+	for _, r := range rows {
+		out[r.SecretNodeID] = r.Count
+	}
+	return out, nil
 }
 
 // PrincipalSecretFirstSeen returns, for every (principal, secret) pair with at least one

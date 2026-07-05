@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -162,13 +164,11 @@ func TestGenerateRotationPlanEmptyWhenNothingDue(t *testing.T) {
 // risky overdue secret in rotationUrgency's intra-wave ordering, and the API
 // response's RiskDegraded:false would give callers no hint anything failed.
 func TestPlanSecretRiskScoreErrorDegrades(t *testing.T) {
-	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	c, _ := newPlannerCore(t, now)
 
-	// No SecretNode row exists for this ID, so ComputeSecretRiskScore's
-	// underlying c.storage.GetSecret call fails outright (not a degraded
-	// result — an error).
+	// This secret ID has no entry in the batch risk-score result (e.g. its
+	// underlying secret row is gone by the time ComputeSecretRiskScoresBatch ran).
 	e := &RotationStatusEntry{
 		SecretID:    999,
 		SecretName:  "ghost-secret",
@@ -176,12 +176,34 @@ func TestPlanSecretRiskScoreErrorDegrades(t *testing.T) {
 		DaysOverdue: 10,
 	}
 
-	pr := c.planSecret(ctx, e, nil, map[uint]*RotationStatusEntry{})
+	pr := c.planSecret(e, nil, map[uint]*RotationStatusEntry{}, map[uint]*SecretRiskScore{}, nil)
 
 	assert.True(t, pr.RiskDegraded, "a risk-score computation error must degrade the plan entry, not silently zero it")
 	assert.Equal(t, 0, pr.RiskScore, "an errored risk score is a floor of 0, not an inflated guess")
 	assert.Empty(t, pr.RiskBand)
 	assert.Contains(t, joinReasons(pr.Reasons), "risk score", "the reason must surface that the risk score itself could not be computed")
+}
+
+// A genuine batch-wide risk-score computation failure (riskErr != nil, e.g. the
+// batched secret lookup itself errored) must degrade the entry the same way a
+// missing-from-result secret does (#486, #409).
+func TestPlanSecretRiskScoreBatchErrorDegrades(t *testing.T) {
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	c, _ := newPlannerCore(t, now)
+
+	e := &RotationStatusEntry{
+		SecretID:    1,
+		SecretName:  "some-secret",
+		Status:      RotationStatusOverdue,
+		DaysOverdue: 10,
+	}
+
+	pr := c.planSecret(e, nil, map[uint]*RotationStatusEntry{}, nil, errors.New("batch lookup failed"))
+
+	assert.True(t, pr.RiskDegraded)
+	assert.Equal(t, 0, pr.RiskScore)
+	assert.Empty(t, pr.RiskBand)
+	assert.Contains(t, joinReasons(pr.Reasons), "risk score")
 }
 
 func joinReasons(rs []string) string {
@@ -295,6 +317,82 @@ func TestGenerateDeploymentRotationPlan_CyclicProjectIsSkippedNotFatal(t *testin
 	assert.Equal(t, 1, dp.OverdueCount)
 	require.Len(t, dp.Projects, 1)
 	assert.Equal(t, uint(2), dp.Projects[0].ProjectID)
+}
+
+// #409: GenerateDeploymentRotationPlan (via GenerateRotationPlan → planSecret) used
+// to call ComputeSecretRiskScore fresh — with its own several queries — once per
+// candidate secret, per project: an O(projects × candidates × groups-per-secret)
+// unbounded fan-out on a single request. ComputeSecretRiskScoresBatch now fetches
+// every input (secrets, read counts, shares, group memberships) once PER PROJECT
+// via batched (GROUP BY / IN) queries, so a project's risk-scoring query count no
+// longer grows with its candidate-secret count. This proves the total query count
+// issued by a single GenerateDeploymentRotationPlan call is the SAME whether each of
+// a fixed number of projects has 5 or 50 always-overdue candidate secrets — mixing
+// direct-user and group shares, so both ListSharesBySecretIDs and
+// ListGroupMembersByGroupIDs are actually exercised — a query COUNT assertion, not a
+// timing one, so it can't flake under load.
+func TestGenerateDeploymentRotationPlan_RiskScoringQueryCostDoesNotScaleWithCandidateCount(t *testing.T) {
+	const numProjects = 3
+
+	runWithCandidatesPerProject := func(perProject int) int {
+		now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+		sqlDB, _ := db.DB()
+		sqlDB.SetMaxOpenConns(1)
+		require.NoError(t, db.AutoMigrate(
+			&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.RotationPolicy{},
+			&models.SecretDependency{}, &models.ShareRecord{}, &models.SecretAccessLog{}, &models.AuditEvent{},
+			&models.User{}, &models.Group{}, &models.UserGroup{},
+		))
+		c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+		ctx := context.Background()
+
+		require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@t.com"}).Error)
+		require.NoError(t, db.Create(&models.User{ID: 2, Username: "direct-recipient", Email: "d@t.com"}).Error)
+		require.NoError(t, db.Create(&models.User{ID: 3, Username: "group-member", Email: "g@t.com"}).Error)
+		require.NoError(t, db.Create(&models.Group{ID: 1, Name: "team-a"}).Error)
+		require.NoError(t, db.Create(&models.UserGroup{UserID: 3, GroupID: 1}).Error)
+
+		overdue := now.Add(-200 * 24 * time.Hour) // well past a 90-day cadence
+		secretID := uint(1)
+		for p := uint(1); p <= numProjects; p++ {
+			require.NoError(t, db.Create(&models.Project{ID: p, Name: fmt.Sprintf("proj-%d", p)}).Error)
+			require.NoError(t, db.Create(&models.Environment{ID: p, ProjectID: p, Name: "env"}).Error)
+			require.NoError(t, db.Create(&models.RotationPolicy{
+				Name: fmt.Sprintf("90d-%d", p), Scope: "project", ProjectID: &p, IntervalDays: 90, AlertDaysBefore: 14, IsActive: true,
+			}).Error)
+			for i := 0; i < perProject; i++ {
+				require.NoError(t, db.Create(&models.SecretNode{
+					ID: secretID, Name: fmt.Sprintf("s-%d", secretID), ProjectID: p, EnvironmentID: p,
+					IsSecret: true, Status: "active", OwnerID: 1, LastRotatedAt: &overdue,
+				}).Error)
+				// Alternate direct-user and group shares so both ListSharesBySecretIDs
+				// and ListGroupMembersByGroupIDs are actually exercised, not just the
+				// no-shares-at-all path.
+				if i%2 == 0 {
+					require.NoError(t, db.Create(&models.ShareRecord{SecretID: secretID, OwnerID: 1, RecipientID: 2, IsGroup: false}).Error)
+				} else {
+					require.NoError(t, db.Create(&models.ShareRecord{SecretID: secretID, OwnerID: 1, RecipientID: 1, IsGroup: true}).Error)
+				}
+				secretID++
+			}
+		}
+
+		qc := attachTotalQueryCounter(t, db)
+		dp, err := c.GenerateDeploymentRotationPlan(ctx)
+		require.NoError(t, err)
+		require.Equal(t, numProjects*perProject, dp.TotalSecrets)
+		return qc.total
+	}
+
+	small := runWithCandidatesPerProject(5)
+	large := runWithCandidatesPerProject(50)
+
+	assert.Equal(t, small, large,
+		"query count must not scale with the number of candidate secrets per project")
+	assert.Less(t, small, 40,
+		"expected a small constant number of batched queries per project, not one set of queries per candidate secret")
 }
 
 func TestGenerateDeploymentRotationPlan_NothingDueAnywhere(t *testing.T) {

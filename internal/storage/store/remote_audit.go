@@ -124,6 +124,15 @@ func (rs *RemoteStorage) ListSecretAccessLogs(_ context.Context, _ uint, _ time.
 	return nil, fmt.Errorf("ListSecretAccessLogs not available in remote mode")
 }
 
+// CountSecretReadsBySecretIDs is the batch form of ListSecretAccessLogs' read
+// tally, which is itself not available in remote mode — so is this, for the same
+// reason. A caller (the rotation planner's risk-scoring batch, #409) already falls
+// back to treating this as zero reads for every secret on this error, exactly what
+// ListSecretAccessLogs' own error already causes today via countReads' fallback.
+func (rs *RemoteStorage) CountSecretReadsBySecretIDs(_ context.Context, _ []uint, _ time.Time) (map[uint]int, error) {
+	return nil, fmt.Errorf("CountSecretReadsBySecretIDs not available in remote mode")
+}
+
 // PrincipalSecretFirstSeen is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) (map[string]map[uint]time.Time, error) {
 	return nil, fmt.Errorf("PrincipalSecretFirstSeen not available in remote mode")

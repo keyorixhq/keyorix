@@ -474,6 +474,38 @@ func (ls *LocalStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*
 	return users, nil
 }
 
+// ListGroupMembersByGroupIDs is the batch form of ListGroupMembers: the members of
+// every group in groupIDs, keyed by group ID, in one query. Unlike ListGroupMembers
+// this does not verify each group ID actually exists — callers already know the
+// IDs are real (e.g. they came from existing share records) and want the member
+// lookup batched, not a per-group existence check. Used by the rotation planner's
+// risk-scoring batch (#409) instead of one ListGroupMembers call per group share,
+// per candidate secret.
+func (ls *LocalStorage) ListGroupMembersByGroupIDs(ctx context.Context, groupIDs []uint) (map[uint][]*models.User, error) {
+	out := make(map[uint][]*models.User, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	type row struct {
+		models.User
+		GroupID uint
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).Table("users").
+		Select("users.*, user_groups.group_id AS group_id").
+		Joins("JOIN user_groups ON user_groups.user_id = users.id").
+		Where("user_groups.group_id IN ?", groupIDs).
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for i := range rows {
+		u := rows[i].User
+		out[rows[i].GroupID] = append(out[rows[i].GroupID], &u)
+	}
+	return out, nil
+}
+
 // --- Password history (ADR-025) ---
 
 // AddPasswordHistory records a bcrypt hash for the user.

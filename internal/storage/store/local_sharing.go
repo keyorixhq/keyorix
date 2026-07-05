@@ -194,6 +194,24 @@ func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) (
 	return shares, nil
 }
 
+// ListSharesBySecretIDs is the batch form of ListSharesBySecret: currently-active
+// share records (same soft-delete/expiry filter, #402) for every secret in
+// secretIDs, in one query. Used by the rotation planner's risk-scoring batch
+// (#409) instead of one ListSharesBySecret call per candidate secret.
+func (ls *LocalStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []uint) ([]*models.ShareRecord, error) {
+	if len(secretIDs) == 0 {
+		return nil, nil
+	}
+	var shares []*models.ShareRecord
+	if err := ls.db.WithContext(ctx).Where(
+		"secret_id IN ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+		secretIDs, time.Now(),
+	).Find(&shares).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+	}
+	return shares, nil
+}
+
 // ListSharesByUser lists currently-active share records where userID is the direct
 // recipient. See ListSharesBySecret for why expired shares are excluded (#402).
 func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
