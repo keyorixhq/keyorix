@@ -18,3 +18,11 @@ func (rs *RemoteStorage) LastUserRoleManagementActivity(_ context.Context, _ uin
 func (rs *RemoteStorage) LastUserSecretDeletionActivity(_ context.Context, _ uint) (map[uint]time.Time, error) {
 	return nil, remoteUnsupported("LastUserSecretDeletionActivity")
 }
+
+func (rs *RemoteStorage) LastUserSecretReadActivity(_ context.Context, _ uint) (map[uint]time.Time, error) {
+	return nil, remoteUnsupported("LastUserSecretReadActivity")
+}
+
+func (rs *RemoteStorage) LastUserSecretWriteActivity(_ context.Context, _ uint) (map[uint]time.Time, error) {
+	return nil, remoteUnsupported("LastUserSecretWriteActivity")
+}

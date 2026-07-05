@@ -716,42 +716,70 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 // is now assessed independently, so the unused admin-tier grant is correctly
 // flagged even though the same user is actively reading secrets elsewhere.
 //
-// The activity signal used per grant depends on the role's tier (roleIsAdminTier):
-//   - A plain read/write-tier role is "used" by ANY entry in LastUserSecretActivity —
-//     a read OR a create/update/rotate (#424), since a write-tier grant (e.g. a
-//     CI/CD pipeline operator or secret-provisioning admin) may legitimately never
-//     read a secret's value back at all.
+// The activity signal used per grant is matched against the SPECIFIC permission(s)
+// that grant's own bundle confers, at two tiers (roleIsAdminTier):
+//   - A plain read/write-tier role is credited "used" via LastUserSecretReadActivity
+//     when its bundle includes secrets.read, and/or via LastUserSecretWriteActivity
+//     (create/update/rotate — all three are gated by the single secrets.write
+//     permission, #424) when its bundle includes secrets.write (#487 round 112) —
+//     not, as before, by ANY combined read-or-write activity regardless of which of
+//     the two the grant actually confers. A write-tier grant (e.g. a CI/CD pipeline
+//     operator or secret-provisioning admin) may legitimately never read a secret's
+//     value back at all, so it must not need a read to count as used; symmetrically,
+//     a read-only grant must not be masked non-dormant purely because the SAME user
+//     also holds a separate write-only grant they actually exercise.
 //   - An admin-tier role (secrets.delete/admin, or a role-management permission
-//     like roles.assign) additionally requires an entry in
-//     LastUserRoleManagementActivity / LastUserSecretDeletionActivity — an
-//     actually-observed elevated action MATCHING the specific capability this
-//     grant's own permission bundle confers (#487) — since ordinary secret
-//     reads/writes don't attest to any ADMIN capability being used at all, and an
-//     elevated action of a DIFFERENT kind doesn't attest to THIS grant's specific
-//     admin capability being used either.
+//     like roles.assign) is credited via LastUserRoleManagementActivity /
+//     LastUserSecretDeletionActivity — an actually-observed elevated action MATCHING
+//     the specific capability this grant's own permission bundle confers (#487) —
+//     since ordinary secret reads/writes don't attest to any ADMIN capability being
+//     used at all, and an elevated action of a DIFFERENT kind doesn't attest to THIS
+//     grant's specific admin capability being used either.
 //
 // This is an approximation, not a perfect per-grant attribution: the audit trail
 // doesn't record which specific grant authorized a given action, only that SOME
-// action satisfying a given permission occurred. Two admin-tier grants in the same
-// project are distinguished when they confer DIFFERENT specific admin capabilities
-// (#487) — e.g. one bundles only roles.assign, the other only secrets.delete: only
-// the grant whose OWN permission bundle covers the observed action's capability is
-// credited, so exercising one no longer masks the other. Two grants that bundle the
-// SAME specific capability (e.g. two roles that both carry secrets.delete) remain
-// genuinely indistinguishable — either would have authorized the observed action,
-// so there is no principled way to credit one over the other; both are credited
-// (neither shown falsely dormant), which is the same "no worse than before"
-// behaviour as pre-#487 for that narrower, harder case. See roleIsAdminTier's doc
-// for the exact tier boundary.
+// action satisfying a given permission occurred. Two grants in the same project
+// (at either tier) are distinguished whenever they confer DIFFERENT specific
+// capabilities (#487, extended to the plain tier in round 112) — e.g. one role
+// bundles only secrets.read, the other only secrets.write, or one bundles only
+// roles.assign, the other only secrets.delete: only the grant whose OWN permission
+// bundle covers the observed action's capability is credited, so exercising one no
+// longer masks the other.
+//
+// Two grants that bundle the SAME specific capability (e.g. two roles that both
+// carry secrets.delete, or both carry secrets.read) remain genuinely
+// indistinguishable, and — after actually investigating the fix this round (#487,
+// round 112) — this is now a CONFIRMED structural limitation of the authorization
+// model itself, not a gap left by insufficient audit-trail plumbing: Authorize/
+// RoleSetHasPermission resolve permission as a boolean OR across the union of a
+// principal's applicable role IDs (internal/core/authz.go, RoleSetHasPermission's
+// SQL is a plain COUNT(*) over the role-permission join, with no notion of "the one
+// role that matched"). When two grants each individually and equally satisfy the
+// same permission check, there is no principled way to attribute a resulting action
+// to one over the other — recording "which role(s) covered this permission" at the
+// moment of the action would recompute the exact same STATIC role-definition
+// membership test already available at read time (a role's permission bundle
+// doesn't vary per request), so it adds no information the read-time
+// hasPermission check above doesn't already have. Manufacturing a tie-break (e.g.
+// "credit the first matching role ID") would be an arbitrary, unjustified
+// attribution — worse than the current, honestly-ambiguous approximation. Both
+// grants are credited (neither shown falsely dormant) — the same "no worse than
+// before" behaviour as pre-#487 for this narrower, structurally irreducible case.
+// See roleIsAdminTier's doc for the exact tier boundary.
 func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture) int {
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
 		cp.degrade(fmt.Sprintf("dormant_role_grants:assignments:project=%d", projectID), err)
 		return 0
 	}
-	activity, err := c.storage.LastUserSecretActivity(ctx, projectID)
+	readActivity, err := c.storage.LastUserSecretReadActivity(ctx, projectID)
 	if err != nil {
-		cp.degrade(fmt.Sprintf("dormant_role_grants:activity:project=%d", projectID), err)
+		cp.degrade(fmt.Sprintf("dormant_role_grants:read_activity:project=%d", projectID), err)
+		return 0
+	}
+	writeActivity, err := c.storage.LastUserSecretWriteActivity(ctx, projectID)
+	if err != nil {
+		cp.degrade(fmt.Sprintf("dormant_role_grants:write_activity:project=%d", projectID), err)
 		return 0
 	}
 	roleMgmtActivity, err := c.storage.LastUserRoleManagementActivity(ctx, projectID)
@@ -810,8 +838,23 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 
 		perms := rolePerms(a.RoleID)
 		if !roleIsAdminTier(perms) {
-			last, ok := activity[a.PrincipalID]
-			if !ok || last.Before(cutoff) {
+			// Plain tier: credit only the activity bucket(s) this SPECIFIC grant's own
+			// permission bundle actually confers (#487 round 112) — a read-tier-only
+			// grant and a separate write-tier-only grant no longer mask each other. A
+			// role bundling neither secrets.read nor secrets.write confers no secret
+			// access to begin with, so it is correctly never credited as "used" here.
+			used := false
+			if hasPermission(perms, "secrets.read") {
+				if last, ok := readActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
+					used = true
+				}
+			}
+			if !used && hasPermission(perms, "secrets.write") {
+				if last, ok := writeActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
+					used = true
+				}
+			}
+			if !used {
 				dormant++
 			}
 			continue

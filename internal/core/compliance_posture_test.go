@@ -268,15 +268,44 @@ func TestGetCompliancePosture_DegradedOnDormantRoleGrantsAssignmentsQueryError(t
 func TestGetCompliancePosture_DegradedOnDormantRoleGrantsActivityQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}))
-	// models.AuditEvent deliberately NOT migrated → LastUserSecretActivity's raw
-	// "audit_events" table query fails.
+	// models.AuditEvent deliberately NOT migrated → LastUserSecretReadActivity's raw
+	// "audit_events" table query fails (the first of the two plain-tier per-
+	// permission activity queries countDormantRoleGrants runs, #487 round 112).
 
 	p, err := c.GetCompliancePosture(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants)
 	assert.True(t, p.Degraded)
-	assert.True(t, containsSubstring(p.DegradedReasons, "dormant_role_grants:activity:project=1"), "got %v", p.DegradedReasons)
+	assert.True(t, containsSubstring(p.DegradedReasons, "dormant_role_grants:read_activity:project=1"), "got %v", p.DegradedReasons)
+}
+
+// failingSecretWriteActivityStore wraps LocalStorage and fails
+// LastUserSecretWriteActivity, simulating a DB error on the write half of the
+// plain-tier per-permission activity split (#487 round 112) while
+// LastUserSecretReadActivity itself still succeeds.
+type failingSecretWriteActivityStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingSecretWriteActivityStore) LastUserSecretWriteActivity(_ context.Context, _ uint) (map[uint]time.Time, error) {
+	return nil, errors.New("simulated db failure")
+}
+
+// #487 round 112: countDormantRoleGrants's plain-tier write-activity query must
+// independently degrade rather than silently return 0 (undercounting stale
+// standing access) on a storage error.
+func TestGetCompliancePosture_DegradedOnDormantRoleGrantsWriteActivityQueryError(t *testing.T) {
+	c, db := compliancePostureCoreWithProject(t)
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	c.storage = &failingSecretWriteActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants)
+	assert.True(t, p.Degraded)
+	assert.True(t, containsSubstring(p.DegradedReasons, "dormant_role_grants:write_activity:project=1"), "got %v", p.DegradedReasons)
 }
 
 // failingRoleManagementActivityStore wraps LocalStorage and fails

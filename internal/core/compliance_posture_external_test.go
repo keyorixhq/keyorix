@@ -311,3 +311,83 @@ func TestCompliancePosture_DormantRoleGrants_DistinctAdminTierGrantsNotMaskedByE
 	assert.Equal(t, 1, p.AccessGovernance.DormantRoleGrants,
 		"exercising secrets_admin must not mask the separate, unused role_manager grant")
 }
+
+// #487 round 112: the SAME per-grant, per-specific-permission narrowing #801
+// applied to admin-tier grants now also applies one tier down, to plain
+// read/write-tier grants. Two DIFFERENT plain-tier grants held by the same user in
+// the same project — one conferring only secrets.read, the other only
+// secrets.write — must be assessed independently: exercising the write-only grant
+// must not mask the separate, genuinely-unused read-only grant as non-dormant.
+func TestCompliancePosture_DormantRoleGrants_DistinctPlainTierGrantsNotMaskedByEachOther(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.AuditEvent{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.RotationPolicy{},
+	))
+
+	// Two custom plain-tier roles conferring DIFFERENT specific secret capabilities:
+	// "secrets_reader" (secrets.read only) and "secrets_writer" (secrets.write only).
+	h.CreateTestRole(t, "secrets_reader", "read-only role", 30)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT 30, p.id FROM permissions p WHERE p.name = 'secrets.read'`)
+	h.CreateTestRole(t, "secrets_writer", "write-only role", 31)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT 31, p.id FROM permissions p WHERE p.name = 'secrets.write'`)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 30, uptr(proj)) // secrets_reader — never exercised
+	h.AssignUserRole(t, 10, 31, uptr(proj)) // secrets_writer — she exercises this one
+
+	aid := uint(10)
+	pid := proj
+	// Alice creates a secret (exercising secrets_writer) but never reads one back
+	// (secrets_reader stays genuinely unused).
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.created", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+
+	p, err := h.CoreService.GetCompliancePosture(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, p.AccessGovernance.DormantRoleGrants,
+		"exercising secrets_writer must not mask the separate, unused secrets_reader grant")
+}
+
+// The companion case: once the read-only grant is actually exercised too, BOTH
+// grants are correctly non-dormant — demonstrating the split credits each grant
+// independently rather than only ever flagging the read-tier one dormant.
+func TestCompliancePosture_DormantRoleGrants_DistinctPlainTierGrantsBothCreditedWhenBothExercised(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.AuditEvent{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.RotationPolicy{},
+	))
+
+	h.CreateTestRole(t, "secrets_reader", "read-only role", 30)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT 30, p.id FROM permissions p WHERE p.name = 'secrets.read'`)
+	h.CreateTestRole(t, "secrets_writer", "write-only role", 31)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT 31, p.id FROM permissions p WHERE p.name = 'secrets.write'`)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 30, uptr(proj))
+	h.AssignUserRole(t, 10, 31, uptr(proj))
+
+	aid := uint(10)
+	pid := proj
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.read", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.created", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+
+	p, err := h.CoreService.GetCompliancePosture(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants,
+		"both the read-only and write-only grants were actually exercised — neither should be dormant")
+}
