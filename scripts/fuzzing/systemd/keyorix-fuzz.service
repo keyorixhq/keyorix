@@ -12,8 +12,15 @@ ExecStart=/opt/keyorix-fuzz/keyorix/scripts/fuzzing/run-rotation.sh
 Restart=always
 RestartSec=30
 # Fuzzing is CPU/memory-hungry by design but must never take the box down or
-# starve anything else running on it.
+# starve anything else running on it. Nice=10 only lowers this service's
+# RELATIVE scheduling priority under contention -- on an otherwise-idle
+# homelab box (which this one mostly is) that does nothing to cap actual
+# usage, so without an explicit ceiling the fuzzer will happily burn every
+# available core continuously. CPUQuota=400% caps it to 4 of this box's 8
+# cores (see scripts/fuzzing/README.md's "Resource limits" section for the
+# tradeoff this creates with -fuzztime, which is wall-clock, not CPU time).
 Nice=10
+CPUQuota=400%
 MemoryMax=2G
 
 [Install]

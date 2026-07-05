@@ -129,6 +129,96 @@ jobs:
           go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
           gosec -severity medium -exclude-generated ./...
 
+  # scripts/fuzzing/targets.conf is a hand-maintained list consumed by the
+  # self-hosted continuous-fuzzing rig (scripts/fuzzing/README.md) -- it has
+  # NO automated link to what `func FuzzXxx` targets actually exist in the
+  # tree. A sibling project hit exactly this failure mode for months with no
+  # signal anything was wrong: an identical hand-maintained list silently
+  # missed 18 of 44 real fuzz functions. This job closes that gap by diffing
+  # the list of FuzzXxx functions `go test -list` finds in the tree (ground
+  # truth) against what targets.conf declares, failing on ANY divergence:
+  #   - a real FuzzXxx exists but isn't declared -- it would silently never
+  #     get continuously fuzzed (the sibling-project failure mode above).
+  #   - targets.conf declares a FuzzXxx that no longer exists -- a stale
+  #     entry (e.g. after a rename/removal) that run-rotation.sh would fail
+  #     to run every cycle.
+  fuzz-targets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26'
+
+      - name: Verify targets.conf matches the real FuzzXxx functions in the tree
+        run: |
+          MODULE_PREFIX="github.com/keyorixhq/keyorix"
+
+          # Reads `go test -list '^Fuzz' ./...`-style output on stdin and prints
+          # "<pkg-relative-to-module>|<FuzzFuncName>" for every real FuzzXxx
+          # function found, one per line. That output interleaves each
+          # package's matched test names (if any) immediately before its own
+          # "ok  <pkg>  <time>" (or "FAIL"/"?   <pkg> [no test files]") summary
+          # line, so the parse below buffers pending names and flushes them,
+          # tagged with the package they preceded, the moment it sees that
+          # summary line. $1 is prefixed onto each package path so the
+          # operator module's targets (see below) stay namespaced separately
+          # from the root module's -- a relative package path like
+          # "internal/foo" could in principle exist under both modules.
+          extract_fuzz_targets() {
+            local prefix="$1"
+            awk -v modprefix="${MODULE_PREFIX}/" -v outprefix="$prefix" '
+              /^(ok|FAIL)[ \t]/ {
+                pkg = $2
+                sub("^" modprefix, "", pkg)
+                for (i = 1; i <= n; i++) print outprefix pkg "|" names[i]
+                n = 0
+                next
+              }
+              /^\?[ \t]/ { n = 0; next }
+              /^#/       { next }
+              NF == 0    { next }
+              { n++; names[n] = $0 }
+            '
+          }
+
+          echo "== true FuzzXxx functions: root module =="
+          go test -list '^Fuzz' ./... | tee root-fuzz-list.txt
+          # The operator is a separate Go module (see the `operator` job
+          # above); GOWORK=off keeps it out of this repo's go.work, mirroring
+          # that job's own established convention for module-specific checks.
+          echo "== true FuzzXxx functions: operator module (GOWORK=off) =="
+          (cd operator && GOWORK=off go test -list '^Fuzz' ./...) | tee operator-fuzz-list.txt
+
+          extract_fuzz_targets "" < root-fuzz-list.txt > true-targets.txt
+          extract_fuzz_targets "operator/" < operator-fuzz-list.txt >> true-targets.txt
+          sort -u true-targets.txt -o true-targets.txt
+
+          grep -vE '^[[:space:]]*(#|$)' scripts/fuzzing/targets.conf \
+            | awk -F'|' '{print $1"|"$2}' \
+            | sort -u > declared-targets.txt
+
+          echo "--- true FuzzXxx targets in the tree ---"; cat true-targets.txt
+          echo "--- targets declared in scripts/fuzzing/targets.conf ---"; cat declared-targets.txt
+
+          missing=$(comm -23 true-targets.txt declared-targets.txt)
+          stale=$(comm -13 true-targets.txt declared-targets.txt)
+
+          status=0
+          if [ -n "$missing" ]; then
+            echo "::error::FuzzXxx functions exist in the tree but are NOT declared in scripts/fuzzing/targets.conf -- they would never be picked up by the continuous-fuzzing rig:"
+            echo "$missing"
+            status=1
+          fi
+          if [ -n "$stale" ]; then
+            echo "::error::scripts/fuzzing/targets.conf declares FuzzXxx targets that no longer exist in the tree (stale entry, e.g. after a rename/removal):"
+            echo "$stale"
+            status=1
+          fi
+          exit $status
+
   # Dependency license compliance. Keyorix is dual-licensed -- the repo is
   # AGPL-3.0, but the same code is also commercially licensed to customers who
   # don't want AGPL obligations (see LICENSING.md's "Our principles"). Nothing

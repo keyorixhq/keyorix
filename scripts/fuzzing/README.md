@@ -21,6 +21,28 @@ long-lived infrastructure — a small home-lab VM/LXC is a good fit.
   dedicated `fuzz-corpus` branch automatically — review/merge what's
   interesting from there.
 
+## Resource limits
+
+`systemd/keyorix-fuzz.service` caps this service to `CPUQuota=400%` (4 of an
+assumed 8-core homelab box) and `MemoryMax=2G`, alongside `Nice=10`. `Nice`
+only lowers this service's *relative* scheduling priority when something else
+on the box wants the CPU too — on an otherwise-idle homelab box (which this
+one mostly is), that does nothing to cap actual usage, so `CPUQuota=` is the
+setting doing the real work of leaving headroom for everything else on the
+box. Adjust both to fit your own hardware and how much of it you're willing
+to dedicate.
+
+**Important tradeoff to understand before tuning `CPUQuota`:** the
+`-fuzztime` values in `targets.conf` (consumed by `run-rotation.sh`) are
+**wall-clock** time, not CPU time — `go test -fuzz -fuzztime=3h` runs for 3
+hours of real time regardless of how much CPU it actually gets scheduled.
+Capping `CPUQuota` therefore does **not** change how long a rotation takes;
+it only makes each rotation's mutation pass *shallower* — fewer inputs get
+tried (throughput scales down roughly with the quota) in that same
+wall-clock window. If you want both fast throughput and a hard resource
+ceiling, lower `-fuzztime` instead of (or in addition to) `CPUQuota` so a
+rotation cycle still completes in a reasonable amount of real time.
+
 ## One-time setup (on the LXC/VM)
 
 Debian or Alpine, ~512MB RAM is plenty for a single-target-at-a-time rotation
