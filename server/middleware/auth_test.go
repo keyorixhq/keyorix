@@ -330,6 +330,53 @@ func TestRequireRole_DeniesScopedPAT(t *testing.T) {
 	})
 }
 
+// TestRequireRole_DeniesMachinePrincipal reproduces the exact #308 landmine
+// scenario: a machine identity holds "deployer" only via a grant scoped to
+// Project A (10), but store.GetMachineRoles is intentionally unscoped and
+// flattens that grant into a bare role name with no project attached —
+// precisely what ValidateMachineToken/machineUserContext feed into
+// userCtx.Roles for every machine-token-authenticated request. If RequireRole
+// were ever wired onto an authorization-gating route, an unscoped name match
+// against that role list would wrongly authorize the same machine identity on
+// a request for a DIFFERENT project (B, 99) that its grant was never scoped
+// to — silently bypassing project scoping entirely for machine principals.
+//
+// Before the #308 fix, RequireRole only checked the role name against
+// userCtx.Roles and had no machine-principal guard, so this exact request
+// would have incorrectly succeeded (StatusOK). After the fix, RequireRole
+// unconditionally refuses to gate on any machine principal, so it is
+// rejected — regardless of which project the route targets — closing the
+// landmine at the consumer rather than depending on GetMachineRoles (or any
+// other future unscoped data source) never being wired in.
+func TestRequireRole_DeniesMachinePrincipal(t *testing.T) {
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := RequireRole("deployer")(testHandler)
+
+	// Mirrors machineUserContext(m, roleNames) exactly as validateToken builds
+	// it for a machine-token request: roleNames is store.GetMachineRoles's
+	// unscoped output ("deployer" appears with no indication it was granted
+	// only at project A/10) for a machine whose real grant is scoped to
+	// project A alone.
+	machineID := uint(42)
+	userCtx := machineUserContext(
+		&models.MachineIdentity{ID: machineID, Name: "ci-deployer"},
+		[]string{"deployer"}, // GetMachineRoles' unscoped flattening of a project-A-only grant
+	)
+	require.NotNil(t, userCtx.MachineIdentityID)
+	require.Equal(t, machineID, *userCtx.MachineIdentityID)
+
+	// The request targets project B (99) — a project the machine's grant was
+	// never scoped to.
+	req := httptest.NewRequest(http.MethodGet, "/projects/99/deploy", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userContextKey, userCtx))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "a machine principal must never satisfy RequireRole's unscoped name match (#308)")
+}
+
 func TestGetUserFromContext(t *testing.T) {
 	tests := []struct {
 		name         string

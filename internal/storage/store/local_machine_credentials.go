@@ -170,10 +170,17 @@ func (ls *LocalStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint,
 // It is intentionally UNSCOPED — it returns roles across every project/
 // environment flattened into one list, with no deleted_at gate on the scope
 // project/environment (unlike GetMachineRoleIDsAt). Do NOT reuse this result
-// for an authorization decision: pair it with an unscoped role-name check (e.g.
-// RequireRole, see its own warning) on a machine-token-reachable route and a
-// role granted only for a now-soft-deleted or entirely different project would
-// wrongly authorize (#308). Use GetMachineRoleIDsAt for any authorization path.
+// for an authorization decision: a role granted only for a now-soft-deleted or
+// entirely different project would wrongly authorize (#308). Use
+// GetMachineRoleIDsAt for any authorization path instead.
+//
+// (#308) As defense in depth, RequireRole (server/middleware) additionally
+// refuses to gate on a machine principal at all, so even this method's output
+// reaching a machine's userCtx.Roles cannot be paired with an unscoped
+// role-name check to bypass scoping — but that guard lives at the consumer,
+// not here, so any OTHER future unscoped role-name check written against this
+// method's result would reintroduce the same bypass. Do not add one; use
+// GetMachineRoleIDsAt / core.Authorize instead.
 func (ls *LocalStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error) {
 	var roles []*models.Role
 	err := ls.db.WithContext(ctx).Table("roles").
