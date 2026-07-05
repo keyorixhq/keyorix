@@ -171,6 +171,18 @@ func (rs *RemoteStorage) ListOrphanedSecrets(_ context.Context, _ uint) ([]*mode
 	return nil, fmt.Errorf("ListOrphanedSecrets not available in remote mode")
 }
 
+// CountOrphanedSecretsByProject is not available in remote mode; the grouped
+// hygiene-rollup query (#393) runs server-side.
+func (rs *RemoteStorage) CountOrphanedSecretsByProject(_ context.Context, _ []uint) (map[uint]int, error) {
+	return nil, fmt.Errorf("CountOrphanedSecretsByProject not available in remote mode")
+}
+
+// CountExpiringSecretsByProject is not available in remote mode; the grouped
+// hygiene-rollup query (#393) runs server-side.
+func (rs *RemoteStorage) CountExpiringSecretsByProject(_ context.Context, _ []uint, _ time.Time) (map[uint]int, error) {
+	return nil, fmt.Errorf("CountExpiringSecretsByProject not available in remote mode")
+}
+
 // GetSecretTags / SetSecretTags are not available in remote mode; tag storage is server-side.
 func (rs *RemoteStorage) GetSecretTags(_ context.Context, _ uint) ([]string, error) {
 	return nil, fmt.Errorf("GetSecretTags not available in remote mode")

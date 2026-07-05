@@ -252,6 +252,13 @@ type Storage interface {
 	// CountMachineIdentitiesByClassification returns install-wide counts keyed by
 	// classification label ("" = unclassified) for the compliance posture.
 	CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error)
+	// CountStaleMachineIdentitiesByProject returns, for every project in
+	// projectIDs in a single grouped query, the count of ACTIVE machine identities
+	// not seen since olderThan (never-seen counts from creation) — the same
+	// definition as ListStaleMachineIdentities, but deployment-wide in one query
+	// instead of one call per project. Used by the hygiene rollup (#393). A
+	// project absent from the result has zero stale machine identities.
+	CountStaleMachineIdentitiesByProject(ctx context.Context, projectIDs []uint, olderThan time.Time) (map[uint]int, error)
 
 	// Machine-token credentials (ADR-030) — opaque bearer tokens, hashed at rest.
 	CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error)
@@ -344,6 +351,18 @@ type Storage interface {
 	// a live user (the owner was deleted/soft-deleted) — offboarding hygiene, so an
 	// admin can re-assign ownership. Scoped to the project via the environment JOIN.
 	ListOrphanedSecrets(ctx context.Context, projectID uint) ([]*models.SecretNode, error)
+	// CountOrphanedSecretsByProject returns the orphaned-secret count (same
+	// definition as ListOrphanedSecrets) for every project in projectIDs, in a
+	// single grouped query keyed by project ID — the deployment-wide counterpart
+	// used by the hygiene rollup (#393) instead of calling ListOrphanedSecrets once
+	// per project. A project absent from the result has zero orphaned secrets.
+	CountOrphanedSecretsByProject(ctx context.Context, projectIDs []uint) (map[uint]int, error)
+	// CountExpiringSecretsByProject returns, for every project in projectIDs in a
+	// single grouped query, the count of live secrets with a non-null expiration
+	// before expiresBefore — the deployment-wide counterpart to the
+	// ListSecrets(ExpiresBefore) count ProjectHygieneSummary uses per-project
+	// (#393). A project absent from the result has zero expiring secrets.
+	CountExpiringSecretsByProject(ctx context.Context, projectIDs []uint, expiresBefore time.Time) (map[uint]int, error)
 	// GetSecretTags returns a secret's tag names (sorted). SetSecretTags replaces a
 	// secret's tags wholesale, upserting Tag rows by name — secret organization/search.
 	GetSecretTags(ctx context.Context, secretID uint) ([]string, error)
@@ -637,6 +656,12 @@ type Storage interface {
 	// access since `notReadSince` — including never-read secrets — ordered
 	// never-read first, then oldest last read.
 	UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
+	// CountUnusedSecretsByProject returns, for every project in projectIDs in a
+	// single grouped query, the count of secrets not read since notReadSince (or
+	// never read) — the deployment-wide counterpart to UnusedSecrets, used by the
+	// hygiene rollup (#393) instead of calling UnusedSecrets once per project. A
+	// project absent from the result has zero unused secrets.
+	CountUnusedSecretsByProject(ctx context.Context, projectIDs []uint, notReadSince time.Time) (map[uint]int, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
 	// AcknowledgeAnomalyAlert marks an alert acknowledged and stamps who did it and

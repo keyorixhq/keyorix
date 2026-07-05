@@ -581,6 +581,22 @@ func (m *MockStorage) ListOrphanedSecrets(ctx context.Context, projectID uint) (
 	return args.Get(0).([]*models.SecretNode), args.Error(1)
 }
 
+func (m *MockStorage) CountOrphanedSecretsByProject(ctx context.Context, projectIDs []uint) (map[uint]int, error) {
+	args := m.Called(ctx, projectIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]int), args.Error(1)
+}
+
+func (m *MockStorage) CountExpiringSecretsByProject(ctx context.Context, projectIDs []uint, expiresBefore time.Time) (map[uint]int, error) {
+	args := m.Called(ctx, projectIDs, expiresBefore)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]int), args.Error(1)
+}
+
 func (m *MockStorage) ListProjectSecretsForDrift(ctx context.Context, projectID uint) ([]storage.DriftSecretRow, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {
@@ -1188,6 +1204,14 @@ func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notRea
 	return args.Get(0).([]storage.UnusedSecretStat), args.Error(1)
 }
 
+func (m *MockStorage) CountUnusedSecretsByProject(ctx context.Context, projectIDs []uint, notReadSince time.Time) (map[uint]int, error) {
+	args := m.Called(ctx, projectIDs, notReadSince)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]int), args.Error(1)
+}
+
 func (m *MockStorage) CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error {
 	args := m.Called(ctx, alert)
 	return args.Error(0)
@@ -1592,6 +1616,14 @@ func (m *MockStorage) CountMachineIdentitiesByClassification(ctx context.Context
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(map[string]int), args.Error(1)
+}
+
+func (m *MockStorage) CountStaleMachineIdentitiesByProject(ctx context.Context, projectIDs []uint, olderThan time.Time) (map[uint]int, error) {
+	args := m.Called(ctx, projectIDs, olderThan)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]int), args.Error(1)
 }
 
 func (m *MockStorage) CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {

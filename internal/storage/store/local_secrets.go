@@ -557,6 +557,69 @@ func (ls *LocalStorage) ListOrphanedSecrets(ctx context.Context, projectID uint)
 	return secrets, nil
 }
 
+// CountOrphanedSecretsByProject returns the same "owner no longer live" count as
+// ListOrphanedSecrets, for every project in projectIDs, via a single
+// `GROUP BY secret_nodes.project_id` query — the deployment-wide counterpart used
+// by the hygiene rollup (#393) instead of calling ListOrphanedSecrets once per
+// project (which turned "every project" into a per-project round trip). A project
+// with no orphaned secrets is simply absent from the returned map.
+func (ls *LocalStorage) CountOrphanedSecretsByProject(ctx context.Context, projectIDs []uint) (map[uint]int, error) {
+	counts := make(map[uint]int)
+	if len(projectIDs) == 0 {
+		return counts, nil
+	}
+	type row struct {
+		ProjectID uint
+		N         int64
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Select("secret_nodes.project_id AS project_id, COUNT(*) AS n").
+		Joins("JOIN environments ON environments.id = secret_nodes.environment_id AND environments.project_id = secret_nodes.project_id").
+		Joins("LEFT JOIN users ON users.id = secret_nodes.owner_id AND users.deleted_at IS NULL").
+		Where("secret_nodes.project_id IN ?", projectIDs).
+		Where("users.id IS NULL").
+		Group("secret_nodes.project_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range rows {
+		counts[r.ProjectID] = int(r.N)
+	}
+	return counts, nil
+}
+
+// CountExpiringSecretsByProject returns, for every project in projectIDs, the
+// count of live secrets with a non-null expiration before expiresBefore — the
+// same definition ListSecrets(ExpiresBefore) uses per-project, but grouped into a
+// single deployment-wide query for the hygiene rollup (#393). A project with no
+// expiring secrets is simply absent from the returned map.
+func (ls *LocalStorage) CountExpiringSecretsByProject(ctx context.Context, projectIDs []uint, expiresBefore time.Time) (map[uint]int, error) {
+	counts := make(map[uint]int)
+	if len(projectIDs) == 0 {
+		return counts, nil
+	}
+	type row struct {
+		ProjectID uint
+		N         int64
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Select("project_id, COUNT(*) AS n").
+		Where("project_id IN ?", projectIDs).
+		Where("expiration IS NOT NULL AND expiration < ?", expiresBefore).
+		Group("project_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range rows {
+		counts[r.ProjectID] = int(r.N)
+	}
+	return counts, nil
+}
+
 // GetSecretTags returns the secret's tag names, sorted.
 func (ls *LocalStorage) GetSecretTags(ctx context.Context, secretID uint) ([]string, error) {
 	var names []string

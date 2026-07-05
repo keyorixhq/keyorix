@@ -160,12 +160,17 @@ const (
 // GetRotationStatus returns every policy-covered secret with an explicit status,
 // so the dashboard can render a full inspector and a rotation health score.
 type RotationStatusEntry struct {
-	PolicyID          uint       `json:"policy_id"`
-	PolicyName        string     `json:"policy_name"`
-	IntervalDays      int        `json:"interval_days"`
-	AlertDaysBefore   int        `json:"alert_days_before"`
-	SecretID          uint       `json:"secret_id"`
-	SecretName        string     `json:"secret_name"`
+	PolicyID        uint   `json:"policy_id"`
+	PolicyName      string `json:"policy_name"`
+	IntervalDays    int    `json:"interval_days"`
+	AlertDaysBefore int    `json:"alert_days_before"`
+	SecretID        uint   `json:"secret_id"`
+	SecretName      string `json:"secret_name"`
+	// ProjectID is the covered secret's project — always populated from the secret
+	// row itself (no extra query), regardless of whether GetRotationStatus was
+	// called project-scoped or deployment-wide. Lets a deployment-wide caller (the
+	// hygiene rollup, #393) group entries by project without a per-project call.
+	ProjectID         uint       `json:"project_id"`
 	EnvironmentID     uint       `json:"environment_id"`
 	LastRotatedAt     *time.Time `json:"last_rotated_at"`
 	DaysSinceRotation int        `json:"days_since_rotation"`
@@ -282,6 +287,7 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID, environm
 				AlertDaysBefore:   policy.AlertDaysBefore,
 				SecretID:          secret.ID,
 				SecretName:        secret.Name,
+				ProjectID:         secret.ProjectID,
 				EnvironmentID:     secret.EnvironmentID,
 				LastRotatedAt:     secret.LastRotatedAt,
 				DaysSinceRotation: daysSince,
