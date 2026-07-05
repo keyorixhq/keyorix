@@ -64,3 +64,46 @@ Per-account (not just per-IP) lockout; exponential backoff; CAPTCHA challenge.
 Core tests over SQLite: an IP is allowed under the budget and blocked at it; a
 different IP is unaffected; attempts age out of the window; an empty IP is never
 limited; prune removes aged rows. `make build` + full suite + `go vet` green.
+
+## Addendum (2026-07-05): closing the gap under storage.type: remote
+
+ADR-049 lets a Keyorix server itself run with `storage.type: remote` — a chained
+deployment proxying every storage call to an upstream Keyorix server over HTTP.
+`RemoteStorage` originally had no server endpoint to proxy
+`RecordLoginAttempt`/`CountRecentLoginAttempts`/`PruneLoginAttempts` to at all, so
+this ADR's rate limiter was a silent, permanent no-op for the whole life of the
+process under that backend (#452); a later round (#675) closed the *silent* half by
+logging a loud one-time operator warning, but left the underlying gap itself open,
+deliberately deferred pending further investigation into whether a real proxied
+endpoint was actually achievable without a disproportionate new authorization model.
+
+It was: the upstream API a `RemoteStorage` client already authenticates against for
+every other proxied call (full user CRUD, secret CRUD, ...) requires a credential
+with far broader privilege than "record/count an IP's recent login attempts" would
+ever need, so three new endpoints —
+`POST /api/v1/system/login-attempts`,
+`GET /api/v1/system/login-attempts/count`,
+`POST /api/v1/system/login-attempts/prune` — were added
+(`server/http/handlers/login_attempts_proxy.go`, registered in
+`server/http/router.go`), gated on the same pre-existing `system.read`/
+`system.write` RBAC permissions every other admin-level route in this codebase
+already uses. They are thin passthroughs onto this ADR's own
+`login_attempts` table via `storage.Storage`'s primitives — no rate-limiting policy
+decision is made server-side; the calling server's own `internal/core.KeyorixCore`
+still decides the threshold/window, exactly as it does against a local backend.
+`RemoteStorage.RecordLoginAttempt`/`CountRecentLoginAttempts`/`PruneLoginAttempts`
+(`internal/storage/store/remote_login_attempts.go`) now make real HTTP calls
+instead of stubbing out.
+
+A downstream server's forwarded IP shares one cluster-wide budget per key with the
+upstream's own direct end-user traffic for that same key (both use the identical
+table/columns password-reset rate limiting already shares via its `pwreset:` key
+prefix) — the same abusive client IP hitting either front door is the same abuse,
+not a conflation of unrelated data.
+
+Verified end-to-end against the REAL production router (not a protocol mock):
+`server/http/remote_storage_login_rate_limit_test.go` builds an "upstream" via the
+actual `NewRouter`, points a real `store.RemoteStorage` at it as a "downstream"
+server's storage, and drives repeated failed logins through
+`core.KeyorixCore.RecordFailedLogin`/`IsLoginRateLimited` to prove the Nth attempt is
+genuinely throttled.

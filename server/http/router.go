@@ -726,6 +726,23 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// job's next execution to sub-second precision. Gated behind system.read
 			// like the rest of this group.
 			r.Get("/scheduler-metrics", customMiddleware.SchedulerMetricsHandler().ServeHTTP)
+
+			// Login/password-reset rate-limit counter proxy (#452 follow-up). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049) — a
+			// real, shipped deployment mode — persist and query its OWN per-IP
+			// rate-limit counters against THIS server's real storage backend, instead
+			// of RemoteStorage.CountRecentLoginAttempts/RecordLoginAttempt/
+			// PruneLoginAttempts having no server endpoint to call at all (the gap
+			// #452/#675 documented but left open: a real proxied endpoint, not just a
+			// louder warning). This reuses the exact same login_attempts table and
+			// storage.Storage primitives the local /auth/login path already uses
+			// (ADR-040) via a thin passthrough — no new policy decision is made here,
+			// the caller's own core.KeyorixCore still decides the threshold/window.
+			// Read is baseline system.read; the two mutating operations require
+			// system.write, matching every other admin-level mutation in this group.
+			r.Get("/login-attempts/count", authHandler.CountLoginAttemptsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/login-attempts", authHandler.RecordLoginAttemptProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/login-attempts/prune", authHandler.PruneLoginAttemptsProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
