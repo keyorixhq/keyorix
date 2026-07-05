@@ -29,6 +29,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.22.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
+	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/nicksnyder/go-i18n/v2 v2.6.0
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.23.2
@@ -40,6 +41,7 @@ require (
 	github.com/wneessen/go-mail v0.7.3
 	go.mongodb.org/mongo-driver v1.17.9
 	golang.org/x/crypto v0.52.0
+	golang.org/x/net v0.55.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.21.0
 	golang.org/x/term v0.43.0
@@ -107,7 +109,6 @@ require (
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
-	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
@@ -135,7 +136,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect

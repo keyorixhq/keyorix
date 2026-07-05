@@ -33,13 +33,17 @@ who want to trace, by hand, how the schema evolved from that point. They are:
 1. You almost certainly don't need to: AutoMigrate already handles the upgrade from
    any pre-existing schema, including one bootstrapped from `001`-`003`.
 2. If you do run `scripts/run_migrations.sh` (or apply these files by hand), **take a
-   full database backup first**. Several `*.down.sql` rollback files intentionally
-   `DROP` tables/columns holding security-relevant data with no export step — see the
-   warning comment at the top of each destructive down-migration
+   full database backup first anyway**. Three `*.down.sql` rollback files `DROP`
+   tables/columns holding security-relevant data
    (`002_rbac_enhancements.down.sql`, `004_add_auth_encryption.down.sql`,
-   `005_secret_sharing.down.sql`). Rolling back is not free: it can permanently
-   discard encrypted credentials, sharing/access-grant history, or the RBAC audit
-   trail.
+   `005_secret_sharing.down.sql`) — see the warning comment at the top of each. Each
+   of these now copies the about-to-be-dropped data into a same-database
+   `*_backup`/`auth_encryption_columns_backup` table immediately before the `DROP`,
+   so the rollback itself is no longer a silent, unrecoverable data-loss event. That
+   in-database backup is a **temporary safety net only** — it is not part of the live
+   schema, is not cleaned up automatically, and is not a substitute for a real
+   external backup; export/archive it and drop it explicitly once you've confirmed
+   the rollback is safe.
 3. These files are dialect-inconsistent by construction (some are SQLite-only,
    `007`/`008` are deliberately dual-dialect, `004` mixes in MySQL-only syntax) — they
    were never executed end-to-end as a single unit against one database engine.
