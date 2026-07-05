@@ -389,8 +389,19 @@ type NotificationEvent struct {
 // best-effort: Deliver runs on the notification path and must never block or fail
 // the triggering operation. Defined here (not in the channel package) so core has
 // no dependency on the channel implementations.
+//
+// Deliver reports whether the event was actually handed off to the channel's
+// delivery pipeline (true) or was a no-op (false) — e.g. a broadcast event with no
+// per-user recipient and no configured destination for the channel to route it to.
+// This is a synchronous, best-effort signal about whether an attempt was even
+// queued; it does NOT confirm the remote destination accepted it (that outcome
+// stays opaque to the caller by design and is tracked only in the per-channel
+// Prometheus counters — see notify_metrics.go). Callers that broadcast to a
+// deployment-wide audience (SendComplianceDigest, notifyRotationFailures) use the
+// return value so their audit trail doesn't claim success when nothing was ever
+// attempted (#221).
 type NotificationSink interface {
-	Deliver(ev NotificationEvent)
+	Deliver(ev NotificationEvent) bool
 }
 
 // SetNotificationSink wires the broadcast (deployment-wide, aggregate) notification

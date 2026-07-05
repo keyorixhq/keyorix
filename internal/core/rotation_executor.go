@@ -43,7 +43,12 @@ const (
 // deployment-wide channel is still an appropriate destination for this event (unlike
 // the per-user events in notifications.go), it just must not cross project
 // boundaries within a single message. No-op when nothing failed for this project;
-// the sink is non-blocking.
+// the sink is non-blocking. If every configured channel is a no-op for this event
+// (e.g. an email-only deployment with no broadcast destination configured, #221),
+// that is logged so the gap is discoverable — this alert is the only signal an
+// operator gets that auto-rotation is silently failing, separate from the
+// EventAutoRotationFailures audit row the caller writes for the rotation failure
+// itself (which is accurate regardless of whether this alert lands).
 func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, projectID uint, failed map[uint]string) {
 	if len(failed) == 0 || c.notificationSink == nil {
 		return
@@ -54,13 +59,16 @@ func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, projectID uint
 	}
 	sort.Strings(lines) // stable, deterministic ordering
 	pid := projectID
-	c.notificationSink.Deliver(NotificationEvent{
+	attempted := c.notificationSink.Deliver(NotificationEvent{
 		Type:      "rotation.failed",
 		Title:     fmt.Sprintf("Auto-rotation: %d secret(s) failed to rotate in %s", len(failed), c.projectLabel(ctx, projectID)),
 		Message:   "The following secrets could not be auto-rotated:\n" + strings.Join(lines, "\n"),
 		ProjectID: &pid,
 		Link:      fmt.Sprintf("/projects/%d/secrets", projectID),
 	})
+	if !attempted {
+		log.Printf("rotation: %d secret(s) failed to rotate in project %d, but no configured notification channel could accept the alert (e.g. email-only with no broadcast destination) — the alert was NOT delivered", len(failed), projectID)
+	}
 }
 
 // SetRotationManager wires the configured backend rotation executors (ADR-047) that

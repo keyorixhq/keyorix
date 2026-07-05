@@ -60,7 +60,40 @@ func TestSendComplianceDigest_Broadcasts(t *testing.T) {
 	assert.Equal(t, "compliance.digest", sink.events[0].Type)
 	assert.Contains(t, sink.events[0].Title, "compliance digest")
 
-	var n int64
-	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "compliance.digest_sent").Count(&n).Error)
-	assert.Equal(t, int64(1), n)
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", "compliance.digest_sent").Find(&events).Error)
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].Success)
+	assert.True(t, *events[0].Success, "the digest genuinely was delivered — the audit event must say so")
+}
+
+// TestSendComplianceDigest_NoChannelAcceptsIt is a regression test for #221: an
+// email-only deployment with no configured broadcast destination used to have
+// Deliver() silently drop the event AND still get an audit event claiming
+// "compliance digest broadcast to notification channels" — a false positive an
+// operator could never distinguish from an actual, successful send. The sink here
+// stands in for exactly that case (fakeSink.refuse mirrors EmailSink.Deliver
+// returning false with no recipient/no broadcast_to configured): the audit event
+// must now say the broadcast was NOT delivered, and a log line must make the gap
+// discoverable.
+func TestSendComplianceDigest_NoChannelAcceptsIt(t *testing.T) {
+	c, db, _ := newEvidenceExportCore(t) // real store, empty deployment
+	sink := &fakeSink{refuse: true}
+	c.SetNotificationSink(sink)
+
+	var sent bool
+	var err error
+	logged := captureLog(t, func() {
+		sent, err = c.SendComplianceDigest(context.Background())
+	})
+	require.NoError(t, err)
+	assert.False(t, sent, "no channel accepted the broadcast — the caller must be told delivery did not happen")
+	assert.Empty(t, sink.events, "the sink never actually accepted the event")
+	assert.Contains(t, logged, "compliance digest", "a no-op broadcast must be logged, not silent")
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", "compliance.digest_sent").Find(&events).Error)
+	require.Len(t, events, 1, "the attempt is still audited")
+	require.NotNil(t, events[0].Success)
+	assert.False(t, *events[0].Success, "delivery never happened — the audit event must not claim success (#221)")
 }

@@ -542,6 +542,36 @@ func TestRunAutoRotation_NotifiesFailures(t *testing.T) {
 	assert.Contains(t, sink.events[0].Message, "connection refused")
 }
 
+// TestRunAutoRotation_NotifiesFailures_LogsWhenNoChannelAccepts is a regression test
+// for #221: when no configured notification channel could accept the rotation-
+// failure broadcast (e.g. an email-only deployment with no broadcast destination —
+// fakeSink.refuse stands in for that), the run must still succeed and the rotation-
+// failure audit event (EventAutoRotationFailures) must still be written accurately —
+// but the alert-delivery gap itself must be logged, not silently swallowed.
+func TestRunAutoRotation_NotifiesFailures_LogsWhenNoChannelAccepts(t *testing.T) {
+	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
+	c, db, fixed := backendPolicyCore(t, fake)
+	sink := &fakeSink{refuse: true}
+	c.SetNotificationSink(sink)
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
+
+	var rotated int
+	var err error
+	logged := captureLog(t, func() {
+		rotated, err = c.RunAutoRotation(context.Background())
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, rotated)
+	assert.Empty(t, sink.events, "no channel accepted the alert")
+	assert.Contains(t, logged, "no configured notification channel could accept the alert", "the delivery gap must be discoverable")
+
+	// The rotation-failure audit event is about the rotation failing, not about
+	// whether the alert was delivered — it must still be written and still accurate.
+	var n int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", EventAutoRotationFailures).Count(&n).Error)
+	assert.Equal(t, int64(1), n)
+}
+
 // A clean run (no failures) sends nothing.
 func TestRunAutoRotation_NoFailuresNoNotify(t *testing.T) {
 	c, db, fixed := rotationExecCore(t)

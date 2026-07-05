@@ -61,14 +61,40 @@ func TestNewEmail_TLSNoneRequiresExplicitOptIn(t *testing.T) {
 	s.Close()
 }
 
-func TestEmailSink_SkipsEventsWithoutRecipient(t *testing.T) {
+// TestEmailSink_BroadcastWithNoDestinationConfiguredIsDroppedAndCounted is a
+// regression test for #221: an event with no per-user Email and no configured
+// BroadcastTo (an email-only deployment with the compliance digest / rotation-
+// failure alerts and nothing else configured) has genuinely nowhere to go. It must
+// still be dropped before it ever enqueues (the worker never dials SMTP for it) —
+// but unlike before the fix, the drop is no longer silent: Deliver reports it was
+// NOT attempted, and it produces a "dropped" delivery outcome an operator can alert
+// on, instead of leaving zero trace anywhere.
+func TestEmailSink_BroadcastWithNoDestinationConfiguredIsDroppedAndCounted(t *testing.T) {
 	t.Setenv(envAllowInsecureSMTP, "true")
 	before := emailOutcomeTotal(t)
 	sink, err := NewEmail(EmailConfig{Host: "smtp.invalid", From: "ops@x.io", TLS: "none"})
 	require.NoError(t, err)
-	// Email == "" — nothing to send to. It must be dropped before it ever enqueues,
-	// so the worker never dials SMTP and no delivery outcome is recorded.
-	sink.Deliver(core.NotificationEvent{Title: "no recipient", Message: "x"})
+	attempted := sink.Deliver(core.NotificationEvent{Type: "compliance.digest", Title: "no recipient, no broadcast_to", Message: "x"})
 	sink.Close()
-	assert.Equal(t, 0.0, emailOutcomeTotal(t)-before, "recipient-less events must not produce a delivery outcome")
+	assert.False(t, attempted, "no recipient and no broadcast_to means genuinely nowhere to send")
+	assert.Equal(t, 1.0, emailOutcomeTotal(t)-before, "the drop must be counted, not silent (#221)")
+}
+
+// TestEmailSink_BroadcastRoutesToConfiguredDestination is a regression test for
+// #221: a broadcast event (no per-user Email — compliance digest / rotation-failure
+// alert) must be routed to the operator-configured BroadcastTo address rather than
+// dropped, when email is the channel carrying it. The SMTP host here is an
+// immediately-refusing closed port (mirrors internal/delivery's smtp_test.go
+// pattern) so the send fails fast and deterministically; the point of this test is
+// that delivery was ATTEMPTED (and the resulting failure counted), not that it
+// succeeded.
+func TestEmailSink_BroadcastRoutesToConfiguredDestination(t *testing.T) {
+	t.Setenv(envAllowInsecureSMTP, "true")
+	before := emailOutcomeTotal(t)
+	sink, err := NewEmail(EmailConfig{Host: "127.0.0.1", Port: 1, From: "ops@x.io", TLS: "none", BroadcastTo: "admin@x.io"})
+	require.NoError(t, err)
+	attempted := sink.Deliver(core.NotificationEvent{Type: "compliance.digest", Title: "digest", Message: "x"})
+	assert.True(t, attempted, "a broadcast event must be routed to the configured destination, not dropped")
+	sink.Close()
+	assert.Equal(t, 1.0, emailOutcomeTotal(t)-before, "the attempted send (here, a failure) must be counted — not silent")
 }
