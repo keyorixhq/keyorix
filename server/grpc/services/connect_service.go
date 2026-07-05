@@ -48,6 +48,9 @@ func (s *ConnectGRPCService) ReadSecret(ctx context.Context, req *pb.ReadFederat
 	if err := authorizeGlobal(ctx, s.core, actor, "connect.read"); err != nil {
 		return nil, err
 	}
+	if req.GetRef() == "" {
+		return nil, status.Error(codes.InvalidArgument, "ref is required")
+	}
 	value, err := s.core.ReadFederatedSecret(ctx, actor.ActorKind(), actor.PrincipalID(), req.GetConnector(), req.GetRef())
 	if err != nil {
 		msg := err.Error()

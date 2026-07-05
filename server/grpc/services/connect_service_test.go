@@ -72,6 +72,17 @@ func TestConnectService_ReadSecret_UnknownConnector(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestConnectService_ReadSecret_EmptyRefRejected regression-tests backlog #400:
+// ReadSecret must reject an empty ref with codes.InvalidArgument before ever
+// calling core.ReadFederatedSecret, matching the HTTP GetSecret handler's
+// `ref query parameter is required` 400 (server/http/handlers/connect.go).
+func TestConnectService_ReadSecret_EmptyRefRejected(t *testing.T) {
+	svc := newConnectService(t)
+	_, err := svc.ReadSecret(connCtx(), readReq("aws", ""))
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
 func TestConnectService_Unauthenticated(t *testing.T) {
 	svc := newConnectService(t)
 	_, err := svc.ListConnectors(context.Background(), &emptypb.Empty{})
