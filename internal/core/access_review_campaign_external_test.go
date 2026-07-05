@@ -239,6 +239,10 @@ func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {
 	closed, err := h.CoreService.CloseAccessReviewCampaign(ctx, 1, proj, res.Campaign.ID, true)
 	require.NoError(t, err)
 	assert.Equal(t, core.CampaignStateClosed, closed.Campaign.State)
+	// #237: a force-close performed while items are still pending must be marked
+	// ForcedIncomplete so the recertification cadence doesn't treat it as a
+	// genuine, fully-decided review.
+	assert.True(t, closed.Campaign.ForcedIncomplete, "a force-close with pending items must be flagged incomplete")
 
 	// A closed campaign rejects further decisions.
 	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
@@ -249,6 +253,35 @@ func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {
 	// Re-closing is rejected.
 	_, err = h.CoreService.CloseAccessReviewCampaign(ctx, 1, proj, res.Campaign.ID, true)
 	require.Error(t, err)
+}
+
+// #237: a close with every item already decided (no pending items left) is a
+// genuine, fully-completed recertification — even when the caller happens to pass
+// force=true, it must NOT be flagged ForcedIncomplete, so it isn't penalized by the
+// recertification cadence the way a genuinely abandoned/rushed close is.
+func TestCloseAccessReviewCampaign_FullyDecidedIsNotForcedIncomplete(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateCampaignTables(t, h)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	require.NoError(t, err)
+	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+	require.NoError(t, h.CoreService.DecideAccessReviewItem(ctx, 1, proj, res.Campaign.ID, detail.Items[0].ID, "attest", ""))
+
+	// Nothing pending, so this close (whether force is true or false) is a genuine
+	// completed review.
+	closed, err := h.CoreService.CloseAccessReviewCampaign(ctx, 1, proj, res.Campaign.ID, true)
+	require.NoError(t, err)
+	assert.Equal(t, core.CampaignStateClosed, closed.Campaign.State)
+	assert.False(t, closed.Campaign.ForcedIncomplete, "a fully-decided close must not be flagged incomplete")
 }
 
 // A campaign id from another project is not reachable through this project's scope.

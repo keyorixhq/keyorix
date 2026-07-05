@@ -768,12 +768,16 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 			return fmt.Errorf("failed to migrate access_review_campaign tables: %w", err)
 		}
 	} else {
-		// #483: Degraded/DegradedReasons were added to AccessReviewCampaign after this
-		// table could already exist in the field (same pgx hazard as project_invitations
-		// above — never full-AutoMigrate an existing table here); add the new columns
-		// via the Migrator so an existing deployment's campaigns table picks them up.
+		// #483/#237: Degraded/DegradedReasons/ForcedIncomplete were each added to
+		// AccessReviewCampaign after this table could already exist in the field (same
+		// pgx hazard as project_invitations above — never full-AutoMigrate an existing
+		// table here); add the new columns via the Migrator so an existing deployment's
+		// campaigns table picks them up. UpdateAccessReviewCampaign does a full-column
+		// Select("*").Updates, so a missing column here isn't just a silently-unused
+		// field — it hard-fails every subsequent campaign create/update on an upgraded
+		// install that predates whichever field was added.
 		m := db.Migrator()
-		for _, col := range []string{"Degraded", "DegradedReasons"} {
+		for _, col := range []string{"Degraded", "DegradedReasons", "ForcedIncomplete"} {
 			if !m.HasColumn(&models.AccessReviewCampaign{}, col) {
 				if err := m.AddColumn(&models.AccessReviewCampaign{}, col); err != nil {
 					return fmt.Errorf("failed to add access_review_campaigns.%s column: %w", col, err)

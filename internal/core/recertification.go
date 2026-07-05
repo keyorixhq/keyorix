@@ -82,7 +82,20 @@ func (c *KeyorixCore) RunScheduledRecertification(ctx context.Context, cadenceDa
 		// No open campaign — is the project due for one?
 		due := lastClosed == nil // never reviewed
 		if lastClosed != nil && lastClosed.Campaign.ClosedAt != nil {
-			due = lastClosed.Campaign.ClosedAt.Before(cutoff)
+			anchor := lastClosed.Campaign.ClosedAt
+			// #237: a force-close performed while items were still pending
+			// (ForcedIncomplete) is evidence of an ABANDONED cycle, not a
+			// completed recertification — some access was never reviewed. Anchor
+			// the cadence to when the campaign was OPENED instead of when it was
+			// hastily force-closed, so an admin can't silently reset the full
+			// cadence window (and thus how long stale access goes unexamined) by
+			// force-closing early; the next campaign becomes due sooner,
+			// proportional to how little of the cadence window the abandoned
+			// cycle actually covered.
+			if lastClosed.Campaign.ForcedIncomplete {
+				anchor = &lastClosed.Campaign.CreatedAt
+			}
+			due = anchor.Before(cutoff)
 		}
 		if !due {
 			continue
