@@ -46,10 +46,17 @@ not a username/password:
   azure:      {"scopes":["https://management.azure.com/.default"]}
   kubernetes: {"namespace":"app","service_account":"my-app","audiences":["https://svc"]}
               (mints a ServiceAccount token via TokenRequest; add
-              "api_server"/"ca_cert"/"token" to target an out-of-cluster API server)
+              "api_server"/"ca_cert"/"token" to target an out-of-cluster API server;
+              add "revocable":true to let Revoke genuinely invalidate the token
+              early instead of waiting for its natural expiry — this binds each
+              token to a dedicated per-lease Secret and requires the calling
+              identity to also hold create+delete on secrets in the namespace,
+              on top of create on serviceaccounts/token)
 Cloud credentials for the mint call come from the ambient identity (AWS chain /
 GCP ADC / Azure DefaultAzureCredential / in-cluster ServiceAccount), never from
-Keyorix config.
+Keyorix config. AWS STS, Azure, and GCP tokens have no safe early-revoke
+mechanism and always self-expire — see internal/dynamic's per-backend file
+header comments for why.
 
 Examples:
   keyorix dynamic-secret create --name app-db --project-id 1 --backend postgres \

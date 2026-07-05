@@ -16,6 +16,10 @@ type PostgresEngine struct{}
 func (e *PostgresEngine) BackendType() string      { return "postgres" }
 func (e *PostgresEngine) IsEphemeralBackend() bool { return false }
 
+// RevokeInvalidatesCredential is always true: DROP ROLE really removes the
+// account, so a subsequent connection attempt with it fails immediately.
+func (e *PostgresEngine) RevokeInvalidatesCredential(_ string) bool { return true }
+
 // SupportsNativeExpiry is true: PostgreSQL roles carry a VALID UNTIL, so the
 // credential disables itself at expiry even without the auto-revoke sweeper.
 func (e *PostgresEngine) SupportsNativeExpiry() bool { return true }
