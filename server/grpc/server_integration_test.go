@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // TestGRPCServer_EndToEnd drives the real NewServer wiring (all six services +
@@ -198,6 +199,116 @@ func TestGRPCServer_HonorsConfiguredMaxRecvMsgSize(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err),
 		"a small request clears the size cap and is then rejected by auth")
+}
+
+// bigResponseServiceDesc/bigResponseHandler register a minimal, test-only unary RPC
+// directly on the real *grpc.Server NewServer returns, so a call to it runs through
+// the exact same ChainUnaryInterceptor/ServerOption chain (including auth and the
+// MaxSendMsgSize option under test) as every production service, but with a handler
+// whose response size the test controls directly — none of the real services make it
+// easy to deterministically produce an oversized response without a lot of
+// business-logic setup unrelated to what's being tested here.
+var bigResponseServiceDesc = grpc.ServiceDesc{
+	ServiceName: "keyorix.test.BigResponseService",
+	HandlerType: (*any)(nil),
+	Methods: []grpc.MethodDesc{
+		{MethodName: "GetBigResponse", Handler: bigResponseHandler},
+	},
+	Metadata: "test/big_response",
+}
+
+// bigResponseSize is deliberately far larger than the small caps this test
+// configures below, and well under any cap it configures as "large enough to
+// succeed".
+const bigResponseSize = 1 << 20 // 1 MiB
+
+func bigResponseHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	handle := func(ctx context.Context, _ interface{}) (interface{}, error) {
+		return &wrapperspb.BytesValue{Value: make([]byte, bigResponseSize)}, nil
+	}
+	if interceptor == nil {
+		return handle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/keyorix.test.BigResponseService/GetBigResponse"}
+	return interceptor(ctx, in, info, handle)
+}
+
+// TestGRPCServer_HonorsConfiguredMaxSendMsgSize is the response-side companion to
+// TestGRPCServer_HonorsConfiguredMaxRecvMsgSize (#173 residual): the gRPC server
+// must also cap outbound RESPONSE size to the same configured limit, not just the
+// inbound request. Before the fix, NewServer set grpc.MaxRecvMsgSize but never
+// grpc.MaxSendMsgSize, so a response was bounded only by grpc-go's own ~2 GiB
+// default regardless of what server.grpc.max_request_body_bytes was configured to.
+func TestGRPCServer_HonorsConfiguredMaxSendMsgSize(t *testing.T) {
+	// newAuthedConn spins up a real NewServer(cfg, ...) instance (with the test-only
+	// big-response service registered on it), plus a bufconn client already carrying
+	// a valid bearer token for a real, seeded user/session — so GetBigResponse's
+	// handler actually runs (past the auth interceptor) and the only thing that can
+	// still reject the call is the configured send-size cap itself.
+	newAuthedConn := func(t *testing.T, cfg *config.Config) (pbConn *grpc.ClientConn, authedCtx context.Context) {
+		t.Helper()
+		h := testhelper.NewRBACTestHelper(t)
+		t.Cleanup(h.Cleanup)
+
+		const token = "big-response-token"
+		user := h.CreateTestUser(t, "big-response-user", 300)
+		expires := time.Now().Add(time.Hour)
+		_, err := h.Storage.CreateSession(context.Background(), &models.Session{
+			UserID: user.ID, SessionToken: token, ExpiresAt: &expires,
+		})
+		require.NoError(t, err)
+
+		srv, err := keyorixgrpc.NewServer(cfg, h.CoreService)
+		require.NoError(t, err)
+		srv.RegisterService(&bigResponseServiceDesc, nil)
+		lis := bufconn.Listen(1024 * 1024)
+		go func() { _ = srv.Serve(lis) }()
+		t.Cleanup(srv.Stop)
+
+		conn, err := grpc.NewClient(
+			"passthrough:///bufnet",
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			// Raise the CLIENT's own recv cap well above bigResponseSize, so a failure
+			// can only be attributed to the SERVER's configured send cap under test, not
+			// the grpc-go client's own unrelated default.
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(4*bigResponseSize)),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		t.Cleanup(cancel)
+		return conn, metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+token))
+	}
+
+	t.Run("a response over the configured cap is rejected with ResourceExhausted", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Server.GRPC.MaxRequestBodyBytes = 4096 // 4 KiB — far below bigResponseSize
+		conn, authedCtx := newAuthedConn(t, cfg)
+
+		out := new(wrapperspb.BytesValue)
+		err := conn.Invoke(authedCtx, "/keyorix.test.BigResponseService/GetBigResponse", &emptypb.Empty{}, out)
+		require.Error(t, err)
+		assert.Equal(t, codes.ResourceExhausted, status.Code(err),
+			"a response over the configured gRPC message-size cap must be rejected with ResourceExhausted")
+	})
+
+	t.Run("a response under the configured cap is delivered", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Server.GRPC.MaxRequestBodyBytes = 4 * bigResponseSize // comfortably above bigResponseSize
+		conn, authedCtx := newAuthedConn(t, cfg)
+
+		out := new(wrapperspb.BytesValue)
+		err := conn.Invoke(authedCtx, "/keyorix.test.BigResponseService/GetBigResponse", &emptypb.Empty{}, out)
+		require.NoError(t, err)
+		assert.Len(t, out.GetValue(), bigResponseSize,
+			"a response within the configured cap must be delivered in full")
+	})
 }
 
 // TestGRPCServer_KeepaliveReclaimsAbandonedConnection proves grpc.KeepaliveParams is
