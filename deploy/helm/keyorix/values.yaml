@@ -21,12 +21,13 @@ auth:
 server:
   image:
     repository: ghcr.io/keyorixhq/keyorix-server
-    # `latest`/`main` are MUTABLE — the exact same tag can point at a different
-    # image tomorrow, defeating "what did I actually deploy" and any image-scan
-    # attestation pinned to this value. Pin to an immutable `sha-<commit>` tag, a
-    # `vX.Y.Z` release tag, or (strongest) a digest via `digest:` below for
-    # production.
-    tag: "latest"
+    # Empty defaults to this chart's own appVersion (a pinned `vX.Y.Z`), matching
+    # the keyorix-operator/keyorix-k8s-sync charts. `latest`/`main` are MUTABLE —
+    # the exact same tag can point at a different image tomorrow, defeating "what
+    # did I actually deploy" and any image-scan attestation pinned to this value —
+    # only set this to a floating tag if you understand that tradeoff. A digest
+    # via `digest:` below (strongest pin) takes precedence over either.
+    tag: ""
     # digest, when set (e.g. "sha256:abc123..."), pins the exact image content —
     # immune to a tag being retargeted after the fact — and takes precedence over
     # tag.
@@ -60,8 +61,9 @@ web:
   enabled: true
   image:
     repository: ghcr.io/keyorixhq/keyorix-web
-    # See server.image.tag — the same mutable-tag caveat applies here.
-    tag: latest
+    # See server.image.tag — same appVersion-pinned default, same mutable-tag
+    # caveat if you override it.
+    tag: ""
     # digest, when set, takes precedence over tag (see server.image.digest).
     digest: ""
     pullPolicy: IfNotPresent

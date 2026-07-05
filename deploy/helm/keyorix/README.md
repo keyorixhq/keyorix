@@ -38,7 +38,8 @@ helm test keyorix
 | `auth.masterPassword` | — | **Required** (or `auth.existingSecret`). KEK passphrase. |
 | `auth.existingSecret` | — | Bring your own Secret (`KEYORIX_MASTER_PASSWORD`, `KEYORIX_DB_PASSWORD`, opt. `KEYORIX_ADMIN_PASSWORD`). |
 | `auth.adminPassword` | — | Optional first-boot admin bootstrap (idempotent). |
-| `server.image.tag` | chart `appVersion` | Server image tag. |
+| `server.image.tag` | chart `appVersion` | Server image tag (empty pins to the chart's own `appVersion`; `server.image.digest` takes precedence if set). |
+| `web.image.tag` | chart `appVersion` | Web UI image tag (same default/precedence as `server.image.tag`). |
 | `server.keysPersistence.*` | 1Gi RWO | The encryption-keys PVC (`resource-policy: keep`). |
 | `web.enabled` | `true` | Deploy the UI (with a k8s-adapted nginx that proxies to the server Service). |
 | `ingress.*` | disabled | Ingress for the web UI. |

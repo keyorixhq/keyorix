@@ -173,6 +173,49 @@ jobs:
             --set externalDatabase.host=db.example.com --set externalDatabase.password=ci \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
 
+      - name: Pinned default image tag + Secret-sourced passwords (#137)
+        run: |
+          # #137 residual: server/web images used to default to the mutable
+          # `latest` tag, and this asserts the default render instead pins to
+          # the chart's own appVersion (matching keyorix-operator/
+          # keyorix-k8s-sync's already-hardened `default .Chart.AppVersion .tag`
+          # convention) -- no `latest` anywhere in the default render.
+          APP_VERSION="$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' deploy/helm/keyorix/Chart.yaml)"
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            --set auth.adminPassword=ci > default-render.yaml
+          if grep -q ':latest' default-render.yaml; then
+            echo "expected no ':latest' image tag in the default render"; exit 1
+          fi
+          if ! grep -q "image: ghcr.io/keyorixhq/keyorix-server:${APP_VERSION}\$" default-render.yaml; then
+            echo "expected the server image pinned to appVersion ${APP_VERSION}"; exit 1
+          fi
+          if ! grep -q "image: \"ghcr.io/keyorixhq/keyorix-web:${APP_VERSION}\"\$" default-render.yaml; then
+            echo "expected the web image pinned to appVersion ${APP_VERSION}"; exit 1
+          fi
+          # An explicit tag/digest override must still work (non-regression for
+          # existing values.yaml overrides set before this fix).
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            --set server.image.tag=v1.2.3 --set web.image.digest=sha256:deadbeef \
+            > override-render.yaml
+          if ! grep -q 'image: ghcr.io/keyorixhq/keyorix-server:v1.2.3$' override-render.yaml; then
+            echo "expected an explicit server.image.tag override to still apply"; exit 1
+          fi
+          if ! grep -q 'image: "ghcr.io/keyorixhq/keyorix-web@sha256:deadbeef"$' override-render.yaml; then
+            echo "expected web.image.digest to still take precedence over tag"; exit 1
+          fi
+          # #137 residual: the master/db/admin passwords must be sourced from
+          # the Secret via secretKeyRef, never a literal env var value.
+          for key in KEYORIX_MASTER_PASSWORD KEYORIX_DB_PASSWORD KEYORIX_ADMIN_PASSWORD; do
+            if ! grep -A2 "name: $key\$" default-render.yaml | grep -q 'secretKeyRef'; then
+              echo "expected $key to be sourced via secretKeyRef, not a literal value"; exit 1
+            fi
+          done
+          if ! grep -A2 'name: POSTGRES_PASSWORD$' default-render.yaml | grep -q 'secretKeyRef'; then
+            echo "expected POSTGRES_PASSWORD to be sourced via secretKeyRef, not a literal value"; exit 1
+          fi
+
       - name: Lint + render keyorix-k8s-sync chart
         run: |
           K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \

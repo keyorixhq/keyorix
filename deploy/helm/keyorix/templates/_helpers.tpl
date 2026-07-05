@@ -45,6 +45,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if .Values.web.image.digest -}}
 {{- printf "%s@%s" .Values.web.image.repository .Values.web.image.digest -}}
 {{- else -}}
-{{- printf "%s:%s" .Values.web.image.repository .Values.web.image.tag -}}
+{{- printf "%s:%s" .Values.web.image.repository (default .Chart.AppVersion .Values.web.image.tag) -}}
 {{- end -}}
 {{- end -}}
