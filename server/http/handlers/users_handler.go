@@ -277,6 +277,15 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.GetUser(w, r)
 }
 
+// GetUserByEmail handles GET /api/v1/users/by-email?email=X (#503).
+func GetUserByEmail(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.GetUserByEmail(w, r)
+}
+
 // UpdateUser handles PUT /api/v1/users/{id}
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {

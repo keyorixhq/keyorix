@@ -578,6 +578,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/search", handlers.SearchUsers)
 			// Stale-account warnings (ADR-025): static path before /{id}.
 			r.Get("/stale", handlers.StaleAccounts)
+			// By-email lookup, scoped by the group-wide users.read gate above — the
+			// server-side counterpart RemoteStorage.GetUserByEmail (#503) needs, for a
+			// caller with only a user's email (not their numeric ID). Deliberately the
+			// SAME gate as GetUser-by-id (not a stricter one): users.read already lets a
+			// caller enumerate every user (including email) via GET /users with no
+			// filter, so this route grants no new capability at that permission level.
+			// Static path, before /{id}.
+			r.Get("/by-email", handlers.GetUserByEmail)
 			r.Get("/{id}", handlers.GetUser)
 			// Mutations need users.write, not the group-wide users.read (which the
 			// read-only system_auditor persona holds) — these were the missed
