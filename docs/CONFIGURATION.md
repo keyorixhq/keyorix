@@ -14,7 +14,7 @@ The config file is located via, in order: an explicit path argument, then
 - [environment](#environment) · [locale](#locale) · [server](#server) · [storage](#storage)
 - [storage.encryption + key_provider](#encryption--kek-providers) (ADR-004, ADR-038)
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
-- [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
+- [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035, ADR-058) — includes [revocation semantics by backend](#credential-revocation-semantics-by-backend)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
 - [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
 - [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
@@ -326,14 +326,27 @@ only controls the **auto-revoke sweeper** that drops leases at expiry.
 dynamic_secrets:
   sweep_enabled: true            # revoke active leases past their TTL
   sweep_interval: "1m"           # cadence (Go duration); default 1m
+  max_lease_ttl: "720h"          # install-wide ceiling on any lease's TTL; default 90d (#97)
 ```
+
+`max_lease_ttl` is a hard, **install-wide** ceiling applied on top of (and always at
+least as strict as) every config's own `max_ttl_seconds` — it exists so that an
+operator who leaves a config's `max_ttl_seconds` at its default of "unset = no
+ceiling" still can't end up minting a 100-year lease. It is a Go duration string;
+unset or unparseable falls back to **90 days**. Set it tighter for your environment
+(e.g. `"24h"`) if 90 days is too generous. It applies uniformly to every backend,
+including the cloud-IAM ones below, and is enforced at both issue and renew time.
 
 Targets are registered via the API — or from the terminal with
 `keyorix dynamic-secret create` (the admin DSN is read from the
 `KEYORIX_DYNAMIC_ADMIN_DSN` env var or a hidden prompt, never a flag) — with an
 admin DSN, a backend type (`postgres`, `mysql`, `mongodb`, `redis`, `aws-sts`, `gcp`,
-or `azure`), an optional creation template, and a default TTL. The creation template
-form depends on the backend:
+`azure`, or `kubernetes`), an optional creation template, and a default TTL
+(`default_ttl_seconds`). Each config can also set its own, tighter ceiling via
+`max_ttl_seconds` (0 = no per-config ceiling beyond the install-wide
+`max_lease_ttl` above) — every issued lease's requested `ttl_seconds` is clamped to
+whichever of the config's `max_ttl_seconds` and the install-wide `max_lease_ttl` is
+smaller. The creation template form depends on the backend:
 - SQL backends (`postgres`, `mysql`) — an SQL grant template using `{{name}}`.
 - `mongodb` — a JSON role spec (`{"roles": [{"role": "readWrite", "db": "app"}]}`);
   the admin DSN is a MongoDB connection URI.
@@ -360,16 +373,92 @@ form depends on the backend:
   `{"scopes":["https://management.azure.com/.default"]}`. Issuing acquires a short-lived
   **Azure AD (Entra) access token** (`access_token` field) via DefaultAzureCredential
   (env / managed identity / workload identity).
+- `kubernetes` (cloud IAM, ADR-058) — the JSON config is
+  `{"namespace":"default","service_account":"my-app","audiences":[...],"revocable":true}`
+  (`namespace` and `service_account` required; `api_server`/`ca_cert`/`token` are
+  optional, for calling a cluster other than the one Keyorix runs in — omit them to
+  use the standard in-cluster identity). Issuing mints a short-lived **ServiceAccount
+  token** (`token` field) via the Kubernetes `TokenRequest` API. This is the one
+  backend where `Revoke` can be a **real, immediate invalidation** rather than a
+  no-op — see [Credential revocation semantics by backend](#credential-revocation-semantics-by-backend)
+  below.
 
 Like `aws-sts`, the `gcp` and `azure` backends mint **self-expiring tokens** — revoke
 is a no-op, renew is refused, and they issue with the sweeper off (the cloud enforces
-expiry); the optional creation template is unused by `gcp`/`azure`.
+expiry); the optional creation template is unused by `gcp`/`azure`/`kubernetes`.
+`kubernetes` tokens are likewise self-expiring and non-renewable, but — unlike the
+other three — can opt into real early revocation; see below.
 
 > **Enable the sweeper for MySQL, MongoDB and Redis targets.** Their accounts have
 > no `VALID UNTIL` equivalent, so a lease TTL is enforced *only* by the sweeper —
 > issuing is refused while it is disabled. PostgreSQL roles additionally carry a
-> DB-level expiry (belt-and-suspenders). `aws-sts` is exempt: AWS enforces the
-> credential's expiry, so it can issue with the sweeper off.
+> DB-level expiry (belt-and-suspenders). `aws-sts`, `gcp`, `azure`, and `kubernetes`
+> are exempt: the cloud/cluster enforces the credential's expiry, so they can issue
+> with the sweeper off.
+
+### Credential revocation semantics by backend
+
+`POST …/leases/{leaseID}/revoke` always marks a lease `revoked` in Keyorix and stops
+it from being renewed or reissued from — but what that means for the underlying
+credential **at the provider** differs by backend, and this is not a temporary gap:
+for three of the four cloud-IAM backends, it is a permanent, well-understood
+property of how that provider's temporary credentials work.
+
+| Backend | Does `Revoke` invalidate the credential early? |
+|---|---|
+| `postgres`, `mysql`, `mongodb`, `redis` | Yes — the role/user/account is dropped on the target immediately. |
+| `aws-sts` | **No.** The AWS credential remains valid until it naturally expires. |
+| `azure` | **No.** The Entra access token remains valid until it naturally expires. |
+| `gcp` | **No.** The OAuth2 access token remains valid until it naturally expires. |
+| `kubernetes` | **No by default; yes if the config sets `"revocable":true`.** |
+
+**Why AWS-STS, Azure, and GCP can't be revoked early.** These backends hand back a
+self-contained, provider-signed temporary credential (an AWS STS session, an Azure
+AD access token, a GCP OAuth2 access token). The resource providers that accept
+these credentials validate them locally — by checking the signature and the
+expiry embedded in the credential itself — rather than calling back to the issuer
+on every request to ask "is this still valid?" That per-request liveness check is
+exactly what makes early revocation possible, and none of these three token types
+have it. Each provider does offer a broader mechanism that *could* be automated
+(e.g. AWS's role-wide session-revocation policy, disabling the underlying identity),
+but every one of them would invalidate **every other concurrent credential sharing
+that same role/identity**, not just the one lease being revoked — an unacceptable
+blast radius for a single-lease `Revoke` call, so Keyorix does not wire it up. This
+is a genuine, industry-wide limitation of how these cloud providers' temporary-
+credential models work, not a missing Keyorix feature: any tool that mints
+credentials through the same provider APIs runs into the identical constraint.
+
+**Why Kubernetes is different.** A Kubernetes `TokenRequest` token can be bound to
+a live Kubernetes object via `spec.boundObjectRef`; the API server checks that
+object's live existence on **every single request** the token is used for,
+independent of the token's own expiry. Setting `"revocable":true` on a
+`kubernetes` dynamic-secret config makes Keyorix create a dedicated, per-lease
+`Secret` and bind the issued token to it; `Revoke` then deletes that `Secret`,
+which invalidates the token immediately — a real revoke, scoped to that one lease
+only. It is off by default because it requires the calling identity to also hold
+`create`+`delete` on `secrets` in the target namespace, on top of the `create` on
+`serviceaccounts/token` every `kubernetes` config already needs — a deliberate,
+per-config opt-in rather than a silent new requirement. See
+[ADR-058](adr-058-kubernetes-dynamic-secrets.md) for the full design.
+
+**What to do about it, as an operator:**
+
+- **Use the shortest practical TTL.** Set a tight `default_ttl_seconds`/
+  `max_ttl_seconds` per config, and keep the install-wide `max_lease_ttl` above
+  tight for your environment — the TTL is the only bound on exposure for
+  `aws-sts`/`azure`/`gcp` leases, since `Revoke` cannot shorten it.
+- **If on-demand early revocation is a hard requirement, prefer the `kubernetes`
+  backend with `"revocable":true`.** It is the only backend with a real,
+  immediate revoke.
+- **Otherwise, treat `aws-sts`/`azure`/`gcp` leases as "live until natural expiry
+  even after a Keyorix-side revoke," and plan incident response accordingly.** A
+  Keyorix `Revoke`/`revoke-all` call stops Keyorix from trusting or renewing the
+  credential, but if you need to guarantee the credential itself stops working
+  immediately (e.g. a suspected leak), the actual remediation is at the cloud
+  provider directly: disable or delete the underlying IAM role, service principal
+  credential, or service account that the lease was minted from. That is available
+  to operators today even though Keyorix cannot do it per-lease without affecting
+  every other concurrent lease on the same identity.
 
 ---
 
