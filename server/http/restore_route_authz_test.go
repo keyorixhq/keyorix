@@ -107,7 +107,7 @@ func TestRestoreProjectAndEnvironmentRoutesRequireRolesAssign(t *testing.T) {
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.AuditEvent{}, &models.Session{}, &models.Project{}, &models.Environment{},
-		&models.SecretNode{}, &models.SecretVersion{},
+		&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{},
 		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	now := time.Now()
