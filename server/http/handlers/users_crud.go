@@ -217,6 +217,44 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, resp, "")
 }
 
+// GetUserByEmail handles GET /api/v1/users/by-email?email=X — looks up a user by
+// email address for callers (e.g. RemoteStorage, #503) that only have the email
+// rather than the numeric ID. The route's permission gate (users.read, inherited
+// from the /users group — the same gate GetUser-by-id uses) is the sole authz
+// check, matching GetUser's model exactly; there is no additional per-record
+// check to bypass. Deliberately mirrors GetUser's generic NotFound response
+// (same status code, same static message) rather than a distinct shape, so a
+// caller cannot use response differences to enumerate valid email addresses —
+// a caller without users.read never reaches this handler at all (401/403 from
+// the route middleware, identical for every email), and a caller WITH users.read
+// can already enumerate every user (including email) via GET /users, so this
+// route grants no new capability at that permission level.
+func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	email := strings.TrimSpace(r.URL.Query().Get("email"))
+	if email == "" {
+		sendError(w, "InvalidParameter", "email is required", http.StatusBadRequest, nil)
+		return
+	}
+	u, err := h.coreService.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		log.Printf("Error getting user by email: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
+		return
+	}
+	resp := userToAPIResponse(u)
+	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	sendSuccess(w, resp, "")
+}
+
 // UpdateUser handles PUT /api/v1/users/{id}
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

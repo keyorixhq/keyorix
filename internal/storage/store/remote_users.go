@@ -219,8 +219,17 @@ func (rs *RemoteStorage) LockUserForUpdate(ctx context.Context, id uint) (*model
 }
 
 // GetUserByEmail retrieves a user by email via remote API.
+//
+// The server registers this lookup as GET /api/v1/users/by-email with the email as
+// a query parameter (mirroring GetSecretByName's #497 query-scoped convention), not
+// as a path segment (#503: an earlier version of this method requested
+// /api/v1/users/by-email/{email}, a route server/http/router.go never registered,
+// so every call 404'd against a real server regardless of whether the user
+// existed — affecting every internal/core call site that resolves a user by email
+// under storage.type: remote, e.g. RBAC/SSO/SCIM lookups, not just CreateUser's
+// pre-existence check).
 func (rs *RemoteStorage) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	path := fmt.Sprintf("/api/v1/users/by-email/%s", url.PathEscape(email))
+	path := fmt.Sprintf("/api/v1/users/by-email?email=%s", url.QueryEscape(email))
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user by email: %w", err)
