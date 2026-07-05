@@ -26,7 +26,12 @@ server:
       enabled: false
       cert_file: "certs/server.crt"     # Path to TLS certificate
       key_file: "certs/server.key"      # Path to TLS key
-      allowed_ciphers: []               # Optional cipher list
+      # Optional TLS 1.2 cipher suite allowlist, by name (e.g.
+      # "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"). Empty/unset keeps the built-in secure
+      # AEAD-only default. Only modern AEAD suites are accepted (RC4/3DES/CBC-mode
+      # suites are rejected at startup); TLS 1.3 negotiates its own suites and is
+      # unaffected by this list.
+      allowed_ciphers: []
     ratelimit:
       # Enable rate limiting
       enabled: false
@@ -42,6 +47,7 @@ server:
       enabled: false
       cert_file: "certs/server.crt"
       key_file: "certs/server.key"
+      # See server.http.tls.allowed_ciphers above — same semantics for gRPC.
       allowed_ciphers: []
     ratelimit:
       enabled: false

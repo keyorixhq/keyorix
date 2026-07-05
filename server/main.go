@@ -1305,7 +1305,14 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		var serveErr error
 		if cfg.Server.HTTP.TLS.Enabled {
 			if cfg.Server.HTTP.TLS.AutoCert {
-				server.TLSConfig = buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains)
+				// checkTransportTLSPosture already validated tls.allowed_ciphers at boot,
+				// so this should never fail in practice; handled defensively anyway.
+				autoCertTLSConfig, err := buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains, cfg.Server.HTTP.TLS)
+				if err != nil {
+					log.Printf("HTTP server error: %v", err)
+					return
+				}
+				server.TLSConfig = autoCertTLSConfig
 				serveErr = server.ServeTLS(ln, "", "")
 			} else {
 				serveErr = server.ServeTLS(ln, cfg.Server.HTTP.TLS.CertFile, cfg.Server.HTTP.TLS.KeyFile)
@@ -1331,20 +1338,35 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 
 // checkTransportTLSPosture guards against silently serving credentials/secret values in
 // cleartext. For each enabled listener without TLS it either fails closed (when
-// security.require_transport_tls is set) or logs a prominent warning. It also warns when
-// the allowed_ciphers / protocol_versions tuning is set, since those fields are not
-// currently honored (the suite list + TLS 1.2 minimum are fixed) and would otherwise give
-// a false sense of control.
+// security.require_transport_tls is set) or logs a prominent warning.
+//
+// It also fails closed when tls.allowed_ciphers names a cipher suite that isn't a
+// recognized, secure TLS 1.2 suite (weak/deprecated suites like RC4/3DES/CBC-mode, or a
+// plain typo) — allowed_ciphers is now genuinely wired into the HTTP and gRPC TLS
+// builders (#333, applyTLSHardening in server/main.go and server/grpc/server.go), so a
+// bad value here would otherwise only surface as a confusing runtime TLS handshake
+// failure instead of a clear startup error.
+//
+// protocol_versions remains a separate, still-unwired tuning field (out of scope for
+// #333 — the TLS 1.2 floor stays fixed in code) — it still only warns, not fails, so an
+// operator isn't misled into thinking it took effect.
 func checkTransportTLSPosture(cfg *config.Config) error {
 	require := cfg.Security.RequireTransportTLS
 	check := func(name string, inst config.ServerInstanceConfig) error {
 		if !inst.Enabled {
 			return nil
 		}
-		// The tuning fields are not wired into the TLS builders — warn whenever they are
-		// set (TLS on or off) so an operator isn't misled into thinking they took effect.
-		if len(inst.TLS.AllowedCiphers) > 0 || len(inst.ProtocolVersions) > 0 {
-			log.Printf("WARNING: %s tls.allowed_ciphers / protocol_versions are set but NOT honored — the cipher suite list and TLS 1.2 minimum are fixed in code.", name)
+		// allowed_ciphers is honored now (#333) — validate it up front so a
+		// misspelled/weak/deprecated cipher name fails closed at startup instead of
+		// only surfacing when a client fails to negotiate a TLS connection.
+		if _, err := inst.TLS.ResolveCipherSuites(nil); err != nil {
+			return fmt.Errorf("%s %w", name, err)
+		}
+		// protocol_versions is parsed but still not wired into the TLS builders — warn
+		// whenever it's set (TLS on or off) so an operator isn't misled into thinking it
+		// took effect.
+		if len(inst.ProtocolVersions) > 0 {
+			log.Printf("WARNING: %s protocol_versions is set but NOT honored — the TLS 1.2 minimum is fixed in code.", name)
 		}
 		if inst.TLS.Enabled {
 			return nil
@@ -1503,44 +1525,64 @@ func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
-	applyTLSHardening(tlsConfig)
+	if err := applyTLSHardening(tlsConfig, cfg.Server.HTTP.TLS); err != nil {
+		return nil, err
+	}
 	return tlsConfig, nil
 }
 
 // hardenedCipherSuites is the explicit AEAD-only cipher suite allowlist applied to
-// every HTTP TLS listener, regardless of how its certificate is sourced.
+// every HTTP TLS listener, regardless of how its certificate is sourced, UNLESS the
+// operator has explicitly configured tls.allowed_ciphers (#333) — in which case that
+// configured list is honored instead (see applyTLSHardening).
 var hardenedCipherSuites = []uint16{
 	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 }
 
-// applyTLSHardening layers the deliberately hardened MinVersion/CipherSuites onto
-// tlsConfig in place. The protocol-version floor and cipher-suite allowlist are
-// independent of how the certificate itself is sourced, so this must be applied
-// uniformly whether tlsConfig came from a manually configured cert/key pair
-// (createTLSConfig) or from an autocert.Manager (buildAutoCertTLSConfig) — AutoCert
-// should only supply the certificate, not silently determine the rest of the TLS
-// posture too (#172).
-func applyTLSHardening(tlsConfig *tls.Config) {
+// applyTLSHardening layers the hardened MinVersion/CipherSuites onto tlsConfig in
+// place. The protocol-version floor and cipher-suite allowlist are independent of how
+// the certificate itself is sourced, so this must be applied uniformly whether
+// tlsConfig came from a manually configured cert/key pair (createTLSConfig) or from an
+// autocert.Manager (buildAutoCertTLSConfig) — AutoCert should only supply the
+// certificate, not silently determine the rest of the TLS posture too (#172).
+//
+// CipherSuites is resolved from tlsCfg.AllowedCiphers (#333): when the operator has
+// left tls.allowed_ciphers unset, the hardcoded hardenedCipherSuites default above
+// applies unchanged (no regression for existing deployments); when they've set it,
+// their configured suite list is honored instead — validated against
+// config.SecureCipherSuiteNames, so a weak/deprecated/misspelled suite name fails
+// closed at startup rather than being silently ignored (the previous behavior) or
+// silently accepted. MinVersion stays fixed at TLS 1.2: TLS 1.3 has no equivalent
+// per-suite selection, so there is nothing for allowed_ciphers to configure there.
+func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig) error {
 	tlsConfig.MinVersion = tls.VersionTLS12
-	tlsConfig.CipherSuites = hardenedCipherSuites
+	suites, err := tlsCfg.ResolveCipherSuites(hardenedCipherSuites)
+	if err != nil {
+		return fmt.Errorf("invalid TLS configuration: %w", err)
+	}
+	tlsConfig.CipherSuites = suites
+	return nil
 }
 
 // buildAutoCertTLSConfig builds the tls.Config for HTTP AutoCert (Let's Encrypt-style
 // automatic certificate management) mode: the autocert.Manager supplies the
 // certificate (via GetCertificate/NextProtos), and the same hardened
 // MinVersion/CipherSuites as the non-AutoCert path (createTLSConfig) are layered on
-// top instead of being silently discarded (#172).
-func buildAutoCertTLSConfig(domains []string) *tls.Config {
+// top instead of being silently discarded (#172), honoring tls.allowed_ciphers the
+// same way createTLSConfig does (#333).
+func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig) (*tls.Config, error) {
 	m := &autocert.Manager{
 		Cache:      autocert.DirCache("certs"),
 		Prompt:     autocert.AcceptTOS,
 		HostPolicy: autocert.HostWhitelist(domains...),
 	}
 	tlsConfig := m.TLSConfig()
-	applyTLSHardening(tlsConfig)
-	return tlsConfig
+	if err := applyTLSHardening(tlsConfig, tlsCfg); err != nil {
+		return nil, err
+	}
+	return tlsConfig, nil
 }
 
 // resolveOutboundIP returns the machine's preferred outbound IP address.

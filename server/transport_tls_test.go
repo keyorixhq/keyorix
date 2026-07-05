@@ -148,13 +148,29 @@ func TestCheckTransportTLSPosture(t *testing.T) {
 	}
 }
 
-// #333: TLSConfig.AllowedCiphers is parsed but never wired into the hardcoded
-// AEAD-only CipherSuites list (server/main.go, server/grpc/server.go). An operator who
-// sets it must get a clear warning, not silent no-op — never a hard failure, since the
-// hardcoded list it can't affect is already AEAD-only.
-func TestCheckTransportTLSPosture_WarnsOnDeadAllowedCiphers(t *testing.T) {
+// #333: TLSConfig.AllowedCiphers is now wired into the HTTP/gRPC CipherSuites
+// (server/main.go's applyTLSHardening, server/grpc/server.go's applyTLSHardening) — an
+// operator who sets a valid TLS 1.2 AEAD suite name gets it honored; a bad
+// (unrecognized/weak/deprecated) suite name fails closed at startup instead of being
+// silently ignored (the old behavior) or silently accepted.
+func TestCheckTransportTLSPosture_RejectsInvalidAllowedCiphers(t *testing.T) {
 	c := cfgWith(true, true, false, false, false)
+	// TLS_AES_128_GCM_SHA256 is a TLS 1.3 suite name — TLS 1.3 doesn't support
+	// per-suite selection via tls.Config.CipherSuites, so it's not in the TLS 1.2
+	// allowlist and must be rejected, not silently accepted.
 	c.Server.HTTP.TLS.AllowedCiphers = []string{"TLS_AES_128_GCM_SHA256"}
+
+	if err := checkTransportTLSPosture(c); err == nil {
+		t.Fatal("an unrecognized/TLS-1.3-only cipher suite name must fail closed at startup")
+	}
+}
+
+// protocol_versions remains a separate, still-unwired tuning field (out of scope for
+// #333) — setting it must still only warn, not fail, and must not mention
+// allowed_ciphers (which is no longer a dead setting).
+func TestCheckTransportTLSPosture_ProtocolVersionsStillWarns(t *testing.T) {
+	c := cfgWith(true, true, false, false, false)
+	c.Server.HTTP.ProtocolVersions = []string{"TLS1.3"}
 
 	var buf bytes.Buffer
 	orig := log.Writer()
@@ -162,10 +178,10 @@ func TestCheckTransportTLSPosture_WarnsOnDeadAllowedCiphers(t *testing.T) {
 	defer log.SetOutput(orig)
 
 	if err := checkTransportTLSPosture(c); err != nil {
-		t.Fatalf("a dead allowed_ciphers setting must warn, not fail: %v", err)
+		t.Fatalf("a set protocol_versions must warn, not fail: %v", err)
 	}
-	if !strings.Contains(buf.String(), "tls.allowed_ciphers") {
-		t.Errorf("expected a warning mentioning tls.allowed_ciphers, got log output: %q", buf.String())
+	if !strings.Contains(buf.String(), "protocol_versions") {
+		t.Errorf("expected a warning mentioning protocol_versions, got log output: %q", buf.String())
 	}
 }
 
@@ -173,7 +189,10 @@ func TestCheckTransportTLSPosture_WarnsOnDeadAllowedCiphers(t *testing.T) {
 // — buildAutoCertTLSConfig (the AutoCert-mode config builder) must apply the same
 // hardening as the non-AutoCert path (createTLSConfig).
 func TestBuildAutoCertTLSConfig_AppliesHardening(t *testing.T) {
-	tlsConfig := buildAutoCertTLSConfig([]string{"example.com"})
+	tlsConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, config.TLSConfig{})
+	if err != nil {
+		t.Fatalf("buildAutoCertTLSConfig: %v", err)
+	}
 	if tlsConfig == nil {
 		t.Fatal("buildAutoCertTLSConfig must not return nil")
 	}
@@ -210,4 +229,107 @@ func TestCreateTLSConfig_NonAutoCertAppliesHardening(t *testing.T) {
 	if len(tlsConfig.CipherSuites) == 0 {
 		t.Fatal("CipherSuites must not be empty")
 	}
+}
+
+// #333 regression: when AllowedCiphers is unset, both createTLSConfig (non-AutoCert)
+// and buildAutoCertTLSConfig (AutoCert) must keep the existing hardcoded secure default
+// — an operator who has never touched tls.allowed_ciphers must see no change in TLS
+// posture.
+func TestApplyTLSHardening_DefaultPreservedWhenAllowedCiphersUnset(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeSelfSignedCert(t, dir)
+
+	cfg := &config.Config{}
+	cfg.Server.HTTP.TLS.Enabled = true
+	cfg.Server.HTTP.TLS.CertFile = certFile
+	cfg.Server.HTTP.TLS.KeyFile = keyFile
+
+	tlsConfig, err := createTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("createTLSConfig: %v", err)
+	}
+	if !cipherSuitesEqual(tlsConfig.CipherSuites, hardenedCipherSuites) {
+		t.Errorf("CipherSuites = %v, want the unchanged hardcoded default %v", tlsConfig.CipherSuites, hardenedCipherSuites)
+	}
+
+	autoCertTLSConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, config.TLSConfig{})
+	if err != nil {
+		t.Fatalf("buildAutoCertTLSConfig: %v", err)
+	}
+	if !cipherSuitesEqual(autoCertTLSConfig.CipherSuites, hardenedCipherSuites) {
+		t.Errorf("AutoCert CipherSuites = %v, want the unchanged hardcoded default %v", autoCertTLSConfig.CipherSuites, hardenedCipherSuites)
+	}
+}
+
+// #333: when AllowedCiphers is configured with a valid, specific TLS 1.2 AEAD suite
+// list, the resulting tls.Config must reflect exactly that list — not the hardcoded
+// default — on both the non-AutoCert and AutoCert HTTP paths.
+func TestApplyTLSHardening_HonorsConfiguredAllowedCiphers(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeSelfSignedCert(t, dir)
+
+	configured := []string{"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"}
+	want := []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}
+
+	cfg := &config.Config{}
+	cfg.Server.HTTP.TLS.Enabled = true
+	cfg.Server.HTTP.TLS.CertFile = certFile
+	cfg.Server.HTTP.TLS.KeyFile = keyFile
+	cfg.Server.HTTP.TLS.AllowedCiphers = configured
+
+	tlsConfig, err := createTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("createTLSConfig: %v", err)
+	}
+	if !cipherSuitesEqual(tlsConfig.CipherSuites, want) {
+		t.Errorf("CipherSuites = %v, want the configured %v (not the hardcoded default %v)", tlsConfig.CipherSuites, want, hardenedCipherSuites)
+	}
+
+	autoCertTLSConfig, err := buildAutoCertTLSConfig([]string{"example.com"}, cfg.Server.HTTP.TLS)
+	if err != nil {
+		t.Fatalf("buildAutoCertTLSConfig: %v", err)
+	}
+	if !cipherSuitesEqual(autoCertTLSConfig.CipherSuites, want) {
+		t.Errorf("AutoCert CipherSuites = %v, want the configured %v", autoCertTLSConfig.CipherSuites, want)
+	}
+}
+
+// #333: an invalid/weak/deprecated cipher suite name must be rejected, not silently
+// accepted, by both createTLSConfig and buildAutoCertTLSConfig.
+func TestApplyTLSHardening_RejectsWeakOrUnknownCipher(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeSelfSignedCert(t, dir)
+
+	for _, name := range []string{
+		"TLS_RSA_WITH_RC4_128_SHA",              // RC4: broken
+		"TLS_RSA_WITH_3DES_EDE_CBC_SHA",         // 3DES: broken
+		"TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256", // CBC-mode: deprecated
+		"not-a-real-cipher-suite",               // plain typo
+	} {
+		cfg := &config.Config{}
+		cfg.Server.HTTP.TLS.Enabled = true
+		cfg.Server.HTTP.TLS.CertFile = certFile
+		cfg.Server.HTTP.TLS.KeyFile = keyFile
+		cfg.Server.HTTP.TLS.AllowedCiphers = []string{name}
+
+		if _, err := createTLSConfig(cfg); err == nil {
+			t.Errorf("createTLSConfig must reject weak/unknown cipher suite %q", name)
+		}
+		if _, err := buildAutoCertTLSConfig([]string{"example.com"}, cfg.Server.HTTP.TLS); err == nil {
+			t.Errorf("buildAutoCertTLSConfig must reject weak/unknown cipher suite %q", name)
+		}
+	}
+}
+
+// cipherSuitesEqual reports whether two ordered cipher-suite ID slices are identical.
+func cipherSuitesEqual(a, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
