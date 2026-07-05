@@ -309,8 +309,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			// mark so a process restart cannot reset it to zero (ADR-029).
 			coreService.SeedAuditWatermark(context.Background())
 		}
-		// Derive the evidence-pack signing key from the DEK so scheduled evidence
-		// exports are signed (and verifiable). Unavailable when encryption is off.
+		// Derive the evidence-pack signing key from the KEK (not the DEK — #268, so a
+		// routine DEK rotation does not invalidate previously-signed packs) so
+		// scheduled evidence exports are signed (and verifiable). Unavailable when
+		// encryption is off.
 		if key, keyVer, ok := encSvc.EvidenceSignKey(); ok {
 			coreService.SetEvidenceSignKey(key, keyVer)
 		}

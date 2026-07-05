@@ -1,6 +1,6 @@
 // keymanager_io.go — Key access, validation, and memory wipe.
 //
-// GetDEK, GetKeyVersion, ValidateKeyFiles, FixKeyFilePermissions, Wipe.
+// GetDEK, GetKeyVersion, GetEvidenceSignKey, ValidateKeyFiles, FixKeyFilePermissions, Wipe.
 // For initialisation see keymanager_lifecycle.go. For rotation see keymanager_rotation.go.
 package encryption
 
@@ -27,6 +27,20 @@ func (km *KeyManager) GetKeyVersion() string {
 	return km.keyVersion
 }
 
+// GetEvidenceSignKey returns a copy of the KEK-derived evidence-signing key and its
+// fingerprint ("key version"), or ok=false if the manager has not been initialized
+// (no KEK has been derived yet, so no evidence-signing key exists).
+func (km *KeyManager) GetEvidenceSignKey() (key []byte, keyID string, ok bool) {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+	if len(km.evidenceSignKey) == 0 {
+		return nil, "", false
+	}
+	key = make([]byte, len(km.evidenceSignKey))
+	copy(key, km.evidenceSignKey)
+	return key, km.evidenceSignKeyID, true
+}
+
 // ValidateKeyFiles checks that key files exist and have correct permissions (0600).
 func (km *KeyManager) ValidateKeyFiles() error {
 	files := []securefiles.FilePermSpec{
@@ -45,7 +59,7 @@ func (km *KeyManager) FixKeyFilePermissions() error {
 	return securefiles.FixFilePerms(files, true)
 }
 
-// Wipe securely removes the DEK from memory.
+// Wipe securely removes the DEK and the evidence-signing key from memory.
 func (km *KeyManager) Wipe() {
 	km.mu.Lock()
 	defer km.mu.Unlock()
@@ -53,5 +67,9 @@ func (km *KeyManager) Wipe() {
 	if km.currentDEK != nil {
 		wipeBytes(km.currentDEK)
 		km.currentDEK = nil
+	}
+	if km.evidenceSignKey != nil {
+		wipeBytes(km.evidenceSignKey)
+		km.evidenceSignKey = nil
 	}
 }

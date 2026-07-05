@@ -1,10 +1,13 @@
 // evidence_signing.go — authenticity signatures for exported compliance-evidence
 // packs (ISO 27001 / SOC 2). The scheduled export HMAC-signs the exact bytes it
-// writes with a DEK-derived key the database/DBA does not hold (see
+// writes with a KEK-derived key the database/DBA does not hold (see
 // encryption.Service.EvidenceSignKey), so an archived pack's integrity is provable
-// on the server off-box. A signature is "<keyVersion>:<hmac-hex>"; a signature made
-// under a DEK version superseded by a rotation is reported as unverifiable rather
-// than a generic mismatch (mirrors the audit-checkpoint key-version handling).
+// on the server off-box. Deriving from the KEK rather than the DEK means a routine
+// DEK rotation does NOT invalidate previously-signed packs — the KEK is unaffected
+// by it, only by a KEK-provider migration (#268). A signature is
+// "<keyVersion>:<hmac-hex>"; a signature made under a key version superseded by a
+// KEK change is reported as unverifiable rather than a generic mismatch (mirrors
+// the audit-checkpoint key-version handling).
 package core
 
 import (
@@ -14,9 +17,10 @@ import (
 	"strings"
 )
 
-// SetEvidenceSignKey wires the DEK-derived HMAC key (and its DEK key version) used to
-// sign and verify evidence packs. Called at startup when encryption is enabled; with
-// no key set, packs are exported unsigned and verification is unavailable.
+// SetEvidenceSignKey wires the KEK-derived HMAC key (and its key-version fingerprint)
+// used to sign and verify evidence packs. Called at startup when encryption is
+// enabled; with no key set, packs are exported unsigned and verification is
+// unavailable.
 func (c *KeyorixCore) SetEvidenceSignKey(key []byte, keyVersion string) {
 	c.evidenceSignKey = key
 	c.evidenceSignKeyVersion = keyVersion
@@ -41,15 +45,16 @@ func (c *KeyorixCore) signEvidence(data []byte) (string, bool) {
 // EvidenceVerifyResult reports the outcome of verifying a pack's signature.
 type EvidenceVerifyResult struct {
 	Valid          bool   `json:"valid"`
-	KeyVersion     string `json:"key_version,omitempty"`     // DEK version the signature was made under
-	CurrentVersion string `json:"current_version,omitempty"` // current signing-key (DEK) version
+	KeyVersion     string `json:"key_version,omitempty"`     // key version the signature was made under
+	CurrentVersion string `json:"current_version,omitempty"` // current signing-key (KEK) fingerprint
 	Reason         string `json:"reason,omitempty"`
 }
 
 // VerifyEvidenceSignature recomputes the HMAC over data and compares it to signature
-// in constant time. A signature made under a superseded DEK version is reported
-// unverifiable (not just invalid), so a post-rotation false alarm is distinguishable
-// from real tampering.
+// in constant time. A signature made under a superseded key version — i.e. a KEK
+// change, since a routine DEK rotation no longer affects this key at all (#268) — is
+// reported unverifiable (not just invalid), so a false alarm is distinguishable from
+// real tampering.
 func (c *KeyorixCore) VerifyEvidenceSignature(data []byte, signature string) *EvidenceVerifyResult {
 	if !c.EvidenceSigningAvailable() {
 		return &EvidenceVerifyResult{Reason: "evidence signing is unavailable (encryption disabled)"}
@@ -60,7 +65,7 @@ func (c *KeyorixCore) VerifyEvidenceSignature(data []byte, signature string) *Ev
 	}
 	res := &EvidenceVerifyResult{KeyVersion: version, CurrentVersion: c.evidenceSignKeyVersion}
 	if version != c.evidenceSignKeyVersion {
-		res.Reason = "signature was made under a superseded key version (the DEK has rotated since); cannot verify"
+		res.Reason = "signature was made under a superseded key version (the signing key has changed since); cannot verify"
 		return res
 	}
 	want, err := hex.DecodeString(sigHex)

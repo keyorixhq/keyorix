@@ -506,4 +506,11 @@ func printMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 		fmt.Printf("      # salt_path: %s (set storage.encryption.salt_path)\n", tgt.SaltPath)
 		fmt.Printf("      # the master passphrase is now %s — set KEYORIX_MASTER_PASSWORD to it\n", newMasterPasswordEnv)
 	}
+	fmt.Println()
+	fmt.Println("⚠️  Unlike a `rotate`, this changes the KEK — and with it, the compliance-")
+	fmt.Println("   evidence-pack signing key (#268). Any evidence pack signed BEFORE this")
+	fmt.Println("   migration will report as \"superseded key version\" (not tampered) under")
+	fmt.Println("   `keyorix compliance verify` from now on; a routine `encryption rotate`")
+	fmt.Println("   does NOT have this effect. Run `compliance verify` on any outstanding")
+	fmt.Println("   packs before this step if you need to confirm they're still valid.")
 }
