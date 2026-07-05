@@ -148,6 +148,16 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 }
 
 // GetSecret retrieves a secret by ID, checking expiration.
+//
+// GetSecret intentionally performs NO authorization check of its own — it neither
+// verifies ownership nor consults shares/RBAC. Every real HTTP/gRPC caller that
+// serves a secret to an end user goes through GetSecretWithPermissionCheck instead,
+// which enforces read permission (via EnforceSecretReadPermission) before delegating
+// to this method. GetSecret exists as the unguarded primitive for internal callers
+// that have already authorized the request some other way (or are working with
+// metadata rather than exposing the value). Do not call GetSecret directly from a
+// path that serves a secret to a caller without first checking permission — use
+// GetSecretWithPermissionCheck for that.
 func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
