@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -235,8 +236,15 @@ func TestHTTPClient_RetryLogic(t *testing.T) {
 	assert.Equal(t, 3, attemptCount) // Should have retried 3 times
 }
 
+// TestHTTPClient_CircuitBreaker was previously skipped as flaky/"needs
+// debugging". Root cause (#501): a real 5xx from an httptest server with an
+// empty body never unmarshaled into APIResponse, so makeRequest returned
+// (resp, nil) — a nil error — and Request() treated that as a SUCCESSFUL
+// round trip, calling c.resetFailureCount() instead of c.recordFailure(). The
+// circuit breaker's failureCount could never accumulate against a real
+// server, so it never opened. Fixed by unconditionally treating every 4xx/5xx
+// status as an error (see makeRequest), which is now enabled.
 func TestHTTPClient_CircuitBreaker(t *testing.T) {
-	t.Skip("Circuit breaker test needs debugging - skipping for now")
 	// Create a test server that always fails
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -399,6 +407,202 @@ func TestAPIError_ErrorMethod_NilSafe(t *testing.T) {
 	})
 }
 
+// TestHTTPClient_4xx_ParsesFlatSendErrorEnvelope pins #501: a 4xx/5xx response
+// whose body matches the ACTUAL shape server/http/handlers/helpers.go's
+// sendError writes — a flat object with a bare "error" type string, not the
+// nested {"error":{"code":...}} shape APIResponse.Error models — must surface
+// the real ErrorType/Message/Details via *HTTPError, not a generic
+// "HTTP 404: 404 Not Found" string. Before the fix, json.Unmarshal into
+// APIResponse failed on this exact shape (string into a struct field) and the
+// real detail was discarded.
+func TestHTTPClient_4xx_ParsesFlatSendErrorEnvelope(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantType   string
+		wantMsg    string
+	}{
+		{
+			name:       "not found",
+			statusCode: http.StatusNotFound,
+			body:       `{"success":false,"error":"NotFound","message":"User not found","code":404}`,
+			wantType:   "NotFound",
+			wantMsg:    "User not found",
+		},
+		{
+			name:       "validation failure",
+			statusCode: http.StatusBadRequest,
+			body:       `{"success":false,"error":"ValidationError","message":"Invalid request data","code":400,"details":"name is required"}`,
+			wantType:   "ValidationError",
+			wantMsg:    "Invalid request data",
+		},
+		{
+			name:       "conflict",
+			statusCode: http.StatusConflict,
+			body:       `{"success":false,"error":"ConflictError","message":"Group name already exists","code":409}`,
+			wantType:   "ConflictError",
+			wantMsg:    "Group name already exists",
+		},
+		{
+			name:       "permission denied",
+			statusCode: http.StatusForbidden,
+			body:       `{"success":false,"error":"Forbidden","message":"insufficient permissions","code":403}`,
+			wantType:   "Forbidden",
+			wantMsg:    "insufficient permissions",
+		},
+		{
+			name:       "rate limited",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"success":false,"error":"RateLimited","message":"too many requests","code":429}`,
+			wantType:   "RateLimited",
+			wantMsg:    "too many requests",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(c.statusCode)
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer server.Close()
+
+			client, err := NewHTTPClient(&Config{
+				BaseURL: server.URL, APIKey: "test-key", TimeoutSeconds: 5, RetryAttempts: 1, TLSVerify: false,
+			})
+			require.NoError(t, err)
+
+			_, err = client.Get(context.Background(), "/test")
+			require.Error(t, err)
+
+			var httpErr *HTTPError
+			require.True(t, errors.As(err, &httpErr), "error must unwrap to *HTTPError")
+			assert.Equal(t, c.statusCode, httpErr.StatusCode)
+			assert.Equal(t, c.wantType, httpErr.ErrorType)
+			assert.Equal(t, c.wantMsg, httpErr.Message)
+			assert.NotEqual(t, fmt.Sprintf("HTTP %d: %d %s", c.statusCode, c.statusCode, http.StatusText(c.statusCode)), err.Error())
+		})
+	}
+}
+
+// TestHTTPClient_4xx_NestedErrorShape_StillParses is the defensive-fallback
+// half of #501: if some OTHER upstream (not this codebase's own sendError)
+// emits the nested {"error":{"code","message","details"}} shape that
+// APIResponse.Error/APIError already models, that structured detail must
+// still be extracted rather than only supporting the flat shape.
+func TestHTTPClient_4xx_NestedErrorShape_StillParses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   map[string]string{"code": "SERVICE_UNAVAILABLE", "message": "unavailable", "details": "db down"},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPClient(&Config{
+		BaseURL: server.URL, APIKey: "test-key", TimeoutSeconds: 5, RetryAttempts: 1, TLSVerify: false,
+	})
+	require.NoError(t, err)
+
+	_, err = client.Get(context.Background(), "/test")
+	require.Error(t, err)
+
+	var httpErr *HTTPError
+	require.True(t, errors.As(err, &httpErr))
+	assert.Equal(t, http.StatusServiceUnavailable, httpErr.StatusCode)
+	assert.Equal(t, "SERVICE_UNAVAILABLE", httpErr.ErrorType)
+	assert.Equal(t, "unavailable", httpErr.Message)
+	assert.Equal(t, "db down", httpErr.Details)
+}
+
+// TestHTTPClient_4xx_MalformedNonJSONBody_DegradesGracefully pins requirement
+// (b): a 4xx/5xx response with a body that ISN'T JSON at all (e.g. a
+// proxy/WAF interstitial, an nginx default error page, a plain-text upstream
+// error) must not panic and must still produce a usable, non-empty error —
+// falling back to the raw status/body instead of silently dropping it.
+func TestHTTPClient_4xx_MalformedNonJSONBody_DegradesGracefully(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("<html><body>502 Bad Gateway</body></html>"))
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPClient(&Config{
+		BaseURL: server.URL, APIKey: "test-key", TimeoutSeconds: 5, RetryAttempts: 1, TLSVerify: false,
+	})
+	require.NoError(t, err)
+
+	var got error
+	assert.NotPanics(t, func() {
+		_, got = client.Get(context.Background(), "/test")
+	})
+	require.Error(t, got)
+
+	var httpErr *HTTPError
+	require.True(t, errors.As(got, &httpErr))
+	assert.Equal(t, http.StatusBadGateway, httpErr.StatusCode)
+	assert.Empty(t, httpErr.ErrorType, "a non-JSON body has no structured error type to extract")
+	assert.Contains(t, httpErr.Details, "502 Bad Gateway", "the raw body must be preserved, not silently dropped")
+	assert.NotPanics(t, func() { _ = got.Error() })
+}
+
+// TestHTTPClient_4xx_EmptyBody_DegradesGracefully covers a 4xx/5xx status with
+// a genuinely empty body (no JSON, no text at all) — must not panic and must
+// still carry the HTTP status in the resulting error.
+func TestHTTPClient_4xx_EmptyBody_DegradesGracefully(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPClient(&Config{
+		BaseURL: server.URL, APIKey: "test-key", TimeoutSeconds: 5, RetryAttempts: 1, TLSVerify: false,
+	})
+	require.NoError(t, err)
+
+	var got error
+	assert.NotPanics(t, func() {
+		_, got = client.Get(context.Background(), "/test")
+	})
+	require.Error(t, got)
+
+	var httpErr *HTTPError
+	require.True(t, errors.As(got, &httpErr))
+	assert.Equal(t, http.StatusInternalServerError, httpErr.StatusCode)
+	assert.NotPanics(t, func() { _ = got.Error() })
+}
+
+// TestHTTPClient_NetworkUnreachable_DegradesGracefully pins the other half of
+// requirement (b): a genuine network-level failure (the server is
+// unreachable entirely, not merely returning an error status) must not panic
+// and must still surface a sensible, non-empty error.
+func TestHTTPClient_NetworkUnreachable_DegradesGracefully(t *testing.T) {
+	// Bind and immediately close a listener so the port is refusing
+	// connections deterministically (no real service behind it).
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	unreachableURL := server.URL
+	server.Close()
+
+	client, err := NewHTTPClient(&Config{
+		BaseURL: unreachableURL, APIKey: "test-key", TimeoutSeconds: 2, RetryAttempts: 1, TLSVerify: false,
+	})
+	require.NoError(t, err)
+
+	var got error
+	assert.NotPanics(t, func() {
+		_, got = client.Get(context.Background(), "/test")
+	})
+	require.Error(t, got)
+	assert.NotPanics(t, func() { _ = got.Error() })
+
+	// A pure network failure is NOT a structured HTTPError (there is no HTTP
+	// response at all to parse a status/body from).
+	var httpErr *HTTPError
+	assert.False(t, errors.As(got, &httpErr), "a connection-refused failure has no HTTP response to build an HTTPError from")
+}
+
 func TestHTTPClient_Timeout(t *testing.T) {
 	// Create a test server that delays response
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -438,11 +642,11 @@ func TestIsRetryableError(t *testing.T) {
 		want bool
 	}{
 		{"nil", nil, false},
-		{"5xx is retryable", &httpStatusError{StatusCode: http.StatusInternalServerError}, true},
-		{"429 is retryable", &httpStatusError{StatusCode: http.StatusTooManyRequests}, true},
-		{"401 is not retryable", &httpStatusError{StatusCode: http.StatusUnauthorized}, false},
-		{"403 is not retryable", &httpStatusError{StatusCode: http.StatusForbidden}, false},
-		{"404 is not retryable", &httpStatusError{StatusCode: http.StatusNotFound}, false},
+		{"5xx is retryable", &HTTPError{StatusCode: http.StatusInternalServerError}, true},
+		{"429 is retryable", &HTTPError{StatusCode: http.StatusTooManyRequests}, true},
+		{"401 is not retryable", &HTTPError{StatusCode: http.StatusUnauthorized}, false},
+		{"403 is not retryable", &HTTPError{StatusCode: http.StatusForbidden}, false},
+		{"404 is not retryable", &HTTPError{StatusCode: http.StatusNotFound}, false},
 		{"marshal error is not retryable", fmt.Errorf("failed to marshal request body: boom"), false},
 		{"request-construction error is not retryable", fmt.Errorf("failed to create request: boom"), false},
 		{"generic network error is retryable", fmt.Errorf("request failed: connection refused"), true},
