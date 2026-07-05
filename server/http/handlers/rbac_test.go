@@ -543,7 +543,7 @@ func TestCreateRole(t *testing.T) {
 			name:      "name with zero-width space is rejected",
 			authToken: "valid-token",
 			requestBody: map[string]interface{}{
-				"name":        "dev​team",
+				"name":        "dev\u200bteam",
 				"description": "Developer role with limited access",
 				"permissions": []string{"secrets.read", "secrets.write"},
 			},
@@ -554,7 +554,7 @@ func TestCreateRole(t *testing.T) {
 			name:      "name with RTL override is rejected",
 			authToken: "valid-token",
 			requestBody: map[string]interface{}{
-				"name":        "dev‮team",
+				"name":        "dev\u202eteam",
 				"description": "Developer role with limited access",
 				"permissions": []string{"secrets.read", "secrets.write"},
 			},

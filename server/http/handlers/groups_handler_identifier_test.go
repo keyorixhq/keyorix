@@ -45,8 +45,8 @@ func postCreateGroup(t *testing.T, h *GroupHandler, name string) *httptest.Respo
 
 func TestCreateGroup_RejectsDangerousNames(t *testing.T) {
 	cases := map[string]string{
-		"zero-width space": "prod​team", // U+200B ZERO WIDTH SPACE
-		"RTL override":     "prod‮team", // U+202E RIGHT-TO-LEFT OVERRIDE
+		"zero-width space": "prod\u200bteam", // U+200B ZERO WIDTH SPACE
+		"RTL override":     "prod\u202eteam", // U+202E RIGHT-TO-LEFT OVERRIDE
 		"cyrillic homograph 'a'": "prodаpi", // U+0430 CYRILLIC SMALL LETTER A
 	}
 	for name, dangerous := range cases {
@@ -76,7 +76,7 @@ func TestUpdateGroup_RejectsDangerousName(t *testing.T) {
 	createW := postCreateGroup(t, h, "ops")
 	require.Equal(t, http.StatusCreated, createW.Code)
 
-	body, err := json.Marshal(map[string]string{"name": "prod​team"}) // zero-width space
+	body, err := json.Marshal(map[string]string{"name": "prod\u200bteam"}) // zero-width space
 	require.NoError(t, err)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/api/v1/groups/1", bytes.NewReader(body)), "id", "1"))
 	req.Header.Set("Content-Type", "application/json")

@@ -87,8 +87,8 @@ func TestCreateProject_BlankEnvironmentsFallBackToDefaults(t *testing.T) {
 // accepted and later shown, apparently-legitimate, in an access-review UI or audit log.
 func TestCreateProject_RejectsDangerousNames(t *testing.T) {
 	cases := map[string]string{
-		"zero-width space":        "prod​team", // U+200B ZERO WIDTH SPACE
-		"RTL override":            "prod‮team", // U+202E RIGHT-TO-LEFT OVERRIDE
+		"zero-width space":        "prod\u200bteam", // U+200B ZERO WIDTH SPACE
+		"RTL override":            "prod\u202eteam", // U+202E RIGHT-TO-LEFT OVERRIDE
 		"non-breaking space":      "prod team", // U+00A0 NO-BREAK SPACE (not in allowlist)
 		"cyrillic homograph 'a'":  "prodаpi",   // U+0430 CYRILLIC SMALL LETTER A looks like Latin "a"
 		"CSV-formula-like prefix": "=cmd|'/calc'",
