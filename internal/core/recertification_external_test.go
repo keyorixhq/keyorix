@@ -2,6 +2,8 @@ package core_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func hasOpenCampaign(campaigns []*core.CampaignWithProgress) bool {
@@ -130,4 +133,90 @@ func TestRunScheduledRecertification_ForcedIncompleteAnchorsToOpenTime(t *testin
 	camps3, err := h.CoreService.ListAccessReviewCampaigns(ctx, 3)
 	require.NoError(t, err)
 	assert.False(t, hasOpenCampaign(camps3), "a genuinely completed close resets the cadence clock at ClosedAt")
+}
+
+// queryCounter tallies the SELECT queries GORM executes against each table, via the
+// same "gorm:query" callback hook GORM itself uses to run queries — a precise,
+// non-flaky substitute for a timing-based assertion.
+type queryCounter struct {
+	mu      sync.Mutex
+	byTable map[string]int
+}
+
+func attachQueryCounter(t *testing.T, db *gorm.DB) *queryCounter {
+	qc := &queryCounter{byTable: map[string]int{}}
+	err := db.Callback().Query().After("gorm:query").Register("test:count_queries", func(tx *gorm.DB) {
+		qc.mu.Lock()
+		defer qc.mu.Unlock()
+		table := ""
+		if tx.Statement != nil {
+			table = tx.Statement.Table
+		}
+		qc.byTable[table]++
+	})
+	require.NoError(t, err)
+	return qc
+}
+
+func (qc *queryCounter) count(table string) int {
+	qc.mu.Lock()
+	defer qc.mu.Unlock()
+	return qc.byTable[table]
+}
+
+// #238: RunScheduledRecertification used to fetch a project's ENTIRE historical
+// campaign+item corpus (ListAccessReviewCampaigns, then ListAccessReviewItems for
+// EVERY campaign returned) on every scheduler tick, for every project — cost that
+// grew unboundedly with a deployment's accumulated campaign history rather than with
+// what a tick actually needs to decide. This proves the fixed tick's campaign lookup
+// executes the same number of queries against access_review_campaigns/
+// access_review_items whether a project has 5 or 100 historical (closed) campaigns —
+// a query COUNT assertion, not a timing one, so it can't flake under load.
+func TestRunScheduledRecertification_CampaignQueryCostDoesNotScaleWithHistory(t *testing.T) {
+	runTickAndCountCampaignQueries := func(historicalCampaigns int) (campaignQueries, itemQueries int) {
+		h := testhelper.NewRBACTestHelper(t)
+		defer h.Cleanup()
+		migrateCampaignTables(t, h)
+		require.NoError(t, h.DB.AutoMigrate(&models.Notification{}))
+
+		ctx := context.Background()
+		now := time.Now()
+
+		// A pile of ancient, irrelevant history for project 2 — the deeper past a
+		// correctly-scoped scheduler tick has no reason to ever reload.
+		for i := 0; i < historicalCampaigns; i++ {
+			closedAt := now.AddDate(0, 0, -1000-i)
+			require.NoError(t, h.DB.Create(&models.AccessReviewCampaign{
+				ProjectID: 2, Name: fmt.Sprintf("historical-%d", i),
+				State: core.CampaignStateClosed, CreatedAt: closedAt, ClosedAt: &closedAt,
+			}).Error)
+		}
+		// The one campaign that's actually relevant to this tick's decision: recent
+		// enough that project 2 is not overdue.
+		recent := now.AddDate(0, 0, -10)
+		require.NoError(t, h.DB.Create(&models.AccessReviewCampaign{
+			ProjectID: 2, Name: "recent", State: core.CampaignStateClosed,
+			CreatedAt: recent, ClosedAt: &recent,
+		}).Error)
+
+		qc := attachQueryCounter(t, h.DB)
+		_, err := h.CoreService.RunScheduledRecertification(ctx, 90, true)
+		require.NoError(t, err)
+		return qc.count("access_review_campaigns"), qc.count("access_review_items")
+	}
+
+	smallCampaignQueries, smallItemQueries := runTickAndCountCampaignQueries(5)
+	largeCampaignQueries, largeItemQueries := runTickAndCountCampaignQueries(100)
+
+	assert.Equal(t, smallCampaignQueries, largeCampaignQueries,
+		"campaign-table query count must not scale with a project's historical campaign count")
+	assert.Equal(t, smallItemQueries, largeItemQueries,
+		"item-table query count must not scale with a project's historical campaign count")
+
+	// 3 seeded projects x 2 targeted single-row lookups each (GetOpenAccessReviewCampaign
+	// + GetLatestClosedAccessReviewCampaign) = 6 — not the old N+1 shape, where the
+	// campaign-table query count would stay small but the item-table query count
+	// would grow by one per historical campaign returned.
+	assert.Equal(t, 6, smallCampaignQueries, "expected exactly two targeted campaign lookups per project")
+	assert.Equal(t, 0, smallItemQueries, "no open campaign exists, so no item query should run at all")
 }

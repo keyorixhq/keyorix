@@ -5,10 +5,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 )
 
 // --- Campaigns ---
@@ -38,6 +40,49 @@ func (ls *LocalStorage) ListAccessReviewCampaigns(ctx context.Context, projectID
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil
+}
+
+// GetOpenAccessReviewCampaign returns the project's open campaign (nil if none is
+// open) via a targeted `WHERE project_id = ? AND state = 'open'` lookup — not by
+// loading and filtering the project's full campaign history. #238: the
+// recertification scheduler tick used to call ListAccessReviewCampaigns (which
+// returns EVERY campaign the project has ever had, oldest to newest) on every tick
+// for every project just to answer "is one open right now"; the cost of that grew
+// unboundedly with a deployment's accumulated campaign history. This query costs the
+// same whether the project has 1 or 10,000 historical campaigns.
+func (ls *LocalStorage) GetOpenAccessReviewCampaign(ctx context.Context, projectID uint) (*models.AccessReviewCampaign, error) {
+	var c models.AccessReviewCampaign
+	err := ls.db.WithContext(ctx).
+		Where("project_id = ? AND state = ?", projectID, accessReviewCampaignOpen).
+		Order("created_at DESC").
+		First(&c).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &c, nil
+}
+
+// GetLatestClosedAccessReviewCampaign returns the project's most recently created
+// non-open campaign (nil if it has never had one) via a targeted
+// `ORDER BY created_at DESC LIMIT 1` lookup, so the recertification scheduler tick
+// (#238) can anchor the next-due date without loading the project's entire
+// historical campaign corpus just to find the newest closed row.
+func (ls *LocalStorage) GetLatestClosedAccessReviewCampaign(ctx context.Context, projectID uint) (*models.AccessReviewCampaign, error) {
+	var c models.AccessReviewCampaign
+	err := ls.db.WithContext(ctx).
+		Where("project_id = ? AND state <> ?", projectID, accessReviewCampaignOpen).
+		Order("created_at DESC").
+		First(&c).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &c, nil
 }
 
 // accessReviewCampaignOpen mirrors core.CampaignStateOpen (the store package cannot
@@ -88,6 +133,21 @@ func (ls *LocalStorage) ListAccessReviewItems(ctx context.Context, campaignID ui
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil
+}
+
+// CountPendingAccessReviewItems returns the number of items still awaiting a
+// decision for a campaign via a single `COUNT(*) WHERE decision = 'pending'`, not by
+// loading every item row and tallying in Go — used by the recertification scheduler
+// tick (#238) to size an in-flight campaign's remaining work for a reminder.
+func (ls *LocalStorage) CountPendingAccessReviewItems(ctx context.Context, campaignID uint) (int, error) {
+	var n int64
+	err := ls.db.WithContext(ctx).Model(&models.AccessReviewItem{}).
+		Where("campaign_id = ? AND decision = ?", campaignID, accessReviewItemPending).
+		Count(&n).Error
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return int(n), nil
 }
 
 func (ls *LocalStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error) {

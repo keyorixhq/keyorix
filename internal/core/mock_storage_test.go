@@ -246,6 +246,22 @@ func (m *MockStorage) ListAccessReviewCampaigns(ctx context.Context, projectID u
 	return args.Get(0).([]*models.AccessReviewCampaign), args.Error(1)
 }
 
+func (m *MockStorage) GetOpenAccessReviewCampaign(ctx context.Context, projectID uint) (*models.AccessReviewCampaign, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.AccessReviewCampaign), args.Error(1)
+}
+
+func (m *MockStorage) GetLatestClosedAccessReviewCampaign(ctx context.Context, projectID uint) (*models.AccessReviewCampaign, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.AccessReviewCampaign), args.Error(1)
+}
+
 func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error) {
 	args := m.Called(ctx, c)
 	return args.Bool(0), args.Error(1)
@@ -262,6 +278,11 @@ func (m *MockStorage) ListAccessReviewItems(ctx context.Context, campaignID uint
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.AccessReviewItem), args.Error(1)
+}
+
+func (m *MockStorage) CountPendingAccessReviewItems(ctx context.Context, campaignID uint) (int, error) {
+	args := m.Called(ctx, campaignID)
+	return args.Int(0), args.Error(1)
 }
 
 func (m *MockStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error) {
