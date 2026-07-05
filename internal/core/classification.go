@@ -3,17 +3,17 @@
 // label; the label drives the classification posture and lets a reviewer find the
 // high-sensitivity secrets. "" means unclassified.
 //
-// KNOWN LIMITATION — classification is a label, not a control: setting a secret (or
-// dynamic-secret config, or machine identity)'s Classification to "restricted" does
-// NOT currently change how it is treated at read time, in RBAC, in rate limiting, or
-// anywhere else in the request path — it is purely informational metadata surfaced in
-// the compliance posture / audit views. Do not assume a "restricted" secret gets any
-// additional gating a "public" one doesn't; if that's the requirement, it must be
-// implemented as an explicit policy check at the relevant enforcement point (there is
-// none today). This is a deliberate scope decision, not an oversight — enforcement is
-// a materially larger feature (would need a policy engine deciding what "restricted"
-// actually restricts: extra approval? MFA step-up? narrower RBAC? all of the above are
-// plausible and none is implemented).
+// UPDATE (#128's residual, resolved by product decision): classification was
+// historically a label with zero enforcement anywhere. It now gates ONE thing, and
+// only when explicitly opted into: config classification.restricted_requires_approval
+// (default false — every deployment's behaviour is unchanged unless an operator turns
+// this on) requires an approved, secret-scoped access request before a direct read of
+// a "restricted"-classified secret's VALUE succeeds (see classification_gate.go). A
+// secret's metadata (this classification label included), RBAC, rate limiting, and
+// every other classification tier remain exactly as informational as before — this is
+// a narrow, additive control on the single highest tier's value-read path, not the
+// general "policy engine" this comment used to describe as unbuilt. MFA step-up and
+// narrower RBAC for "restricted" remain undecided/unimplemented, same as before.
 package core
 
 import (

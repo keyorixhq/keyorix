@@ -753,6 +753,17 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.AccessRequest{}); err != nil {
 			return fmt.Errorf("failed to migrate access_requests table: %w", err)
 		}
+	} else {
+		// SecretID was added after this table could already exist in the field (same
+		// pgx hazard as project_invitations above — never full-AutoMigrate an existing
+		// table here); add it via the Migrator so an upgraded install still gets the
+		// column the secret-scoped access-request flow needs (classification gate).
+		m := db.Migrator()
+		if !m.HasColumn(&models.AccessRequest{}, "SecretID") {
+			if err := m.AddColumn(&models.AccessRequest{}, "SecretID"); err != nil {
+				return fmt.Errorf("failed to add access_requests.secret_id column: %w", err)
+			}
+		}
 	}
 
 	// Create the access-request approvals table if missing (N-of-M dual control).

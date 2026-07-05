@@ -59,16 +59,26 @@ type ProjectInvitation struct {
 	RevokedAt       *time.Time
 }
 
-// AccessRequest is a user's request for a role in a project (ADR-024). State
-// machine: pending → approved / rejected / withdrawn / expired. On approval the
-// granted role (which may differ from the suggested one) is assigned at the
-// project scope. No auto-approval.
+// AccessRequest is a user's request for a role in a project (ADR-024), OR — when
+// SecretID is set — a request for approval to read one specific secret's value
+// (classification-gated reads, see internal/core/classification_gate.go). State
+// machine: pending → approved / rejected / withdrawn / expired in both cases. For
+// a project/role request, approval assigns the granted role (which may differ
+// from the suggested one) at the project scope. For a secret-scoped request,
+// approval grants no role at all — it only flips State to approved, which the
+// classification gate looks for; GrantedRole/SuggestedRole are unused (left
+// empty) on that path. No auto-approval either way.
 type AccessRequest struct {
 	ID            uint   `gorm:"primaryKey"`
 	ProjectID     uint   `gorm:"index"`
 	UserID        uint   `gorm:"index"`
-	SuggestedRole string // role the requester asks for
-	GrantedRole   string // role actually granted on approval
+	SuggestedRole string // role the requester asks for (empty for a secret-scoped request)
+	GrantedRole   string // role actually granted on approval (empty for a secret-scoped request)
+	// SecretID, when non-nil, narrows this request to "approval to read this one
+	// secret" rather than a project/role grant (see RequestSecretAccess /
+	// ApproveSecretAccessRequest). nil = the original project/role request this
+	// model was designed for (ADR-024).
+	SecretID      *uint `gorm:"index"`
 	State         string // pending | approved | rejected | withdrawn | expired
 	Reason        string // requester's note, or the rejecter's reason
 	ResolvedBy    uint

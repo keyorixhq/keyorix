@@ -2,6 +2,13 @@
 // access requests (ADR-024): access (create), list, withdraw, and review
 // (approve/reject). Requesting and withdrawing are self-service; review is
 // admin-driven. These mirror the HTTP surface under /projects/{id}/access-requests.
+//
+// secret-access is the narrower sibling: a request for approval to read one
+// specific secret's value (the classification gate — see
+// internal/core/classification_gate.go), rather than a role at a project.
+// list/withdraw/review all work on it unchanged (it's the same AccessRequest
+// row, just with SecretID set); review's approve path detects that and routes
+// to ApproveSecretAccessRequest instead of granting a role.
 package request
 
 import (
@@ -21,6 +28,7 @@ var RequestCmd = &cobra.Command{
 
 func init() {
 	RequestCmd.AddCommand(accessCmd)
+	RequestCmd.AddCommand(secretAccessCmd)
 	RequestCmd.AddCommand(listCmd)
 	RequestCmd.AddCommand(withdrawCmd)
 	RequestCmd.AddCommand(reviewCmd)

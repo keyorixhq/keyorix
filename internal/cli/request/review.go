@@ -72,6 +72,22 @@ func runReview(cmd *cobra.Command, args []string) error {
 
 	switch reviewAction {
 	case "approve":
+		// A secret-scoped request (SecretID set) grants no role at all — it can't go
+		// through ApproveAccessRequestWithExpiry, whose entire body is about granting
+		// one (see classification_gate.go's doc comment for why that function isn't
+		// reused here). Route it to the narrower approval instead.
+		if existing.SecretID != nil {
+			if reviewRole != "" || reviewTTL != "" {
+				return fmt.Errorf("--role and --ttl do not apply to a secret-scoped request (id %d) — it grants no role", reviewID)
+			}
+			req, err := service.ApproveSecretAccessRequest(ctx, reviewID, approverID)
+			if err != nil {
+				return fmt.Errorf("failed to approve secret access request: %w", err)
+			}
+			fmt.Printf("Secret access request %d approved for %s to read secret %d.\n",
+				req.ID, userLabel(ctx, service, req.UserID), *req.SecretID)
+			return nil
+		}
 		var ttl time.Duration
 		if reviewTTL != "" {
 			ttl, err = time.ParseDuration(reviewTTL)

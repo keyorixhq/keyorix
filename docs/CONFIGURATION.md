@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
 - [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -778,6 +778,34 @@ value of `1` (the default) keeps the single-approval behaviour.
 ```yaml
 dual_control:
   required_approvals: 2   # distinct approvers needed per access request (default 1)
+```
+
+## classification
+
+Whether the **"restricted" data-classification label** (the highest tier;
+`public`/`internal`/`confidential`/`restricted`, see `internal/core/classification.go`)
+changes read-time behaviour. **Disabled by default** — today, "restricted" is
+purely informational metadata; setting `restricted_requires_approval: true` for
+the first time is a **breaking behaviour change** for any deployment that already
+has "restricted" secrets, since they were previously readable like any other with
+sufficient RBAC. Opt in deliberately, only once you also have a plan for
+approving requests (below) — otherwise every "restricted" secret's value becomes
+permanently unreadable the moment you enable this.
+
+When enabled, reading a "restricted" secret's **value** (not its metadata —
+`GetSecret`/listing are unaffected) requires an approved, **secret-scoped**
+access request: `keyorix request secret-access --secret-id <id> --user
+<email>` to request it, `keyorix request review --id <id> --action approve
+--by <admin-email>` to approve it (an administrator at the secret's project).
+This reuses the same `AccessRequest` model/flow as `dual_control` above
+(ADR-024), narrowed with a `SecretID` rather than granting a role. A read whose
+acting principal cannot be identified as a specific user — a machine/service
+identity, for instance — is **always denied** when this is on: there is no
+"wait for approval" for automation, and no bypass for it either.
+
+```yaml
+classification:
+  restricted_requires_approval: false   # opt-in; see above before enabling
 ```
 
 ## anomaly_alerts

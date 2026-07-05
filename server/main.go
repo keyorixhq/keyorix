@@ -692,6 +692,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("Dual-control approval enabled: %d approvals required per access request", n)
 	}
 
+	// Wire the "restricted" classification read-time gate (#128's product
+	// decision); false (the default) leaves the label purely informational,
+	// identical to every deployment's behaviour today.
+	coreService.SetClassificationRestrictedRequiresApproval(cfg.Classification.RestrictedRequiresApproval)
+	if cfg.Classification.RestrictedRequiresApproval {
+		log.Printf("Classification enforcement enabled: reading a \"restricted\" secret's value now requires an approved, secret-scoped access request")
+	}
+
 	// Wire the configured data-retention windows (A.5.33) so the compliance posture
 	// reports them; the scheduler below drives the actual purge. Audited (#160) so a
 	// shortened window is on the record, not just its eventual purge counts.
