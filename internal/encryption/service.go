@@ -186,33 +186,24 @@ func (s *Service) AuditCheckpointKey() (key []byte, keyVersion string, ok bool) 
 	return out, s.keyManager.GetKeyVersion(), true
 }
 
-// evidenceSignKeyInfo domain-separates the evidence-signing key from the DEK's
-// other uses (HKDF info parameter).
-const evidenceSignKeyInfo = "keyorix-evidence-signature-v1"
-
-// EvidenceSignKey derives a 32-byte HMAC key for signing exported compliance-
-// evidence packs from the current DEK via HKDF-SHA256, alongside the current key
-// version. Like AuditCheckpointKey it is DEK-bound but domain-separated and held
-// only in application memory — so an archived evidence pack's authenticity is
-// provable on the server without the key ever touching the database or the export.
-// Returns ok=false when encryption is disabled or uninitialised.
+// EvidenceSignKey returns the 32-byte HMAC key used to sign exported compliance-
+// evidence packs, alongside its fingerprint ("key version"). Unlike
+// AuditCheckpointKey, this key is derived from the KEK, not the DEK (see
+// KeyManager.evidenceSignKey and #268): a routine DEK rotation
+// (RotateDEKWithSweep, ADR-010) re-wraps a brand-new DEK under the SAME KEK, so
+// this key is completely unaffected by it, and a previously-signed evidence pack
+// stays verifiable across a DEK rotation. Held only in application memory, never
+// persisted, exactly like the DEK — so an archived evidence pack's authenticity
+// is provable on the server without the key ever touching the database or the
+// export. Returns ok=false when encryption is disabled or uninitialised (no KEK
+// has been derived).
 func (s *Service) EvidenceSignKey() (key []byte, keyVersion string, ok bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if !s.config.Enabled || !s.initialized {
 		return nil, "", false
 	}
-	dek := s.keyManager.GetDEK()
-	defer wipeBytes(dek)
-	if len(dek) == 0 {
-		return nil, "", false
-	}
-	r := hkdf.New(sha256.New, dek, nil, []byte(evidenceSignKeyInfo))
-	out := make([]byte, 32)
-	if _, err := io.ReadFull(r, out); err != nil {
-		return nil, "", false
-	}
-	return out, s.keyManager.GetKeyVersion(), true
+	return s.keyManager.GetEvidenceSignKey()
 }
 
 // EncryptSecret encrypts plaintext and returns (encryptedBytes, metadataBytes, error).
