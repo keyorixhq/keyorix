@@ -655,14 +655,23 @@ func derefUint(p *uint) uint {
 // honoured on this role-based gate, which does not funnel through core.Authorize
 // (where the restriction is otherwise enforced). Fail-closed.
 //
-// WARNING (#308): this match is UNSCOPED — it checks only the role name against
-// userCtx.Roles, with no project/environment scope check at all. It currently has
-// no production route caller (only exercised by auth_test.go). Do NOT wire this
-// onto a machine-token-reachable route: combined with a machine identity's
-// unscoped role list (e.g. store.GetMachineRoles, itself for-display only, see
-// its own warning), it would bypass project/environment scoping entirely for
-// machine principals. If a role-based gate is ever needed on a scoped route, use
-// a scope-aware check (core.Authorize / the RBAC choke point) instead.
+// This match is UNSCOPED — it checks only the role name against userCtx.Roles,
+// with no project/environment scope check at all. It currently has no
+// production route caller (only exercised by auth_test.go). If a role-based
+// gate is ever needed on a scoped route, use a scope-aware check
+// (core.Authorize / the RBAC choke point) instead.
+//
+// (#308) A machine identity's role list (e.g. store.GetMachineRoles, itself
+// for-display only — see its own warning) is unscoped across every
+// project/environment, so an unscoped name match here would bypass
+// project/environment scoping entirely for machine principals: a role granted
+// only in Project A would incorrectly satisfy this gate on a route in Project
+// B. Rather than rely on every future caller remembering never to wire this
+// onto a machine-token-reachable route, this is enforced here, at the
+// consumer, so it holds regardless of what unscoped data source ever feeds
+// userCtx.Roles: a machine/OIDC principal (ActorType machine_identity)
+// unconditionally cannot satisfy a role gate. Fail-closed, mirroring the PAT
+// restriction check above.
 func RequireRole(role string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -673,6 +682,16 @@ func RequireRole(role string) func(next http.Handler) http.Handler {
 			}
 			if userCtx.PATRestriction != nil {
 				forbiddenResponse(w, "A scoped personal access token cannot satisfy a role requirement")
+				return
+			}
+			// #308: a machine/OIDC-federated principal's role list is resolved
+			// unscoped (across every project/environment) at authentication time,
+			// so it must never be allowed to satisfy this unscoped role-name gate —
+			// doing so would silently bypass project/environment scoping for
+			// machine principals. Machine authorization must go through a
+			// scope-aware check (core.Authorize) instead.
+			if userCtx.MachineIdentityID != nil {
+				forbiddenResponse(w, "A machine identity cannot satisfy an unscoped role requirement")
 				return
 			}
 			for _, userRole := range userCtx.Roles {
