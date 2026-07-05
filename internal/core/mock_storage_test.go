@@ -306,7 +306,15 @@ func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint
 	return args.Get(0).(map[uint]time.Time), args.Error(1)
 }
 
-func (m *MockStorage) LastUserElevatedActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+func (m *MockStorage) LastUserRoleManagementActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]time.Time), args.Error(1)
+}
+
+func (m *MockStorage) LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

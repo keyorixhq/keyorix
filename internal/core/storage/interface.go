@@ -104,18 +104,26 @@ type Storage interface {
 	// standing access to prune. Users with no recorded activity are absent from the
 	// map.
 	LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
-	// LastUserElevatedActivity returns, per user, the most recent time they
-	// performed an "elevated" (administrative-tier) action attributable to this
-	// project — a role grant/removal or a secret deletion, as opposed to an
-	// ordinary secret read. Backs the admin-tier half of dormant-role-grant
-	// detection (#258): a plain secrets.read/write role is considered "used" by any
-	// entry in LastUserSecretActivity, but a role that also confers
-	// secrets.delete/admin or role-management (e.g. project_admin) should only be
-	// considered "used" if the principal actually exercised that elevated
-	// capability — routine secret reads under a *different*, lower-tier grant must
-	// not mask an unused admin-tier standing grant as active. Users with no
-	// recorded elevated activity are absent from the map.
-	LastUserElevatedActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
+	// LastUserRoleManagementActivity returns, per user, the most recent time they
+	// granted/revoked a role or group-role attributable to this project (the
+	// roles.assign-tier half of admin-tier dormant-role-grant detection: #258,
+	// narrowed per-permission by #487). A plain secrets.read/write role is
+	// considered "used" by any entry in LastUserSecretActivity, but a role that
+	// additionally confers role-management (e.g. project_admin's roles.assign)
+	// should only be considered "used" via THIS capability if the principal
+	// actually exercised it — routine secret reads (or even a SEPARATE admin-tier
+	// grant's secrets.delete activity) under a different grant must not mask this
+	// one as active. Users with no recorded role-management activity are absent
+	// from the map.
+	LastUserRoleManagementActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
+	// LastUserSecretDeletionActivity returns, per user, the most recent time they
+	// deleted a secret attributable to this project (the secrets.delete/admin-tier
+	// half of admin-tier dormant-role-grant detection: #258, narrowed
+	// per-permission by #487) — see LastUserRoleManagementActivity's doc for why
+	// this is kept separate rather than folded into one combined "elevated
+	// activity" signal. Users with no recorded deletion activity are absent from
+	// the map.
+	LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
 
 	// Project invitations (ADR-024).
 	CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error)
