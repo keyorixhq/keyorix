@@ -17,6 +17,36 @@
 // there; a compromised-but-still-genuine boot chain unseals the KEK exactly as
 // successfully as a clean one would. Do not describe this provider as boot-attestation
 // or measured-boot binding until PCR policy sealing is implemented.
+//
+// This is a deliberate deferral, not an oversight — investigated for real PCR-policy
+// binding (go-tpm v0.9.8's tpm2.PolicyPCR/PolicySession fully support it; a trial
+// session at seal time plus a real session at unseal time is a well-trodden pattern,
+// verifiable against the go-tpm-tools simulator) and concluded impractical to add
+// *as a standalone change* given how this provider's surrounding machinery works
+// today:
+//   - Keyorix does not own or control the host's boot chain. It ships as a plain Go
+//     binary / container image (see install.sh, deploy/helm/); there is no
+//     Keyorix-authored OS image, systemd/package-manager hook, or any other
+//     mechanism to detect an impending firmware/bootloader/kernel update and reseal
+//     beforehand. Any customer-driven OS patch on the host silently changes PCR 0-7
+//     and would fail closed on next restart with zero warning.
+//   - There is no recovery/escrow fallback (e.g. a PolicyOR combining the PCR
+//     policy with a break-glass password/share) if the PCR values do change. A
+//     sealed blob whose PCR policy no longer matches is unseal-proof by design —
+//     that is the entire point — so without a second authorization path a routine,
+//     uncoordinated host patch converts into unrecoverable loss of the KEK and
+//     therefore the DEK and every encrypted secret behind it.
+//   - `keyorix encryption migrate-provider` cannot serve as that recovery path
+//     either: it re-wraps the DEK by first calling KEK() on the *current* provider,
+//     so once a PCR mismatch makes this provider's blob unsealable there is no way
+//     to migrate off it. There is no in-place "reseal under fresh PCR values"
+//     command today.
+//
+// In short: PCR binding is real and testable, but bolting it on here without also
+// building host-update integration and a recovery/escrow path would trade a known,
+// narrow limitation (host-binding only) for a silent single-outage-away total data
+// loss risk — worse for a secrets manager than the status quo. Revisit only
+// alongside a reseal/recovery design, not as an isolated fix.
 package crypto
 
 import (
