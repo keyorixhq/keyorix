@@ -13,6 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -258,4 +259,49 @@ func TestGRPCServer_KeepaliveReclaimsAbandonedConnection(t *testing.T) {
 	}
 	assert.False(t, errors.Is(readErr, os.ErrDeadlineExceeded),
 		"the read must unblock because the SERVER closed the connection, not because our own read deadline fired first (got: %v)", readErr)
+}
+
+// TestGRPCServer_MetricsRecordAuthRejectedRequest is the regression guard for #223:
+// MetricsInterceptor must sit outside (wrap) AuthInterceptor in the real chain
+// NewServer builds, so an auth-rejected call is still counted — mirroring the HTTP
+// API, where PrometheusMiddleware is registered ahead of the Authentication
+// middleware and so records every request regardless of auth outcome. Before the
+// fix, MetricsInterceptor ran last (after AuthInterceptor), so a request AuthInterceptor
+// rejected never reached it and was invisible to keyorix_grpc_requests_total — a
+// credential-stuffing campaign against the gRPC endpoint produced zero movement in
+// Prometheus-based alerting.
+func TestGRPCServer_MetricsRecordAuthRejectedRequest(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+
+	srv, err := keyorixgrpc.NewServer(&config.Config{}, h.CoreService)
+	require.NoError(t, err)
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	before := interceptors.GetGRPCMetrics()
+
+	// No authorization metadata at all — AuthInterceptor rejects this with
+	// Unauthenticated before the handler ever runs.
+	_, err = pb.NewSecretServiceClient(conn).GetSecret(ctx, &pb.GetSecretRequest{Id: 1})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+
+	after := interceptors.GetGRPCMetrics()
+	assert.Greater(t, after.TotalRequests, before.TotalRequests,
+		"an auth-rejected request must still be counted in TotalRequests")
+	assert.Greater(t, after.ErrorRequests, before.ErrorRequests,
+		"an auth-rejected request must be recorded as an error outcome")
 }
