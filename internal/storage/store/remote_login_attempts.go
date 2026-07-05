@@ -2,42 +2,85 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
 	"time"
 )
 
-// Login rate limiting is server-side only (ADR-040) — the limiter runs in the
-// server's auth handlers against LocalStorage; a remote (client) caller never
-// records or counts attempts.
+// #452 follow-up: RecordLoginAttempt/CountRecentLoginAttempts/PruneLoginAttempts now
+// have a REAL server endpoint to proxy to, closing the gap two earlier rounds (#452,
+// #454) deliberately left open pending further investigation — "a real proxied atomic
+// endpoint was evaluated and rejected as out of scope". That evaluation assumed the
+// upstream server would need a NEW authorization model for a system-to-system caller;
+// in fact the upstream API a RemoteStorage client already authenticates against (every
+// other remote_*.go call — CreateUser, DeleteUser, full secret CRUD, ...) requires a
+// credential with FAR broader privilege than "record/count an IP's recent login
+// attempts" would ever need, so gating these three new endpoints behind the same
+// existing system.read/system.write RBAC permissions (server/http/router.go's
+// /api/v1/system/login-attempts routes) introduces no new privilege class at all.
 //
-// #452: this also fires when the SERVER itself is booted with storage.type: remote
-// (a chained deployment proxying to an upstream Keyorix server via
-// internal/storage/factory.go's createRemoteStorage) — the local server's own
-// server/http/handlers/auth.go still calls IsLoginRateLimited/RecordFailedLogin
-// against ITS OWN storage on every login, so these three methods are on the hot
-// path there too, not just an unreachable client-mode corner.
-//
-// A real proxied implementation (having the upstream server expose a login-attempt
-// counter/record REST endpoint for a downstream server to call) was considered and
-// rejected for this PR: no such endpoint exists today, and the upstream server's
-// own login_attempts table is scoped to rate-limiting ITS OWN direct /auth/login
-// traffic (ADR-040) — reusing it for a downstream server's unrelated per-IP budget
-// would need a new endpoint, a new authorization model for a system-to-system
-// (not end-user) caller, and versioned API/client wiring on both sides. That is a
-// legitimate architectural improvement but is materially bigger than this
-// security-hardening PR's scope (#452, HIGH: silent fail-open, not silent-and-
-// unfixable). Instead, CountRecentLoginAttempts continues to return the
-// ErrRemoteUnsupported/ErrUnsupportedByBackend sentinel, and the caller
-// (internal/core/rate_limit.go) now logs a loud, one-time operator warning the
-// first time it observes this sentinel, rather than failing open with zero
-// visibility. Fail-open itself is unavoidable without the real proxy above (rate
-// limiting is a backstop, not the primary auth boundary) — this closes the
-// "silent" half of the gap, not the "fails open" half.
-func (rs *RemoteStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Time) error {
-	return remoteUnsupported("RecordLoginAttempt")
+// These proxy directly onto the upstream's own login_attempts table/storage.Storage
+// primitives (ADR-040) — the SAME table the upstream's own /auth/login handler uses
+// for its own direct end-user traffic, and the SAME one password-reset rate limiting
+// already reuses via the "pwreset:" key prefix (internal/core/rate_limit.go). A
+// downstream server's forwarded IP therefore shares one cluster-wide budget per key
+// with the upstream's own direct traffic for that same key — the correct behavior
+// (the same abusive client IP hitting either front door is the same abuse), not a
+// conflation of unrelated data.
+func (rs *RemoteStorage) RecordLoginAttempt(ctx context.Context, ip string, at time.Time) error {
+	body := struct {
+		IP string    `json:"ip"`
+		At time.Time `json:"at"`
+	}{IP: ip, At: at}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/login-attempts", body)
+	if err != nil {
+		return fmt.Errorf("failed to record login attempt: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("record login attempt failed: %s", resp.Error.Error())
+	}
+	return nil
 }
-func (rs *RemoteStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("CountRecentLoginAttempts")
+
+func (rs *RemoteStorage) CountRecentLoginAttempts(ctx context.Context, ip string, since time.Time) (int64, error) {
+	q := url.Values{}
+	q.Set("ip", ip)
+	q.Set("since", since.UTC().Format(time.RFC3339Nano))
+	path := "/api/v1/system/login-attempts/count?" + q.Encode()
+
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count login attempts: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("count login attempts failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Count int64 `json:"count"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Count, nil
 }
-func (rs *RemoteStorage) PruneLoginAttempts(_ context.Context, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("PruneLoginAttempts")
+
+func (rs *RemoteStorage) PruneLoginAttempts(ctx context.Context, before time.Time) (int64, error) {
+	body := struct {
+		Before time.Time `json:"before"`
+	}{Before: before}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/login-attempts/prune", body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to prune login attempts: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("prune login attempts failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Deleted, nil
 }
