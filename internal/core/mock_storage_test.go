@@ -605,6 +605,14 @@ func (m *MockStorage) CountExpiringSecretsByProject(ctx context.Context, project
 	return args.Get(0).(map[uint]int), args.Error(1)
 }
 
+func (m *MockStorage) ListLiveSecretNamesByProject(ctx context.Context, projectIDs []uint, limit int) ([]storage.SecretNameRow, bool, error) {
+	args := m.Called(ctx, projectIDs, limit)
+	if args.Get(0) == nil {
+		return nil, args.Bool(1), args.Error(2)
+	}
+	return args.Get(0).([]storage.SecretNameRow), args.Bool(1), args.Error(2)
+}
+
 func (m *MockStorage) ListProjectSecretsForDrift(ctx context.Context, projectID uint) ([]storage.DriftSecretRow, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {
