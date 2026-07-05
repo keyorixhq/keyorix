@@ -63,8 +63,16 @@ type UserRole struct {
 }
 
 // CreateRoleRequest is the request body for role creation.
+//
+// #189: Name is restricted to the `identifier` charset (letters/digits/space/`-`/`_`)
+// so a zero-width, RTL-override, or homograph-lookalike character can't be used to
+// visually disguise a custom role in an access-review UI or audit log. This only
+// constrains roles created through this API — the bootstrap-seeded system/builtin
+// roles (admin, viewer, ...; see internal/core/auth_bootstrap.go) are written
+// directly via storage.CreateRole and never pass through this validated request type,
+// so they're unaffected.
 type CreateRoleRequest struct {
-	Name        string   `json:"name"        validate:"required,min=3,max=50"`
+	Name        string   `json:"name"        validate:"required,min=3,max=50,identifier"`
 	Description string   `json:"description" validate:"required,min=1,max=200"`
 	Permissions []string `json:"permissions" validate:"required,min=1"`
 }
