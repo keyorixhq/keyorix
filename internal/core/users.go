@@ -190,6 +190,21 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 		addGrant(r.ID, a.ProjectID)
 	}
 
+	// #419: the separation-of-duties preventive gate. A brand-new user has no
+	// prior grants to check against (requireNoSoDViolation needs a user ID that
+	// doesn't exist yet), so requireGrantSetNoSoDViolation instead evaluates
+	// whether the FULL set of role grants landing atomically below would together
+	// complete a policy — the same evasion this closes for an existing user's
+	// individual grants, applied to "many roles minted for one brand-new user in
+	// one call" instead.
+	roleIDs := make([]uint, 0, len(grants))
+	for _, g := range grants {
+		roleIDs = append(roleIDs, g.RoleID)
+	}
+	if err := c.requireGrantSetNoSoDViolation(ctx, roleIDs); err != nil {
+		return nil, err
+	}
+
 	created, err := c.storage.CreateUserWithRoleGrants(ctx, user, grants)
 	if err != nil {
 		// #117: same race/translation as CreateUser above — see its comment.

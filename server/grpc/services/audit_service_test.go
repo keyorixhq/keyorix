@@ -127,7 +127,7 @@ func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.UserRole{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}))
+		&models.Project{}, &models.Environment{}, &models.SoDPolicy{}))
 	// auditCtx() is user 1 — grant it super_admin (global) so the audit.read check passes.
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)

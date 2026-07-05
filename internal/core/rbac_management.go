@@ -137,6 +137,9 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
 		return err
 	}
+	if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
+		return err
+	}
 	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -279,9 +282,13 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 // audit event. actorID is the acting principal (0 when unauthenticated, e.g. a
 // local CLI invocation). This is the audited choke point all role-assignment
 // paths funnel through. See requireGranterHoldsRolePermissions for the
-// admin-rank-ceiling check on the grant (#93/#107/#141).
+// admin-rank-ceiling check on the grant (#93/#107/#141), and requireNoSoDViolation
+// (sod.go) for the separation-of-duties preventive gate (#419).
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope); err != nil {
+		return err
+	}
+	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 		return err
 	}
 	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
@@ -307,7 +314,20 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 // actorID is still recorded as the audit actor. Never call this from a path
 // reachable by an ordinary authenticated request exercising roles.assign — that
 // path must go through AssignUserRole so the ceiling check applies.
+//
+// #419: the separation-of-duties preventive gate (requireNoSoDViolation) IS
+// still applied here, unlike the ceiling check above — this is a distinct
+// concern (whether the grant creates a toxic-permission overlap, not whether the
+// granter's own authority covers it) and its only caller, reconcileSSOGroups
+// (sso.go), already treats any error from this call as "role not added, sync the
+// rest, retry next login" rather than failing the login — so blocking here is
+// safe and closes an SSO-group-mapping-driven instance of the same #419 gap
+// (IdP group membership can change on every login, which is at least as fast a
+// grant/revoke cycle as an explicit JIT grant).
 func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
+	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+		return err
+	}
 	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
