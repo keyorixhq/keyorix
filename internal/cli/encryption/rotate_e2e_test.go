@@ -162,7 +162,7 @@ func runRotationE2E(t *testing.T, kind string) {
 	}
 
 	// 4. Rotate through the real CLI entry point.
-	if err := rotateWithConfig(cfg, true); err != nil {
+	if err := rotateWithConfig(cfg, true, false); err != nil {
 		t.Fatalf("rotateWithConfig: %v", err)
 	}
 

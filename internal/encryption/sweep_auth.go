@@ -21,7 +21,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func sweepSessions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+// dryRun skips the final Updates() write only; every other step still runs.
+func sweepSessions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) {
 	var sessions []models.Session
 	if err := tx.Find(&sessions).Error; err != nil {
 		return 0, fmt.Errorf("failed to fetch sessions: %w", err)
@@ -52,18 +53,21 @@ func sweepSessions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSer
 		if err != nil {
 			return swept, fmt.Errorf("failed to marshal session metadata id=%d: %w", session.ID, err)
 		}
-		if err := tx.Model(&models.Session{}).Where("id = ?", session.ID).Updates(map[string]interface{}{
-			"encrypted_session_token": newBytes,
-			"session_token_metadata":  models.JSON(metaBytes),
-		}).Error; err != nil {
-			return swept, fmt.Errorf("failed to update session id=%d: %w", session.ID, err)
+		if !dryRun {
+			if err := tx.Model(&models.Session{}).Where("id = ?", session.ID).Updates(map[string]interface{}{
+				"encrypted_session_token": newBytes,
+				"session_token_metadata":  models.JSON(metaBytes),
+			}).Error; err != nil {
+				return swept, fmt.Errorf("failed to update session id=%d: %w", session.ID, err)
+			}
 		}
 		swept++
 	}
 	return swept, nil
 }
 
-func sweepAPITokens(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+// dryRun skips the final Updates() write only; every other step still runs.
+func sweepAPITokens(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) {
 	var tokens []models.APIToken
 	if err := tx.Find(&tokens).Error; err != nil {
 		return 0, fmt.Errorf("failed to fetch api_tokens: %w", err)
@@ -94,18 +98,21 @@ func sweepAPITokens(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 		if err != nil {
 			return swept, fmt.Errorf("failed to marshal api_token metadata id=%d: %w", token.ID, err)
 		}
-		if err := tx.Model(&models.APIToken{}).Where("id = ?", token.ID).Updates(map[string]interface{}{
-			"encrypted_token": newBytes,
-			"token_metadata":  models.JSON(metaBytes),
-		}).Error; err != nil {
-			return swept, fmt.Errorf("failed to update api_token id=%d: %w", token.ID, err)
+		if !dryRun {
+			if err := tx.Model(&models.APIToken{}).Where("id = ?", token.ID).Updates(map[string]interface{}{
+				"encrypted_token": newBytes,
+				"token_metadata":  models.JSON(metaBytes),
+			}).Error; err != nil {
+				return swept, fmt.Errorf("failed to update api_token id=%d: %w", token.ID, err)
+			}
 		}
 		swept++
 	}
 	return swept, nil
 }
 
-func sweepAPIClients(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+// dryRun skips the final Updates() write only; every other step still runs.
+func sweepAPIClients(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) {
 	var clients []models.APIClient
 	if err := tx.Find(&clients).Error; err != nil {
 		return 0, fmt.Errorf("failed to fetch api_clients: %w", err)
@@ -136,11 +143,13 @@ func sweepAPIClients(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 		if err != nil {
 			return swept, fmt.Errorf("failed to marshal api_client metadata id=%d: %w", client.ID, err)
 		}
-		if err := tx.Model(&models.APIClient{}).Where("id = ?", client.ID).Updates(map[string]interface{}{
-			"encrypted_client_secret": newBytes,
-			"client_secret_metadata":  models.JSON(metaBytes),
-		}).Error; err != nil {
-			return swept, fmt.Errorf("failed to update api_client id=%d: %w", client.ID, err)
+		if !dryRun {
+			if err := tx.Model(&models.APIClient{}).Where("id = ?", client.ID).Updates(map[string]interface{}{
+				"encrypted_client_secret": newBytes,
+				"client_secret_metadata":  models.JSON(metaBytes),
+			}).Error; err != nil {
+				return swept, fmt.Errorf("failed to update api_client id=%d: %w", client.ID, err)
+			}
 		}
 		swept++
 	}
@@ -153,8 +162,9 @@ func sweepAPIClients(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 // sweepSecretVersions's legacy-branch pattern. Missing this sweeper's re-encryption
 // step entirely (the original gap, ADR-010) meant a DEK rotation left every enrolled
 // TOTP secret encrypted under the wiped old DEK — permanently breaking MFA login.
+// dryRun skips the final Updates() write only; every other step still runs.
 // Returns (rowsSwept, legacyRowsUpgraded, error).
-func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, int, error) {
+func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) {
 	var rows []models.MFASecret
 	if err := tx.Find(&rows).Error; err != nil {
 		return 0, 0, fmt.Errorf("failed to fetch mfa_secrets: %w", err)
@@ -192,11 +202,13 @@ func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 		if err != nil {
 			return swept, legacyUpgraded, fmt.Errorf("failed to marshal mfa_secret metadata id=%d: %w", row.ID, err)
 		}
-		if err := tx.Model(&models.MFASecret{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
-			"secret_enc":  newBytes,
-			"secret_meta": metaBytes,
-		}).Error; err != nil {
-			return swept, legacyUpgraded, fmt.Errorf("failed to update mfa_secret id=%d: %w", row.ID, err)
+		if !dryRun {
+			if err := tx.Model(&models.MFASecret{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+				"secret_enc":  newBytes,
+				"secret_meta": metaBytes,
+			}).Error; err != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to update mfa_secret id=%d: %w", row.ID, err)
+			}
 		}
 		swept++
 		if isLegacy {
@@ -212,8 +224,9 @@ func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 // upgraded to AAD in place — see sweepMFASecrets. Missing this sweeper's
 // re-encryption step entirely (the original gap, ADR-010) left the admin connection
 // string undecryptable after a DEK rotation — the backend could no longer be reached
-// or its leases revoked. Returns (rowsSwept, legacyRowsUpgraded, error).
-func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, int, error) {
+// or its leases revoked. dryRun skips the final Updates() write only; every other
+// step still runs. Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) {
 	var rows []models.DynamicSecretConfig
 	if err := tx.Find(&rows).Error; err != nil {
 		return 0, 0, fmt.Errorf("failed to fetch dynamic_secret_configs: %w", err)
@@ -251,11 +264,13 @@ func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *E
 		if err != nil {
 			return swept, legacyUpgraded, fmt.Errorf("failed to marshal dynamic_secret_config metadata id=%d: %w", row.ID, err)
 		}
-		if err := tx.Model(&models.DynamicSecretConfig{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
-			"admin_dsn_enc":  newBytes,
-			"admin_dsn_meta": metaBytes,
-		}).Error; err != nil {
-			return swept, legacyUpgraded, fmt.Errorf("failed to update dynamic_secret_config id=%d: %w", row.ID, err)
+		if !dryRun {
+			if err := tx.Model(&models.DynamicSecretConfig{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+				"admin_dsn_enc":  newBytes,
+				"admin_dsn_meta": metaBytes,
+			}).Error; err != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to update dynamic_secret_config id=%d: %w", row.ID, err)
+			}
 		}
 		swept++
 		if isLegacy {
@@ -270,8 +285,9 @@ func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *E
 // DynamicSecretLeaseAAD(LeaseID, ConfigID) (#94). Legacy rows are upgraded to AAD in
 // place — see sweepMFASecrets. Missing this sweeper's re-encryption step entirely
 // (the original gap, ADR-010) left active lease credentials undecryptable after a DEK
-// rotation. Returns (rowsSwept, legacyRowsUpgraded, error).
-func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, int, error) {
+// rotation. dryRun skips the final Updates() write only; every other step still
+// runs. Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) {
 	var rows []models.DynamicSecretLease
 	if err := tx.Find(&rows).Error; err != nil {
 		return 0, 0, fmt.Errorf("failed to fetch dynamic_secret_leases: %w", err)
@@ -309,11 +325,13 @@ func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *En
 		if err != nil {
 			return swept, legacyUpgraded, fmt.Errorf("failed to marshal dynamic_secret_lease metadata id=%d: %w", row.ID, err)
 		}
-		if err := tx.Model(&models.DynamicSecretLease{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
-			"credential_enc":  newBytes,
-			"credential_meta": metaBytes,
-		}).Error; err != nil {
-			return swept, legacyUpgraded, fmt.Errorf("failed to update dynamic_secret_lease id=%d: %w", row.ID, err)
+		if !dryRun {
+			if err := tx.Model(&models.DynamicSecretLease{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+				"credential_enc":  newBytes,
+				"credential_meta": metaBytes,
+			}).Error; err != nil {
+				return swept, legacyUpgraded, fmt.Errorf("failed to update dynamic_secret_lease id=%d: %w", row.ID, err)
+			}
 		}
 		swept++
 		if isLegacy {
@@ -323,7 +341,8 @@ func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *En
 	return swept, legacyUpgraded, nil
 }
 
-func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+// dryRun skips the final Updates() write only; every other step still runs.
+func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) {
 	var resets []models.PasswordReset
 	if err := tx.Find(&resets).Error; err != nil {
 		return 0, fmt.Errorf("failed to fetch password_resets: %w", err)
@@ -354,11 +373,13 @@ func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *Encrypt
 		if err != nil {
 			return swept, fmt.Errorf("failed to marshal password_reset metadata id=%d: %w", reset.ID, err)
 		}
-		if err := tx.Model(&models.PasswordReset{}).Where("id = ?", reset.ID).Updates(map[string]interface{}{
-			"encrypted_token": newBytes,
-			"token_metadata":  models.JSON(metaBytes),
-		}).Error; err != nil {
-			return swept, fmt.Errorf("failed to update password_reset id=%d: %w", reset.ID, err)
+		if !dryRun {
+			if err := tx.Model(&models.PasswordReset{}).Where("id = ?", reset.ID).Updates(map[string]interface{}{
+				"encrypted_token": newBytes,
+				"token_metadata":  models.JSON(metaBytes),
+			}).Error; err != nil {
+				return swept, fmt.Errorf("failed to update password_reset id=%d: %w", reset.ID, err)
+			}
 		}
 		swept++
 	}

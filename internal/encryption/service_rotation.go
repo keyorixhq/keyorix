@@ -19,11 +19,14 @@ import (
 // The DB transaction is owned here: committed on sweep success, rolled back on
 // any failure. The old DEK remains active if anything fails. This is a
 // write-locking operation — avoid accepting write traffic during the sweep.
-func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
+//
+// Returns the completed SweepResult so callers (the rotate CLI) can report every
+// field of it to the operator, not just the subset logged below.
+func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResult, error) {
 	s.mu.RLock()
 	if !s.initialized {
 		s.mu.RUnlock()
-		return fmt.Errorf("encryption service not initialized")
+		return nil, fmt.Errorf("encryption service not initialized")
 	}
 	s.mu.RUnlock()
 
@@ -34,9 +37,10 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 	// or never happens. AcquireExclusiveKeyLock is released by the deferred
 	// Shutdown() the CLI already calls after this function returns.
 	if err := s.AcquireExclusiveKeyLock(); err != nil {
-		return fmt.Errorf("refusing to rotate: %w — stop the running server before rotating", err)
+		return nil, fmt.Errorf("refusing to rotate: %w — stop the running server before rotating", err)
 	}
 
+	var sweepResult *SweepResult
 	sweepFn := func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error {
 		tx := db.Begin()
 		if tx.Error != nil {
@@ -48,7 +52,7 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 			}
 		}()
 
-		result, err := SweepAllTables(tx, oldSvc, newSvc, newKeyVersion)
+		result, err := SweepAllTables(tx, oldSvc, newSvc, newKeyVersion, false)
 		if err != nil {
 			tx.Rollback()
 			return fmt.Errorf("sweep failed: %w", err)
@@ -57,14 +61,22 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 			return fmt.Errorf("failed to commit sweep transaction: %w", err)
 		}
 
-		log.Printf("✅ Sweep committed: %d secret_versions, %d sessions, %d api_tokens, %d api_clients, %d password_resets re-encrypted (%d legacy AAD upgraded)",
+		// Log (and, via the returned SweepResult, report to the CLI operator) every
+		// field of the result — not just the original 5 of 8 "Swept" counts. The 3
+		// previously-omitted fields here (mfa_secrets, dynamic_secret_configs,
+		// dynamic_secret_leases) are exactly the tables #422's sweep-gap fix added;
+		// silently under-reporting them left an operator with no visibility into
+		// whether that fix's own sweeps ran, even after the data itself was safe.
+		log.Printf("✅ Sweep committed: %d secret_versions, %d sessions, %d api_tokens, %d api_clients, %d password_resets, %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases re-encrypted (%d legacy AAD upgraded)",
 			result.SecretVersionsSwept, result.SessionsSwept, result.APITokensSwept,
-			result.APIClientsSwept, result.PasswordResetsSwept, result.LegacyAADUpgraded)
+			result.APIClientsSwept, result.PasswordResetsSwept, result.MFASecretsSwept,
+			result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept, result.LegacyAADUpgraded)
+		sweepResult = result
 		return nil
 	}
 
 	if err := s.keyManager.RotateDEKWithSweep(passphrase, sweepFn); err != nil {
-		return fmt.Errorf("DEK rotation with sweep failed: %w", err)
+		return nil, fmt.Errorf("DEK rotation with sweep failed: %w", err)
 	}
 
 	s.mu.Lock()
@@ -72,10 +84,51 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 	dek := s.keyManager.GetDEK()
 	encSvc, err := NewEncryptionService(dek)
 	if err != nil {
-		return fmt.Errorf("failed to recreate encryption service after rotation: %w", err)
+		return nil, fmt.Errorf("failed to recreate encryption service after rotation: %w", err)
 	}
 	s.encryptionService = encSvc
-	return nil
+	return sweepResult, nil
+}
+
+// PreviewRotationSweep performs a READ-ONLY dry run of the same table/row
+// traversal RotateDEKWithSweep's sweep uses, so an operator can see exactly what a
+// real rotation would touch — table names and row counts — before committing to
+// that write-locking, irreversible operation.
+//
+// It makes NO changes whatsoever: the current encryption service is used as BOTH
+// oldSvc and newSvc (no new DEK is generated, nothing is written to the key
+// directory), SweepAllTables is invoked with dryRun=true (which skips every
+// per-row Updates() write while still performing every SELECT/decrypt/re-encrypt/
+// count step, so the preview is accurate and would surface a row that couldn't be
+// decrypted), and the wrapping transaction is unconditionally rolled back —
+// never committed — regardless of outcome.
+func (s *Service) PreviewRotationSweep(db *gorm.DB) (*SweepResult, error) {
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return nil, fmt.Errorf("encryption service not initialized")
+	}
+	svc := s.encryptionService
+	keyVersion := s.keyManager.GetKeyVersion()
+	s.mu.RUnlock()
+
+	tx := db.Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+	// Always rolled back — a dry run must never persist anything, no matter what.
+	defer tx.Rollback()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	result, err := SweepAllTables(tx, svc, svc, keyVersion, true)
+	if err != nil {
+		return nil, fmt.Errorf("dry-run sweep preview failed: %w", err)
+	}
+	return result, nil
 }
 
 // UpgradeAuthAAD re-encrypts every legacy (pre-#94), no-AAD row in the AAD-bound auth
@@ -113,7 +166,7 @@ func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
 	}()
 
 	result := &SweepResult{}
-	sweptMFA, legacyMFA, err := sweepMFASecrets(tx, svc, svc, keyVersion)
+	sweptMFA, legacyMFA, err := sweepMFASecrets(tx, svc, svc, keyVersion, false)
 	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("mfa_secrets AAD upgrade failed: %w", err)
@@ -121,7 +174,7 @@ func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
 	result.MFASecretsSwept = sweptMFA
 	result.LegacyAADUpgraded += legacyMFA
 
-	sweptDynConfigs, legacyDynConfigs, err := sweepDynamicSecretConfigs(tx, svc, svc, keyVersion)
+	sweptDynConfigs, legacyDynConfigs, err := sweepDynamicSecretConfigs(tx, svc, svc, keyVersion, false)
 	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("dynamic_secret_configs AAD upgrade failed: %w", err)
@@ -129,7 +182,7 @@ func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
 	result.DynamicSecretConfigsSwept = sweptDynConfigs
 	result.LegacyAADUpgraded += legacyDynConfigs
 
-	sweptDynLeases, legacyDynLeases, err := sweepDynamicSecretLeases(tx, svc, svc, keyVersion)
+	sweptDynLeases, legacyDynLeases, err := sweepDynamicSecretLeases(tx, svc, svc, keyVersion, false)
 	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("dynamic_secret_leases AAD upgrade failed: %w", err)

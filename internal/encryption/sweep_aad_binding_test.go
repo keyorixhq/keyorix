@@ -29,7 +29,8 @@ func TestRotateDEKWithSweep_PreservesAADBinding(t *testing.T) {
 	nodeID := seedSecretNode(t, db, projectID)
 	versionID := seedSecretVersion(t, db, svc, nodeID, projectID, versionNumber, "super-secret-value")
 
-	require.NoError(t, svc.RotateDEKWithSweep("test-passphrase", db))
+	_, rotErr := svc.RotateDEKWithSweep("test-passphrase", db)
+	require.NoError(t, rotErr)
 
 	var v models.SecretVersion
 	require.NoError(t, db.First(&v, versionID).Error)
