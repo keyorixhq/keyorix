@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -81,4 +82,69 @@ func TestDeploymentSecretNameConformance(t *testing.T) {
 		assert.Equal(t, 4, rep.TotalSecrets)
 		assert.Empty(t, rep.Violations)
 	})
+}
+
+// #416: DeploymentSecretNameConformance used to call SecretNameConformance once PER
+// PROJECT — a full ListSecrets query per project, repeated for every project in the
+// deployment, with no bound on project count. That made the endpoint's query count
+// (and so its latency/DB load) grow linearly, unboundedly, with the number of
+// projects in the deployment — reachable well below system_admin, the same
+// N+1/unbounded fan-out family as #238/#393. Every project's live secret names are
+// now fetched in a single bounded query (ListLiveSecretNamesByProject) and checked
+// against the naming policy in memory. This proves the query count issued by a
+// single call is the SAME whether the deployment has 5 or 50 projects — a query
+// COUNT assertion (attachTotalQueryCounter, defined in deployment_hygiene_test.go),
+// not a timing one, so it can't flake under load.
+func TestDeploymentSecretNameConformance_QueryCostDoesNotScaleWithProjectCount(t *testing.T) {
+	runWithNProjects := func(n int) int {
+		require.NoError(t, i18n.InitializeForTesting())
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+		sqlDB, _ := db.DB()
+		sqlDB.SetMaxOpenConns(1)
+		require.NoError(t, db.AutoMigrate(
+			&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
+		))
+
+		c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+		ctx := context.Background()
+		now := time.Now()
+		require.NoError(t, c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, Pattern: "^[A-Z][A-Z0-9_]*$"}))
+
+		for i := 0; i < n; i++ {
+			p, err := c.storage.CreateProject(ctx, &models.Project{Name: fmt.Sprintf("p%d", i)})
+			require.NoError(t, err)
+			e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
+			require.NoError(t, err)
+			// One conforming and one violating name per project, so the breakdown is
+			// non-trivial — the QUERY COUNT must stay flat regardless of how many
+			// projects (or how many carry violations) exist.
+			_, err = c.storage.CreateSecret(ctx, &models.SecretNode{
+				Name: "DB_PASSWORD", ProjectID: p.ID, EnvironmentID: e.ID, Type: "password", OwnerID: 1,
+				IsSecret: true, CreatedAt: now, UpdatedAt: now,
+			})
+			require.NoError(t, err)
+			_, err = c.storage.CreateSecret(ctx, &models.SecretNode{
+				Name: fmt.Sprintf("bad-key-%d", i), ProjectID: p.ID, EnvironmentID: e.ID, Type: "password", OwnerID: 1,
+				IsSecret: true, CreatedAt: now, UpdatedAt: now,
+			})
+			require.NoError(t, err)
+		}
+
+		qc := attachTotalQueryCounter(t, db)
+		rep, err := c.DeploymentSecretNameConformance(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 2*n, rep.TotalSecrets)
+		assert.Len(t, rep.Violations, n)
+		assert.False(t, rep.Truncated)
+		return qc.total
+	}
+
+	small := runWithNProjects(5)
+	large := runWithNProjects(50)
+
+	assert.Equal(t, small, large,
+		"DeploymentSecretNameConformance's query count must not scale with the number of projects in the deployment")
+	assert.Less(t, small, 10,
+		"expected a small constant number of queries (list projects + one bounded secret-name scan), not one set of queries per project")
 }

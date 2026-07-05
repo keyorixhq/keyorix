@@ -620,6 +620,35 @@ func (ls *LocalStorage) CountExpiringSecretsByProject(ctx context.Context, proje
 	return counts, nil
 }
 
+// ListLiveSecretNamesByProject returns every live secret (folders excluded) across
+// every project in projectIDs — id/name/type/classification/environment plus its
+// project ID — in a SINGLE query ordered by project then name, instead of one
+// ListSecrets call per project (#416, the deployment-wide name-conformance scan's
+// N+1 fix). Fetches one row beyond limit so truncation can be reported without a
+// separate COUNT query.
+func (ls *LocalStorage) ListLiveSecretNamesByProject(ctx context.Context, projectIDs []uint, limit int) ([]storage.SecretNameRow, bool, error) {
+	if len(projectIDs) == 0 {
+		return nil, false, nil
+	}
+	var rows []storage.SecretNameRow
+	err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Select("project_id, id, name, type, classification, environment_id").
+		Where("project_id IN ?", projectIDs).
+		Where("is_secret = ?", true).
+		Order("project_id ASC, name ASC").
+		Limit(limit + 1).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	truncated := false
+	if len(rows) > limit {
+		truncated = true
+		rows = rows[:limit]
+	}
+	return rows, truncated, nil
+}
+
 // GetSecretTags returns the secret's tag names, sorted.
 func (ls *LocalStorage) GetSecretTags(ctx context.Context, secretID uint) ([]string, error) {
 	var names []string

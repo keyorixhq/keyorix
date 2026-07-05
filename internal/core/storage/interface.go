@@ -363,6 +363,16 @@ type Storage interface {
 	// ListSecrets(ExpiresBefore) count ProjectHygieneSummary uses per-project
 	// (#393). A project absent from the result has zero expiring secrets.
 	CountExpiringSecretsByProject(ctx context.Context, projectIDs []uint, expiresBefore time.Time) (map[uint]int, error)
+	// ListLiveSecretNamesByProject returns every live secret (folders excluded)
+	// across every project in projectIDs — id/name/type/classification/environment
+	// plus its project ID — in a SINGLE query ordered by project then name, capped at
+	// limit total rows. This is the deployment-wide counterpart to the per-project
+	// ListSecrets call SecretNameConformance uses (#416): naming-policy regex
+	// matching is not a SQL concern, so this intentionally returns raw rows for the
+	// caller to check against the policy in memory — only the N+1 QUERY pattern
+	// (one ListSecrets call per project) is eliminated, not the in-memory regex
+	// work. The returned bool reports whether limit was hit (result truncated).
+	ListLiveSecretNamesByProject(ctx context.Context, projectIDs []uint, limit int) ([]SecretNameRow, bool, error)
 	// GetSecretTags returns a secret's tag names (sorted). SetSecretTags replaces a
 	// secret's tags wholesale, upserting Tag rows by name — secret organization/search.
 	GetSecretTags(ctx context.Context, secretID uint) ([]string, error)
@@ -904,6 +914,20 @@ type DriftSecretRow struct {
 	Type          string
 	HasExpiration bool
 	HasMaxReads   bool
+}
+
+// SecretNameRow is one live secret's naming-conformance-relevant projection plus its
+// project ID — the row shape ListLiveSecretNamesByProject returns for the
+// deployment-wide naming-policy conformance scan (#416). Mirrors the fields
+// SecretNameViolation already carries per-project, so the deployment-wide caller can
+// build a DeploymentSecretNameViolation directly without a second lookup.
+type SecretNameRow struct {
+	ProjectID      uint
+	ID             uint
+	Name           string
+	Type           string
+	Classification string
+	EnvironmentID  uint
 }
 
 // UserFilter defines filtering options for user queries

@@ -183,6 +183,12 @@ func (rs *RemoteStorage) CountExpiringSecretsByProject(_ context.Context, _ []ui
 	return nil, fmt.Errorf("CountExpiringSecretsByProject not available in remote mode")
 }
 
+// ListLiveSecretNamesByProject is not available in remote mode; the grouped
+// deployment-wide name-conformance scan (#416) runs server-side.
+func (rs *RemoteStorage) ListLiveSecretNamesByProject(_ context.Context, _ []uint, _ int) ([]storage.SecretNameRow, bool, error) {
+	return nil, false, fmt.Errorf("ListLiveSecretNamesByProject not available in remote mode")
+}
+
 // GetSecretTags / SetSecretTags are not available in remote mode; tag storage is server-side.
 func (rs *RemoteStorage) GetSecretTags(_ context.Context, _ uint) ([]string, error) {
 	return nil, fmt.Errorf("GetSecretTags not available in remote mode")
