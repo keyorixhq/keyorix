@@ -169,6 +169,88 @@ func TestDeleteSecret_RevokesActiveShares(t *testing.T) {
 	assert.Equal(t, "", perm)
 }
 
+// #119 residual: DeleteProject's secret cascade is a raw bulk UPDATE on secret_nodes,
+// unlike DeleteSecret's per-secret path — before the fix it never revoked each
+// project secret's ShareRecord rows, leaving them live even though the project (and its
+// secrets) had just been deleted. Mirrors TestDeleteSecret_RevokesActiveShares, but
+// through the project-delete cascade instead of a single secret delete, and additionally
+// confirms RestoreProject does not silently reinstate the revoked share — "delete means
+// gone" for sharing, whether the secret went via a direct delete or a project cascade.
+func TestDeleteProject_RevokesActiveSharesForProjectSecrets(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.DynamicSecretConfig{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "grantee", Email: "g@x.io"}).Error)
+	proj, err := ls.CreateProject(ctx, &models.Project{Name: "app"})
+	require.NoError(t, err)
+	env, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: proj.ID})
+	require.NoError(t, err)
+	sec, err := ls.CreateSecret(ctx, &models.SecretNode{
+		ProjectID: proj.ID, EnvironmentID: env.ID, Name: "db-pw", IsSecret: true, Type: "text",
+		Status: "active", OwnerID: 1,
+	})
+	require.NoError(t, err)
+
+	share, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: sec.ID, RecipientID: 2, IsGroup: false, OwnerID: 1, Permission: "read",
+	})
+	require.NoError(t, err)
+
+	// Sanity: the grantee has access before the project delete.
+	perm, err := ls.CheckSharePermission(ctx, sec.ID, 2)
+	require.NoError(t, err)
+	assert.Equal(t, "read", perm)
+
+	// Delete the whole project (not the secret directly) — the cascade path this test
+	// pins, as distinct from TestDeleteSecret_RevokesActiveShares above.
+	require.NoError(t, ls.DeleteProject(ctx, proj.ID))
+
+	var deletedShare models.ShareRecord
+	require.NoError(t, db.Unscoped().First(&deletedShare, share.ID).Error)
+	assert.True(t, deletedShare.DeletedAt.Valid,
+		"the share must be revoked (soft-deleted) when the project holding its secret is deleted")
+
+	// Restoring the project brings the secret back, but must NOT resurrect the share
+	// that the project's delete cascade already revoked.
+	_, restoredSecrets, err := ls.RestoreProject(ctx, proj.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, restoredSecrets, "the project restore must bring the secret back")
+
+	perm, err = ls.CheckSharePermission(ctx, sec.ID, 2)
+	require.Error(t, err, "a share revoked by project delete must not resurrect when the project is restored")
+	assert.Equal(t, "", perm)
+}
+
+// TestDeleteProject_LeavesRoleGrantsUntouched pins the DeleteProject side of the #119
+// residual: UserRole/GroupRole (unlike ShareRecord) have no DeletedAt column of their
+// own and cannot be soft-deleted without a schema change to their composite primary
+// key, and RestoreProject's existing role-reinstatement design (#161,
+// requireAuthorityToReinstateProjectRoles) depends on these rows surviving the
+// soft-delete window unchanged. They are cleaned up permanently, instead, once the
+// project passes its retention window and is no longer restorable
+// (PurgeDeletedProjectsBefore, see TestPurgeDeletedProjectsBefore_CascadesRoleGrants).
+func TestDeleteProject_LeavesRoleGrantsUntouched(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.UserRole{}, &models.GroupRole{}, &models.DynamicSecretConfig{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+
+	proj, err := ls.CreateProject(ctx, &models.Project{Name: "app"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: proj.ID}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1, ProjectID: proj.ID}).Error)
+
+	require.NoError(t, ls.DeleteProject(ctx, proj.ID))
+
+	var userRoleCount, groupRoleCount int64
+	require.NoError(t, db.Model(&models.UserRole{}).Where("project_id = ?", proj.ID).Count(&userRoleCount).Error)
+	assert.Equal(t, int64(1), userRoleCount, "UserRole grants must survive a project soft-delete so restore can reinstate them")
+	require.NoError(t, db.Model(&models.GroupRole{}).Where("project_id = ?", proj.ID).Count(&groupRoleCount).Error)
+	assert.Equal(t, int64(1), groupRoleCount, "GroupRole grants must survive a project soft-delete so restore can reinstate them")
+}
+
 // #136: CheckSharePermission's OwnerID==userID check must not match when both are the
 // zero value. A machine actor's ID is also 0, so an unguarded equality would grant it
 // owner-level "write" on every ownerless (machine-created) secret.

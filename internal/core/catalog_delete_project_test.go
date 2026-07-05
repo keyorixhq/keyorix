@@ -130,7 +130,7 @@ func TestDeleteProject_ForceSkipsGuardButStaysTransactional(t *testing.T) {
 func TestDeleteProject_RealStorage_RejectsWhenSecretsExist(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
@@ -149,7 +149,7 @@ func TestDeleteProject_RealStorage_RejectsWhenSecretsExist(t *testing.T) {
 func TestDeleteProject_RealStorage_EmptyProjectSucceeds(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
@@ -165,7 +165,7 @@ func TestDeleteProject_RealStorage_EmptyProjectSucceeds(t *testing.T) {
 func TestDeleteProject_RealStorage_ForceCascadesOverSecrets(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
@@ -188,7 +188,7 @@ func TestDeleteProject_RealStorage_ForceCascadesOverSecrets(t *testing.T) {
 func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}, &models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}, &models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("test-passphrase"))

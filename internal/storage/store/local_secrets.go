@@ -168,6 +168,36 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
 			return fmt.Errorf("failed to soft-delete project secrets: %w", err)
 		}
+		// Revoke every still-active share for every secret in this project (#119
+		// residual): the bulk update above is a raw UPDATE on secret_nodes, unlike
+		// DeleteSecret's per-secret path, which also revokes that secret's ShareRecord
+		// rows (#370) — so a project-cascade delete used to skip that step entirely,
+		// leaving shares for the project's secrets live. Left alone, a share would
+		// silently reactivate (via CheckSharePermission) the instant the project (and
+		// its secrets) is later restored, with zero re-authorization — exactly the
+		// hazard #370 closed for a single secret delete. The subquery is raw SQL,
+		// deliberately bypassing GORM's default deleted_at IS NULL scope on
+		// SecretNode, so it also reaches the secrets just soft-deleted above. Mirrors
+		// #370: like RestoreSecret, RestoreProject does NOT bring these shares back —
+		// "delete means gone" for sharing, whether the secret was deleted directly or
+		// via a project cascade.
+		if err := tx.Where("secret_id IN (SELECT id FROM secret_nodes WHERE project_id = ?) AND deleted_at IS NULL", id).
+			Delete(&models.ShareRecord{}).Error; err != nil {
+			return fmt.Errorf("failed to revoke project secret shares: %w", err)
+		}
+		// UserRole/GroupRole grants scoped to this project are deliberately left
+		// untouched here, unlike ShareRecord above. Both are plain composite-primary-key
+		// join rows (UserID/GroupID, RoleID, ProjectID, EnvironmentID) with no DeletedAt
+		// column of their own — soft-deleting them isn't possible without a schema
+		// migration that also reworks their primary key (a soft-deleted grant would
+		// collide with a later re-grant of the identical scope under today's PK), and
+		// RestoreProject's design (see requireAuthorityToReinstateProjectRoles / #161)
+		// depends on these rows surviving the soft-delete window unchanged so a restore
+		// fully reinstates the project's prior grants, gated by the actor's own
+		// authority. PurgeDeletedProjectsBefore already hard-deletes them once the
+		// project passes its retention window and can no longer be restored — the same
+		// cascade, just necessarily deferred until undo is off the table.
+		//
 		// Soft-delete all currently-live environments in the project.
 		if err := tx.Model(&models.Environment{}).
 			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
