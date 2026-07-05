@@ -1,15 +1,38 @@
 -- Migration: Remove secret sharing schema
 -- Version: 005
 --
--- WARNING — IRREVERSIBLE DATA LOSS: `DROP TABLE IF EXISTS share_records`
--- below permanently destroys every share/access-grant record (who shared
--- what secret with whom, and when) — this is access-control history, not
--- just schema. BACK UP share_records (or export it to a backup table)
--- before running this rollback.
+-- WARNING — DATA LOSS AFTER A GRACE WINDOW: before the
+-- `DROP TABLE IF EXISTS share_records` below, every row is copied into
+-- `share_records_backup` so that rolling back does not permanently destroy
+-- the record of who shared what secret with whom, and when. That backup
+-- table is a TEMPORARY safety net only — it is not part of the live schema
+-- and is not cleaned up automatically; an operator should export/archive it
+-- and drop it explicitly once the rollback is confirmed safe. The backup
+-- insert is safe to re-run across repeated rollback/re-upgrade/rollback
+-- cycles (it accumulates timestamped snapshots rather than colliding with an
+-- earlier backup).
 
 -- Drop triggers
 DROP TRIGGER IF EXISTS update_secret_shared_status_insert;
 DROP TRIGGER IF EXISTS update_secret_shared_status_delete;
+
+-- Back up share_records before dropping it. See warning above: this is a
+-- temporary safety net, not permanent storage.
+CREATE TABLE IF NOT EXISTS share_records_backup (
+  backup_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id INTEGER,
+  secret_id INTEGER,
+  owner_id INTEGER,
+  recipient_id INTEGER,
+  is_group BOOLEAN,
+  permission TEXT,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP,
+  deleted_at TIMESTAMP,
+  backed_up_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO share_records_backup (id, secret_id, owner_id, recipient_id, is_group, permission, created_at, updated_at, deleted_at)
+  SELECT id, secret_id, owner_id, recipient_id, is_group, permission, created_at, updated_at, deleted_at FROM share_records;
 
 -- Drop share_records table and its indexes
 DROP INDEX IF EXISTS idx_share_records_secret_id;
