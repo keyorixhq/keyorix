@@ -206,7 +206,16 @@ storage:
   verified/measured boot state — no PolicyPCR session is used. Any code capable of
   asking the TPM to unseal the blob succeeds regardless of firmware/bootloader/kernel
   integrity, so this provider does **not** currently protect against a compromised
-  boot chain on an otherwise-genuine, present TPM.
+  boot chain on an otherwise-genuine, present TPM. This is a deliberate deferral, not
+  an oversight: Keyorix ships as a plain binary/container with no owned host OS image
+  or update hook, so it has no way to detect an impending firmware/bootloader/kernel
+  patch and reseal beforehand, and there is no recovery/escrow fallback if a legitimate
+  host update changes the PCR values — `migrate-provider` itself needs to unseal the
+  *current* blob first, so it can't rescue a PCR-mismatched one. Adding PCR binding
+  without also building that update-integration and recovery story would trade a
+  narrow, known limitation for a silent risk of a routine host patch permanently
+  destroying the KEK (and every secret under it); see `internal/crypto/tpm_provider.go`
+  for the full reasoning.
 - **`aws-kms`** / **`gcp-kms`** / **`azure-kms`** (ADR-041): the KEK is a random key
   **wrapped by a cloud KMS/HSM key**; only the wrapped blob is on disk
   (`wrapped_key_path`), unwrapped via the KMS at startup. The wrapping key never
