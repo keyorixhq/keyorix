@@ -36,12 +36,26 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		// order listed: the first is OUTERMOST (executes first on the way in, last on
 		// the way out), wrapping every interceptor listed after it. RecoveryInterceptor
 		// / StreamRecoveryInterceptor are listed FIRST so a panic in ANY later
-		// interceptor — logging, timeout, auth, metrics, or the handler itself — is
+		// interceptor — metrics, logging, timeout, auth, or the handler itself — is
 		// caught, instead of only panics inside the handler. A panic that unwound past
 		// an inner (non-outermost) recovery interceptor would otherwise crash the
 		// request with none of Recovery's clean INTERNAL status + logged stack trace.
+		//
+		// MetricsInterceptor is listed SECOND — inside Recovery but wrapping everything
+		// after it, including AuthInterceptor — for parity with the HTTP API, where
+		// PrometheusMiddleware is registered before the Authentication middleware
+		// (server/http/router.go) and so records every request regardless of auth
+		// outcome. Metrics used to run last, after Auth, so an auth-rejected gRPC call
+		// (bad/expired token, IP-allowlist miss, MFA required) never reached it and was
+		// invisible to keyorix_grpc_requests_total — a credential-stuffing campaign
+		// against the gRPC endpoint produced zero movement in Prometheus-based
+		// alerting, even though LoggingInterceptor (also outermost) still logged every
+		// attempt. Metrics sits just inside Recovery (not outside it) so a panic is
+		// still caught and turned into a clean INTERNAL status before Metrics' own
+		// deferred bookkeeping runs on the way out.
 		grpc.ChainUnaryInterceptor(
 			interceptors.RecoveryInterceptor(),
+			interceptors.MetricsInterceptor(),
 			interceptors.LoggingInterceptor(),
 			// Cap each unary RPC at the same 60s the HTTP API's Timeout middleware
 			// enforces, so a hung handler can't tie up resources over gRPC when it would
@@ -49,8 +63,18 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// long-lived), so the stream chain carries no timeout.
 			interceptors.TimeoutInterceptor(grpcUnaryTimeout),
 			interceptors.AuthInterceptor(coreService, cfg.Security.RequireMFA),
-			interceptors.MetricsInterceptor(),
 		),
+		// The stream chain intentionally carries no metrics interceptor: MetricsInterceptor
+		// (and the keyorix_grpc_requests_total / _duration_seconds_total series it feeds)
+		// times a single request/response round trip, and grpcMetrics.TotalDuration backs
+		// an average-latency figure. A streaming call's "handler" blocks for the entire
+		// life of the stream (StreamAuditLogs can run for hours), so folding stream call
+		// establishment into the same counters/duration total would both misrepresent unary
+		// latency (one long-lived stream would dominate the average) and conflate two
+		// different things under one metric name. Auth-rejected stream opens are still
+		// visible via StreamLoggingInterceptor (also outermost here). A correct fix — a
+		// separate, stream-specific metric — is tracked as its own follow-up rather than
+		// folded into this reordering.
 		grpc.ChainStreamInterceptor(
 			interceptors.StreamRecoveryInterceptor(),
 			interceptors.StreamLoggingInterceptor(),
