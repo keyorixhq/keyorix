@@ -160,22 +160,35 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 }
 
 // hardenedCipherSuites is the explicit AEAD-only cipher suite allowlist applied to
-// every gRPC TLS listener, regardless of how its certificate is sourced.
+// every gRPC TLS listener, regardless of how its certificate is sourced, UNLESS the
+// operator has explicitly configured tls.allowed_ciphers (#333) — in which case that
+// configured list is honored instead (see applyTLSHardening).
 var hardenedCipherSuites = []uint16{
 	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 }
 
-// applyTLSHardening layers the deliberately hardened MinVersion/CipherSuites onto
-// tlsConfig in place. The protocol-version floor and cipher-suite allowlist are
-// independent of how the certificate itself is sourced, so this must be applied
-// uniformly on both the AutoCert and non-AutoCert paths below — AutoCert should only
-// supply the certificate, not silently determine the rest of the TLS posture too
-// (#172).
-func applyTLSHardening(tlsConfig *tls.Config) {
+// applyTLSHardening layers the hardened MinVersion/CipherSuites onto tlsConfig in
+// place. The protocol-version floor and cipher-suite allowlist are independent of how
+// the certificate itself is sourced, so this must be applied uniformly on both the
+// AutoCert and non-AutoCert paths below — AutoCert should only supply the certificate,
+// not silently determine the rest of the TLS posture too (#172).
+//
+// CipherSuites is resolved from tlsCfg.AllowedCiphers (#333): unset means the hardcoded
+// hardenedCipherSuites default above applies unchanged (no regression for existing
+// deployments); set means the operator's configured suite list is honored instead,
+// validated against config.SecureCipherSuiteNames so a weak/deprecated/misspelled
+// suite name fails closed rather than being silently ignored or accepted. MinVersion
+// stays fixed at TLS 1.2 — TLS 1.3 has no equivalent per-suite selection.
+func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig) error {
 	tlsConfig.MinVersion = tls.VersionTLS12
-	tlsConfig.CipherSuites = hardenedCipherSuites
+	suites, err := tlsCfg.ResolveCipherSuites(hardenedCipherSuites)
+	if err != nil {
+		return fmt.Errorf("invalid gRPC TLS configuration: %w", err)
+	}
+	tlsConfig.CipherSuites = suites
+	return nil
 }
 
 // createGRPCTLSConfig creates TLS configuration for gRPC server
@@ -185,7 +198,9 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		// not wired up here — but the hardened MinVersion/CipherSuites below must
 		// still apply, matching the non-AutoCert path's posture (#172).
 		tlsConfig := &tls.Config{}
-		applyTLSHardening(tlsConfig)
+		if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS); err != nil {
+			return nil, err
+		}
 		return tlsConfig, nil
 	}
 
@@ -196,6 +211,8 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
-	applyTLSHardening(tlsConfig)
+	if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS); err != nil {
+		return nil, err
+	}
 	return tlsConfig, nil
 }

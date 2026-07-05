@@ -313,11 +313,19 @@ func (s ServerInstanceConfig) EffectiveMaxRequestBodyBytes() int64 {
 }
 
 type TLSConfig struct {
-	Enabled        bool     `yaml:"enabled"`
-	AutoCert       bool     `yaml:"auto_cert,omitempty"`
-	Domains        []string `yaml:"domains,omitempty"`
-	CertFile       string   `yaml:"cert_file"`
-	KeyFile        string   `yaml:"key_file"`
+	Enabled  bool     `yaml:"enabled"`
+	AutoCert bool     `yaml:"auto_cert,omitempty"`
+	Domains  []string `yaml:"domains,omitempty"`
+	CertFile string   `yaml:"cert_file"`
+	KeyFile  string   `yaml:"key_file"`
+	// AllowedCiphers optionally restricts the TLS 1.2 cipher suites offered to
+	// SecureCipherSuiteNames' names (e.g. "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384").
+	// Left empty/unset, the caller's own hardcoded secure AEAD-only default applies
+	// unchanged (see ResolveCipherSuites, and server/main.go's + server/grpc/server.go's
+	// applyTLSHardening, which wire this in — #333). Any name outside
+	// SecureCipherSuiteNames — including weak/deprecated suites (RC4, 3DES, CBC-mode)
+	// and TLS 1.3 suite names, which don't apply to CipherSuites at all — is rejected
+	// at startup rather than silently ignored or accepted.
 	AllowedCiphers []string `yaml:"allowed_ciphers"`
 }
 
