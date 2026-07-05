@@ -391,11 +391,10 @@ func ssoBoundToOtherProvider(externalID, provider string) bool {
 // provider+subject on first link, so a later provider can't re-link it by asserting the
 // same address.
 func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email string, emailVerified bool) (*models.User, error) {
-	notFound := i18n.T("ErrorUserNotFound", nil)
 	if sub != "" {
 		if u, err := c.storage.GetUserByExternalID(ctx, ssoExternalID(provider, sub)); err == nil {
 			return u, nil
-		} else if !strings.Contains(err.Error(), notFound) {
+		} else if !storage.IsUserNotFound(err) {
 			return nil, err
 		}
 	}
@@ -404,7 +403,7 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 	}
 	u, err := c.storage.GetUserByEmail(ctx, email)
 	if err != nil {
-		if strings.Contains(err.Error(), notFound) {
+		if storage.IsUserNotFound(err) {
 			return nil, nil
 		}
 		return nil, err

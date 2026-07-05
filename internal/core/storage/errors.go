@@ -1,6 +1,10 @@
 package storage
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/keyorixhq/keyorix/internal/storage/remote"
+)
 
 // ErrUserNotFound is returned (wrapped) by GetUser when the user positively does not
 // exist, as distinct from a transient retrieval failure. Callers that must fail
@@ -114,3 +118,31 @@ var ErrDuplicateDynamicSecretConfig = errors.New("a dynamic-secret config with t
 // loser's insert fail here instead of silently duplicating; callers treat this as a
 // benign no-op skip, not a failure.
 var ErrDuplicateReminderNotification = errors.New("an unread reminder notification already exists for this user, type, and project")
+
+// IsUserNotFound reports whether err represents "this user positively does not
+// exist" under EITHER active storage backend (#504). LocalStorage wraps the
+// ErrUserNotFound sentinel above (errors.Is); RemoteStorage instead returns a
+// remote.HTTPError for every 4xx/5xx response, with its own IsNotFound()
+// helper keyed on the actual HTTP status (errors.As). Neither of those is
+// reliably detectable by matching an error's rendered text — the i18n string
+// LocalStorage happens to embed in ErrUserNotFound's wrapping message is an
+// implementation detail, not a contract, and a RemoteStorage error never
+// contained it in the first place (round 112's #501 fix gave RemoteStorage a
+// structured error but multiple internal/core call sites still matched the
+// old i18n text and so never worked against storage.type: remote, before or
+// after that fix). Callers that must distinguish "genuinely absent" from a
+// transient retrieval failure across both backends should use this instead of
+// either check alone.
+func IsUserNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrUserNotFound) {
+		return true
+	}
+	var httpErr *remote.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.IsNotFound()
+	}
+	return false
+}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -17,9 +18,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// userNotFound mirrors the storage "not found" error that resolveSSOUser treats as
-// "no matching account" (rather than a hard error), so the mock matches the real path.
-func userNotFound() error { return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)) }
+// userNotFound mirrors the real storage "not found" error (wrapping the typed
+// storage.ErrUserNotFound sentinel, #504) that resolveSSOUser treats as "no matching
+// account" (rather than a hard error), so the mock matches the real path.
+func userNotFound() error {
+	return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
+}
 
 // stubSAML is a SAMLAuthn whose ParseResponse returns a canned assertion — so the SAML
 // login flow is tested without a live IdP or a signed response.
