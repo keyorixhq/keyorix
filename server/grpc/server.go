@@ -88,11 +88,26 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 	// operator's server.grpc setting, so the cap was bypassable by switching transport.
 	// Bounds the inbound message; clamp to MaxInt32 so the int64→int conversion is safe
 	// on every platform (a >2 GiB request cap is nonsensical anyway).
+	//
+	// The same value also bounds the OUTBOUND response (#173 residual). grpc-go's
+	// server-side default for MaxSendMsgSize is math.MaxInt32 (~2 GiB) — far larger
+	// than the 4 MiB it defaults to for MaxRecvMsgSize — so leaving it unset meant the
+	// send direction was effectively uncapped while the recv direction was explicitly
+	// bounded. Lower risk than the inbound case (an oversized response generally means
+	// the server already did the expensive work to build it), but still worth closing
+	// for defense-in-depth against endpoints that return large aggregated data (bulk
+	// secret listings, audit log streams). No separate response-size config field
+	// exists (nor is one warranted): server.grpc.max_request_body_bytes is documented
+	// as "the max gRPC message size" without a request/response distinction, so the
+	// same configured/defaulted value applies to both directions.
 	maxMsg := cfg.Server.GRPC.EffectiveMaxRequestBodyBytes()
 	if maxMsg > math.MaxInt32 {
 		maxMsg = math.MaxInt32
 	}
-	opts = append(opts, grpc.MaxRecvMsgSize(int(maxMsg)))
+	opts = append(opts,
+		grpc.MaxRecvMsgSize(int(maxMsg)),
+		grpc.MaxSendMsgSize(int(maxMsg)),
+	)
 
 	// Detect and reclaim idle/abandoned connections (#222/#435). Without server-side
 	// keepalive, a valid audit.read (or any other) credential holder can open many
