@@ -20,10 +20,17 @@ env:
   # fetched live regardless of binary version.
   GOSEC_VERSION: v2.26.1
   GOLANGCI_LINT_VERSION: v2.12.2
+  GO_LICENSES_VERSION: v1.6.0
   GITLEAKS_VERSION: 8.30.1
   GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   KUBECONFORM_VERSION: 0.8.0
   KUBECONFORM_LINUX_AMD64_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+  # Pinned pyinstaller binary release (not `pip install`, so the scanner brings no
+  # Python/pip dependency-resolution surface of its own). checkov publishes no
+  # official checksums file, so this hash was computed locally from the release
+  # asset and pinned here, matching the gitleaks/kubeconform convention above.
+  CHECKOV_VERSION: 3.3.6
+  CHECKOV_LINUX_X64_SHA256: 0b4f043603225acc55812d896233c98fdfe13e8de31dbbcb18edc669812fb667
 
 jobs:
   build-and-test:
@@ -121,6 +128,62 @@ jobs:
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
           gosec -severity medium -exclude-generated ./...
+
+  # Dependency license compliance. Keyorix is dual-licensed -- the repo is
+  # AGPL-3.0, but the same code is also commercially licensed to customers who
+  # don't want AGPL obligations (see LICENSING.md's "Our principles"). Nothing
+  # today stops a future `go get` from silently pulling in a dependency under
+  # a license that's actually incompatible with that model: real copyleft
+  # (GPL/AGPL/LGPL) that could "infect" the ability to relicense the resulting
+  # binary commercially, or a source-available-but-restrictive license (SSPL,
+  # BSL, Commons Clause, Elastic License) that explicitly bars commercial
+  # redistribution. This job fails the build if any dependency -- direct or
+  # transitive, in either Go module -- carries a license outside the allowlist.
+  #
+  # Allowlist verified against the ACTUAL dependency tree of both modules
+  # (`go-licenses csv ./...`), not assumed: every third-party dependency in
+  # both modules today is MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, or
+  # MPL-2.0 (github.com/go-sql-driver/mysql) -- ordinary permissive/weak
+  # file-level-copyleft licenses standard in the Go/cloud ecosystem. MPL-2.0's
+  # copyleft is scoped to modifications of MPL-licensed files themselves; using
+  # an unmodified MPL-2.0 dependency imposes no obligation on the rest of this
+  # program. No GPL/AGPL/LGPL/SSPL/BSL/Commons-Clause/Elastic/Unknown licenses
+  # were found in either module's real dependency tree.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26'
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@${GO_LICENSES_VERSION}
+
+      # `--ignore` excludes each module's OWN code from the license check --
+      # this repo is itself AGPL-3.0, which is expected and not a dependency
+      # finding, not a license this job should flag. (The operator module has
+      # no LICENSE file of its own inside operator/, so without --ignore its
+      # own packages would misleadingly show up as "Unknown" too.)
+      - name: go-licenses check (root module)
+        run: |
+          go-licenses check ./... \
+            --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0 \
+            --ignore github.com/keyorixhq/keyorix
+
+      # The operator is a separate Go module (see the `operator` job above);
+      # GOWORK=off keeps it out of this repo's go.work, mirroring that job's
+      # own established convention for module-specific checks.
+      - name: go-licenses check (operator module)
+        working-directory: operator
+        env:
+          GOWORK: off
+        run: |
+          go-licenses check ./... \
+            --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0 \
+            --ignore github.com/keyorixhq/keyorix/operator
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -280,3 +343,73 @@ jobs:
           if ! grep -q -- '-watch-namespaces=team-a,team-b' scoped-render.yaml; then
             echo "expected the -watch-namespaces flag on the manager Deployment"; exit 1
           fi
+
+  # helm-chart (above) validates chart/schema *shape* (helm lint + kubeconform
+  # against the Kubernetes API schema) but asserts nothing about security
+  # *policy* -- it would not catch e.g. a future PR accidentally dropping
+  # `readOnlyRootFilesystem: true` or `allowPrivilegeEscalation: false` from a
+  # pod security context, or a chart that starts granting wildcard/escalate RBAC.
+  # This job closes that gap by running checkov's Kubernetes policy checks
+  # against the same rendered chart output.
+  helm-chart-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Install checkov
+        run: |
+          # Pinned version + checksum-verified before extraction (#115) -- see the
+          # CHECKOV_VERSION/CHECKOV_LINUX_X64_SHA256 comment in the env block above.
+          curl -fsSLO "https://github.com/bridgecrewio/checkov/releases/download/${CHECKOV_VERSION}/checkov_linux_X86_64.zip"
+          echo "${CHECKOV_LINUX_X64_SHA256}  checkov_linux_X86_64.zip" | sha256sum -c -
+          unzip -q checkov_linux_X86_64.zip -d checkov_dist
+          echo "$PWD/checkov_dist/dist" >> "$GITHUB_PATH"
+
+      - name: Render all 3 charts
+        run: |
+          # Reuses the same --set values as the helm-chart job's renders, so this
+          # job scans exactly what that job already proved schema-valid.
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            --set auth.adminPassword=ci --set ingress.enabled=true > keyorix-render.yaml
+          helm template kx deploy/helm/keyorix-k8s-sync \
+            --set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+            --set mappings[0].ref=e/n --set mappings[0].namespace=app \
+            --set mappings[0].name=s --set mappings[0].key=K \
+            --set targetNamespaces='{app,web}' > k8s-sync-render.yaml
+          helm template kx deploy/helm/keyorix-operator > operator-render.yaml
+
+      - name: checkov (pod security + RBAC-escalation policy scan)
+        run: |
+          # Scoped to the hardening properties this repo has already committed to
+          # (non-root, dropped capabilities, read-only rootfs, no privilege
+          # escalation, seccomp, no privileged/hostPID/hostIPC/hostNetwork
+          # containers) plus the RBAC-escalation family named in the background
+          # for this job (wildcard rules, escalate/bind, CSR-approval, webhook
+          # control, default-SA binding) -- NOT checkov's full default Kubernetes
+          # ruleset, which also flags missing resource limits/probes/image pull
+          # policy/etc. Those aren't regressions in anything hardened today and
+          # would just be alert-fatigue noise (a scanner nobody trusts because
+          # it's noisy is worse than no scanner).
+          #
+          # Deliberately excluded after reading their check source, not blind
+          # suppression:
+          #   CKV_K8S_35 ("prefer secret-as-file over secretKeyRef env vars")
+          #     directly contradicts this repo's own #137 fix, which *moved to*
+          #     secretKeyRef env vars as the hardening step -- enabling it would
+          #     permanently flag an intentional, already-reviewed decision.
+          #   CKV_K8S_40 ("runAsUser >= 10000") conflicts with the fixed,
+          #     image-matched UIDs already documented in the deployment templates
+          #     (1001 server, 101 nginx, 999 postgres, 65532 distroless).
+          #
+          # --framework kubernetes: restricts the scan to K8s policy checks only,
+          # skipping checkov's separate secrets-framework (gitleaks above already
+          # covers secret scanning across full git history; these rendered files
+          # are CI-only artifacts, not committed content, and contain only the
+          # placeholder `ci` password values passed via --set above).
+          CHECKS="CKV_K8S_16,CKV_K8S_17,CKV_K8S_18,CKV_K8S_19,CKV_K8S_20,CKV_K8S_22,CKV_K8S_23,CKV_K8S_28,CKV_K8S_31,CKV_K8S_37,CKV_K8S_42,CKV_K8S_49,CKV_K8S_155,CKV_K8S_156,CKV_K8S_157,CKV_K8S_158"
+          checkov --framework kubernetes --compact --check "$CHECKS" \
+            -f keyorix-render.yaml -f k8s-sync-render.yaml -f operator-render.yaml

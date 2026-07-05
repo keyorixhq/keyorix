@@ -71,10 +71,15 @@ when they ship. Until then, download releases only from
 - Pre-commit gates: `gofmt`, `go vet`, `go build`, `gosec` (MEDIUM+ severity)
 - CI gates on every push and pull request: `go vet`, race-enabled tests,
   `govulncheck`, `gosec` (pinned version), `golangci-lint` (errcheck, staticcheck,
-  unused, and more), `gitleaks` full-history secret scan
+  unused, and more), `gitleaks` secret scan (scoped to the PR's own commit
+  history), `CodeQL` (dataflow/taint analysis, both Go modules), Helm chart
+  schema validation
 - Any change to the encryption layer requires a written Architecture Decision
   Record before implementation
-- External contributions require a signed CLA and maintainer review
+- External contributions require DCO sign-off (`git commit -s` — see
+  [CONTRIBUTING.md](CONTRIBUTING.md)) and maintainer review. Branch protection
+  on `main` requires every CI check to pass (enforced for maintainers too,
+  no bypass) before a PR can merge.
 
 ## Security-Relevant Configuration
 
