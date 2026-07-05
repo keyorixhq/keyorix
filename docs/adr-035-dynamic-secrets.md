@@ -188,3 +188,44 @@ PostgreSQL, MySQL, MongoDB, **or** Redis.
 Cloud-IAM backends (AWS STS / GCP / Azure), which need a non-DSN credential shape
 beyond the current `CredentialEngine` interface; per-config connection pooling for
 the admin connection; gRPC/UI surfaces for lease management.
+
+## Addendum (2026-07-06): install-wide max-lease-TTL ceiling + revocation semantics (#97)
+
+Two residual gaps flagged in the security-hardening backlog (#97) are now closed or
+documented:
+
+- **Install-wide max-lease-TTL ceiling.** `dynamic_secrets.max_lease_ttl` (config,
+  default 90 days) is a hard ceiling enforced on top of every config's own
+  `max_ttl_seconds`, at both issue and renew time, across every backend — closing
+  the gap where a config left with an unbounded `max_ttl_seconds` plus a
+  caller-supplied override could otherwise mint an arbitrarily long-lived lease.
+- **`Revoke` is a permanent, provider-level no-op for AWS STS, Azure, and GCP** —
+  not an unimplemented feature. Each was individually investigated: none of these
+  providers' temporary-credential types (an STS session, an Entra access token, a
+  GCP OAuth2 access token) support revocation-by-ID, because the resource providers
+  validate them locally (signature + expiry) rather than checking liveness against
+  the issuer on every request. The one revocation mechanism each provider does
+  expose (AWS's role-wide session-deny policy; disabling the underlying identity)
+  is scoped to the whole shared role/identity, not a single lease, so wiring it into
+  a per-lease `Revoke` would revoke every other concurrent lease on that identity —
+  an unacceptable blast radius. A further, dedicated investigation into per-lease
+  *disposable* cloud identities (a fresh IAM role/app registration/service account
+  minted and destroyed per lease, avoiding the shared-identity blast radius) found
+  that path blocked too: it would require Keyorix's own cloud credential to hold
+  identity-**lifecycle** authority (create/delete roles or service accounts) instead
+  of today's narrow assume/token-acquire scope — a strictly worse blast radius if
+  that credential is ever compromised — plus hard GCP service-account quotas and
+  multi-minute Azure AD directory-propagation delays that make it impractical for a
+  fast issue path. This is treated as a permanent, industry-wide characteristic of
+  these providers' temporary-credential models, not a backlog item to keep chasing.
+- **Kubernetes is the exception** — see [ADR-058](adr-058-kubernetes-dynamic-secrets.md).
+  `TokenRequest`'s `spec.boundObjectRef` gives the API server a real per-request
+  liveness check the cloud providers above don't have, so an opt-in
+  `"revocable":true` config gets genuine, immediate, single-lease revocation.
+
+The full, customer-facing writeup of what `Revoke` does and doesn't do per backend,
+why, and what operators should do about it (shortest practical TTL, prefer
+`kubernetes` when early revocation is a hard requirement, or plan cloud-provider-side
+incident response for AWS/Azure/GCP leases) lives in
+[`CONFIGURATION.md`'s "Credential revocation semantics by backend"](CONFIGURATION.md#credential-revocation-semantics-by-backend) —
+this addendum is the design-history pointer, not a duplicate of the operator guidance.
