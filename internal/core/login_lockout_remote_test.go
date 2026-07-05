@@ -15,16 +15,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// apiOKUser writes a successful envelope response wrapping user, matching the format
-// RemoteStorage.GetUser (and so LockUserForUpdate, which is just GetUser — see
-// remote_users.go) expects.
+// apiOKUser writes a successful envelope response wrapping user, matching the REAL
+// wire shape server/http/handlers/users_handler.go's userToAPIResponse produces
+// (snake_case keys) — not a raw models.User marshal. RemoteStorage.GetUser (and so
+// LockUserForUpdate, which is just GetUser — see remote_users.go) decodes exactly
+// this shape (#496); a raw-model mock would silently paper over the same
+// request/response field-name mismatch #496 fixed, since both sides would share the
+// identical (wrong) assumption.
 func apiOKUser(t *testing.T, w http.ResponseWriter, user *models.User) {
 	t.Helper()
-	type resp struct {
-		Success bool         `json:"success"`
-		Data    *models.User `json:"data"`
+	data := map[string]interface{}{
+		"id":            user.ID,
+		"username":      user.Username,
+		"email":         user.Email,
+		"display_name":  user.DisplayName,
+		"active":        user.IsActive,
+		"account_state": user.AccountState,
+		"created_at":    user.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":    user.UpdatedAt.UTC().Format(time.RFC3339),
+		"last_login_at": nil,
+		"deleted_at":    nil,
 	}
-	require.NoError(t, json.NewEncoder(w).Encode(resp{Success: true, Data: user}))
+	if user.LastLoginAt != nil {
+		data["last_login_at"] = user.LastLoginAt.UTC().Format(time.RFC3339)
+	}
+	if user.LoginLockedUntil != nil {
+		data["login_locked_until"] = user.LoginLockedUntil.UTC().Format(time.RFC3339)
+	}
+	type resp struct {
+		Success bool        `json:"success"`
+		Data    interface{} `json:"data"`
+	}
+	require.NoError(t, json.NewEncoder(w).Encode(resp{Success: true, Data: data}))
 }
 
 // newRemoteLockoutCore builds a KeyorixCore backed by RemoteStorage against a real
@@ -86,13 +108,26 @@ func TestLockout_RemoteStorageFailsOpenLoudlyOnce(t *testing.T) {
 	// return its "unable to verify account lock state" fail-closed error — the backend
 	// being permanently unable to clear the counters is not the same as a transient
 	// storage error, and lockout is a backstop, not the primary auth boundary.
+	//
+	// NOTE (discovered fixing #496, filed separately — a different root cause, not a
+	// field-name mismatch): unlike recordFailedLogin above, this path does NOT log the
+	// INERT warning against a REAL remote server. checkLockAndClearLoginFailures
+	// (login_lockout.go) has a "nothing to clear" fast path keyed on the freshly-fetched
+	// u.FailedLoginAttempts/LoginLockedUntil/LoginLockoutCount — fields userToAPIResponse
+	// (server/http/handlers/users_handler.go) never puts on the wire at all (deliberately:
+	// they are internal security-accounting state, not public API surface). Under
+	// storage.type: remote that fast path always observes zero/nil, so it always takes
+	// the early return: UpdateLoginLockoutState is never even attempted and the warning
+	// never fires, silently leaving any real stale accounting uncleared. This is a
+	// pre-existing, independent gap — not introduced by #496 — that #496's response-shape
+	// fix (decodeUserResponse in remote_users.go) simply stopped masking: this test's own
+	// former apiOKUser mock round-tripped FailedLoginAttempts as a raw model field, which
+	// no real server response ever does, exactly the hand-rolled-mock blind spot #496's
+	// own fix was written to avoid repeating.
 	lockedUser := &models.User{ID: 43, Username: "carol", AccountState: AccountActive, IsActive: true, FailedLoginAttempts: 2}
 	c2 := newRemoteLockoutCore(t, lockedUser, policy)
-	out3 := captureLog(t, func() {
-		err := c2.checkLockAndClearLoginFailures(ctx, lockedUser)
-		assert.NoError(t, err, "must not block login just because lockout accounting can't be persisted")
-	})
-	assert.Contains(t, out3, "login lockout accounting is INERT")
+	err := c2.checkLockAndClearLoginFailures(ctx, lockedUser)
+	assert.NoError(t, err, "must not block login just because lockout accounting can't be persisted")
 }
 
 // TestUnlockUser_RemoteStorageFailsOpenLoudly is the (#484) regression for the admin

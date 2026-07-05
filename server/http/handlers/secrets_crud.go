@@ -263,6 +263,69 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, response, "")
 }
 
+// GetSecretByName handles GET /api/v1/secrets/by-name?name=X&project_id=Y&environment_id=Z
+// — looks up a secret's metadata by its name scoped to a project/environment, for
+// callers (e.g. RemoteStorage) that only have the name rather than the numeric ID.
+// The route's scoped-permission gate (ScopeFromQuery) authorizes the caller against
+// the project_id/environment_id query params, matching ListSecrets' convention; the
+// per-user ownership/sharing check then runs against the resolved secret's own ID,
+// the same belt-and-suspenders pattern GetSecret (by id) uses.
+func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		h.sendError(w, "InvalidParameter", "name is required", http.StatusBadRequest, nil)
+		return
+	}
+	projectID, err := strconv.ParseUint(r.URL.Query().Get("project_id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "project_id is required", http.StatusBadRequest, nil)
+		return
+	}
+	environmentID, err := strconv.ParseUint(r.URL.Query().Get("environment_id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "environment_id is required", http.StatusBadRequest, nil)
+		return
+	}
+
+	// Machine principals (ADR-030) are already authorized at the query-param scope by
+	// the route gate; the per-user owner/sharing check does not apply to them, so
+	// resolve directly (same split GetSecret uses for the by-id route).
+	isMachine := userCtx.MachineIdentityID != nil
+
+	var secret *models.SecretNode
+	if isMachine {
+		secret, err = h.coreService.GetSecretByName(r.Context(), name, uint(projectID), uint(environmentID))
+	} else {
+		secret, err = h.coreService.GetSecretByNameWithPermissionCheck(r.Context(), name, uint(projectID), uint(environmentID), userCtx.UserID)
+	}
+	if err != nil {
+		log.Printf("Error getting secret by name: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+		} else if strings.Contains(err.Error(), "permission denied") {
+			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		} else {
+			h.sendError(w, "InternalError", "Failed to get secret", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
+	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	auditCtx := core.DetachedAuditContext(r.Context())
+	goSafe(func() {
+		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
+	}) // #nosec G118
+
+	h.sendSuccess(w, secret, "")
+}
+
 // GetSecretValueByRef handles GET /api/v1/secrets/value?ref=project/environment/name —
 // reads a secret's value resolved by a human-readable reference instead of a numeric
 // ID, for integrations (e.g. the External Secrets Operator) that template a key string.

@@ -244,6 +244,20 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	// A 2xx response with a genuinely empty body (the canonical shape of a 204
+	// No Content, e.g. DeleteUser/DeleteSecret) is an unambiguous success, not
+	// a parse failure (#498). json.Unmarshal on zero bytes errors with
+	// "unexpected end of JSON input", which — before this check — fell into
+	// the generic parse-error branch below and synthesized Success:false,
+	// silently misreporting every genuinely successful delete as failed. Only
+	// short-circuit for a truly empty body on a 2xx status; a malformed/
+	// truncated JSON body (non-empty) still falls through to the real parse
+	// error below, so a corrupted response on a 200 that was SUPPOSED to
+	// carry content is still correctly surfaced as an error.
+	if len(respBody) == 0 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return &APIResponse{Success: true}, nil
+	}
+
 	var apiResp APIResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		// If we can't parse as API response, create a generic error

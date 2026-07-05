@@ -62,6 +62,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 		&models.User{},
 		&models.Project{},
 		&models.Environment{},
+		&models.SoDPolicy{},
 	))
 	// A distinct name from any role individual tests create via mustCreateRole (some
 	// create their own role literally named "admin" for unrelated purposes) — Role.Name

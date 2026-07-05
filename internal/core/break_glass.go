@@ -181,7 +181,13 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	// access was actually granted — reconcile it to revoked rather than leaving a
 	// phantom "active" record with no corresponding role, and free the slot so the
 	// user can retry.
-	if err := c.AssignUserRoleWithExpiry(ctx, userID, userID, role.ID, scope, expiresAt); err != nil {
+	//
+	// Deliberately calls assignUserRoleWithExpirySkipSoD, not AssignUserRoleWithExpiry:
+	// break-glass is un-gated by design (the whole point is access the user does NOT
+	// already have), so it must not be refused by the #419 separation-of-duties
+	// preventive gate during a genuine incident — see that function's doc comment
+	// (jit_access.go).
+	if err := c.assignUserRoleWithExpirySkipSoD(ctx, userID, userID, role.ID, scope, expiresAt); err != nil {
 		activation.State = BreakGlassRevoked
 		activation.RevokedAt = &now
 		_ = c.storage.UpdateBreakGlassActivation(ctx, activation)

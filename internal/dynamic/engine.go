@@ -41,12 +41,25 @@ type CredentialEngine interface {
 	// the sweeper disabled would mint a credential whose TTL is never enforced.
 	SupportsNativeExpiry() bool
 	BackendType() string
-	// IsEphemeralBackend reports whether the backend mints self-expiring,
-	// non-revocable credentials (e.g. AWS STS) rather than a persistent role on a
-	// target. For such backends Revoke is a no-op (nothing to drop) and Renew is
-	// refused — the credential's lifetime is fixed by the cloud provider at issue,
-	// so a new lease must be issued instead of extending an existing one.
+	// IsEphemeralBackend reports whether the backend mints self-expiring
+	// credentials (e.g. AWS STS) rather than a persistent role on a target. Renew
+	// is refused for such backends — the credential's lifetime is fixed by the
+	// cloud provider at issue, so a new lease must be issued instead of extending
+	// an existing one. It does NOT by itself mean Revoke is a no-op: see
+	// RevokeInvalidatesCredential.
 	IsEphemeralBackend() bool
+	// RevokeInvalidatesCredential reports whether calling Revoke for this specific
+	// adminDSN actually invalidates the credential at the provider before its
+	// natural expiry (true), or is only local Keyorix bookkeeping that leaves the
+	// credential live until it self-expires (false). Persistent-role backends
+	// (Postgres/MySQL/MongoDB/Redis) always return true — DROP/DELETE really
+	// removes the account. Most cloud-IAM backends (AWS STS, Azure, GCP) always
+	// return false — see each file's header comment for the provider-specific
+	// reason a real revoke isn't safely automatable. Kubernetes returns true only
+	// when the specific lease's adminDSN config opted into bound-token revocation
+	// (see kubernetes.go); otherwise false. Callers use this to render an accurate
+	// audit message instead of assuming every ephemeral backend is a no-op.
+	RevokeInvalidatesCredential(adminDSN string) bool
 }
 
 // New returns the engine for a backend type.
@@ -103,13 +116,25 @@ type FakeEngine struct {
 	FailRevoke   bool
 	FailRenew    bool
 	NativeExpiry bool              // when true, mimics a backend with DB-level TTL (e.g. Postgres)
-	Ephemeral    bool              // when true, mimics a cloud-IAM backend (no revoke, no renew)
+	Ephemeral    bool              // when true, mimics a cloud-IAM backend (no renew)
 	IssueFields  map[string]string // when set, returned in the issued Credential.Fields
+	// RevokeEffective overrides RevokeInvalidatesCredential's result when non-nil,
+	// for tests simulating a backend (like Kubernetes' opt-in bound-token mode)
+	// whose Revoke genuinely invalidates the credential despite being ephemeral.
+	// When nil, it defaults to !Ephemeral (matching every real non-ephemeral
+	// engine, and AWS STS/Azure/GCP's always-false ephemeral no-op).
+	RevokeEffective *bool
 }
 
 func (f *FakeEngine) BackendType() string        { return "fake" }
 func (f *FakeEngine) SupportsNativeExpiry() bool { return f.NativeExpiry }
 func (f *FakeEngine) IsEphemeralBackend() bool   { return f.Ephemeral }
+func (f *FakeEngine) RevokeInvalidatesCredential(_ string) bool {
+	if f.RevokeEffective != nil {
+		return *f.RevokeEffective
+	}
+	return !f.Ephemeral
+}
 
 func (f *FakeEngine) Issue(_ context.Context, _, _ string, _ time.Duration) (Credential, string, error) {
 	f.mu.Lock()

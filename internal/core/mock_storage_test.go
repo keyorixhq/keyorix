@@ -306,7 +306,15 @@ func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint
 	return args.Get(0).(map[uint]time.Time), args.Error(1)
 }
 
-func (m *MockStorage) LastUserElevatedActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+func (m *MockStorage) LastUserRoleManagementActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]time.Time), args.Error(1)
+}
+
+func (m *MockStorage) LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -330,12 +338,22 @@ func (m *MockStorage) GetSoDPolicy(ctx context.Context, id uint) (*models.SoDPol
 	return args.Get(0).(*models.SoDPolicy), args.Error(1)
 }
 
+// ListSoDPolicies defaults to "no policies configured" when a test hasn't set up
+// an expectation for it (mirrors GetProject/ListEnvironmentsByProject above) —
+// #419 wired a ListSoDPolicies call into every role-grant choke point
+// (requireNoSoDViolation and friends, sod.go), so any grant-path test that
+// doesn't care about SoD would otherwise need to stub this out too.
 func (m *MockStorage) ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "ListSoDPolicies" {
+			args := m.Called(ctx)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.SoDPolicy), args.Error(1)
+		}
 	}
-	return args.Get(0).([]*models.SoDPolicy), args.Error(1)
+	return nil, nil
 }
 
 func (m *MockStorage) DeleteSoDPolicy(ctx context.Context, id uint) error {

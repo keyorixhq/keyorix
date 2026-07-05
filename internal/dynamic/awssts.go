@@ -4,6 +4,20 @@
 // AWS enforces their expiry and they cannot be revoked or renewed, so Revoke is a
 // no-op and Renew is refused (issue a fresh lease instead).
 //
+// #97 residual (investigated, not fixed here): AWS has no "revoke this one
+// AssumeRole session" API. The one documented workaround — the IAM console's
+// "Revoke active sessions" action, which attaches/updates a Deny statement
+// conditioned on aws:TokenIssueTime <= <revocation timestamp> — is scoped to the
+// ROLE, not to a single session: it denies EVERY session (from every principal)
+// assumed before that timestamp, including other concurrent, unrelated leases
+// issued from this same role_arn. Automating that from a single-lease Revoke()
+// call would revoke sessions this call was never asked to touch — an
+// unacceptable, uncontrolled blast radius — so it is not wired up here. This
+// backend also never calls GetFederationToken or creates a per-lease IAM
+// user/role (only AssumeRole, see Issue below), so there is no per-lease IAM
+// object to delete either. Revoke remains a documented no-op;
+// RevokeInvalidatesCredential always returns false.
+//
 // The encrypted "admin DSN" carries this backend's JSON config instead of a database
 // connection string:
 //
@@ -134,8 +148,13 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	return Credential{Fields: fields}, sessionName, nil
 }
 
-// Revoke is a no-op: STS credentials self-expire and cannot be invalidated early.
+// Revoke is a no-op: STS credentials self-expire and cannot be invalidated early
+// without denying every other concurrent session on the same role (see the file
+// header for the specific mechanism investigated and rejected).
 func (e *AWSSTSEngine) Revoke(_ context.Context, _, _ string) error { return nil }
+
+// RevokeInvalidatesCredential is always false: see the file header.
+func (e *AWSSTSEngine) RevokeInvalidatesCredential(_ string) bool { return false }
 
 // Renew is refused: an STS credential's lifetime is fixed at issue. core.RenewLease
 // guards on IsEphemeralBackend before reaching here; this is a defensive backstop.

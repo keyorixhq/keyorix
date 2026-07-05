@@ -68,6 +68,11 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 		&models.PersonalAccessToken{},
 		&models.Session{},
 		&models.SystemMetadata{},
+		// #419: every role-grant choke point now calls ListSoDPolicies (the
+		// separation-of-duties preventive gate, sod.go) — migrated unconditionally
+		// here so any test exercising a grant path gets a real (empty-by-default)
+		// sod_policies table instead of a "no such table" storage error.
+		&models.SoDPolicy{},
 	)
 	require.NoError(t, err)
 

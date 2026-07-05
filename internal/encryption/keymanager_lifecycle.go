@@ -22,12 +22,16 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/hkdf"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
@@ -51,7 +55,51 @@ type KeyManager struct {
 	// Service to obtain the KEK from elsewhere. Either way the KEK still wraps the
 	// same on-disk DEK, so the data path is unchanged.
 	keyProvider crypto.KeyProvider
-	mu          sync.RWMutex
+	// evidenceSignKey/evidenceSignKeyID are a 32-byte HMAC key and its public
+	// fingerprint, derived from the KEK (NOT the DEK) via HKDF-SHA256 at
+	// Initialize time — before the KEK is wiped below. Used to sign/verify
+	// exported compliance-evidence packs (internal/core/evidence_signing.go).
+	// Deriving from the KEK rather than the DEK is the point (#268): a routine
+	// DEK rotation (RotateDEKWithSweep, ADR-010) re-wraps a brand-new DEK under
+	// the SAME KEK, so this key — and its fingerprint — is completely unaffected
+	// by it, and a previously-signed evidence pack stays verifiable across a DEK
+	// rotation. Only a genuine KEK change (KEK-provider migration, RewrapDEK /
+	// ADR-041 — a far rarer, deliberate operator action) changes it; when that
+	// happens VerifyEvidenceSignature correctly reports an older signature as
+	// made under a superseded key version rather than as tampered, same as
+	// before. Never persisted to disk — held only in memory, like currentDEK.
+	evidenceSignKey   []byte
+	evidenceSignKeyID string
+	mu                sync.RWMutex
+}
+
+// evidenceSignKeyInfo/evidenceSignKeyIDInfo domain-separate the evidence-signing
+// key (and its public fingerprint) from any other use of the KEK (HKDF info
+// parameter). Bump the suffix only if the derivation scheme changes.
+const (
+	evidenceSignKeyInfo   = "keyorix-evidence-signature-kek-v2"
+	evidenceSignKeyIDInfo = "keyorix-evidence-signature-kek-id-v2"
+)
+
+// deriveEvidenceSignKey derives the 32-byte evidence-signing HMAC key and its
+// 16-byte public key-ID fingerprint from kek via HKDF-SHA256 (two independently
+// domain-separated outputs of the same KEK, so the fingerprint reveals nothing
+// about the key itself). Both are pure, deterministic functions of the KEK alone,
+// so they are stable across a DEK rotation (same KEK) and only change when the KEK
+// itself does (KEK-provider migration).
+func deriveEvidenceSignKey(kek []byte) (key []byte, keyID string, err error) {
+	keyR := hkdf.New(sha256.New, kek, nil, []byte(evidenceSignKeyInfo))
+	key = make([]byte, 32)
+	if _, err = io.ReadFull(keyR, key); err != nil {
+		return nil, "", fmt.Errorf("derive evidence-signing key: %w", err)
+	}
+	idR := hkdf.New(sha256.New, kek, nil, []byte(evidenceSignKeyIDInfo))
+	idBytes := make([]byte, 16)
+	if _, err = io.ReadFull(idR, idBytes); err != nil {
+		wipeBytes(key)
+		return nil, "", fmt.Errorf("derive evidence-signing key id: %w", err)
+	}
+	return key, "esk-" + hex.EncodeToString(idBytes), nil
 }
 
 // SetKeyProvider configures where the KEK comes from. Must be called before
@@ -119,7 +167,17 @@ func (km *KeyManager) Initialize(passphrase string) error {
 		return fmt.Errorf("failed to unwrap DEK: %w", err)
 	}
 
+	// Derive the evidence-signing key from the KEK (still in scope here, before the
+	// deferred wipe above runs) — NOT from dek, so it survives a later DEK rotation
+	// unchanged (#268).
+	esk, eskID, err := deriveEvidenceSignKey(kek)
+	if err != nil {
+		return fmt.Errorf("failed to derive evidence-signing key: %w", err)
+	}
+
 	km.currentDEK = dek
+	km.evidenceSignKey = esk
+	km.evidenceSignKeyID = eskID
 	return nil
 }
 

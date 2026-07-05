@@ -33,6 +33,10 @@ type RedisEngine struct{}
 func (e *RedisEngine) BackendType() string      { return "redis" }
 func (e *RedisEngine) IsEphemeralBackend() bool { return false }
 
+// RevokeInvalidatesCredential is always true: ACL DELUSER really removes the
+// account, so a subsequent auth attempt with it fails immediately.
+func (e *RedisEngine) RevokeInvalidatesCredential(_ string) bool { return true }
+
 // SupportsNativeExpiry is false: Redis ACL users have no native expiry, so lease
 // expiry is enforced only by the auto-revoke sweeper (which must be enabled).
 func (e *RedisEngine) SupportsNativeExpiry() bool { return false }

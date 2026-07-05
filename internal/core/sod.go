@@ -197,20 +197,9 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 		return out, nil
 	}
 
-	perms, err := c.storage.GetUserPermissions(ctx, u.ID)
+	held, err := c.userHeldPermissionSet(ctx, u.ID)
 	if err != nil {
 		return nil, err
-	}
-	groupPerms, err := c.storage.GetUserGroupPermissions(ctx, u.ID)
-	if err != nil {
-		return nil, err
-	}
-	held := make(map[string]bool, len(perms)+len(groupPerms))
-	for _, p := range perms {
-		held[p.Name] = true
-	}
-	for _, p := range groupPerms {
-		held[p.Name] = true
 	}
 	var out []SoDViolation
 	for _, pol := range policies {
@@ -224,6 +213,32 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 		}
 	}
 	return out, nil
+}
+
+// userHeldPermissionSet returns the set of permission names userID holds via
+// DIRECT role assignments and GROUP-inherited roles — NOT the admin-bypass
+// (callers that need bypass-awareness check adminRoleName separately, exactly as
+// userSoDViolations already does above). Shared by the periodic scan
+// (userSoDViolations) and the grant-time preventive check (requireNoSoDViolation
+// and friends, #419) so both compute "what does this principal effectively hold"
+// identically — one policy-matching rule, not two.
+func (c *KeyorixCore) userHeldPermissionSet(ctx context.Context, userID uint) (map[string]bool, error) {
+	perms, err := c.storage.GetUserPermissions(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	groupPerms, err := c.storage.GetUserGroupPermissions(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	held := make(map[string]bool, len(perms)+len(groupPerms))
+	for _, p := range perms {
+		held[p.Name] = true
+	}
+	for _, p := range groupPerms {
+		held[p.Name] = true
+	}
+	return held, nil
 }
 
 // machineSoDViolations scans active machine identities, appending any violations
@@ -311,4 +326,264 @@ func actorPtr(id uint) *uint {
 	}
 	a := id
 	return &a
+}
+
+// ── Preventive gate (#419) ───────────────────────────────────────────────────
+//
+// DetectSoDViolations above is a purely periodic/on-demand DETECTIVE control — it
+// only catches a toxic-permission overlap when someone runs it (a scheduled
+// digest or an on-demand call). Combined with this codebase's JIT/time-bound
+// role grants (UserRole.ExpiresAt and friends), a toxic overlap that both STARTS
+// and FULLY EXPIRES between two scans is genuinely exercisable through the live
+// Authorize() path — real access is granted and can be used during that window —
+// but never appears in any SoD violation report: a timing-based evasion of the
+// control, concretely constructible by arranging two overlapping short-lived
+// grants.
+//
+// The functions below are the PREVENTIVE counterpart. Called from every direct
+// role-grant choke point, before a new grant lands, they reuse the exact same
+// policy-matching rule the periodic scan uses (sodPolicyNewlyCompletedBy) to ask
+// a narrower, single-principal (or single-grant-set) question — "would THIS
+// grant, together with what the principal ALREADY holds, complete a policy that
+// isn't already complete?" — and BLOCK the grant if so (fail closed, matching
+// this codebase's established posture for every other grant-time ceiling check:
+// requireGranterHoldsRolePermissions, requireAuthorityForRole).
+//
+// Deliberately out of scope below: a principal who ALREADY holds (or is being
+// granted) an admin permission-bypass role (isAdminRoleName). An admin holds
+// every permission and so trivially "violates" every SoD policy the instant one
+// is defined — exactly the case userSoDViolations' own admin-bypass branch flags
+// on the periodic scan. Applying that same rule as a hard PREVENTIVE block would
+// refuse ALL further admin-role provisioning the moment any SoD policy exists —
+// an availability regression far outside what this fix is meant to close.
+// Admin-role grants are separately, adequately gated by their own
+// escalation-by-proxy ceiling (requireAuthorityForRole/requireAdminAuthorityAt:
+// only an existing admin may grant one).
+//
+// Also deliberately NOT wired into break_glass.go's self-service emergency
+// activation: break-glass is documented as "Deliberately un-gated by RBAC — the
+// whole point is access the user does NOT already have", and a false-positive
+// SoD block during a genuine incident would be a severe, unacceptable failure
+// mode for the control that exists to remediate incidents. See
+// assignUserRoleWithExpirySkipSoD (jit_access.go) for the carve-out, which
+// mirrors the SAME reasoning this codebase already applies to the ceiling check
+// AssignUserRoleWithExpiry also (deliberately) skips.
+
+// sodPolicyNewlyCompletedBy returns the first policy in policies that becomes
+// satisfied (both permission sides held) once adding is unioned into held, but
+// was NOT already satisfied by held alone — i.e. a violation this specific
+// change would newly create, not one that already existed. nil when nothing
+// newly completes. The one shared predicate every preventive check below (and,
+// via userSoDViolations, the periodic scan) evaluates a policy with.
+func sodPolicyNewlyCompletedBy(policies []*models.SoDPolicy, held, adding map[string]bool) *models.SoDPolicy {
+	for _, pol := range policies {
+		if held[pol.PermissionA] && held[pol.PermissionB] {
+			continue // already violated before this change — not created by it
+		}
+		hasA := held[pol.PermissionA] || adding[pol.PermissionA]
+		hasB := held[pol.PermissionB] || adding[pol.PermissionB]
+		if hasA && hasB {
+			return pol
+		}
+	}
+	return nil
+}
+
+// rolePermissionNameSet returns the permission names roleID's role_permissions
+// rows carry.
+func (c *KeyorixCore) rolePermissionNameSet(ctx context.Context, roleID uint) (map[string]bool, error) {
+	perms, err := c.storage.GetRolePermissions(ctx, roleID)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(perms))
+	for _, p := range perms {
+		set[p.Name] = true
+	}
+	return set, nil
+}
+
+// sodBlockedErr formats the blocking error a preventive check returns when a
+// grant would newly complete pol.
+func sodBlockedErr(pol *models.SoDPolicy, detail string) error {
+	return fmt.Errorf("cannot %s: it would create a separation-of-duties violation with policy %q (%s + %s)",
+		detail, pol.Name, pol.PermissionA, pol.PermissionB)
+}
+
+// requireNoSoDViolation is the preventive gate for a DIRECT user role grant: it
+// blocks granting roleID to userID if doing so would newly complete an SoD
+// policy given userID's OTHER current permissions (direct + group,
+// scope-agnostic — SoD policies are principal-level, exactly like the periodic
+// scan, not scope-restricted; a user must never hold both sides ANYWHERE, not
+// merely "not in the same project"). This is the choke point AssignUserRole and
+// AssignUserRoleWithExpiry both call.
+func (c *KeyorixCore) requireNoSoDViolation(ctx context.Context, userID, roleID uint) error {
+	policies, err := c.storage.ListSoDPolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(policies) == 0 {
+		return nil
+	}
+	if c.adminRoleName(ctx, userID) != "" {
+		return nil // already holds admin-bypass — see package doc above
+	}
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if isAdminRoleName(role.Name) {
+		return nil // granting admin-bypass — see package doc above
+	}
+	adding, err := c.rolePermissionNameSet(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(adding) == 0 {
+		return nil
+	}
+	held, err := c.userHeldPermissionSet(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if pol := sodPolicyNewlyCompletedBy(policies, held, adding); pol != nil {
+		return sodBlockedErr(pol, "grant this role")
+	}
+	return nil
+}
+
+// requireGroupGrantNoSoDViolation is requireNoSoDViolation's GROUP-grant
+// counterpart: a role assigned to a group is inherited by every member, so it
+// can complete a policy for a member exactly as a direct grant would. Checks
+// each active, non-admin-bypass member (a group's membership is a small,
+// bounded set — unlike DetectSoDViolations' full-deployment scan — so this
+// stays cheap even run synchronously on every group-role assignment). A member
+// who already holds admin-bypass is skipped, not treated as a block (see
+// package doc above).
+func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, groupID, roleID uint) error {
+	policies, err := c.storage.ListSoDPolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(policies) == 0 {
+		return nil
+	}
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if isAdminRoleName(role.Name) {
+		return nil
+	}
+	adding, err := c.rolePermissionNameSet(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(adding) == 0 {
+		return nil
+	}
+	members, err := c.storage.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	for _, m := range members {
+		if !m.IsActive || c.adminRoleName(ctx, m.ID) != "" {
+			continue
+		}
+		held, err := c.userHeldPermissionSet(ctx, m.ID)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		if pol := sodPolicyNewlyCompletedBy(policies, held, adding); pol != nil {
+			return fmt.Errorf("cannot assign this role to the group: it would create a separation-of-duties violation for member %d with policy %q (%s + %s)",
+				m.ID, pol.Name, pol.PermissionA, pol.PermissionB)
+		}
+	}
+	return nil
+}
+
+// requireMachineGrantNoSoDViolation is requireNoSoDViolation's machine-identity
+// counterpart: a machine holds permissions only through its explicit role
+// grants (machineSoDViolations — no admin-bypass ever applies to a machine, a
+// leaked token is bounded to its explicit grants), so "held" is simply the
+// union of its OTHER current roles' permissions.
+func (c *KeyorixCore) requireMachineGrantNoSoDViolation(ctx context.Context, machineID, roleID uint) error {
+	policies, err := c.storage.ListSoDPolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(policies) == 0 {
+		return nil
+	}
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if isAdminRoleName(role.Name) {
+		return nil
+	}
+	adding, err := c.rolePermissionNameSet(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(adding) == 0 {
+		return nil
+	}
+	roles, err := c.storage.GetMachineRoles(ctx, machineID)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	held := make(map[string]bool)
+	for _, r := range roles {
+		perms, err := c.rolePermissionNameSet(ctx, r.ID)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		for name := range perms {
+			held[name] = true
+		}
+	}
+	if pol := sodPolicyNewlyCompletedBy(policies, held, adding); pol != nil {
+		return sodBlockedErr(pol, "assign this role")
+	}
+	return nil
+}
+
+// requireGrantSetNoSoDViolation is requireNoSoDViolation's counterpart for a set
+// of roles granted ATOMICALLY to one principal with NO prior grants — e.g.
+// CreateUserWithAssignments minting a brand-new user's system role plus project
+// assignments in one call, where there is no user ID yet to look up existing
+// permissions against, so every role in the set is evaluated together instead.
+// Any role in the set that is itself admin-bypass exempts the whole set (see
+// package doc above).
+func (c *KeyorixCore) requireGrantSetNoSoDViolation(ctx context.Context, roleIDs []uint) error {
+	policies, err := c.storage.ListSoDPolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	}
+	if len(policies) == 0 {
+		return nil
+	}
+	held := make(map[string]bool)
+	for _, rid := range roleIDs {
+		role, err := c.storage.GetRole(ctx, rid)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		if isAdminRoleName(role.Name) {
+			return nil
+		}
+		perms, err := c.rolePermissionNameSet(ctx, rid)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		for name := range perms {
+			held[name] = true
+		}
+	}
+	if pol := sodPolicyNewlyCompletedBy(policies, map[string]bool{}, held); pol != nil {
+		return fmt.Errorf("cannot create user: the combined role assignments would create a separation-of-duties violation with policy %q (%s + %s)",
+			pol.Name, pol.PermissionA, pol.PermissionB)
+	}
+	return nil
 }

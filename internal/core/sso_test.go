@@ -510,7 +510,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{}, &models.AuditEvent{}, &models.SoDPolicy{}))
 	ls := store.NewLocalStorage(db)
 	c := NewKeyorixCore(ls)
 	ctx := context.Background()

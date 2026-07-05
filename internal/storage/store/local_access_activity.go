@@ -32,24 +32,21 @@ import (
 //
 // Deliberately NOT included: "secret.deleted". Holding secrets.delete/admin makes a
 // role admin-tier (see roleIsAdminTier, internal/core/access_review.go) and its
-// grant is instead assessed against elevatedActivityEventTypes below — folding
-// "secret.deleted" into this plain-tier list would let an admin-tier grant's
-// destructive action satisfy the WRONG activity check for countDormantRoleGrants'
-// per-grant-tier split (#258).
+// grant is instead assessed against secretsDeletionActivityEventTypes below —
+// folding "secret.deleted" into this plain-tier list would let an admin-tier
+// grant's destructive action satisfy the WRONG activity check for
+// countDormantRoleGrants' per-grant-tier split (#258).
 var accessActivityEventTypes = []string{
 	"secret.read", "secret.created", "secret.updated", "secret.rotated",
 }
 
-// elevatedActivityEventTypes are the audit event types that count as exercising an
-// administrative-tier capability, for the admin-tier half of dormant-role-grant
-// detection (#258). Deliberately a short, high-confidence list restricted to event
-// types that reliably carry project_id in practice:
-//
-//   - "role.assigned" / "role.removed" / "role.group_assigned" / "role.group_removed"
-//     — granting or revoking a role is the signature action a role-management
-//     permission (e.g. project_admin's roles.assign) exists to enable.
-//   - "secret.deleted" — written with project context via LogSecretDeletedWithProject,
-//     the destructive action a secrets.delete-tier role confers beyond read/write.
+// roleManagementActivityEventTypes are the audit event types that count as
+// exercising a role-management (roles.assign) capability, one of the two
+// admin-tier activity buckets behind dormant-role-grant detection (#258, narrowed
+// per-permission by #487). Deliberately a short, high-confidence list restricted to
+// event types that reliably carry project_id in practice: granting or revoking a
+// role is the signature action a role-management permission (e.g. project_admin's
+// roles.assign) exists to enable.
 //
 // Deliberately NOT included: role.created/updated/deleted and permission.assigned/
 // removed are role-DEFINITION changes, not scoped to a project (global, scope-less
@@ -58,14 +55,20 @@ var accessActivityEventTypes = []string{
 // project-scoped (group membership isn't itself project-specific). This is a
 // deliberate approximation, not an exhaustive "every admin action" list — see
 // countDormantRoleGrants for how it's used and its documented limits.
-var elevatedActivityEventTypes = []string{
+var roleManagementActivityEventTypes = []string{
 	"role.assigned", "role.removed", "role.group_assigned", "role.group_removed",
-	"secret.deleted",
 }
 
-// lastUserActivityByEventTypes is the shared query behind LastUserSecretActivity and
-// LastUserElevatedActivity: the most recent matching-event time per user in the
-// project, read from audit_events.
+// secretsDeletionActivityEventTypes are the audit event types that count as
+// exercising the secrets.delete/secrets.admin capability, the other admin-tier
+// activity bucket (#258/#487): "secret.deleted", written with project context via
+// LogSecretDeletedWithProject, is the destructive action a secrets.delete-tier role
+// confers beyond plain read/write.
+var secretsDeletionActivityEventTypes = []string{"secret.deleted"}
+
+// lastUserActivityByEventTypes is the shared query behind LastUserSecretActivity,
+// LastUserRoleManagementActivity and LastUserSecretDeletionActivity: the most
+// recent matching-event time per user in the project, read from audit_events.
 //
 // It selects the typed event_time column ordered newest-first and keeps the first
 // row seen per user (rather than SQL MAX(), whose result is an untyped string that
@@ -106,9 +109,16 @@ func (ls *LocalStorage) LastUserSecretActivity(ctx context.Context, projectID ui
 	return ls.lastUserActivityByEventTypes(ctx, projectID, accessActivityEventTypes)
 }
 
-// LastUserElevatedActivity returns the most recent administrative-tier action time
-// per user in the project. See elevatedActivityEventTypes for exactly which events
-// count and why.
-func (ls *LocalStorage) LastUserElevatedActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	return ls.lastUserActivityByEventTypes(ctx, projectID, elevatedActivityEventTypes)
+// LastUserRoleManagementActivity returns the most recent time, per user, that they
+// performed a role-management action (granting/revoking a role or group-role) in
+// the project. See roleManagementActivityEventTypes for exactly which events count.
+func (ls *LocalStorage) LastUserRoleManagementActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	return ls.lastUserActivityByEventTypes(ctx, projectID, roleManagementActivityEventTypes)
+}
+
+// LastUserSecretDeletionActivity returns the most recent time, per user, that they
+// deleted a secret in the project. See secretsDeletionActivityEventTypes for
+// exactly which events count.
+func (ls *LocalStorage) LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	return ls.lastUserActivityByEventTypes(ctx, projectID, secretsDeletionActivityEventTypes)
 }

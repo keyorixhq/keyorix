@@ -35,6 +35,10 @@ type MongoEngine struct{}
 func (e *MongoEngine) BackendType() string      { return "mongodb" }
 func (e *MongoEngine) IsEphemeralBackend() bool { return false }
 
+// RevokeInvalidatesCredential is always true: dropUser really removes the
+// account, so a subsequent auth attempt with it fails immediately.
+func (e *MongoEngine) RevokeInvalidatesCredential(_ string) bool { return true }
+
 // SupportsNativeExpiry is false: MongoDB users have no native expiry, so lease
 // expiry is enforced only by the auto-revoke sweeper (which must be enabled).
 func (e *MongoEngine) SupportsNativeExpiry() bool { return false }
