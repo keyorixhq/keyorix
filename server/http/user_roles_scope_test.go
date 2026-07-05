@@ -34,7 +34,7 @@ func setupUserRolesScopeCore(t *testing.T) *core.KeyorixCore {
 		&models.Project{}, &models.Environment{}, &models.User{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.AuditEvent{}, &models.Session{},
+		&models.AuditEvent{}, &models.Session{}, &models.SoDPolicy{},
 	))
 
 	now := time.Now()

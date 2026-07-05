@@ -180,9 +180,17 @@ func TestDeploymentDisclosureFamily_BaselineDeniedAuditorAllowed(t *testing.T) {
 	defer server.Close()
 
 	createTestToken(t, testCore) // bootstrap admin + seed roles/permissions
-	seedFamilyFixtures(t, testCore)
+	// Tokens are created BEFORE seedFamilyFixtures: it plants an SoD policy
+	// ("family-test-policy", system.read + audit.read) that system_auditor itself
+	// violates, by design, so /sod/violations has a real row to disclose. Since
+	// #419, minting a NEW system_auditor account after that policy exists would be
+	// correctly BLOCKED by the grant-time preventive gate — creating the account
+	// first (no policy yet) and defining the policy afterward instead reproduces
+	// the intended "grandfathered/pre-existing violation" scenario, exactly what
+	// the periodic scan is meant to still catch.
 	baselineToken := createLimitedToken(t, testCore) // system_viewer only (system.read)
 	auditorToken := createAuditorToken(t, testCore)  // system_auditor (audit.read, global)
+	seedFamilyFixtures(t, testCore)
 
 	// Plant a non-conforming secret BEFORE the naming policy is enabled (naming policy
 	// is only enforced at create time — a policy tightened afterward leaves existing
@@ -378,10 +386,14 @@ func TestDashboardStats_PermissionTiers(t *testing.T) {
 	defer server.Close()
 
 	createTestToken(t, testCore)
-	seedFamilyFixtures(t, testCore)
+	// Tokens created BEFORE seedFamilyFixtures — see the identical comment in
+	// TestDeploymentDisclosureFamily_BaselineDeniedAuditorAllowed above (#419: the
+	// grant-time SoD preventive gate would otherwise block minting system_auditor
+	// after the fixture's SoD policy already exists).
 	noPermToken := createNoPermissionToken(t, testCore)
 	baselineToken := createLimitedToken(t, testCore)
 	auditorToken := createAuditorToken(t, testCore)
+	seedFamilyFixtures(t, testCore)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	get := func(token, path string) (*http.Response, []byte) {

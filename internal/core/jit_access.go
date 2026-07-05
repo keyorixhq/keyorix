@@ -28,7 +28,35 @@ import (
 // permissions (that's break-glass's entire purpose) — closing this gap needs a
 // break-glass-aware carve-out, which is its own follow-up, not a mechanical mirror
 // of AssignUserRole's fix.
+//
+// #419: the separation-of-duties preventive gate (requireNoSoDViolation) DOES
+// apply here by default, unlike the ceiling check above — this is precisely the
+// JIT-timing-evasion vector the finding describes ("a toxic-permission overlap
+// that both starts and fully expires between two SoD digest runs ... concretely
+// constructible by arranging two overlapping short-lived grants"). Break-glass
+// is the one caller that legitimately cannot be blocked by it (same reasoning as
+// the ceiling-check gap above): see assignUserRoleWithExpirySkipSoD, which
+// break_glass.go calls instead.
 func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
+	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
+		return err
+	}
+	return c.assignUserRoleWithExpirySkipSoD(ctx, actorID, userID, roleID, scope, expiresAt)
+}
+
+// assignUserRoleWithExpirySkipSoD performs the identical time-bound grant as
+// AssignUserRoleWithExpiry but deliberately SKIPS the #419 separation-of-duties
+// preventive check. Use it ONLY where the action is break-glass's self-service
+// emergency access (break_glass.go's ActivateBreakGlass): break-glass is
+// documented as "Deliberately un-gated by RBAC — the whole point is access the
+// user does NOT already have", so a false-positive SoD block during a genuine
+// incident is an unacceptable failure mode for the control that exists to
+// remediate incidents — mirroring the exact reasoning already established above
+// for the escalation-by-proxy ceiling check this function also (deliberately)
+// skips. Never call this from any other path — the HTTP JIT-assign endpoint and
+// the access-request TTL-approval path must go through AssignUserRoleWithExpiry
+// so the SoD gate applies.
+func (c *KeyorixCore) assignUserRoleWithExpirySkipSoD(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
 	if err := c.storage.AssignRoleWithExpiry(ctx, userID, roleID, scope, expiresAt); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -39,13 +67,19 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 // AssignGroupRoleWithExpiry assigns a time-bound role to a group at scope, gated by
 // the same escalation-by-proxy ceiling as the permanent grant (AssignRoleToGroup —
 // a JIT admin grant to a group is just as much a self-escalation vector as a
-// permanent one); see AssignUserRoleWithExpiry.
+// permanent one); see AssignUserRoleWithExpiry. Also gated by the #419
+// separation-of-duties preventive check (requireGroupGrantNoSoDViolation) — no
+// caller of this function needs a break-glass-style carve-out, unlike the direct
+// user grant above.
 func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt time.Time) error {
 	role, err := c.storage.GetRole(ctx, roleID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+		return err
+	}
+	if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
 		return err
 	}
 	if err := c.storage.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, expiresAt); err != nil {

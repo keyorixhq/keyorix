@@ -209,7 +209,10 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 // must not be reachable through this path. Granting an admin role is additionally
 // gated by requireAuthorityForRole (the same escalation-by-proxy ceiling
 // AddProjectMember applies) — an admin-credentialed machine identity is just as
-// much a self-escalation vector as an admin user grant.
+// much a self-escalation vector as an admin user grant. Also gated by the #419
+// separation-of-duties preventive check (requireMachineGrantNoSoDViolation,
+// sod.go) — a machine identity holds real permissions too and Authorize
+// authorizes it, so the same toxic-permission-pair concern applies.
 func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint) error {
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
@@ -220,6 +223,9 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 		return err
 	}
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+		return err
+	}
+	if err := c.requireMachineGrantNoSoDViolation(ctx, machineID, roleID); err != nil {
 		return err
 	}
 	if err := c.storage.AssignMachineRole(ctx, machineID, roleID, scope); err != nil {
