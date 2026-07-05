@@ -30,7 +30,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -71,42 +71,49 @@ func TestSweepCompleteness_EveryEncryptedModelFieldHasASweep(t *testing.T) {
 	}
 	modelsDir := filepath.Join(filepath.Dir(thisFile), "..", "storage", "models")
 
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, modelsDir, func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(modelsDir)
 	if err != nil {
-		t.Fatalf("failed to parse %s: %v", modelsDir, err)
+		t.Fatalf("failed to read %s: %v", modelsDir, err)
 	}
-	if len(pkgs) == 0 {
-		t.Fatalf("no packages found under %s — did the models package move?", modelsDir)
+	var goFiles []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		goFiles = append(goFiles, filepath.Join(modelsDir, e.Name()))
+	}
+	if len(goFiles) == 0 {
+		t.Fatalf("no .go files found under %s — did the models package move?", modelsDir)
 	}
 
+	fset := token.NewFileSet()
 	discovered := map[modelField]bool{}
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			ast.Inspect(file, func(n ast.Node) bool {
-				ts, ok := n.(*ast.TypeSpec)
-				if !ok {
-					return true
-				}
-				st, ok := ts.Type.(*ast.StructType)
-				if !ok || st.Fields == nil {
-					return true
-				}
-				for _, f := range st.Fields.List {
-					if !isByteSliceType(f.Type) {
-						continue
-					}
-					for _, name := range f.Names {
-						if looksLikeEncryptedFieldName(name.Name) {
-							discovered[modelField{ts.Name.Name, name.Name}] = true
-						}
-					}
-				}
-				return true
-			})
+	for _, path := range goFiles {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("failed to parse %s: %v", path, err)
 		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			ts, ok := n.(*ast.TypeSpec)
+			if !ok {
+				return true
+			}
+			st, ok := ts.Type.(*ast.StructType)
+			if !ok || st.Fields == nil {
+				return true
+			}
+			for _, f := range st.Fields.List {
+				if !isByteSliceType(f.Type) {
+					continue
+				}
+				for _, name := range f.Names {
+					if looksLikeEncryptedFieldName(name.Name) {
+						discovered[modelField{ts.Name.Name, name.Name}] = true
+					}
+				}
+			}
+			return true
+		})
 	}
 
 	if len(discovered) == 0 {
