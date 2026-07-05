@@ -570,3 +570,76 @@ func TestCheckGroupPermissions(t *testing.T) {
 
 	mockStorage.AssertExpectations(t)
 }
+
+// TestGetSecretWithPermissionCheck exercises the actual guarded read path
+// (GetSecretWithPermissionCheck) that every real HTTP/gRPC caller uses to fetch a
+// secret's value — as opposed to the bare GetSecret, which deliberately performs no
+// authorization check of its own (see GetSecret's doc comment) and is only safe to
+// call after a permission check has already happened, or for internal callers that
+// enforce access some other way. Neither is exercised end-to-end anywhere else in the
+// test suite: TestCheckSecretPermission and TestEnforceSecretReadPermission cover the
+// permission-decision logic in isolation, but not the combined "check, then actually
+// retrieve" behavior that GetSecretWithPermissionCheck wraps around it.
+func TestGetSecretWithPermissionCheck(t *testing.T) {
+	// Initialize i18n for tests
+	cfg := &config.Config{
+		Locale: config.LocaleConfig{
+			Language:         "en",
+			FallbackLanguage: "en",
+		},
+	}
+	err := i18n.Initialize(cfg)
+	require.NoError(t, err)
+
+	t.Run("authorized reader (owner) retrieves the secret", func(t *testing.T) {
+		mockStorage := &MockStorage{}
+		secret := &models.SecretNode{ID: 1, OwnerID: 1, Name: "test-secret"}
+		mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+
+		core := NewKeyorixCore(mockStorage)
+
+		got, err := core.GetSecretWithPermissionCheck(context.Background(), 1, 1)
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, secret.ID, got.ID)
+
+		mockStorage.AssertExpectations(t)
+	})
+
+	t.Run("authorized reader (direct share) retrieves the secret", func(t *testing.T) {
+		mockStorage := &MockStorage{}
+		secret := &models.SecretNode{ID: 1, OwnerID: 99, Name: "test-secret"}
+		mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+		mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{
+			{ID: 1, SecretID: 1, RecipientID: 2, IsGroup: false, Permission: "read", CreatedAt: time.Now()},
+		}, nil)
+
+		core := NewKeyorixCore(mockStorage)
+
+		got, err := core.GetSecretWithPermissionCheck(context.Background(), 1, 2)
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, secret.ID, got.ID)
+
+		mockStorage.AssertExpectations(t)
+	})
+
+	t.Run("unauthorized caller (no owner, no share) is rejected before retrieval", func(t *testing.T) {
+		mockStorage := &MockStorage{}
+		secret := &models.SecretNode{ID: 1, OwnerID: 99, Name: "test-secret"}
+		mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+		mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
+		mockStorage.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+
+		core := NewKeyorixCore(mockStorage)
+
+		got, err := core.GetSecretWithPermissionCheck(context.Background(), 1, 2)
+
+		assert.Error(t, err)
+		assert.Nil(t, got)
+
+		mockStorage.AssertExpectations(t)
+	})
+}

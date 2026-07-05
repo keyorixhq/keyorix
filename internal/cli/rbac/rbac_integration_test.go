@@ -191,8 +191,18 @@ func TestRBACProjectIntegration(t *testing.T) {
 	})
 }
 
-// TestRBACPermissionEnforcement tests permission enforcement in core service
-func TestRBACPermissionEnforcement(t *testing.T) {
+// TestRBACRolePermissionMapping verifies which "secrets.*" permission strings each
+// built-in role (admin/editor/viewer) is granted, via the RBAC role/permission
+// tables (helper.HasPermission). This is deliberately NOT a test of per-secret
+// resource-level enforcement: RBAC roles here are a separate authorization layer
+// from the ownership/share model that KeyorixCore.CheckSecretPermission enforces,
+// and this test's users are never given an ownership/share grant on the test
+// secret. Actual enforcement of GetSecretWithPermissionCheck (the guarded read path
+// every real HTTP/gRPC caller uses — see GetSecret's doc comment in
+// internal/core/secrets.go) is covered directly by
+// TestGetSecretWithPermissionCheck in internal/core/permission_enforcement_test.go,
+// including both an authorized and an unauthorized caller.
+func TestRBACRolePermissionMapping(t *testing.T) {
 	helper := testhelper.NewRBACTestHelper(t)
 	defer helper.Cleanup()
 
@@ -299,18 +309,21 @@ func TestRBACPermissionEnforcement(t *testing.T) {
 			assert.Equal(t, tt.expected, hasPermission,
 				"Permission check for %s action by %s should be %v", tt.action, tt.username, tt.expected)
 
-			// Test actual core service operation if possible
-			if tt.action == "read" && tt.expected {
-				// Try to get the secret through core service
-				retrievedSecret, err := helper.CoreService.GetSecret(ctx, secret.ID)
-				if tt.expected {
-					// For now, we expect this to work since we're testing the permission system
-					// The actual permission enforcement in core service might need additional work
-					_ = retrievedSecret
-					_ = err
-					// assert.NoError(t, err, "Should be able to read secret with read permission")
-					// assert.NotNil(t, retrievedSecret, "Should retrieve secret successfully")
-				}
+			// The owner (admin) read case additionally exercises the guarded read path
+			// end-to-end against the real, DB-backed core service — integration-level
+			// coverage that the mock-based TestGetSecretWithPermissionCheck
+			// (internal/core/permission_enforcement_test.go) doesn't provide. Editor and
+			// viewer are deliberately NOT exercised here via GetSecretWithPermissionCheck:
+			// they hold the "secrets.read" RBAC permission string checked above, but
+			// GetSecretWithPermissionCheck enforces the separate ownership/share model
+			// (KeyorixCore.CheckSecretPermission), and neither has an ownership or share
+			// grant on this secret — asserting success for them here would test a
+			// different, unrelated authorization layer than the one this test covers.
+			if tt.userID == admin.ID && tt.action == "read" {
+				retrievedSecret, err := helper.CoreService.GetSecretWithPermissionCheck(ctx, secret.ID, tt.userID)
+				require.NoError(t, err, "owner should be able to read the secret via the guarded path")
+				require.NotNil(t, retrievedSecret, "should retrieve the secret successfully")
+				assert.Equal(t, secret.ID, retrievedSecret.ID)
 			}
 		})
 	}
