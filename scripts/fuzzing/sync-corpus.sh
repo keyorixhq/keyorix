@@ -20,6 +20,22 @@ STATUS="${2:-0}"
 : "${FUZZ_CORPUS_BRANCH:=fuzz-corpus}"
 
 mkdir -p "$FUZZ_CORPUS_WORKTREE/testdata/fuzz"
+
+# Go's fuzz engine only ever creates testdata/fuzz/<FuncName>/ when a target
+# actually CRASHES — never for ordinary coverage-expanding exploration (that
+# non-crashing "new interesting" corpus stays in the local build cache,
+# $GOCACHE/fuzz, and is never written into the source tree). So on any target
+# that hasn't crashed yet, $KEYORIX_REPO/testdata/fuzz doesn't exist at all —
+# this is the normal, expected common case, not an error. Without this guard,
+# rsync's sender failed with "No such file or directory" (exit 23), and
+# because run-rotation.sh calls this script with `set -e` active, that
+# non-zero exit killed the ENTIRE run-rotation.sh process — which systemd's
+# Restart=always then restarted from the top of targets.conf, re-fuzzing the
+# FIRST target instead of advancing to the next one. Confirmed live: the rig
+# had been stuck re-fuzzing target #1 in a 3-hour crash/restart loop since
+# deployment, having never once reached a second target or a corpus commit.
+[ -d "$KEYORIX_REPO/testdata/fuzz" ] || exit 0
+
 rsync -a --update "$KEYORIX_REPO/testdata/fuzz/" "$FUZZ_CORPUS_WORKTREE/testdata/fuzz/"
 
 cd "$FUZZ_CORPUS_WORKTREE"
