@@ -40,6 +40,22 @@ var accessActivityEventTypes = []string{
 	"secret.read", "secret.created", "secret.updated", "secret.rotated",
 }
 
+// secretReadActivityEventTypes / secretWriteActivityEventTypes split
+// accessActivityEventTypes along the two permissions that actually gate these
+// actions (secrets.read vs secrets.write — create/update/rotate are ALL gated by
+// the single secrets.write permission, see auth_bootstrap.go's permission
+// catalog), so a plain-tier grant's dormancy can be credited against the
+// SPECIFIC permission its own bundle confers (#487 round 112), the same
+// per-permission narrowing roleManagementActivityEventTypes/
+// secretsDeletionActivityEventTypes already apply one tier up. Before this
+// split, a read-only grant and a separate write-only grant held by the same
+// user in the same project masked each other via the single combined
+// accessActivityEventTypes/LastUserSecretActivity bucket: exercising either
+// permission satisfied BOTH grants' dormancy check, identical in shape to the
+// admin-tier masking #487/#801 already closed.
+var secretReadActivityEventTypes = []string{"secret.read"}
+var secretWriteActivityEventTypes = []string{"secret.created", "secret.updated", "secret.rotated"}
+
 // roleManagementActivityEventTypes are the audit event types that count as
 // exercising a role-management (roles.assign) capability, one of the two
 // admin-tier activity buckets behind dormant-role-grant detection (#258, narrowed
@@ -121,4 +137,19 @@ func (ls *LocalStorage) LastUserRoleManagementActivity(ctx context.Context, proj
 // exactly which events count.
 func (ls *LocalStorage) LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
 	return ls.lastUserActivityByEventTypes(ctx, projectID, secretsDeletionActivityEventTypes)
+}
+
+// LastUserSecretReadActivity returns the most recent secret.read time per user in
+// the project — the secrets.read half of plain-tier dormant-role-grant detection
+// (#487 round 112). See secretReadActivityEventTypes.
+func (ls *LocalStorage) LastUserSecretReadActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	return ls.lastUserActivityByEventTypes(ctx, projectID, secretReadActivityEventTypes)
+}
+
+// LastUserSecretWriteActivity returns the most recent
+// secret.created/updated/rotated time per user in the project — the
+// secrets.write half of plain-tier dormant-role-grant detection (#487 round
+// 112). See secretWriteActivityEventTypes.
+func (ls *LocalStorage) LastUserSecretWriteActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	return ls.lastUserActivityByEventTypes(ctx, projectID, secretWriteActivityEventTypes)
 }

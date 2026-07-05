@@ -124,6 +124,25 @@ type Storage interface {
 	// activity" signal. Users with no recorded deletion activity are absent from
 	// the map.
 	LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
+	// LastUserSecretReadActivity returns, per user, the most recent secret.read
+	// time attributable to this project — the secrets.read half of plain-tier
+	// dormant-role-grant detection (#487 round 112). Mirrors
+	// LastUserRoleManagementActivity/LastUserSecretDeletionActivity's per-
+	// permission split, one level down from admin-tier: before this, a plain-tier
+	// grant was credited "used" by ANY secret activity (read OR write) in
+	// LastUserSecretActivity regardless of which specific permission (secrets.read
+	// vs secrets.write) the grant's OWN bundle actually confers, so a user holding
+	// a read-only grant AND a separate write-only grant in the same project had
+	// BOTH masked non-dormant by either one's activity. Users with no recorded
+	// read activity are absent from the map.
+	LastUserSecretReadActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
+	// LastUserSecretWriteActivity returns, per user, the most recent
+	// secret.created/updated/rotated time attributable to this project — the
+	// secrets.write half of plain-tier dormant-role-grant detection (#487 round
+	// 112). See LastUserSecretReadActivity's doc for why this is kept separate
+	// rather than folded into one combined signal. Users with no recorded write
+	// activity are absent from the map.
+	LastUserSecretWriteActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
 
 	// Project invitations (ADR-024).
 	CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error)

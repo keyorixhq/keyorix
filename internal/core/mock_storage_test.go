@@ -322,6 +322,22 @@ func (m *MockStorage) LastUserSecretDeletionActivity(ctx context.Context, projec
 	return args.Get(0).(map[uint]time.Time), args.Error(1)
 }
 
+func (m *MockStorage) LastUserSecretReadActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]time.Time), args.Error(1)
+}
+
+func (m *MockStorage) LastUserSecretWriteActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]time.Time), args.Error(1)
+}
+
 func (m *MockStorage) CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy) (*models.SoDPolicy, error) {
 	args := m.Called(ctx, p)
 	if args.Get(0) == nil {
