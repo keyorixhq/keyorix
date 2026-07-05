@@ -15,12 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # Fetch exactly enough history to see every commit in this PR (plus
-          # one, for the merge-base) — NOT fetch-depth: 0. A full-history fetch
-          # pulls every OTHER branch in the repo too (actions/checkout's own
-          # documented behavior), which is unrelated noise for a check that
-          # only needs this PR's own commit range.
-          fetch-depth: ${{ github.event.pull_request.commits + 1 }}
+          # A generous fixed depth — NOT fetch-depth: 0 (fetches every OTHER
+          # branch in the repo too, per actions/checkout's own docs) and NOT
+          # `github.event.pull_request.commits + 1` (this workflow originally
+          # shipped with that expression; GitHub Actions' ${{ }} expressions
+          # don't support arithmetic operators at all, so GitHub silently
+          # rejected the whole file as unparseable — zero jobs ran, and it
+          # surfaced as a generic push-event failure rather than a visible
+          # check failure on any PR, since a workflow that fails to parse
+          # can't post a check run for the PR that would have triggered it).
+          # 100 comfortably covers this repo's real PR sizes.
+          fetch-depth: 100
 
       # Self-contained check (no third-party Action/GitHub App) — mirrors this
       # repo's existing preference for pinned binaries/inline scripts over
