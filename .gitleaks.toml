@@ -18,6 +18,8 @@ description = "Demo / docs / scripts / test fixtures — non-real sample credent
 regexes = [
   '''keyorix-audit-checkpoint-v1''',
   '''keyorix-evidence-signature-v1''',
+  '''keyorix-evidence-signature-kek-v2''',
+  '''keyorix-evidence-signature-kek-id-v2''',
 ]
 paths = [
   '''demo/.*''',
