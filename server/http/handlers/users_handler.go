@@ -91,6 +91,28 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 	if u.LoginLockedUntil != nil && time.Now().Before(*u.LoginLockedUntil) {
 		out["login_locked_until"] = u.LoginLockedUntil.UTC().Format(time.RFC3339)
 	}
+	// #500: also surface the raw lockout-accounting counters, not just the derived
+	// "is currently locked" fact above. This endpoint is only reachable with the
+	// users.read/users.write permission (server/http/router.go) — the same
+	// admin-level trust boundary that already sees account_state, active, and (just
+	// above) an active login_locked_until, and that already has UnlockUser authority
+	// over this exact state; the self-service /auth/profile endpoint is a completely
+	// separate handler (auth.go's userProfileMap) that never reaches this function, so
+	// no lower-trust caller gains visibility here. Exposing these matters beyond mere
+	// admin-UI completeness: under storage.type: remote, checkLockAndClearLoginFailures
+	// (internal/core/login_lockout.go) reads this exact response (via LockUserForUpdate,
+	// which is just GetUser over HTTP) to decide its "nothing to clear" fast path;
+	// without these fields on the wire that path always read a false all-zero snapshot
+	// and silently skipped even the operator-visible "lockout accounting is INERT"
+	// warning whenever an account had accumulated (but not yet tripped) failures — the
+	// "fail open" half of that design worked, but the "loudly" half silently didn't,
+	// from this call path.
+	out["failed_login_attempts"] = u.FailedLoginAttempts
+	out["login_lockout_count"] = u.LoginLockoutCount
+	out["last_failed_login_at"] = nil
+	if u.LastFailedLoginAt != nil {
+		out["last_failed_login_at"] = u.LastFailedLoginAt.UTC().Format(time.RFC3339)
+	}
 	return out
 }
 
