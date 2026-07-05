@@ -106,21 +106,30 @@ double-migration hazard).
     too — **delivered.** An opt-in scheduler (`audit_checkpoints.enabled`, HA-gated)
     periodically writes an `audit_checkpoints` row recording the verified
     `(chained_events, head_id, head_hash)` plus an **HMAC-SHA256 signature** keyed
-    by a key the running server holds in memory but the database/DBA does not — it
-    is HKDF-derived from the DEK (`encryption.Service.AuditCheckpointKey`, info
-    `keyorix-audit-checkpoint-v1`), so signed checkpoints require encryption
-    enabled. `VerifyAuditChain` then verifies the live chain against the latest
-    checkpoint. The checkpoint is **authenticated first** (the HMAC covers every
-    field, so nothing it claims — including `key_version` — is trusted until the
-    signature verifies under the current key); then a chain shorter than the
-    certified length, or a rewritten certified head, flips `valid` to false with a
-    `checkpoint_reason` — catching the tail-truncation / genesis re-seed the bare
-    re-walk cannot. A checkpoint row altered in **any** field without the key fails
-    the signature check and is reported as a tamper signal — there is deliberately
-    no unauthenticated field (e.g. `key_version`) a DB-level actor can edit to skip
-    enforcement. A new checkpoint is refused over a chain shorter than an
-    authenticated prior checkpoint, so a truncation is never silently re-baselined
-    away. Surfaced as `checkpointed`/`checkpoint_reason` on `/audit/verify` and in
+    by a key the running server holds in memory but the database/DBA does not —
+    it is HKDF-derived from the **KEK** (`encryption.Service.AuditCheckpointKey`,
+    info `keyorix-audit-checkpoint-kek-v2`; **#502, corrected 2026-07-05** — it was
+    originally HKDF-derived from the DEK, info `keyorix-audit-checkpoint-v1`, which
+    meant every routine `RotateDEKWithSweep` followed by a server restart caused
+    every existing checkpoint to fail its signature check, so `VerifyAuditChain`
+    reported the whole trail invalid until the next checkpoint write re-baselined
+    it — a real, if self-healing, false-tamper-alarm on every DEK rotation. Mirrors
+    the identical #268 fix for the evidence-signing key: the KEK is untouched by a
+    routine DEK rotation and only changes on a rare, deliberate KEK-provider
+    migration, so a checkpoint signed before a DEK rotation now stays verifiable
+    after one, with no window where `keyorix audit verify` falsely reports
+    tampering), so signed checkpoints require encryption enabled. `VerifyAuditChain`
+    then verifies the live chain against the latest checkpoint. The checkpoint is
+    **authenticated first** (the HMAC covers every field, so nothing it claims —
+    including `key_version` — is trusted until the signature verifies under the
+    current key); then a chain shorter than the certified length, or a rewritten
+    certified head, flips `valid` to false with a `checkpoint_reason` — catching
+    the tail-truncation / genesis re-seed the bare re-walk cannot. A checkpoint row
+    altered in **any** field without the key fails the signature check and is
+    reported as a tamper signal — there is deliberately no unauthenticated field
+    (e.g. `key_version`) a DB-level actor can edit to skip enforcement. A new
+    checkpoint is refused over a chain shorter than an authenticated prior
+    checkpoint, so a truncation is never silently re-baselined away. Surfaced as `checkpointed`/`checkpoint_reason` on `/audit/verify` and in
     `keyorix audit verify`.
   - **Checkpoint-write serialization (#300):** `WriteAuditCheckpoint` is reachable
     from three unsynchronized triggers — the scheduler tick, the HTTP
@@ -139,7 +148,7 @@ double-migration hazard).
     per-append lock key). Unlike the scheduler's own `WithSchedulerLock` (a "try"
     lock that skips a tick on contention), this blocks until free, so an
     operator-triggered write racing the scheduler is serialized, not dropped.
-  - **DEK rotation:** a checkpoint signed under a superseded DEK cannot be
+  - **Key rotation:** a checkpoint signed under a superseded signing key cannot be
     re-verified on-box, so after a rotation `verify` fails closed (reports invalid)
     until the next checkpoint write re-baselines under the new key — the scheduler
     does this on its next tick / at startup, and an operator can force it
@@ -147,7 +156,10 @@ double-migration hazard).
     system.write). `WriteAuditCheckpoint` re-baselines over an *unverifiable* prior
     checkpoint but still refuses over an *authenticated* truncation. Trusting the
     unauthenticated `key_version` to suppress that alarm was rejected — it would let
-    an attacker forge the rotation case to mask a truncation.
+    an attacker forge the rotation case to mask a truncation. **Since #502** the
+    signing key is KEK-derived, not DEK-derived (see above), so a routine
+    `RotateDEKWithSweep` no longer triggers this at all — only a genuine
+    KEK-provider migration (ADR-041, a far rarer, deliberate operator action) does.
   - **Residual (honest scope):** enforcement consults the latest checkpoint row.
     A DB-level actor who can write `audit_checkpoints` can therefore *neutralise*
     on-box enforcement — delete every row, or overwrite the latest slot with an

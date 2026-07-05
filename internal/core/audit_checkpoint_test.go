@@ -283,9 +283,12 @@ func TestAuditCheckpoint_TamperedKeyVersionDetected(t *testing.T) {
 	assert.Contains(t, v.CheckpointReason, "does not verify under the current signing key")
 }
 
-// After a genuine DEK rotation the prior checkpoint cannot be re-verified, so
-// verify reports invalid until the next checkpoint write re-baselines under the
-// new key — and that write must succeed (no deadlock).
+// After a genuine signing-key rotation (a KEK-provider migration — since #502 the
+// audit-checkpoint key is KEK-derived, so a routine DEK rotation no longer changes
+// it at all; see TestAuditCheckpointKey_StableAcrossDEKRotation in the encryption
+// package) the prior checkpoint cannot be re-verified, so verify reports invalid
+// until the next checkpoint write re-baselines under the new key — and that write
+// must succeed (no deadlock).
 func TestAuditCheckpoint_RotationRebaselines(t *testing.T) {
 	ctx := context.Background()
 	c, _ := newCheckpointCore(t)
@@ -293,7 +296,9 @@ func TestAuditCheckpoint_RotationRebaselines(t *testing.T) {
 	_, _, err := c.WriteAuditCheckpoint(ctx) // signed under "v1"
 	require.NoError(t, err)
 
-	// Rotate the DEK → a new signing key + version.
+	// Simulate a KEK-provider migration → a new signing key + version wired in at
+	// the next server startup (SetAuditCheckpointKey is only called at startup; see
+	// server/main.go).
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x9}, 32), "v2")
 
 	// The stale "v1" checkpoint no longer verifies → flagged (fail closed).

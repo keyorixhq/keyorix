@@ -219,13 +219,16 @@ type KeyorixCore struct {
 	// setupBaseURL is the absolute base (e.g. https://keyorix.acme.internal) used to
 	// build setup links. Required to mint a link; a relative link is a misconfig.
 	setupBaseURL string
-	// auditCkptKey signs/verifies audit-chain checkpoints (ADR-029): a DEK-derived
-	// HMAC key the database/DBA does not hold. nil = signed checkpoints unavailable
+	// auditCkptKey signs/verifies audit-chain checkpoints (ADR-029): a KEK-derived
+	// HMAC key the database/DBA does not hold (#502 — mirroring #268's fix for the
+	// evidence-signing key: deriving from the KEK rather than the DEK means a
+	// routine DEK rotation does not affect it, so a checkpoint signed before a DEK
+	// rotation stays verifiable after one). nil = signed checkpoints unavailable
 	// (encryption disabled), in which case WriteAuditCheckpoint is a no-op and
 	// VerifyAuditChain runs without on-box checkpoint enforcement. Set at startup
-	// via SetAuditCheckpointKey. auditCkptKeyVersion records which DEK version it
-	// was derived from, so a checkpoint signed under a superseded key is not
-	// enforced after a DEK rotation.
+	// via SetAuditCheckpointKey. auditCkptKeyVersion records the KEK-derived key's
+	// own fingerprint, so a checkpoint signed under a superseded key (a genuine
+	// KEK-provider migration, far rarer than a DEK rotation) is not enforced.
 	auditCkptKey        []byte
 	auditCkptKeyVersion string
 	// tokenCacheInvalidator evicts a bearer token from the HTTP auth cache by its hash.

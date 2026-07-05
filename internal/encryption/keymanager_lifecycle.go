@@ -70,7 +70,28 @@ type KeyManager struct {
 	// before. Never persisted to disk — held only in memory, like currentDEK.
 	evidenceSignKey   []byte
 	evidenceSignKeyID string
-	mu                sync.RWMutex
+	// auditCheckpointKey/auditCheckpointKeyID are a 32-byte HMAC key and its public
+	// fingerprint, derived from the KEK (NOT the DEK) via HKDF-SHA256 at Initialize
+	// time — before the KEK is wiped below. Used to sign/verify audit-chain
+	// checkpoints (ADR-029, internal/core/audit_checkpoint.go). Deriving from the
+	// KEK rather than the DEK is the point (#502, mirroring #268's fix for
+	// evidenceSignKey above): a routine DEK rotation (RotateDEKWithSweep, ADR-010)
+	// re-wraps a brand-new DEK under the SAME KEK, so this key — and its
+	// fingerprint — is completely unaffected by it, and a checkpoint signed before a
+	// DEK rotation stays verifiable after one (previously, deriving from the DEK
+	// meant every DEK rotation followed by a server restart caused every existing
+	// checkpoint to fail its signature check and `audit verify` to report the trail
+	// invalid until the next checkpoint write re-baselined it — a real, if
+	// self-healing, false-tamper-alarm window). Only a genuine KEK change
+	// (KEK-provider migration, RewrapDEK / ADR-041 — a far rarer, deliberate
+	// operator action) changes it; when that happens the existing superseded-key
+	// handling in enforceAuditCheckpoint/writeAuditCheckpointLocked correctly
+	// treats the stale checkpoint as needing re-baselining rather than as tampered,
+	// same as before. Never persisted to disk — held only in memory, like
+	// currentDEK/evidenceSignKey.
+	auditCheckpointKey   []byte
+	auditCheckpointKeyID string
+	mu                   sync.RWMutex
 }
 
 // evidenceSignKeyInfo/evidenceSignKeyIDInfo domain-separate the evidence-signing
@@ -79,6 +100,16 @@ type KeyManager struct {
 const (
 	evidenceSignKeyInfo   = "keyorix-evidence-signature-kek-v2"
 	evidenceSignKeyIDInfo = "keyorix-evidence-signature-kek-id-v2"
+)
+
+// auditCheckpointKeyInfo/auditCheckpointKeyIDInfo domain-separate the
+// audit-checkpoint signing key (and its public fingerprint) from any other use of
+// the KEK (HKDF info parameter). Bump the suffix only if the derivation scheme
+// changes. The "-v1" DEK-derived label this superseded (#502) remains allowlisted
+// in .gitleaks.toml for historical/git-blame reasons but is no longer used.
+const (
+	auditCheckpointKeyInfo   = "keyorix-audit-checkpoint-kek-v2"
+	auditCheckpointKeyIDInfo = "keyorix-audit-checkpoint-kek-id-v2"
 )
 
 // deriveEvidenceSignKey derives the 32-byte evidence-signing HMAC key and its
@@ -100,6 +131,27 @@ func deriveEvidenceSignKey(kek []byte) (key []byte, keyID string, err error) {
 		return nil, "", fmt.Errorf("derive evidence-signing key id: %w", err)
 	}
 	return key, "esk-" + hex.EncodeToString(idBytes), nil
+}
+
+// deriveAuditCheckpointKey derives the 32-byte audit-checkpoint-signing HMAC key
+// and its 16-byte public key-ID fingerprint from kek via HKDF-SHA256, exactly
+// mirroring deriveEvidenceSignKey above (independently domain-separated so
+// neither output reveals anything about the other, or about the KEK itself).
+// Both are pure, deterministic functions of the KEK alone, so they are stable
+// across a DEK rotation (same KEK) and only change when the KEK itself does.
+func deriveAuditCheckpointKey(kek []byte) (key []byte, keyID string, err error) {
+	keyR := hkdf.New(sha256.New, kek, nil, []byte(auditCheckpointKeyInfo))
+	key = make([]byte, 32)
+	if _, err = io.ReadFull(keyR, key); err != nil {
+		return nil, "", fmt.Errorf("derive audit-checkpoint key: %w", err)
+	}
+	idR := hkdf.New(sha256.New, kek, nil, []byte(auditCheckpointKeyIDInfo))
+	idBytes := make([]byte, 16)
+	if _, err = io.ReadFull(idR, idBytes); err != nil {
+		wipeBytes(key)
+		return nil, "", fmt.Errorf("derive audit-checkpoint key id: %w", err)
+	}
+	return key, "ack-" + hex.EncodeToString(idBytes), nil
 }
 
 // SetKeyProvider configures where the KEK comes from. Must be called before
@@ -175,9 +227,19 @@ func (km *KeyManager) Initialize(passphrase string) error {
 		return fmt.Errorf("failed to derive evidence-signing key: %w", err)
 	}
 
+	// Derive the audit-checkpoint signing key from the KEK too (#502), for the same
+	// reason: NOT from dek, so a checkpoint signed before a DEK rotation stays
+	// verifiable after one.
+	ack, ackID, err := deriveAuditCheckpointKey(kek)
+	if err != nil {
+		return fmt.Errorf("failed to derive audit-checkpoint key: %w", err)
+	}
+
 	km.currentDEK = dek
 	km.evidenceSignKey = esk
 	km.evidenceSignKeyID = eskID
+	km.auditCheckpointKey = ack
+	km.auditCheckpointKeyID = ackID
 	return nil
 }
 

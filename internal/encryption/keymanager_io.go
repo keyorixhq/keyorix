@@ -41,6 +41,20 @@ func (km *KeyManager) GetEvidenceSignKey() (key []byte, keyID string, ok bool) {
 	return key, km.evidenceSignKeyID, true
 }
 
+// GetAuditCheckpointKey returns a copy of the KEK-derived audit-checkpoint signing
+// key and its fingerprint ("key version"), or ok=false if the manager has not been
+// initialized (no KEK has been derived yet, so no checkpoint-signing key exists).
+func (km *KeyManager) GetAuditCheckpointKey() (key []byte, keyID string, ok bool) {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+	if len(km.auditCheckpointKey) == 0 {
+		return nil, "", false
+	}
+	key = make([]byte, len(km.auditCheckpointKey))
+	copy(key, km.auditCheckpointKey)
+	return key, km.auditCheckpointKeyID, true
+}
+
 // ValidateKeyFiles checks that key files exist and have correct permissions (0600).
 func (km *KeyManager) ValidateKeyFiles() error {
 	files := []securefiles.FilePermSpec{
@@ -59,7 +73,8 @@ func (km *KeyManager) FixKeyFilePermissions() error {
 	return securefiles.FixFilePerms(files, true)
 }
 
-// Wipe securely removes the DEK and the evidence-signing key from memory.
+// Wipe securely removes the DEK, the evidence-signing key, and the
+// audit-checkpoint signing key from memory.
 func (km *KeyManager) Wipe() {
 	km.mu.Lock()
 	defer km.mu.Unlock()
@@ -71,5 +86,9 @@ func (km *KeyManager) Wipe() {
 	if km.evidenceSignKey != nil {
 		wipeBytes(km.evidenceSignKey)
 		km.evidenceSignKey = nil
+	}
+	if km.auditCheckpointKey != nil {
+		wipeBytes(km.auditCheckpointKey)
+		km.auditCheckpointKey = nil
 	}
 }

@@ -4,12 +4,13 @@
 // row detectable, but an unanchored on-box re-walk cannot catch tail-truncation
 // or a genesis re-seed: a shorter, self-consistent chain still verifies. A
 // checkpoint closes that gap on-box. It records (chained_events, head_id,
-// head_hash) and signs them with an HMAC keyed by a DEK-derived key the running
+// head_hash) and signs them with an HMAC keyed by a KEK-derived key the running
 // server holds in memory but the database/DBA does not (see
-// encryption.Service.AuditCheckpointKey). Verifying the live chain against the
-// latest signed checkpoint then detects a drop below the certified length or a
-// rewrite of the certified head — tampering a DB-level actor cannot hide without
-// the signing key.
+// encryption.Service.AuditCheckpointKey — derived from the KEK rather than the
+// DEK, #502, so a routine DEK rotation does not affect it). Verifying the live
+// chain against the latest signed checkpoint then detects a drop below the
+// certified length or a rewrite of the certified head — tampering a DB-level
+// actor cannot hide without the signing key.
 package core
 
 import (
@@ -38,8 +39,8 @@ import (
 // the in-memory watermark. See ADR-029.
 const auditHighWaterKey = "audit_checkpoint_highwater" // #nosec G101 -- metadata key name, not a credential
 
-// SetAuditCheckpointKey wires the DEK-derived HMAC key (and the DEK key version
-// it was derived from) used to sign and verify audit checkpoints. Called at
+// SetAuditCheckpointKey wires the KEK-derived HMAC key (and its own fingerprint,
+// used as the "key version") used to sign and verify audit checkpoints. Called at
 // startup when encryption is enabled; with no key set, checkpoints are
 // unavailable and VerifyAuditChain runs without on-box checkpoint enforcement.
 func (c *KeyorixCore) SetAuditCheckpointKey(key []byte, keyVersion string) {
@@ -183,9 +184,10 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 	}
 	// Refuse to re-baseline over a truncation that an AUTHENTICATED prior checkpoint
 	// proves — otherwise a scheduled write would silently bless a shortened chain and
-	// erase the evidence. An unverifiable prior checkpoint (a stale one after a DEK
-	// rotation) does not block re-baselining; that is how the system recovers from a
-	// key rotation.
+	// erase the evidence. An unverifiable prior checkpoint (a stale one after a
+	// signing-key change — a KEK-provider migration; a routine DEK rotation no
+	// longer affects this KEK-derived key, #502) does not block re-baselining; that
+	// is how the system recovers from a key rotation.
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
 		return nil, err
@@ -199,7 +201,7 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 			}
 		} else if cp.KeyVersion == c.auditCkptKeyVersion {
 			// The prior checkpoint claims the CURRENT signing-key version yet fails its
-			// signature. That is tampering, not a DEK rotation (a rotation would carry a
+			// signature. That is tampering, not a key rotation (a rotation would carry a
 			// superseded key_version). Re-baselining here would let a DB-level actor
 			// launder a tail-truncation by flipping one signature byte: the read path
 			// flags this as Valid=false, but a silent re-baseline would write a fresh,
@@ -207,8 +209,10 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 			// closed and leave the tamper signal standing for an operator to investigate.
 			return nil, fmt.Errorf("refusing to checkpoint: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", cp.ID, cp.KeyVersion)
 		}
-		// else: signature fails AND key_version is superseded → consistent with a DEK
-		// rotation; fall through and re-baseline under the new key (recovery path).
+		// else: signature fails AND key_version is superseded → consistent with a
+		// signing-key rotation (a KEK-provider migration, since #502 — a routine DEK
+		// rotation no longer changes this key at all); fall through and re-baseline
+		// under the new key (recovery path).
 	}
 	// Refuse to checkpoint a chain that sits below the certified high-water mark —
 	// otherwise a scheduled write would launder a truncation into a fresh, authentic
@@ -250,11 +254,13 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 // shortfall or head rewrite flips Valid to false.
 //
 // A signature that does not verify is treated as a tamper signal (Valid=false). It
-// also fires for a stale checkpoint signed under a superseded DEK version after a
-// key rotation — by design: we cannot re-verify an old-key signature on-box, and
-// silently trusting the unauthenticated key_version field would reopen the bypass.
-// WriteAuditCheckpoint re-baselines under the new key (it does not block on an
-// unverifiable checkpoint), clearing the state on the next checkpoint write.
+// also fires for a stale checkpoint signed under a superseded key version after a
+// signing-key rotation (a KEK-provider migration — since #502 the signing key is
+// KEK-derived, so a routine DEK rotation no longer triggers this at all) — by
+// design: we cannot re-verify an old-key signature on-box, and silently trusting
+// the unauthenticated key_version field would reopen the bypass. WriteAuditCheckpoint
+// re-baselines under the new key (it does not block on an unverifiable checkpoint),
+// clearing the state on the next checkpoint write.
 func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.AuditChainVerification) error {
 	if !c.AuditCheckpointsAvailable() {
 		return nil
@@ -292,7 +298,7 @@ func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.Aud
 
 	if !c.checkpointSignatureValid(cp) {
 		c.failCheckpoint(v, nil,
-			fmt.Sprintf("audit checkpoint #%d does not verify under the current signing key — the checkpoint was tampered, or a DEK rotation occurred and no fresh checkpoint has been written yet", cp.ID))
+			fmt.Sprintf("audit checkpoint #%d does not verify under the current signing key — the checkpoint was tampered, or a KEK-provider migration occurred and no fresh checkpoint has been written yet", cp.ID))
 		return nil
 	}
 	reason, tampered, err := c.checkpointTruncation(ctx, v.ChainedEvents, cp)
@@ -449,9 +455,11 @@ func parseAuditHighWater(val string) (cp *models.AuditCheckpoint, sig string, ok
 //     (enforceAuditCheckpoint), which has never had a superseded-key exception.
 //   - strict=false (the WRITE/recovery path, WriteAuditCheckpoint, and the
 //     non-enforcing SeedAuditWatermark/advanceAuditHighWater callers): a sig
-//     failure under a claimed-superseded key_version is treated as a genuine DEK
-//     rotation and ignored, so the system can still self-heal by writing a fresh,
-//     correctly-signed checkpoint under the new key. This does not reopen #110:
+//     failure under a claimed-superseded key_version is treated as a genuine
+//     signing-key rotation (a KEK-provider migration; since #502 a routine DEK
+//     rotation no longer changes this key) and ignored, so the system can still
+//     self-heal by writing a fresh, correctly-signed checkpoint under the new
+//     key. This does not reopen #110:
 //     the very next VerifyAuditChain call uses strict=true and will flag the
 //     stale/unverifiable mark until that fresh write actually happens.
 func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context, strict bool) (floor int64, found, tampered bool, reason string, err error) {
@@ -484,12 +492,13 @@ func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context, strict bool) (flo
 			return 0, false, false, "", cerr
 		} else if exists {
 			return floor, true, true,
-				fmt.Sprintf("audit high-water mark fails its signature (claiming key version %q) while signed checkpoints exist — an unverifiable key_version claim is not trusted as proof of a DEK rotation", cp.KeyVersion), nil
+				fmt.Sprintf("audit high-water mark fails its signature (claiming key version %q) while signed checkpoints exist — an unverifiable key_version claim is not trusted as proof of a key rotation", cp.KeyVersion), nil
 		}
 	}
 	// Lenient path, or no checkpoint exists yet to protect: signature fails and
-	// key_version is (claimed) superseded → consistent with a DEK rotation; ignore
-	// the stale mark (the next checkpoint write re-establishes it under the new key).
+	// key_version is (claimed) superseded → consistent with a signing-key rotation
+	// (a KEK-provider migration); ignore the stale mark (the next checkpoint write
+	// re-establishes it under the new key).
 	return floor, true, false, "", nil
 }
 
