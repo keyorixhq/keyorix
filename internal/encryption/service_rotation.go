@@ -232,6 +232,35 @@ func (s *Service) AcquireExclusiveKeyLock() error {
 	return nil
 }
 
+// AcquireSharedKeyLock takes a shared, non-blocking OS advisory lock on the same
+// key-directory lock file AcquireExclusiveKeyLock uses (#196). It is for local,
+// short-lived CLI commands that read (or, for upgrade-aad, write under) the
+// CURRENT DEK without themselves rotating it — status/validate/fix-perms/
+// upgrade-aad/init. Unlike AcquireExclusiveKeyLock, any number of Services can
+// hold the shared lock at the same time, so ordinary concurrent CLI invocations
+// never contend with each other over it — but it is refused outright while a
+// live server or an in-progress rotation/migrate-provider holds the lock
+// exclusively, so those commands fail fast instead of racing a DEK that's
+// concurrently being replaced. Released by Shutdown, same as the exclusive
+// lock. Idempotent: a second call while this Service already holds either kind
+// of lock is a no-op.
+func (s *Service) AcquireSharedKeyLock() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("encryption service not initialized")
+	}
+	if s.serverLock != nil {
+		return nil
+	}
+	f, err := acquireSharedKeyLock(s.keyManager.baseDir)
+	if err != nil {
+		return err
+	}
+	s.serverLock = f
+	return nil
+}
+
 // Shutdown cleanly wipes the DEK from memory and releases the exclusive key
 // lock, if this Service was holding one.
 func (s *Service) Shutdown() {
@@ -240,7 +269,7 @@ func (s *Service) Shutdown() {
 	if s.keyManager != nil {
 		s.keyManager.Wipe()
 	}
-	releaseExclusiveKeyLock(s.serverLock)
+	releaseKeyLock(s.serverLock)
 	s.serverLock = nil
 	s.initialized = false
 }
