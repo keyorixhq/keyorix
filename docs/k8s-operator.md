@@ -43,6 +43,20 @@ helm upgrade keyorix-operator deploy/helm/keyorix-operator -n keyorix-system \
   --set replicas=2 --set leaderElection=true
 ```
 
+By default a single operator instance watches `KeyorixSecret` CRs across every namespace in
+the cluster, so its RBAC (`ClusterRole`) is bound cluster-wide via a `ClusterRoleBinding` —
+the only way to grant access to a namespace it can't predict ahead of time. If your
+deployment instead runs one operator instance per namespace (or per bounded tenant set), set
+`watchNamespaces` to scope both the manager's watch and its RBAC binding down to a
+namespace-scoped `RoleBinding` per listed namespace:
+
+```sh
+helm install keyorix-operator-team-a deploy/helm/keyorix-operator -n team-a \
+  --set 'watchNamespaces={team-a}'
+```
+
+See the chart's [README](../deploy/helm/keyorix-operator/README.md#rbac) for details.
+
 ## Usage
 
 1. Create a least-privilege machine-identity token (ADR-030) Secret in your app

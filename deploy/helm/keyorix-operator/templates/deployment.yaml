@@ -36,6 +36,9 @@ spec:
             - "-health-probe-bind-address=:{{ .Values.healthPort | default 8081 }}"
             - "-metrics-bind-address=:{{ .Values.metricsPort | default 8080 }}"
             - "-leader-elect={{ .Values.leaderElection | default false }}"
+            {{- if .Values.watchNamespaces }}
+            - "-watch-namespaces={{ join "," .Values.watchNamespaces }}"
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort | default 8080 }}

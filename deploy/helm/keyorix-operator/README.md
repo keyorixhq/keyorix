@@ -21,14 +21,33 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 | `leaderElection` | Run >1 replica safely via a lease in the release namespace (default `false`) |
 | `metricsPort` / `healthPort` | Manager metrics (`/metrics`) and probe (`/healthz`,`/readyz`) ports |
 | `serviceAccount.create` / `serviceAccount.name` | ServiceAccount control |
+| `watchNamespaces` | Restrict this instance (and its RBAC) to these namespaces instead of the whole cluster — see [RBAC](#rbac) |
 | `resources`, `nodeSelector`, `tolerations`, `affinity`, `podAnnotations` | Standard pod scheduling/resourcing |
 
 ## RBAC
 
 A `ClusterRole` grants read on `keyorixsecrets` (+ status/finalizers) and
-get/list/watch/create/update/patch on `secrets`. A namespaced `Role` grants the lease +
-event access leader election needs. The operator reads secret **values** only through the
-Keyorix API (with each `KeyorixSecret`'s machine token) — never from the cluster.
+get/list/watch/create/update/patch/delete on `secrets` (`delete` is used only to remove the
+target Secret once the upstream Keyorix reference is confirmed gone). A namespaced `Role`
+grants the lease + event access leader election needs. The operator reads secret **values**
+only through the Keyorix API (with each `KeyorixSecret`'s machine token) — never from the
+cluster.
+
+By default a single operator instance watches `KeyorixSecret` CRs across every namespace in
+the cluster, so the `ClusterRole` above is bound cluster-wide via a `ClusterRoleBinding`. If
+you instead run one operator instance per namespace (or per bounded tenant set), set
+`watchNamespaces` to that instance's namespace(s):
+
+```sh
+helm install keyorix-operator-team-a deploy/helm/keyorix-operator -n team-a \
+  --set 'watchNamespaces={team-a}'
+```
+
+This passes `-watch-namespaces` to the manager (restricting its own watch/cache to those
+namespaces too) and swaps the cluster-wide `ClusterRoleBinding` for a namespace-scoped
+`RoleBinding` in each listed namespace — the same `ClusterRole` stays cluster-scoped (a
+Kubernetes RBAC object type), but its granted access is limited to the bound namespaces. Do
+not deploy more than one instance watching the same namespace with different configs.
 
 ## Uninstalling
 
