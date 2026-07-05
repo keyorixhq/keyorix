@@ -117,6 +117,35 @@ func loadConfig() (*config.Config, error) {
 	return cfg, nil
 }
 
+// initLocalKeyOpService constructs and initializes the encryption.Service for a
+// short-lived, LOCAL key-management CLI operation — status/validate/fix-perms/
+// upgrade-aad/init — and has it participate in the same cross-process lock
+// coordination the server (held for its whole lifetime) and rotate/migrate-
+// provider (held for the duration of their write) already use (#92/#195/#196).
+// None of these commands rotate the DEK themselves, so they take the SHARED
+// side of the lock: any number of them can run concurrently with each other,
+// but every one is refused while a live server or an in-progress rotation/
+// migrate-provider holds the lock exclusively — instead of silently reading
+// (or, for upgrade-aad, writing under) a DEK that's concurrently being
+// replaced. cleanPendingDEK matches upgrade-aad/rotate's existing convention of
+// clearing a leftover dek.key.pending from an interrupted rotation before
+// initializing. Callers must `defer service.Shutdown()` on success to release
+// the lock.
+func initLocalKeyOpService(cfg *config.Config, baseDir, passphrase string, cleanPendingDEK bool) (*encryption.Service, error) {
+	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+	if cleanPendingDEK {
+		service.CleanPendingDEK()
+	}
+	if err := service.Initialize(passphrase); err != nil {
+		return nil, fmt.Errorf("failed to initialize encryption: %w", err)
+	}
+	if err := service.AcquireSharedKeyLock(); err != nil {
+		service.Shutdown()
+		return nil, fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
+	}
+	return service, nil
+}
+
 func runInit(cmd *cobra.Command, args []string) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -129,17 +158,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	baseDir, _ := os.Getwd()
-	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
-
 	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println("🔐 Initializing encryption...")
-	if err := service.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize encryption: %w", err)
+	service, err := initLocalKeyOpService(cfg, baseDir, passphrase, false)
+	if err != nil {
+		return err
 	}
+	defer service.Shutdown()
 
 	fmt.Println("✅ Encryption initialized successfully")
 	fmt.Printf("📋 Key version: %s\n", service.GetKeyVersion())
@@ -163,17 +192,18 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	baseDir, _ := os.Getwd()
-	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
-
 	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		fmt.Printf("⚠️  %v\n", err)
 		return nil
 	}
-	if err := service.Initialize(passphrase); err != nil {
-		fmt.Printf("❌ Initialization failed: %v\n", err)
+
+	service, err := initLocalKeyOpService(cfg, baseDir, passphrase, false)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
 		return nil
 	}
+	defer service.Shutdown()
 
 	fmt.Printf("Initialized: ✅\n")
 	fmt.Printf("Key Version: %s\n", service.GetKeyVersion())
@@ -262,15 +292,14 @@ func upgradeAADWithConfig(cfg *config.Config) error {
 	}
 
 	baseDir, _ := os.Getwd()
-	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
-
 	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		return err
 	}
-	service.CleanPendingDEK()
-	if err := service.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize encryption: %w", err)
+
+	service, err := initLocalKeyOpService(cfg, baseDir, passphrase, true)
+	if err != nil {
+		return err
 	}
 	defer service.Shutdown()
 
@@ -306,14 +335,17 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	return validateWithConfig(cfg)
+}
 
+// validateWithConfig is the testable core of runValidate.
+func validateWithConfig(cfg *config.Config) error {
 	if !cfg.Storage.Encryption.Enabled {
 		fmt.Println("ℹ️  Encryption is disabled - nothing to validate")
 		return nil
 	}
 
 	baseDir, _ := os.Getwd()
-	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
 	fmt.Println("🔍 Validating encryption setup...")
 
@@ -321,10 +353,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := service.Initialize(passphrase); err != nil {
-		fmt.Printf("❌ Initialization failed: %v\n", err)
+
+	service, err := initLocalKeyOpService(cfg, baseDir, passphrase, false)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
 		return err
 	}
+	defer service.Shutdown()
 
 	if err := service.ValidateKeyFiles(); err != nil {
 		fmt.Printf("❌ Key file validation failed: %v\n", err)
@@ -341,21 +376,26 @@ func runFixPerms(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	return fixPermsWithConfig(cfg)
+}
 
+// fixPermsWithConfig is the testable core of runFixPerms.
+func fixPermsWithConfig(cfg *config.Config) error {
 	if !cfg.Storage.Encryption.Enabled {
 		return fmt.Errorf("encryption is disabled in configuration")
 	}
 
 	baseDir, _ := os.Getwd()
-	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
-
 	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		return err
 	}
-	if err := service.Initialize(passphrase); err != nil {
-		return fmt.Errorf("failed to initialize encryption: %w", err)
+
+	service, err := initLocalKeyOpService(cfg, baseDir, passphrase, false)
+	if err != nil {
+		return err
 	}
+	defer service.Shutdown()
 
 	fmt.Println("🔧 Fixing key file permissions...")
 	if err := service.FixKeyFilePermissions(); err != nil {
