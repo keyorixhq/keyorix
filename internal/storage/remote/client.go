@@ -258,6 +258,29 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 		return &APIResponse{Success: true}, nil
 	}
 
+	// Any 4xx/5xx status is unconditionally a failure (#501): parse the body
+	// for the server's actual structured error detail and return it as an
+	// error, rather than sometimes returning a "successful round trip with
+	// Success:false" *APIResponse (the old behavior when the body didn't
+	// unmarshal into APIResponse — which is the common case for THIS server,
+	// since sendError's "error" field is a bare type string, not the nested
+	// object APIResponse.Error expects, so json.Unmarshal always failed and
+	// the real code/message were discarded into an opaque "HTTP 404: 404 Not
+	// Found" string). Every remote_*.go call site checks `err != nil` before
+	// ever touching the response (verified across all ~60 call sites), so
+	// collapsing onto the error return is safe and gives every caller ONE
+	// consistent failure signal for what is really the same class of failure.
+	//
+	// This also fixes a latent circuit-breaker bug: previously, a real 4xx/5xx
+	// response (which never unmarshaled into APIResponse) came back as
+	// (resp, nil) from makeRequest, and Request() treated a nil error as a
+	// SUCCESSFUL round trip — calling c.resetFailureCount() instead of
+	// c.recordFailure(). The circuit breaker could never open against a real
+	// server returning persistent 5xx errors.
+	if resp.StatusCode >= 400 {
+		return nil, newHTTPError(resp.StatusCode, resp.Status, respBody)
+	}
+
 	var apiResp APIResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		// If we can't parse as API response, create a generic error
@@ -269,20 +292,6 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 				Details: string(respBody),
 			},
 		}, nil
-	}
-
-	// Check for HTTP errors
-	if resp.StatusCode >= 400 {
-		if apiResp.Error == nil {
-			apiResp.Error = &APIError{
-				Code:    fmt.Sprintf("HTTP_%d", resp.StatusCode),
-				Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status),
-			}
-		}
-		// Return a typed status error so isRetryableError can distinguish a
-		// transient server-side failure (worth retrying) from a client error like
-		// 401/403/404 (retrying can never succeed — the request itself is wrong).
-		return nil, &httpStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 
 	// #314: a 2xx/3xx upstream response can still carry Success:false with no
@@ -301,15 +310,111 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 	return &apiResp, nil
 }
 
-// httpStatusError carries the upstream HTTP status so isRetryableError can
-// distinguish a transient server failure from a client error (#317).
-type httpStatusError struct {
-	StatusCode int
-	Status     string
+// serverErrorBody mirrors the JSON shape sendError actually writes
+// (server/http/handlers/helpers.go): a flat object with a short
+// machine-readable "error" type string (e.g. "NotFound", "ValidationError",
+// "ConflictError"), not the nested {"error": {"code":...,"message":...}}
+// shape APIResponse.Error/APIError models. That mismatch is why
+// json.Unmarshal(respBody, &APIResponse{}) always failed with a type error
+// for a real 4xx/5xx response from this server, discarding the server's
+// actual code/message/details (#501).
+type serverErrorBody struct {
+	Success bool            `json:"success"`
+	Error   string          `json:"error"`
+	Message string          `json:"message"`
+	Code    int             `json:"code"`
+	Details json.RawMessage `json:"details,omitempty"`
 }
 
-func (e *httpStatusError) Error() string {
-	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Status)
+// HTTPError is returned by makeRequest for every 4xx/5xx HTTP response. It
+// carries the server's actual structured error type/message when the body
+// parses — as either the flat shape sendError emits (the common case against
+// this codebase's own server) or, defensively, the nested
+// {"error":{"code","message","details"}} shape in case some other upstream
+// emits that instead — rather than collapsing every distinct failure mode
+// (not found vs. validation vs. permission denied vs. rate limited) into an
+// identical generic "HTTP 404: 404 Not Found" string.
+//
+// Callers that need to distinguish specific outcomes should use
+// errors.As(err, &httpErr) and branch on StatusCode/ErrorType (or the
+// IsNotFound helper) instead of string-matching Error().
+type HTTPError struct {
+	StatusCode int
+	Status     string
+	ErrorType  string // e.g. "NotFound", "ValidationError", "ConflictError"; empty if unavailable
+	Message    string
+	Details    string
+}
+
+// newHTTPError builds an HTTPError for a 4xx/5xx response, extracting
+// whatever structured detail the body actually contains. It never panics and
+// always returns a non-nil, usable error, even for an empty or non-JSON body
+// (e.g. a proxy/WAF interstitial or a plain-text upstream error page) — the
+// raw body is preserved in Details rather than silently dropped.
+func newHTTPError(statusCode int, status string, body []byte) *HTTPError {
+	e := &HTTPError{StatusCode: statusCode, Status: status}
+
+	var flat serverErrorBody
+	if err := json.Unmarshal(body, &flat); err == nil && (flat.Error != "" || flat.Message != "") {
+		e.ErrorType = flat.Error
+		e.Message = flat.Message
+		e.Details = rawJSONToString(flat.Details)
+		return e
+	}
+
+	// Defensive fallback: some upstream might emit the nested APIResponse.Error
+	// shape instead of the flat sendError shape.
+	var nested APIResponse
+	if err := json.Unmarshal(body, &nested); err == nil && nested.Error != nil {
+		e.ErrorType = nested.Error.Code
+		e.Message = nested.Error.Message
+		e.Details = nested.Error.Details
+		return e
+	}
+
+	// Body didn't parse as either known shape (empty, non-JSON, or an
+	// unrelated JSON document) — preserve the raw text as Details rather than
+	// pretending it's a structured error.
+	e.Details = string(body)
+	return e
+}
+
+// rawJSONToString renders a json.RawMessage as plain text: unwraps a JSON
+// string to its literal value, otherwise falls back to the raw JSON text
+// (e.g. an object/array details payload).
+func rawJSONToString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return string(raw)
+}
+
+func (e *HTTPError) Error() string {
+	switch {
+	case e.ErrorType != "" && e.Message != "":
+		if e.Details != "" {
+			return fmt.Sprintf("%s: %s (%s)", e.ErrorType, e.Message, e.Details)
+		}
+		return fmt.Sprintf("%s: %s", e.ErrorType, e.Message)
+	case e.Message != "":
+		return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
+	case e.Details != "":
+		return fmt.Sprintf("HTTP %d: %s: %s", e.StatusCode, e.Status, e.Details)
+	default:
+		return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Status)
+	}
+}
+
+// IsNotFound reports whether the server identified this failure as a
+// not-found condition. Checked against the actual HTTP status rather than
+// ErrorType text, since handler-chosen ErrorType strings aren't a guaranteed-
+// stable API contract — callers should prefer this over matching Error() text.
+func (e *HTTPError) IsNotFound() bool {
+	return e.StatusCode == http.StatusNotFound
 }
 
 // isRetryableError determines whether a failed request is worth retrying
@@ -326,9 +431,9 @@ func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var statusErr *httpStatusError
-	if errors.As(err, &statusErr) {
-		return statusErr.StatusCode >= 500 || statusErr.StatusCode == http.StatusTooManyRequests
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode >= 500 || httpErr.StatusCode == http.StatusTooManyRequests
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "failed to marshal request body") || strings.Contains(msg, "failed to create request") {
