@@ -1,0 +1,29 @@
+# Security-sensitive paths require review from @aibeshkov before merge.
+# This backs the review process documented in docs/compliance/SECURITY-VERIFICATION.md.
+# Enable "Require review from Code Owners" in branch protection for this to be enforced.
+
+# Cryptography: KEK/DEK handling, Shamir secret sharing, KMS/TPM/password key providers
+/internal/crypto/            @aibeshkov
+/internal/encryption/        @aibeshkov
+/internal/securefiles/       @aibeshkov
+
+# Authentication, authorization, RBAC core logic
+/internal/core/auth*.go        @aibeshkov
+/internal/core/authz*.go       @aibeshkov
+/internal/core/rbac*.go        @aibeshkov
+/internal/core/permissions.go  @aibeshkov
+
+# HTTP/gRPC request-path middleware (auth, MFA, rate limiting, CSRF, session cookies)
+/server/middleware/           @aibeshkov
+
+# Database migrations — schema/column changes here have repeatedly caused
+# upgrade-path bugs (missing columns, dialect-specific query bugs) that only
+# surface on existing, non-fresh deployments
+/internal/storage/factory.go  @aibeshkov
+
+# The CI/CD pipeline itself: SAST, secret scanning, container signing, release process
+/.github/workflows/           @aibeshkov
+
+# Security policy and compliance documentation
+/SECURITY.md                  @aibeshkov
+/docs/compliance/             @aibeshkov
