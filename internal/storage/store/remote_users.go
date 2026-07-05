@@ -19,24 +19,133 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 )
+
+// --- Wire DTOs (#496) ---
+//
+// models.User carries no json tags of its own (it is a GORM model, and the local
+// backend never needs one) except PasswordHash's `json:"-"`. Marshaling it
+// directly, as CreateUser/UpdateUser used to, produces Go field names verbatim —
+// "DisplayName", "IsActive", "AccountState", "CreatedAt", ... . The real HTTP
+// handlers (server/http/handlers/users_crud.go) decode into their own snake_case
+// DTOs. encoding/json's decode falls back to a case-insensitive match when there is
+// no exact tag match, which happens to paper over single-word fields ("Username"
+// still matches a "username" tag, "Email" still matches "email") but never an
+// underscore-separated one ("DisplayName" does not case-insensitively equal
+// "display_name"; "IsActive" does not equal "active" at all, it is not even a
+// substring match) — so those fields were silently dropped, landing at their zero
+// value server-side. The wire types below name every field explicitly so nothing
+// depends on that fallback (or the handler's specific field-naming choices) again.
+//
+// Password is deliberately never sent by userCreateWireRequest: models.User only
+// ever carries a bcrypt PasswordHash (`json:"-"`, intentionally excluded from the
+// wire) by the time CreateUser is invoked — buildUserForCreate
+// (internal/core/users.go) discards the plaintext once it computes the hash, and
+// storage.Storage.CreateUser(ctx, *models.User) has no other channel to carry a
+// plaintext password. That means the server's own "password is required unless
+// deliver_setup_link/generate_one_time_password is set" check will still reject
+// this call — a separate, deeper gap (the Storage interface itself never receives
+// the one field the server needs) than this fix's field-name-mismatch scope. This
+// fix at least ensures the OTHER fields are no longer ALSO silently wrong, so the
+// error the caller now sees accurately blames the missing password, not a
+// coincidentally-also-broken display_name/is_active.
+type userCreateWireRequest struct {
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	IsActive    *bool  `json:"is_active,omitempty"`
+}
+
+// userUpdateWireRequest mirrors UpdateUser's handler DTO exactly (all optional,
+// PUT-as-PATCH semantics): only fields explicitly present are changed server-side.
+type userUpdateWireRequest struct {
+	Username    *string `json:"username,omitempty"`
+	Email       *string `json:"email,omitempty"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Active      *bool   `json:"active,omitempty"`
+}
+
+func newUserCreateWireRequest(user *models.User) userCreateWireRequest {
+	active := user.IsActive
+	return userCreateWireRequest{
+		Username:    user.Username,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		IsActive:    &active,
+	}
+}
+
+func newUserUpdateWireRequest(user *models.User) userUpdateWireRequest {
+	username, email, displayName, active := user.Username, user.Email, user.DisplayName, user.IsActive
+	return userUpdateWireRequest{
+		Username:    &username,
+		Email:       &email,
+		DisplayName: &displayName,
+		Active:      &active,
+	}
+}
+
+// userWireResponse mirrors userToAPIResponse's snake_case wire shape
+// (server/http/handlers/users_handler.go) — the actual response body every
+// user-returning endpoint sends. Decoding straight into models.User (as before)
+// has the identical mismatch as the request side, in reverse: "display_name",
+// "active", "account_state", "created_at", "updated_at", "last_login_at" all fail
+// the case-insensitive fallback against models.User's untagged field names, so
+// every field but ID/Username/Email came back silently zeroed.
+type userWireResponse struct {
+	ID               uint       `json:"id"`
+	Username         string     `json:"username"`
+	Email            string     `json:"email"`
+	DisplayName      string     `json:"display_name"`
+	Active           bool       `json:"active"`
+	AccountState     string     `json:"account_state"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	LastLoginAt      *time.Time `json:"last_login_at"`
+	DeletedAt        *time.Time `json:"deleted_at"`
+	LoginLockedUntil *time.Time `json:"login_locked_until,omitempty"`
+}
+
+func (w userWireResponse) toModel() *models.User {
+	u := &models.User{
+		ID:               w.ID,
+		Username:         w.Username,
+		Email:            w.Email,
+		DisplayName:      w.DisplayName,
+		IsActive:         w.Active,
+		AccountState:     w.AccountState,
+		CreatedAt:        w.CreatedAt,
+		UpdatedAt:        w.UpdatedAt,
+		LastLoginAt:      w.LastLoginAt,
+		LoginLockedUntil: w.LoginLockedUntil,
+	}
+	if w.DeletedAt != nil {
+		u.DeletedAt = gorm.DeletedAt{Time: *w.DeletedAt, Valid: true}
+	}
+	return u
+}
+
+func decodeUserResponse(data []byte) (*models.User, error) {
+	var wire userWireResponse
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
+}
 
 // --- Users ---
 
 // CreateUser creates a new user via remote API.
 func (rs *RemoteStorage) CreateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/users", user)
+	resp, err := rs.client.Post(ctx, "/api/v1/users", newUserCreateWireRequest(user))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 	if !resp.Success {
 		return nil, fmt.Errorf("create user failed: %s", resp.Error.Error())
 	}
-	var result models.User
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+	return decodeUserResponse(resp.Data)
 }
 
 // GetUser retrieves a user by ID via remote API.
@@ -49,11 +158,7 @@ func (rs *RemoteStorage) GetUser(ctx context.Context, id uint) (*models.User, er
 	if !resp.Success {
 		return nil, fmt.Errorf("get user failed: %s", resp.Error.Error())
 	}
-	var result models.User
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+	return decodeUserResponse(resp.Data)
 }
 
 // LockUserForUpdate has no row lock to take over HTTP — each remote API call is already
@@ -73,11 +178,7 @@ func (rs *RemoteStorage) GetUserByEmail(ctx context.Context, email string) (*mod
 	if !resp.Success {
 		return nil, fmt.Errorf("get user by email failed: %s", resp.Error.Error())
 	}
-	var result models.User
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+	return decodeUserResponse(resp.Data)
 }
 
 // GetUserByUsername is not implemented for remote storage.
@@ -92,18 +193,14 @@ func (rs *RemoteStorage) GetUserByExternalID(_ context.Context, _ string) (*mode
 // UpdateUser updates an existing user via remote API.
 func (rs *RemoteStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
 	path := fmt.Sprintf("/api/v1/users/%d", user.ID)
-	resp, err := rs.client.Put(ctx, path, user)
+	resp, err := rs.client.Put(ctx, path, newUserUpdateWireRequest(user))
 	if err != nil {
 		return nil, fmt.Errorf("failed to update user: %w", err)
 	}
 	if !resp.Success {
 		return nil, fmt.Errorf("update user failed: %s", resp.Error.Error())
 	}
-	var result models.User
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+	return decodeUserResponse(resp.Data)
 }
 
 // UpdateLastLogin is not available in remote mode — last_login_at is stamped
@@ -198,13 +295,17 @@ func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilt
 		return nil, 0, fmt.Errorf("list users failed: %s", resp.Error.Error())
 	}
 	var result struct {
-		Users []*models.User `json:"users"`
-		Total int64          `json:"total"`
+		Users []userWireResponse `json:"users"`
+		Total int64              `json:"total"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result.Users, result.Total, nil
+	users := make([]*models.User, 0, len(result.Users))
+	for _, w := range result.Users {
+		users = append(users, w.toModel())
+	}
+	return users, result.Total, nil
 }
 
 func (rs *RemoteStorage) ListUsersInStateBefore(_ context.Context, _ string, _ time.Time) ([]*models.User, error) {
