@@ -4,6 +4,16 @@
 // expiry and the token cannot be revoked or renewed, so Revoke is a no-op and Renew
 // is refused (issue a fresh lease).
 //
+// #97 residual (investigated, not fixed here): this backend calls
+// iamcredentials.projects.serviceAccounts.generateAccessToken, which mints a
+// short-lived OAuth2 access token (not a downloadable/long-lived service-account
+// KEY). Google's IAM Credentials API documentation is explicit that tokens minted
+// this way cannot be revoked before their natural expiry — there is no
+// provider-side "kill this specific generateAccessToken token" call, unlike a
+// service-account key (which CAN be deleted for immediate effect, but this
+// backend never creates one — see Issue below). Revoke remains a documented
+// no-op; RevokeInvalidatesCredential always returns false.
+//
 // The encrypted "admin DSN" carries this backend's JSON config:
 //
 //	{"service_account":"sa@project.iam.gserviceaccount.com",
@@ -93,8 +103,12 @@ func (e *GCPEngine) Issue(ctx context.Context, adminDSN, _ string, ttl time.Dura
 	return Credential{Fields: fields}, "keyorix-dyn-" + suffix, nil
 }
 
-// Revoke is a no-op: GCP access tokens self-expire and cannot be invalidated early.
+// Revoke is a no-op: GCP access tokens self-expire and cannot be invalidated early
+// (see the file header for the specific mechanism investigated and rejected).
 func (e *GCPEngine) Revoke(_ context.Context, _, _ string) error { return nil }
+
+// RevokeInvalidatesCredential is always false: see the file header.
+func (e *GCPEngine) RevokeInvalidatesCredential(_ string) bool { return false }
 
 // Renew is refused: a GCP token's lifetime is fixed at issue. core.RenewLease guards
 // on IsEphemeralBackend before reaching here; this is a defensive backstop.

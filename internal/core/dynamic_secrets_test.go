@@ -551,6 +551,31 @@ func TestDynamicSecrets_RevokeEphemeralBackendAuditsHonestly(t *testing.T) {
 	assert.Contains(t, ev.Description, "cannot be invalidated early", "the audit trail must not claim a full provider-side revoke for an ephemeral backend")
 }
 
+// #97: the flip side of the test above — an ephemeral backend whose Revoke DID
+// genuinely invalidate the credential early (e.g. Kubernetes with
+// "revocable":true — see kubernetes.go) must NOT be lumped in with the no-op
+// backends' misleading "cannot be invalidated early" message.
+func TestDynamicSecrets_RevokeEffectiveEphemeralBackendAuditsAsGenuineRevoke(t *testing.T) {
+	c, db, fake, _ := newDynamicTestCore(t)
+	fake.Ephemeral = true
+	effective := true
+	fake.RevokeEffective = &effective
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	require.NoError(t, c.RevokeLease(ctx, issued.LeaseID, 7, "manual"))
+
+	lease, err := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, "revoked", lease.Status)
+
+	var ev models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", "dynamic_lease.revoked").Order("id DESC").First(&ev).Error)
+	assert.NotContains(t, ev.Description, "cannot be invalidated early", "a backend that genuinely revoked the credential must not be audited as a no-op")
+}
+
 func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
 	c, _, _, _ := newDynamicTestCore(t)
 	_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{

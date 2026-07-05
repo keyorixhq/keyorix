@@ -429,14 +429,18 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
 		return err
 	}
-	// #97: for an ephemeral backend (AWS STS, Kubernetes) engine.Revoke above is a
-	// documented no-op — the credential cannot be invalidated early at the provider,
-	// only marked dead in Keyorix's own bookkeeping. Saying "revoked" outright would
+	// #97: for most ephemeral backends (AWS STS, Azure, GCP, and Kubernetes unless
+	// opted into bound-token revocation) engine.Revoke above is a documented no-op
+	// — the credential cannot be invalidated early at the provider, only marked
+	// dead in Keyorix's own bookkeeping. Saying "revoked" outright would
 	// misleadingly imply the credential is dead; it remains live until its own
 	// provider-enforced expiry (lease.ExpiresAt, corrected to the actual granted
-	// expiry at issue — see IssueLease).
+	// expiry at issue — see IssueLease). RevokeInvalidatesCredential tells us
+	// whether THIS lease's specific adminDSN actually got a real revoke (e.g. a
+	// Kubernetes config with "revocable":true), so that case is audited honestly
+	// as a genuine revoke rather than lumped in with the no-op backends.
 	msg := fmt.Sprintf("revoked dynamic lease %s (reason=%s)", lease.LeaseID, reason)
-	if engine.IsEphemeralBackend() {
+	if engine.IsEphemeralBackend() && !engine.RevokeInvalidatesCredential(adminDSN) {
 		msg = fmt.Sprintf("marked dynamic lease %s revoked locally (reason=%s); the %s credential cannot be invalidated early and remains live until its provider-enforced expiry at %s",
 			lease.LeaseID, reason, cfg.BackendType, lease.ExpiresAt.UTC().Format(time.RFC3339))
 	}

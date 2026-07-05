@@ -27,6 +27,10 @@ type MySQLEngine struct{}
 func (e *MySQLEngine) BackendType() string      { return "mysql" }
 func (e *MySQLEngine) IsEphemeralBackend() bool { return false }
 
+// RevokeInvalidatesCredential is always true: DROP USER really removes the
+// account, so a subsequent connection attempt with it fails immediately.
+func (e *MySQLEngine) RevokeInvalidatesCredential(_ string) bool { return true }
+
 // SupportsNativeExpiry is false: MySQL users have no VALID UNTIL, so lease expiry
 // is enforced only by the auto-revoke sweeper (which must be enabled).
 func (e *MySQLEngine) SupportsNativeExpiry() bool { return false }

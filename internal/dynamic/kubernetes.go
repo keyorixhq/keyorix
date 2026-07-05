@@ -1,13 +1,35 @@
 // kubernetes.go — the Kubernetes dynamic-secret backend (ADR-035, cloud-IAM): mints a
 // short-lived ServiceAccount token via the Kubernetes TokenRequest API
 // (POST …/serviceaccounts/{sa}/token). Like AWS STS and GCP these are ephemeral —
-// Kubernetes enforces the token's expiry and it cannot be revoked or renewed, so Revoke
-// is a no-op and Renew is refused (issue a fresh lease instead).
+// Kubernetes enforces the token's expiry, so Renew is refused (issue a fresh lease
+// instead) — but unlike AWS/Azure/GCP, Revoke is NOT always a no-op here (#97
+// residual, investigated):
+//
+// Kubernetes TokenRequest tokens can be bound to a live Kubernetes object via
+// spec.boundObjectRef (this is exactly the documented mechanism `kubectl create
+// token --bound-object-kind=Secret` uses, and how kubelet's projected-volume
+// tokens are bound to their Pod). The API server's ServiceAccount token
+// authenticator checks the bound object's live existence + UID on EVERY request,
+// independent of the token's own exp claim — so deleting the bound object
+// invalidates the token immediately, before its natural expiry.
+//
+// This is opt-in per config ("revocable":true — see below), OFF by default, for
+// two reasons: (1) it requires the calling identity to also hold create/delete on
+// `secrets` in the target namespace, on top of the `create` on
+// `serviceaccounts/token` every config already needs — a real permission
+// expansion that must be a deliberate operator choice, not a silent new
+// requirement for every existing deployment; (2) the bound object is scoped to
+// THIS ONE lease (a dedicated, empty per-lease Secret named after the lease's
+// role label), so revoking it has no blast radius on other leases or on the
+// ServiceAccount itself — unlike AWS/Azure's only revocation workarounds, which
+// would deny/invalidate every concurrent session on the shared role/identity
+// (see awssts.go / azure.go for why those remain no-ops).
 //
 // The encrypted "admin DSN" carries this backend's JSON config:
 //
 //	{"namespace":"default","service_account":"my-app",
 //	 "audiences":["https://my-service"],   // optional; omit for the API-server audience
+//	 "revocable":true,                     // optional; see header above (default false)
 //	 "api_server":"https://10.0.0.1:443",  // optional; omit to use in-cluster config
 //	 "ca_cert":"<PEM>","token":"<bearer>"} // required when api_server is set
 //
@@ -16,8 +38,9 @@
 // service-account token and CA) — so no credentials live in Keyorix config when the
 // server runs in the cluster. The identity making the call (in-cluster SA or the
 // configured token) must hold `create` on the `serviceaccounts/token` subresource for
-// the target ServiceAccount. To stay dependency-free (no client-go) the TokenRequest is
-// a small REST call over net/http, mirroring the Kubernetes sync agent's REST sink.
+// the target ServiceAccount, plus `create`+`delete` on `secrets` in the namespace when
+// revocable is true. To stay dependency-free (no client-go) every call is a small REST
+// request over net/http, mirroring the Kubernetes sync agent's REST sink.
 package dynamic
 
 import (
@@ -43,10 +66,25 @@ const (
 	k8sSACAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
 
+// boundObjectRef identifies the per-lease Secret a revocable token's
+// spec.boundObjectRef points to (see the file header).
+type boundObjectRef struct {
+	Name string
+	UID  string
+}
+
 // k8sTokenMinter is the slice of Kubernetes the engine uses — an interface seam so the
 // engine is unit-tested with a fake and the REST/TLS plumbing stays contained here.
 type k8sTokenMinter interface {
-	mintToken(ctx context.Context, namespace, serviceAccount string, audiences []string, expiration time.Duration) (token string, expiry time.Time, err error)
+	mintToken(ctx context.Context, namespace, serviceAccount string, audiences []string, expiration time.Duration, bound *boundObjectRef) (token string, expiry time.Time, err error)
+	// createBoundSecret creates an empty, per-lease Secret used only as a
+	// TokenRequest boundObjectRef target, returning its UID. Only called when the
+	// lease's config sets "revocable":true.
+	createBoundSecret(ctx context.Context, namespace, name string) (uid string, err error)
+	// deleteBoundSecret deletes the Secret created by createBoundSecret,
+	// immediately invalidating any token bound to it. Idempotent: deleting an
+	// already-gone Secret is not an error.
+	deleteBoundSecret(ctx context.Context, namespace, name string) error
 }
 
 // KubernetesEngine mints short-lived ServiceAccount tokens via the TokenRequest API.
@@ -62,13 +100,20 @@ type k8sConfig struct {
 	Namespace      string   `json:"namespace"`
 	ServiceAccount string   `json:"service_account"`
 	Audiences      []string `json:"audiences,omitempty"`
-	APIServer      string   `json:"api_server,omitempty"`
-	CACert         string   `json:"ca_cert,omitempty"`
-	Token          string   `json:"token,omitempty"`
+	// Revocable opts this config into bound-token revocation (see the file
+	// header): Issue creates a dedicated per-lease Secret and binds the token to
+	// it, so Revoke can delete that Secret to invalidate the token early. Default
+	// false preserves the original no-op behavior and requires no extra RBAC.
+	Revocable bool   `json:"revocable,omitempty"`
+	APIServer string `json:"api_server,omitempty"`
+	CACert    string `json:"ca_cert,omitempty"`
+	Token     string `json:"token,omitempty"`
 }
 
-// Issue mints a token for the configured ServiceAccount. roleName is a label only —
-// there is nothing to drop on revoke. creationTemplate is unused.
+// Issue mints a token for the configured ServiceAccount. roleName is the lease
+// label; when Revocable is set it is also the name of the per-lease bound Secret
+// created below (needed by Revoke to find and delete it later). creationTemplate
+// is unused.
 func (e *KubernetesEngine) Issue(ctx context.Context, adminDSN, _ string, ttl time.Duration) (Credential, string, error) {
 	var cfg k8sConfig
 	if err := json.Unmarshal([]byte(adminDSN), &cfg); err != nil {
@@ -94,15 +139,35 @@ func (e *KubernetesEngine) Issue(ctx context.Context, adminDSN, _ string, ttl ti
 		}
 		minter = m
 	}
-	token, expiry, err := minter.mintToken(ctx, cfg.Namespace, cfg.ServiceAccount, cfg.Audiences, expiration)
-	if err != nil {
-		return Credential{}, "", fmt.Errorf("kubernetes: request token: %w", err)
-	}
 
+	// Generated up front (rather than after minting) so it can double as the
+	// per-lease bound Secret's name when revocable is set.
 	suffix, err := randString(12)
 	if err != nil {
 		return Credential{}, "", err
 	}
+	label := "keyorix-dyn-" + suffix
+
+	var bound *boundObjectRef
+	if cfg.Revocable {
+		uid, err := minter.createBoundSecret(ctx, cfg.Namespace, label)
+		if err != nil {
+			return Credential{}, "", fmt.Errorf("kubernetes: create bound secret for revocation: %w", err)
+		}
+		bound = &boundObjectRef{Name: label, UID: uid}
+	}
+
+	token, expiry, err := minter.mintToken(ctx, cfg.Namespace, cfg.ServiceAccount, cfg.Audiences, expiration, bound)
+	if err != nil {
+		if bound != nil {
+			// The TokenRequest failed after the Secret was created — clean it up
+			// (best-effort) rather than leave an orphaned bound object nothing was
+			// ever minted against.
+			_ = minter.deleteBoundSecret(ctx, cfg.Namespace, bound.Name)
+		}
+		return Credential{}, "", fmt.Errorf("kubernetes: request token: %w", err)
+	}
+
 	fields := map[string]string{
 		"token":           token,
 		"namespace":       cfg.Namespace,
@@ -111,11 +176,50 @@ func (e *KubernetesEngine) Issue(ctx context.Context, adminDSN, _ string, ttl ti
 	if !expiry.IsZero() {
 		fields["expiration"] = expiry.UTC().Format(time.RFC3339)
 	}
-	return Credential{Fields: fields}, "keyorix-dyn-" + suffix, nil
+	return Credential{Fields: fields}, label, nil
 }
 
-// Revoke is a no-op: ServiceAccount tokens self-expire and cannot be invalidated early.
-func (e *KubernetesEngine) Revoke(_ context.Context, _, _ string) error { return nil }
+// Revoke is a no-op unless the lease's config set "revocable":true, in which case
+// roleName is also the name of the per-lease Secret created at Issue and bound
+// into the token's spec.boundObjectRef — deleting it here immediately invalidates
+// the token (see the file header for why this is safe: it is scoped to this one
+// lease). Deleting an already-gone Secret is treated as success, so a retried or
+// double revoke doesn't fail.
+func (e *KubernetesEngine) Revoke(ctx context.Context, adminDSN, roleName string) error {
+	var cfg k8sConfig
+	if err := json.Unmarshal([]byte(adminDSN), &cfg); err != nil {
+		return fmt.Errorf("kubernetes: config must be JSON ({\"namespace\":...,\"service_account\":...}): %w", err)
+	}
+	if !cfg.Revocable {
+		return nil // no bound object was created for this lease — self-expiring, nothing to drop
+	}
+
+	minter := e.minter
+	if minter == nil {
+		m, err := newRealK8sMinter(cfg)
+		if err != nil {
+			return err
+		}
+		minter = m
+	}
+	if err := minter.deleteBoundSecret(ctx, cfg.Namespace, roleName); err != nil {
+		return fmt.Errorf("kubernetes: delete bound secret %s/%s: %w", cfg.Namespace, roleName, err)
+	}
+	return nil
+}
+
+// RevokeInvalidatesCredential reports whether this lease's config opted into
+// bound-token revocation ("revocable":true — see the file header). A malformed
+// adminDSN fails closed to false: understating a genuine revoke (rare — Issue
+// would already have failed on the same malformed config) is far safer than an
+// audit trail overclaiming that a credential was killed when it wasn't.
+func (e *KubernetesEngine) RevokeInvalidatesCredential(adminDSN string) bool {
+	var cfg k8sConfig
+	if err := json.Unmarshal([]byte(adminDSN), &cfg); err != nil {
+		return false
+	}
+	return cfg.Revocable
+}
 
 // Renew is refused: a token's lifetime is fixed at issue. core.RenewLease guards on
 // IsEphemeralBackend before reaching here; this is a defensive backstop.
@@ -181,17 +285,29 @@ func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
 	}, nil
 }
 
-func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount string, audiences []string, expiration time.Duration) (string, time.Time, error) {
+func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount string, audiences []string, expiration time.Duration, bound *boundObjectRef) (string, time.Time, error) {
 	expSeconds := int64(expiration.Seconds())
+	spec := map[string]interface{}{
+		"expirationSeconds": expSeconds,
+	}
+	if len(audiences) > 0 {
+		spec["audiences"] = audiences
+	}
+	if bound != nil {
+		// Binds the token's validity to this Secret's live existence + UID (see
+		// the file header) — this is what makes Revoke's delete an immediate,
+		// real invalidation instead of local bookkeeping.
+		spec["boundObjectRef"] = map[string]interface{}{
+			"kind":       "Secret",
+			"apiVersion": "v1",
+			"name":       bound.Name,
+			"uid":        bound.UID,
+		}
+	}
 	reqBody := map[string]interface{}{
 		"apiVersion": "authentication.k8s.io/v1",
 		"kind":       "TokenRequest",
-		"spec": map[string]interface{}{
-			"expirationSeconds": expSeconds,
-		},
-	}
-	if len(audiences) > 0 {
-		reqBody["spec"].(map[string]interface{})["audiences"] = audiences
+		"spec":       spec,
 	}
 	raw, err := json.Marshal(reqBody)
 	if err != nil {
@@ -237,6 +353,91 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 		expiry, _ = time.Parse(time.RFC3339, out.Status.ExpirationTimestamp)
 	}
 	return out.Status.Token, expiry, nil
+}
+
+// createBoundSecret creates an empty, labeled Secret used only as a TokenRequest
+// boundObjectRef target (see the file header), returning its UID so it can be
+// embedded in that boundObjectRef.
+func (m *realK8sMinter) createBoundSecret(ctx context.Context, namespace, name string) (string, error) {
+	reqBody := map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]interface{}{
+			"name": name,
+			"labels": map[string]interface{}{
+				"app.kubernetes.io/managed-by": "keyorix",
+				"keyorix.io/purpose":           "dynamic-secret-token-binding",
+			},
+		},
+		"type": "Opaque",
+	}
+	raw, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal Secret: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/secrets", m.host, pathSegment(namespace))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw)) // #nosec G107 -- host is operator-configured/in-cluster
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := m.hc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", fmt.Errorf("not authorized (HTTP %d) — the caller needs create on secrets in %s (required when revocable is true)", resp.StatusCode, namespace)
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("create Secret returned HTTP %d", resp.StatusCode)
+	}
+
+	var out struct {
+		Metadata struct {
+			UID string `json:"uid"`
+		} `json:"metadata"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("decode Secret response: %w", err)
+	}
+	if out.Metadata.UID == "" {
+		return "", fmt.Errorf("create Secret returned no uid")
+	}
+	return out.Metadata.UID, nil
+}
+
+// deleteBoundSecret deletes the Secret created by createBoundSecret, immediately
+// invalidating any token bound to it. A 404 is treated as success so Revoke stays
+// idempotent (a retried, or already-cleaned-up, revoke must not fail).
+func (m *realK8sMinter) deleteBoundSecret(ctx context.Context, namespace, name string) error {
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/secrets/%s", m.host, pathSegment(namespace), pathSegment(name))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil) // #nosec G107 -- host is operator-configured/in-cluster
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := m.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already gone — revoke is idempotent
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("not authorized (HTTP %d) — the caller needs delete on secrets in %s (required when revocable is true)", resp.StatusCode, namespace)
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("delete Secret returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // pathSegment guards a namespace/service-account name placed into the request path: K8s

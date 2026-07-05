@@ -60,6 +60,7 @@ func TestAWSSTSEngine_Issue(t *testing.T) {
 	assert.Equal(t, "aws-sts", eng.BackendType())
 	require.NoError(t, eng.Revoke(context.Background(), "", role)) // no-op
 	require.Error(t, eng.Renew(context.Background(), "", role, time.Now()))
+	assert.False(t, eng.RevokeInvalidatesCredential(""), "AWS has no per-session revoke API for AssumeRole credentials")
 }
 
 func TestAWSSTSEngine_DurationClampedToMin(t *testing.T) {

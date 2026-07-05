@@ -51,6 +51,7 @@ func TestGCPEngine_Issue(t *testing.T) {
 	assert.Equal(t, "gcp", eng.BackendType())
 	require.NoError(t, eng.Revoke(context.Background(), "", role))
 	require.Error(t, eng.Renew(context.Background(), "", role, time.Now()))
+	assert.False(t, eng.RevokeInvalidatesCredential(""), "GCP generateAccessToken tokens can't be revoked before natural expiry")
 }
 
 func TestGCPEngine_Defaults(t *testing.T) {
@@ -103,6 +104,7 @@ func TestAzureEngine_Issue(t *testing.T) {
 	assert.Equal(t, "azure", eng.BackendType())
 	require.NoError(t, eng.Revoke(context.Background(), "", role))
 	require.Error(t, eng.Renew(context.Background(), "", role, time.Now()))
+	assert.False(t, eng.RevokeInvalidatesCredential(""), "Azure client-credential access tokens can't be revoked before natural expiry")
 }
 
 func TestAzureEngine_ConfigValidation(t *testing.T) {
