@@ -1,0 +1,9 @@
+[Unit]
+Description=Keyorix fuzz daily heartbeat
+
+[Service]
+Type=oneshot
+User=fuzzer
+Group=fuzzer
+EnvironmentFile=/etc/keyorix-fuzz/config.env
+ExecStart=/opt/keyorix-fuzz/keyorix/scripts/fuzzing/heartbeat.sh

@@ -1,0 +1,20 @@
+[Unit]
+Description=Keyorix continuous fuzz rotation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fuzzer
+Group=fuzzer
+EnvironmentFile=/etc/keyorix-fuzz/config.env
+ExecStart=/opt/keyorix-fuzz/keyorix/scripts/fuzzing/run-rotation.sh
+Restart=always
+RestartSec=30
+# Fuzzing is CPU/memory-hungry by design but must never take the box down or
+# starve anything else running on it.
+Nice=10
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target
