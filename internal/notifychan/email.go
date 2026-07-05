@@ -1,7 +1,17 @@
 // email.go — the SMTP notification channel. Like the credential-delivery mailer
 // (ADR-028) it delegates TLS correctness to wneessen/go-mail rather than hand-
 // rolling net/smtp. Delivery, retry, and metrics are handled by the shared engine
-// (delivery.go); events without a recipient email are dropped before they enqueue.
+// (delivery.go).
+//
+// A per-user event (ev.Email resolved by the caller, e.g. dispatchNotification)
+// always has somewhere to go. A BROADCAST event (SendComplianceDigest,
+// notifyRotationFailures) has no such per-user address — a broadcast is meant for
+// whoever is configured to receive it, not one specific mailbox — so it is routed
+// to cfg.BroadcastTo, the operator-configured digest/admin destination, exactly the
+// way the webhook/chat channels always route a broadcast to their one fixed
+// endpoint. With neither an event Email nor a configured BroadcastTo there is
+// nowhere to send it; that drop is counted and logged like any other channel
+// failure rather than silently discarded (#221).
 package notifychan
 
 import (
@@ -48,6 +58,14 @@ type EmailConfig struct {
 	Password string
 	From     string
 	TLS      string // starttls | implicit | none(dev-only)
+	// BroadcastTo is the destination address for BROADCAST notifications (the
+	// scheduled compliance digest, auto-rotation-failure alerts) — the address a
+	// deployment-wide alert goes to when email is the channel handling it. Optional:
+	// leave empty when a non-email channel (Slack/Teams/webhook) already receives
+	// broadcasts, or when email-only broadcast alerting isn't wanted. Without it, a
+	// broadcast event has no recipient to route to and is dropped (counted/logged,
+	// not silently, #221).
+	BroadcastTo string
 }
 
 // EmailSink delivers notifications as plaintext email via the operator's SMTP relay.
@@ -85,13 +103,29 @@ func newEmail(cfg EmailConfig, baseBackoff time.Duration) (*EmailSink, error) {
 	return s, nil
 }
 
-// Deliver enqueues the event. Non-blocking; a full queue drops and counts it. Events
-// without a recipient address are dropped here (nothing to send), not enqueued.
-func (s *EmailSink) Deliver(ev core.NotificationEvent) {
-	if s == nil || ev.Email == "" {
-		return
+// Deliver enqueues the event and reports whether it was actually handed off for
+// sending. Non-blocking; a full queue drops and counts it (see delivery.go).
+//
+// An event with no per-user Email is a BROADCAST (compliance digest, rotation-
+// failure alert): it is routed to the configured BroadcastTo address rather than
+// being dropped for lacking a per-user recipient (#221). With no Email and no
+// BroadcastTo configured there is genuinely nowhere to send it — that is still
+// counted and logged as a dropped delivery, not silently discarded, so an operator
+// running email-only can see a broadcast channel that never has anywhere to go.
+func (s *EmailSink) Deliver(ev core.NotificationEvent) bool {
+	if s == nil {
+		return false
+	}
+	if ev.Email == "" {
+		if s.cfg.BroadcastTo == "" {
+			notifyDeliveries.WithLabelValues(s.d.channel, outcomeDropped).Inc()
+			log.Printf("notifychan: email dropped a broadcast notification (type=%q) — no recipient and no email.broadcast_to destination configured", ev.Type)
+			return false
+		}
+		ev.Email = s.cfg.BroadcastTo
 	}
 	s.d.enqueue(ev)
+	return true
 }
 
 // send mails the event once. retryable reports whether a non-nil err is transient: a

@@ -30,9 +30,17 @@ func NewMulti(sinks ...core.NotificationSink) core.NotificationSink {
 	}
 }
 
-// Deliver fans the event out to every wrapped sink.
-func (m *MultiSink) Deliver(ev core.NotificationEvent) {
+// Deliver fans the event out to every wrapped sink. It reports whether ANY wrapped
+// sink actually attempted delivery — so a caller broadcasting across several
+// channels only sees false when every single one of them was a no-op (e.g. an
+// email-only deployment with no configured broadcast destination, #221), not merely
+// when one of several channels couldn't take it.
+func (m *MultiSink) Deliver(ev core.NotificationEvent) bool {
+	attempted := false
 	for _, s := range m.sinks {
-		s.Deliver(ev)
+		if s.Deliver(ev) {
+			attempted = true
+		}
 	}
+	return attempted
 }

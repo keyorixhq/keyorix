@@ -10,6 +10,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -90,9 +91,12 @@ func plural(n int) string {
 }
 
 // SendComplianceDigest builds the digest and broadcasts it to the configured
-// notification channels (Slack/Teams/webhook). It is a single broadcast (no
-// per-user fan-out), so a chat channel gets one message. Returns whether a digest
-// was delivered (false when no notification channel is wired). Audited.
+// notification channels (Slack/Teams/webhook/email). It is a single broadcast (no
+// per-user fan-out), so a chat channel gets one message. Returns whether the digest
+// was actually attempted (false when no notification channel is wired at all, OR
+// every wired channel was a no-op — e.g. an email-only deployment with no
+// email.broadcast_to destination configured, #221). Audited either way, but the
+// audit event only claims success when delivery was actually attempted.
 func (c *KeyorixCore) SendComplianceDigest(ctx context.Context) (bool, error) {
 	if c.notificationSink == nil {
 		return false, nil // nowhere to deliver — no channel configured
@@ -101,13 +105,18 @@ func (c *KeyorixCore) SendComplianceDigest(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	c.notificationSink.Deliver(NotificationEvent{
+	attempted := c.notificationSink.Deliver(NotificationEvent{
 		Type:    "compliance.digest",
 		Title:   title,
 		Message: body,
 		Link:    "/compliance",
 	})
 	sysCtx := WithActorType(ctx, ActorTypeSystem)
+	if !attempted {
+		log.Printf("compliance digest: notification channel(s) configured but none accepted the broadcast (e.g. email-only with no broadcast destination) — digest was NOT delivered")
+		c.writeAuditEventFailed(sysCtx, EventComplianceDigestSent, nil, "", "compliance digest broadcast attempted but no configured channel could accept it")
+		return false, nil
+	}
 	c.writeAuditEvent(sysCtx, EventComplianceDigestSent, nil, nil, "compliance digest broadcast to notification channels")
 	return true, nil
 }

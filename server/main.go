@@ -448,12 +448,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 	if ec := cfg.Notifications.Email; ec.Enabled {
 		sink, eerr := notifychan.NewEmail(notifychan.EmailConfig{
-			Host:     ec.Host,
-			Port:     ec.Port,
-			Username: ec.Username,
-			Password: ec.GetPassword(),
-			From:     ec.From,
-			TLS:      ec.TLS,
+			Host:        ec.Host,
+			Port:        ec.Port,
+			Username:    ec.Username,
+			Password:    ec.GetPassword(),
+			From:        ec.From,
+			TLS:         ec.TLS,
+			BroadcastTo: ec.BroadcastTo,
 		})
 		if eerr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification email channel: %w", eerr)
@@ -477,6 +478,15 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification Teams channel enabled")
+	}
+	// #221: email-only, with no email.broadcast_to configured, has no destination
+	// for a deployment-wide broadcast (compliance digest, auto-rotation-failure
+	// alert) to route to — it will keep no-op'ing every time one fires. Warn at
+	// startup rather than let an operator discover it only from the (also newly
+	// added, #221) dropped-delivery metric/log after the fact.
+	if cfg.Notifications.Email.Enabled && cfg.Notifications.Email.BroadcastTo == "" &&
+		!cfg.Notifications.Webhook.Enabled && !cfg.Notifications.Slack.Enabled && !cfg.Notifications.Teams.Enabled {
+		log.Printf("WARNING: notifications.email is the only enabled notification channel and notifications.email.broadcast_to is not set — the compliance digest and auto-rotation-failure alerts have no destination to broadcast to and will silently no-op every time they fire; set notifications.email.broadcast_to to an admin/ops address to receive them")
 	}
 	if sink := notifychan.NewMulti(broadcastSinks...); sink != nil {
 		coreService.SetNotificationSink(sink)

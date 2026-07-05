@@ -1018,6 +1018,15 @@ type NotificationEmailConfig struct {
 	Password string `yaml:"password"` // use KEYORIX_NOTIFY_SMTP_PASSWORD env var instead
 	From     string `yaml:"from"`
 	TLS      string `yaml:"tls"` // starttls | implicit | none(dev-only)
+	// BroadcastTo is the destination address for BROADCAST notifications — the
+	// scheduled compliance digest and auto-rotation-failure alerts (#221) — when
+	// email is the channel carrying them. Unlike a per-user notification (whose
+	// recipient is resolved from the user's account), a broadcast has no single
+	// addressee, so without this the email channel has nowhere to route it and the
+	// broadcast silently never sends. Optional: leave unset if Slack/Teams/webhook
+	// already covers deployment-wide broadcasts, or if email-only broadcast alerting
+	// isn't wanted.
+	BroadcastTo string `yaml:"broadcast_to"`
 }
 
 // GetPassword returns the resolved SMTP password, preferring the environment variable.

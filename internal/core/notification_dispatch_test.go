@@ -10,9 +10,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fakeSink struct{ events []NotificationEvent }
+// fakeSink is a NotificationSink test double. refuse, when true, simulates a sink
+// that cannot accept the event at all (e.g. the email channel with no recipient and
+// no configured broadcast destination, #221): Deliver still records nothing was
+// attempted, and returns false so callers can assert on the accurate signal.
+type fakeSink struct {
+	events []NotificationEvent
+	refuse bool
+}
 
-func (f *fakeSink) Deliver(ev NotificationEvent) { f.events = append(f.events, ev) }
+func (f *fakeSink) Deliver(ev NotificationEvent) bool {
+	if f.refuse {
+		return false
+	}
+	f.events = append(f.events, ev)
+	return true
+}
 
 func TestNotify_DispatchesToSinkWithResolvedEmail(t *testing.T) {
 	store := new(MockStorage)

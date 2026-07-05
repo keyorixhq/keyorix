@@ -71,12 +71,16 @@ func newChat(cfg ChatConfig, baseBackoff time.Duration) (*ChatSink, error) {
 	return s, nil
 }
 
-// Deliver enqueues the event. Non-blocking; a full queue drops and counts it.
-func (s *ChatSink) Deliver(ev core.NotificationEvent) {
+// Deliver enqueues the event. Non-blocking; a full queue drops and counts it. Like
+// the webhook channel, the Slack/Teams incoming-webhook is one fixed destination —
+// not a per-user address — so every event (including a broadcast) is always
+// attempted; Deliver only reports false when the sink itself is nil.
+func (s *ChatSink) Deliver(ev core.NotificationEvent) bool {
 	if s == nil {
-		return
+		return false
 	}
 	s.d.enqueue(ev)
+	return true
 }
 
 // send POSTs the platform payload once. retryable reports whether a non-nil err is

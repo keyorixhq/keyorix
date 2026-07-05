@@ -85,12 +85,16 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*WebhookSink, err
 }
 
 // Deliver enqueues the event for asynchronous POST. Non-blocking: a full queue (a
-// wedged endpoint) drops and counts the event rather than stalling the caller.
-func (s *WebhookSink) Deliver(ev core.NotificationEvent) {
+// wedged endpoint) drops and counts the event rather than stalling the caller. The
+// webhook endpoint is one fixed, operator-configured destination — not a per-user
+// address — so every event (including a broadcast) is always attempted; Deliver
+// only reports false when the sink itself is nil.
+func (s *WebhookSink) Deliver(ev core.NotificationEvent) bool {
 	if s == nil {
-		return
+		return false
 	}
 	s.d.enqueue(ev)
+	return true
 }
 
 // send POSTs the event once. retryable reports whether a non-nil err is transient
