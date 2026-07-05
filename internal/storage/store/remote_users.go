@@ -1,6 +1,7 @@
 // remote_users.go — User and Group operations for RemoteStorage.
 //
-// Covers: CreateUser, GetUser, GetUserByEmail, GetUserByUsername, UpdateUser,
+// Covers: CreateUser, GetUser, GetUserByEmail, GetUserByUsername,
+// GetUserByExternalID, UpdateUser,
 //
 //	DeleteUser, RestoreUser, ListUsers, GetUserGroups,
 //	CreateGroup, GetGroup, UpdateGroup, DeleteGroup, ListGroups,
@@ -104,6 +105,16 @@ func newUserUpdateWireRequest(user *models.User) userUpdateWireRequest {
 // to decide both "is this account currently locked" and its "nothing to clear"
 // fast path — without them on the wire, the fast path always saw a false all-zero
 // snapshot under storage.type: remote.
+// ExternalID (#505) rounds out the wire response with the IdP-assigned identifier
+// SCIM/SSO JIT-provisioning stamps on a user (models.User.ExternalID). Without it,
+// resolveSSOUser's (internal/core/sso.go) cross-provider-takeover guard —
+// ssoBoundToOtherProvider(u.ExternalID, provider), which refuses to let a SECOND
+// SSO provider claim an account already linked to a different one via the
+// email-fallback branch — silently never tripped under storage.type: remote: every
+// decoded user's ExternalID read back as the Go zero value "", identical to a
+// never-federated account, regardless of what the upstream's own row actually
+// stored. This affected the already-shipped #504 email-fallback path, not just the
+// new by-external-id lookup this change adds.
 type userWireResponse struct {
 	ID                  uint       `json:"id"`
 	Username            string     `json:"username"`
@@ -111,6 +122,7 @@ type userWireResponse struct {
 	DisplayName         string     `json:"display_name"`
 	Active              bool       `json:"active"`
 	AccountState        string     `json:"account_state"`
+	ExternalID          string     `json:"external_id"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 	LastLoginAt         *time.Time `json:"last_login_at"`
@@ -129,6 +141,7 @@ func (w userWireResponse) toModel() *models.User {
 		DisplayName:         w.DisplayName,
 		IsActive:            w.Active,
 		AccountState:        w.AccountState,
+		ExternalID:          w.ExternalID,
 		CreatedAt:           w.CreatedAt,
 		UpdatedAt:           w.UpdatedAt,
 		LastLoginAt:         w.LastLoginAt,
@@ -240,13 +253,58 @@ func (rs *RemoteStorage) GetUserByEmail(ctx context.Context, email string) (*mod
 	return decodeUserResponse(resp.Data)
 }
 
-// GetUserByUsername is not implemented for remote storage.
-func (rs *RemoteStorage) GetUserByUsername(_ context.Context, _ string) (*models.User, error) {
-	return nil, remoteUnsupported("GetUserByUsername")
+// GetUserByUsername retrieves a user by username via remote API (#505).
+//
+// Mirrors GetUserByEmail's #503 query-parameter convention exactly: GET
+// /api/v1/users/by-username?username=X, gated by the same users.read permission
+// as GetUser/GetUserByEmail (server/http/router.go), with the identical generic
+// NotFound response shape on a miss — a caller without users.read never reaches
+// the handler at all, and one WITH users.read can already enumerate every
+// username via GET /users, so this route grants no new capability at that
+// permission level.
+//
+// Before this fix, the unconditional stub blocked far more than the SCIM/
+// invitation username-derivation helpers that motivated #505's filing: Login
+// (internal/core/auth.go) resolves the submitted credential's account via
+// c.storage.GetUserByUsername and, unlike buildUserForCreate's deliberate
+// unsupported-error tolerance, treats ANY error — including the old
+// ErrUnsupportedByBackend stub — as "invalid credentials". That made every
+// password login fail unconditionally under storage.type: remote, not just the
+// SSO/invitation paths #505 named.
+func (rs *RemoteStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	path := fmt.Sprintf("/api/v1/users/by-username?username=%s", url.QueryEscape(username))
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user by username: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get user by username failed: %s", resp.Error.Error())
+	}
+	return decodeUserResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) GetUserByExternalID(_ context.Context, _ string) (*models.User, error) {
-	return nil, remoteUnsupported("GetUserByExternalID")
+// GetUserByExternalID retrieves a SCIM/SSO-provisioned user by the IdP's
+// externalId via remote API (#505). Same query-parameter/permission/NotFound-shape
+// convention as GetUserByUsername and GetUserByEmail: GET
+// /api/v1/users/by-external-id?external_id=X, gated by users.read.
+//
+// Before this fix, resolveSSOUser (internal/core/sso.go) and FindSCIMUser
+// (internal/core/scim.go) both treat any non-not-found error from this call as a
+// hard failure (storage.IsUserNotFound(err) is false for the old
+// ErrUnsupportedByBackend stub), so an SSO login asserting a `sub` — or a SCIM
+// PATCH/GET filtering by externalId — hard-failed unconditionally under
+// storage.type: remote, never falling through to the email-based fallback either
+// call site supports.
+func (rs *RemoteStorage) GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
+	path := fmt.Sprintf("/api/v1/users/by-external-id?external_id=%s", url.QueryEscape(externalID))
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user by external id: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get user by external id failed: %s", resp.Error.Error())
+	}
+	return decodeUserResponse(resp.Data)
 }
 
 // UpdateUser updates an existing user via remote API.

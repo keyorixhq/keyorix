@@ -411,6 +411,35 @@ func (c *KeyorixCore) GetUserByEmail(ctx context.Context, email string) (*models
 	return user, nil
 }
 
+// GetUserByUsername retrieves a user by username. Backs the GET
+// /api/v1/users/by-username HTTP route (#505) — the server-side counterpart
+// RemoteStorage.GetUserByUsername needs.
+func (c *KeyorixCore) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	if username == "" {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "username is required")
+	}
+	user, err := c.storage.GetUserByUsername(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	return user, nil
+}
+
+// GetUserByExternalID retrieves a user by the IdP-assigned external id. Backs the
+// GET /api/v1/users/by-external-id HTTP route (#505) — the server-side
+// counterpart RemoteStorage.GetUserByExternalID needs for SSO/SCIM identity
+// resolution.
+func (c *KeyorixCore) GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
+	if externalID == "" {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "external_id is required")
+	}
+	user, err := c.storage.GetUserByExternalID(ctx, externalID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	return user, nil
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {

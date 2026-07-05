@@ -586,6 +586,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// filter, so this route grants no new capability at that permission level.
 			// Static path, before /{id}.
 			r.Get("/by-email", handlers.GetUserByEmail)
+			// By-username and by-external-id lookups (#505), the server-side
+			// counterparts RemoteStorage.GetUserByUsername/GetUserByExternalID need —
+			// SAME gate (users.read) and NotFound shape as by-email above, for the
+			// identical reason: a caller with users.read can already enumerate every
+			// user's username/external_id via GET /users, so these routes grant no
+			// new capability at that permission level. Static paths, before /{id}.
+			r.Get("/by-username", handlers.GetUserByUsername)
+			r.Get("/by-external-id", handlers.GetUserByExternalID)
 			r.Get("/{id}", handlers.GetUser)
 			// Mutations need users.write, not the group-wide users.read (which the
 			// read-only system_auditor persona holds) — these were the missed
