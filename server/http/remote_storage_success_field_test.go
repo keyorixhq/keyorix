@@ -128,11 +128,9 @@ func TestRemoteStorage_SuccessFieldFix_RealServerRoundTrip(t *testing.T) {
 	assert.Equal(t, secret.Name, gotSecret.Name)
 	assert.Equal(t, secret.ProjectID, gotSecret.ProjectID)
 
-	// NOTE: GetSecretByName is deliberately not exercised here — it targets
-	// /api/v1/secrets/by-name/{name}, a route that server/http/router.go never
-	// registers at all (confirmed: no "by-name" route exists), so it 404s for an
-	// unrelated, pre-existing reason having nothing to do with this fix. Left as a
-	// separate follow-up finding rather than folded into this fix's scope.
+	// NOTE: GetSecretByName is not exercised here — it is covered by its own
+	// dedicated end-to-end fix/regression test (#497),
+	// remote_storage_get_secret_by_name_test.go, once the missing route was added.
 
 	// --- LIST secrets (filtered by project) ---
 	secrets, secTotal, err := rs.ListSecrets(ctx, &coreStorage.SecretFilter{ProjectID: &project.ID, Page: 1, PageSize: 50})

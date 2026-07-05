@@ -74,9 +74,16 @@ func (rs *RemoteStorage) GetSecretsByIDs(ctx context.Context, ids []uint) ([]*mo
 }
 
 // GetSecretByName retrieves a secret by name and scope context via remote API.
+//
+// The server registers this lookup as GET /api/v1/secrets/by-name with the name as
+// a query parameter (mirroring ListSecrets' project_id/environment_id query-scoped
+// convention), not as a path segment (#497: an earlier version of this method
+// requested /api/v1/secrets/by-name/{name}, a route server/http/router.go never
+// registered, so every call 404'd against a real server regardless of whether the
+// secret existed).
 func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
-	path := fmt.Sprintf("/api/v1/secrets/by-name/%s?project_id=%d&environment_id=%d",
-		url.PathEscape(name), projectID, environmentID)
+	path := fmt.Sprintf("/api/v1/secrets/by-name?name=%s&project_id=%d&environment_id=%d",
+		url.QueryEscape(name), projectID, environmentID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret by name: %w", err)

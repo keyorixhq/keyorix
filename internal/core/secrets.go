@@ -180,6 +180,35 @@ func (c *KeyorixCore) GetSecretWithPermissionCheck(ctx context.Context, id, user
 	return c.GetSecret(ctx, id)
 }
 
+// GetSecretByName resolves a secret by its name within a project/environment. Like
+// GetSecret, it performs NO authorization check of its own — callers that serve the
+// result to an end user must go through GetSecretByNameWithPermissionCheck instead.
+func (c *KeyorixCore) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
+	secret, err := c.storage.GetSecretByName(ctx, name, projectID, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+	}
+	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
+	}
+	return secret, nil
+}
+
+// GetSecretByNameWithPermissionCheck retrieves a secret by name/project/environment
+// with read permission enforcement — the name-lookup counterpart to
+// GetSecretWithPermissionCheck, mirroring the resolve-then-authorize-by-id pattern
+// ResolveSecretRef/GetSecretValueByRef already use for the ref-based value read.
+func (c *KeyorixCore) GetSecretByNameWithPermissionCheck(ctx context.Context, name string, projectID, environmentID, userID uint) (*models.SecretNode, error) {
+	secret, err := c.storage.GetSecretByName(ctx, name, projectID, environmentID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+	}
+	if _, err := c.EnforceSecretReadPermission(ctx, secret.ID, userID); err != nil {
+		return nil, err
+	}
+	return c.GetSecret(ctx, secret.ID)
+}
+
 // UpdateSecret updates an existing secret.
 func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
 	if err := c.validateUpdateSecretRequest(req); err != nil {
