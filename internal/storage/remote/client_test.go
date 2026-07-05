@@ -303,6 +303,93 @@ func TestHTTPClient_MalformedSuccessResponse_NoPanic(t *testing.T) {
 	})
 }
 
+// TestHTTPClient_204NoContent_Success pins #498: a 204 No Content response (the
+// real shape DeleteUser/DeleteSecret's handlers return — an empty body, no JSON
+// at all) must be treated as an unambiguous success, not a parse failure. Before
+// the fix, json.Unmarshal on the zero-byte body errored with "unexpected end of
+// JSON input", and makeRequest's parse-error branch synthesized Success:false —
+// silently misreporting every genuinely successful delete as a failure.
+func TestHTTPClient_204NoContent_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	config := &Config{
+		BaseURL:        server.URL,
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  0,
+		TLSVerify:      false,
+	}
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+
+	resp, err := client.Delete(context.Background(), "/users/1")
+	require.NoError(t, err, "a 204 No Content must not be misreported as a request failure")
+	require.NotNil(t, resp)
+	assert.True(t, resp.Success, "a 204 No Content must be treated as success, not the zero-value Success:false")
+	assert.Nil(t, resp.Error)
+}
+
+// TestHTTPClient_2xxEmptyBody_Success generalizes the #498 fix beyond a literal
+// 204: any 2xx status with a genuinely empty body (not just 204) must also be
+// treated as success, since the mechanism (an empty body can't be unmarshaled)
+// is identical regardless of the exact 2xx code used.
+func TestHTTPClient_2xxEmptyBody_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		// deliberately write nothing
+	}))
+	defer server.Close()
+
+	config := &Config{
+		BaseURL:        server.URL,
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  0,
+		TLSVerify:      false,
+	}
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+
+	resp, err := client.Get(context.Background(), "/whatever")
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, resp.Success)
+}
+
+// TestHTTPClient_MalformedNonEmptyBody_StillReportsFailure is the non-regression
+// half of the #498 fix: the empty-body special case must NOT be broadened into
+// "any unparseable body is success". A 200 that was supposed to carry a JSON
+// body but instead sends truncated/malformed (non-empty) bytes must still
+// surface as a genuine parse failure (Success:false with the raw body captured
+// in Error.Details), exactly as before this fix.
+func TestHTTPClient_MalformedNonEmptyBody_StillReportsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success": tru`)) // truncated, non-empty, malformed JSON
+	}))
+	defer server.Close()
+
+	config := &Config{
+		BaseURL:        server.URL,
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  0,
+		TLSVerify:      false,
+	}
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+
+	resp, err := client.Get(context.Background(), "/whatever")
+	require.NoError(t, err, "a parse failure is reported via Success:false/Error, not a Go error")
+	require.NotNil(t, resp)
+	assert.False(t, resp.Success, "a genuinely malformed non-empty body must still be reported as a failure")
+	require.NotNil(t, resp.Error)
+	assert.Contains(t, resp.Error.Details, `{"success": tru`)
+}
+
 // TestAPIError_ErrorMethod_NilSafe pins the nil-receiver guard directly: any
 // existing or future caller doing (*APIError)(nil).Error() must not panic.
 func TestAPIError_ErrorMethod_NilSafe(t *testing.T) {
