@@ -6,6 +6,13 @@ metadata:
   labels:
     {{- include "keyorix.labels" . | nindent 4 }}
     app.kubernetes.io/component: web
+  annotations:
+    # checkov (helm-chart-security CI job): nginx needs a writable root filesystem
+    # for /var/cache/nginx, /var/run/nginx.pid and client-body temp files -- the
+    # container is otherwise fully hardened (allowPrivilegeEscalation: false,
+    # capabilities dropped, non-root uid 101, seccomp RuntimeDefault at the pod
+    # level), so only this one property is suppressed, not the whole check family.
+    checkov.io/skip1: CKV_K8S_22=nginx requires a writable root filesystem for its cache/pid/temp files
 spec:
   replicas: {{ .Values.web.replicas }}
   selector:
