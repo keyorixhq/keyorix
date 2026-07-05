@@ -40,7 +40,6 @@ spec:
           imagePullPolicy: {{ .Values.server.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           ports:
