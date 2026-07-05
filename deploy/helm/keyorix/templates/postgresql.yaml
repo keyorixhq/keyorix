@@ -41,6 +41,14 @@ metadata:
   labels:
     {{- include "keyorix.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
+  annotations:
+    # checkov (helm-chart-security CI job): postgres needs a writable root
+    # filesystem for its unix socket (/var/run/postgresql) and temp files outside
+    # the PVC-backed data directory -- the container is otherwise fully hardened
+    # (allowPrivilegeEscalation: false, capabilities dropped, non-root uid 999,
+    # seccomp RuntimeDefault at the pod level), so only this one property is
+    # suppressed, not the whole check family.
+    checkov.io/skip1: CKV_K8S_22=postgres requires a writable root filesystem for its socket/temp files
 spec:
   replicas: 1
   strategy:

@@ -9,6 +9,13 @@ metadata:
     helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
 spec:
   restartPolicy: Never
+  securityContext:
+    # A plain `wget --spider` needs no elevated privileges at all -- matches the
+    # same hardening baseline as the application's own containers (#helm-chart-security).
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: health
       image: busybox:1.36
@@ -17,3 +24,8 @@ spec:
         - "--spider"
         - "-S"
         - "http://{{ include "keyorix.server.fullname" . }}:{{ .Values.server.service.port }}/health"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
