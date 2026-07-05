@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -69,12 +70,20 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
 	}
 
-	// Verify the environment belongs to the stated project.
+	// Verify the environment belongs to the stated project. RemoteStorage.GetEnvironment
+	// is unimplemented (ErrUnsupportedByBackend, #499): it has no by-ID lookup route to
+	// call without also knowing the project (which this pre-check exists to establish).
+	// Rather than hard-failing every remote CreateSecret on a pre-check the backend can't
+	// perform, skip it when unsupported — the upstream server's own CreateSecret handler
+	// runs this identical ownership check against its own LocalStorage when it receives
+	// the forwarded request, so the invariant is still enforced authoritatively, just on
+	// the other side of the wire instead of redundantly on both.
 	env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID)
 	if err != nil {
-		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
-	}
-	if env.ProjectID != req.ProjectID {
+		if !errors.Is(err, storage.ErrUnsupportedByBackend) {
+			return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+		}
+	} else if env.ProjectID != req.ProjectID {
 		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
 	}
 
@@ -116,16 +125,28 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		UpdatedAt:      time.Now(),
 	}
 
-	createdSecret, err := c.storage.CreateSecret(ctx, secret)
+	// req.Value is forwarded as the optional plaintext argument (#499): LocalStorage
+	// ignores it (a no-op — the value still flows through the storeSecretVersion call
+	// below, unchanged), while RemoteStorage forwards it over the wire so the real
+	// upstream handler's required "value" field is satisfied and version 1 is created
+	// atomically server-side. Never logged.
+	createdSecret, err := c.storage.CreateSecret(ctx, secret, string(req.Value))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
-	if err := c.storeSecretVersion(ctx, createdSecret, req.Value, 1); err != nil {
-		if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
-			log.Printf("warning: failed to cleanup orphaned secret %d after failed version creation: %v", createdSecret.ID, delErr)
+	// Skip the separate version-creation call when the backend already stored the value
+	// atomically as part of CreateSecret itself (RemoteStorage, #499): calling
+	// storeSecretVersion again here would try to mint a conflicting duplicate version 1
+	// against a secret that already has one. LocalStorage never sets ValueStored, so this
+	// call remains exactly as before for it.
+	if !createdSecret.ValueStored {
+		if err := c.storeSecretVersion(ctx, createdSecret, req.Value, 1); err != nil {
+			if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
+				log.Printf("warning: failed to cleanup orphaned secret %d after failed version creation: %v", createdSecret.ID, delErr)
+			}
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
 	// Apply the create-time tags (#390) now that the secret and its first version both

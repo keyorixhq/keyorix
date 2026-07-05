@@ -54,7 +54,11 @@ func isDuplicateEmailViolation(err error) bool {
 
 // --- Users ---
 
-func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User) (*models.User, error) {
+// CreateUser ignores the optional plaintextPassword variadic (#499): user
+// already carries its final PasswordHash by the time core calls this, and
+// LocalStorage has no wire format to leak the plaintext into — it is simply
+// never read here, matching the interface doc's no-op requirement.
+func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User, _ ...string) (*models.User, error) {
 	if err := ls.db.WithContext(ctx).Create(user).Error; err != nil {
 		if isDuplicateEmailViolation(err) {
 			// The partial unique index uniq_users_email_active (#117) caught a concurrent
