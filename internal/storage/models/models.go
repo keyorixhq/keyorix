@@ -567,6 +567,16 @@ type SecretNode struct {
 	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins
 	// queries on secret_nodes must filter it explicitly.
 	DeletedAt gorm.DeletedAt `gorm:"index"`
+	// ValueStored is a transient, in-process-only signal (#499): never persisted
+	// (`gorm:"-"`) and never serialized (`json:"-"`). storage.Storage.CreateSecret
+	// sets it true on the node it returns ONLY when the backend already durably
+	// stored the secret's initial value as part of that same call (RemoteStorage,
+	// when core forwarded a plaintextValue and the upstream server created
+	// version 1 atomically). core.CreateSecret checks this to decide whether its
+	// own follow-up CreateSecretVersion call is still needed (LocalStorage,
+	// where it always is) or would create a conflicting duplicate (RemoteStorage,
+	// where the value is already stored). Never carries the value itself.
+	ValueStored bool `gorm:"-" json:"-"`
 }
 
 // SecretDependency is a directed edge in a project's secret dependency graph:

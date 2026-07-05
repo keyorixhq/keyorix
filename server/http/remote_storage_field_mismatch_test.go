@@ -72,19 +72,23 @@ func rawPost(t *testing.T, baseURL, path, token string, body []byte) (status int
 // #496 fix for RemoteStorage.CreateUser's request wire shape against the REAL
 // CreateUser handler (server/http/handlers/users_crud.go).
 //
-// Before the fix, models.User (no json tags of its own besides PasswordHash's
-// json:"-") was marshaled directly: "DisplayName" and "IsActive" do not
-// case-insensitively match the handler's "display_name"/"active"... sorry,
-// "is_active" tags (only single-word fields like "Username"/"Email" happened to
-// still match). DisplayName landed as "" server-side, which fails the handler's
-// OWN "required,min=1" structural validation — producing a generic "Invalid
-// request data" error that (wrongly) implicated display_name, masking the
-// separate, genuine, and NOT-fixable-here gap: models.User only ever carries a
-// bcrypt PasswordHash (json:"-"), never a plaintext password, so CreateUser via
-// remote storage can never satisfy the handler's password requirement regardless
-// of the other fields. After the fix, username/email/display_name/is_active all
-// reach the handler correctly, so the ONLY remaining failure is the accurate one:
-// the explicit "password is required" business-logic check, not a structural
+// Before the #496 fix, models.User (no json tags of its own besides
+// PasswordHash's json:"-") was marshaled directly: "DisplayName" and "IsActive"
+// do not case-insensitively match the handler's "display_name"/"active"...
+// sorry, "is_active" tags (only single-word fields like "Username"/"Email"
+// happened to still match). DisplayName landed as "" server-side, which fails
+// the handler's OWN "required,min=1" structural validation — producing a
+// generic "Invalid request data" error that (wrongly) implicated display_name,
+// masking the separate, genuine gap #496 deliberately left open and #499 later
+// closed: CreateUser's optional plaintextPassword variadic can now convey the
+// password (see TestRemoteStorage_PlaintextChannel_CreateUser_RealServerRoundTrip
+// for the genuine end-to-end success proof). THIS test calls rs.CreateUser with
+// NO plaintextPassword argument — exactly what SSO/SCIM auto-provisioning (which
+// has no real plaintext to offer) sends — so "password" is correctly absent from
+// the wire and the handler's business-logic check still (correctly) rejects it.
+// After the #496 fix, username/email/display_name/is_active all reach the
+// handler correctly, so the ONLY remaining failure is the accurate one: the
+// explicit "password is required" business-logic check, not a structural
 // validation error blaming the wrong field.
 func TestRemoteStorage_FieldMismatchFix_CreateUser_WireShapeAndValidation(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
@@ -108,15 +112,14 @@ func TestRemoteStorage_FieldMismatchFix_CreateUser_WireShapeAndValidation(t *tes
 	require.NoError(t, err)
 
 	active := true
+	// No plaintextPassword argument passed (#499): this call has nothing real to
+	// offer, so it must still fail — matching an SSO/SCIM-style auto-provisioned
+	// caller that genuinely has no plaintext credential to send.
 	_, createErr := rs.CreateUser(ctx, &models.User{
 		Username: "e2e-mismatch-newuser", Email: "e2e-mismatch-newuser@example.com",
 		DisplayName: "E2E New User", IsActive: active,
 		PasswordHash: "irrelevant-bcrypt-hash-never-sent", // json:"-": must never reach the wire
 	})
-	// This call can never succeed end-to-end: models.User has no plaintext password
-	// channel at all, so the server's password-required check always rejects it
-	// (a separate, deeper gap than #496's field-name-mismatch scope, tracked
-	// separately). What matters here is WHY it fails.
 	require.Error(t, createErr)
 
 	// --- prove the exact bytes sent match the real handler's expected DTO shape ---
@@ -148,18 +151,21 @@ func TestRemoteStorage_FieldMismatchFix_CreateUser_WireShapeAndValidation(t *tes
 // the CreateUser test above for RemoteStorage.CreateSecret against the real
 // CreateSecret handler (server/http/handlers/secrets_crud.go).
 //
-// Before the fix, models.SecretNode (no json tags at all) was marshaled
+// Before the #496 fix, models.SecretNode (no json tags at all) was marshaled
 // directly: "ProjectID"/"EnvironmentID"/"MaxReads" do not case-insensitively
 // match "project_id"/"environment_id"/"max_reads", so environment_id (required)
 // landed as 0 server-side, producing a generic "Invalid request data" error
-// blaming environment_id/project_id — masking the separate, genuine, and
-// NOT-fixable-here gap: models.SecretNode carries no value field at all (the
-// plaintext lives only in core.CreateSecretRequest.Value, handed to a wholly
-// separate CreateSecretVersion call), so CreateSecret via remote storage can
-// never satisfy the handler's "value" requirement regardless of the other
-// fields. After the fix, name/project_id/environment_id/type/max_reads/
-// classification all reach the handler correctly, so the ONLY remaining
-// validation failure is the accurate one: "value" missing.
+// blaming environment_id/project_id — masking the separate, genuine gap #496
+// deliberately left open and #499 later closed: CreateSecret's optional
+// plaintextValue variadic can now convey the value (see
+// TestRemoteStorage_PlaintextChannel_CreateSecret_RealServerRoundTrip for the
+// genuine end-to-end success proof). THIS test calls rs.CreateSecret with NO
+// plaintextValue argument — exactly what a caller with nothing to offer sends —
+// so "value" is present on the wire but empty, and the handler's structural
+// "required" check still (correctly) rejects it. After the #496 fix,
+// name/project_id/environment_id/type/max_reads/classification all reach the
+// handler correctly, so the ONLY remaining validation failure is the accurate
+// one: "value" missing.
 func TestRemoteStorage_FieldMismatchFix_CreateSecret_WireShapeAndValidation(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	defer i18n.ResetForTesting()
@@ -190,14 +196,13 @@ func TestRemoteStorage_FieldMismatchFix_CreateSecret_WireShapeAndValidation(t *t
 	require.NoError(t, err)
 
 	maxReads := 5
+	// No plaintextValue argument passed (#499): this call has nothing real to offer,
+	// so it must still fail — the server's "value" required check correctly rejects
+	// an empty value exactly as it would reject an absent one.
 	_, createErr := rs.CreateSecret(ctx, &models.SecretNode{
 		Name: "e2e-mismatch-secret", ProjectID: project.ID, EnvironmentID: envID,
 		Type: "generic", MaxReads: &maxReads, Classification: "internal",
 	})
-	// This call can never succeed end-to-end: models.SecretNode carries no value
-	// field at all, so the server's "value" required check always rejects it (a
-	// separate, deeper gap than #496's field-name-mismatch scope, tracked
-	// separately). What matters here is WHY it fails.
 	require.Error(t, createErr)
 
 	// --- prove the exact bytes sent match the real handler's expected DTO shape ---
@@ -209,8 +214,10 @@ func TestRemoteStorage_FieldMismatchFix_CreateSecret_WireShapeAndValidation(t *t
 	assert.Equal(t, "generic", sentBody["type"])
 	assert.Equal(t, float64(5), sentBody["max_reads"], "#496: max_reads must be sent, not silently dropped as MaxReads")
 	assert.Equal(t, "internal", sentBody["classification"])
-	_, hasValue := sentBody["value"]
-	assert.False(t, hasValue, "models.SecretNode has no value field to send at all")
+	value, hasValue := sentBody["value"]
+	assert.True(t, hasValue, "#499: the wire request always includes a value key now that "+
+		"CreateSecret can convey one via its optional plaintextValue argument")
+	assert.Equal(t, "", value, "no plaintextValue was passed to this call, so it must be empty, not a real secret value")
 	for _, badKey := range []string{"ProjectID", "EnvironmentID", "MaxReads", "Name", "Type"} {
 		_, present := sentBody[badKey]
 		assert.False(t, present, "must not send the old PascalCase Go field name %q", badKey)

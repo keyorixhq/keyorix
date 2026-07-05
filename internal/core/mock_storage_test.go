@@ -508,7 +508,10 @@ func (m *MockStorage) RestoreEnvironment(_ context.Context, _, _ uint) error {
 
 // Secret Management
 
-func (m *MockStorage) CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
+// CreateSecret ignores the optional plaintextValue variadic (#499) — it is not
+// forwarded to m.Called, so existing `.On("CreateSecret", ctx, secret)`
+// expectations (2 args) keep matching regardless of what core passes.
+func (m *MockStorage) CreateSecret(ctx context.Context, secret *models.SecretNode, _ ...string) (*models.SecretNode, error) {
 	args := m.Called(ctx, secret)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -789,7 +792,10 @@ func (m *MockStorage) DeleteExpiredShareRecords(ctx context.Context, before time
 
 // User Management
 
-func (m *MockStorage) CreateUser(ctx context.Context, user *models.User) (*models.User, error) {
+// CreateUser ignores the optional plaintextPassword variadic (#499) — it is not
+// forwarded to m.Called, so existing `.On("CreateUser", ctx, user)`
+// expectations (2 args) keep matching regardless of what core passes.
+func (m *MockStorage) CreateUser(ctx context.Context, user *models.User, _ ...string) (*models.User, error) {
 	args := m.Called(ctx, user)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

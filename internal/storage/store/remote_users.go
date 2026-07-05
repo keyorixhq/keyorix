@@ -38,23 +38,24 @@ import (
 // value server-side. The wire types below name every field explicitly so nothing
 // depends on that fallback (or the handler's specific field-naming choices) again.
 //
-// Password is deliberately never sent by userCreateWireRequest: models.User only
+// Password (#499, closing the residual gap #496 left open): models.User only
 // ever carries a bcrypt PasswordHash (`json:"-"`, intentionally excluded from the
-// wire) by the time CreateUser is invoked — buildUserForCreate
-// (internal/core/users.go) discards the plaintext once it computes the hash, and
-// storage.Storage.CreateUser(ctx, *models.User) has no other channel to carry a
-// plaintext password. That means the server's own "password is required unless
-// deliver_setup_link/generate_one_time_password is set" check will still reject
-// this call — a separate, deeper gap (the Storage interface itself never receives
-// the one field the server needs) than this fix's field-name-mismatch scope. This
-// fix at least ensures the OTHER fields are no longer ALSO silently wrong, so the
-// error the caller now sees accurately blames the missing password, not a
-// coincidentally-also-broken display_name/is_active.
+// wire — it must never be sent) by the time CreateUser is invoked;
+// buildUserForCreate (internal/core/users.go) discards the plaintext once it
+// computes the hash. The server's own "password is required unless
+// deliver_setup_link/generate_one_time_password is set" check needs the
+// PLAINTEXT (it hashes its own copy), which storage.Storage.CreateUser's new
+// optional plaintextPassword variadic now carries specifically for this call —
+// see the interface doc (internal/core/storage/interface.go) for why it is a
+// call argument and not a models.User field. Omitted (empty string) whenever the
+// caller has no real plaintext to offer (SSO/SCIM auto-provisioning), in which
+// case this field is simply left out of the JSON body, exactly as before.
 type userCreateWireRequest struct {
 	Username    string `json:"username"`
 	Email       string `json:"email"`
 	DisplayName string `json:"display_name"`
 	IsActive    *bool  `json:"is_active,omitempty"`
+	Password    string `json:"password,omitempty"`
 }
 
 // userUpdateWireRequest mirrors UpdateUser's handler DTO exactly (all optional,
@@ -66,13 +67,14 @@ type userUpdateWireRequest struct {
 	Active      *bool   `json:"active,omitempty"`
 }
 
-func newUserCreateWireRequest(user *models.User) userCreateWireRequest {
+func newUserCreateWireRequest(user *models.User, plaintextPassword string) userCreateWireRequest {
 	active := user.IsActive
 	return userCreateWireRequest{
 		Username:    user.Username,
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
 		IsActive:    &active,
+		Password:    plaintextPassword,
 	}
 }
 
@@ -136,9 +138,17 @@ func decodeUserResponse(data []byte) (*models.User, error) {
 
 // --- Users ---
 
-// CreateUser creates a new user via remote API.
-func (rs *RemoteStorage) CreateUser(ctx context.Context, user *models.User) (*models.User, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/users", newUserCreateWireRequest(user))
+// CreateUser creates a new user via remote API. plaintextPassword is optional
+// (#499) — see the interface doc and userCreateWireRequest's comment above for
+// why it is a call argument rather than a models.User field. At most the first
+// value is used; the rest is accepted only to satisfy the variadic interface
+// signature (callers pass zero or one).
+func (rs *RemoteStorage) CreateUser(ctx context.Context, user *models.User, plaintextPassword ...string) (*models.User, error) {
+	var password string
+	if len(plaintextPassword) > 0 {
+		password = plaintextPassword[0]
+	}
+	resp, err := rs.client.Post(ctx, "/api/v1/users", newUserCreateWireRequest(user, password))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}

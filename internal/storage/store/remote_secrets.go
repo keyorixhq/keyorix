@@ -36,28 +36,27 @@ import (
 // in server/http, which already had to work around the MaxReads/max_reads gap by
 // asserting on UpdatedAt instead of the field it actually changed).
 //
-// Note what is deliberately NOT sent, in both directions, because there is no
-// channel in the storage.Storage interface to carry it:
-//   - CreateSecret: "value" (required by the handler). models.SecretNode has no
-//     value field at all — the plaintext lives only in
-//     core.CreateSecretRequest.Value (internal/core/secrets.go), which
-//     core.CreateSecret hands to storeSecretVersion/CreateSecretVersion
-//     separately, never to CreateSecret's own SecretNode argument. So this call
-//     will still fail the handler's "value" required validation today — a
-//     separate, deeper gap (the interface itself never receives the value) than
-//     this fix's field-name-mismatch scope. This fix only ensures the OTHER
-//     fields are no longer ALSO silently wrong, so the resulting error
-//     accurately blames the missing value, not a coincidentally-also-broken
-//     project_id/environment_id/max_reads.
+// Note what is deliberately NOT sent, in both directions:
+//   - CreateSecret: "value" (required by the handler) IS now sent (#499, closing
+//     the residual gap #496 left open) via the optional plaintextValue variadic
+//     on storage.Storage.CreateSecret — see the interface doc
+//     (internal/core/storage/interface.go) for why it is a call argument rather
+//     than a models.SecretNode field. Sent unconditionally required (no
+//     omitempty): the handler always requires it, and core.CreateSecret always
+//     has a value to offer (CreateSecretRequest.Value itself is
+//     validate:"required").
 //   - CreateSecret: "tags". core.CreateSecret applies create-time tags via a
 //     separate SetSecretTags storage call (already documented as
 //     remote-unsupported below), never through the SecretNode passed to
 //     CreateSecret, so there is nothing to forward here either.
-//   - UpdateSecret: "value" (optional). Same reasoning as CreateSecret — value
-//     changes go through storeNextSecretVersion/CreateSecretVersion, not
-//     UpdateSecret's own SecretNode argument.
+//   - UpdateSecret: "value" (optional). UpdateSecret has no equivalent
+//     plaintextValue channel — value changes still go through
+//     storeNextSecretVersion/CreateSecretVersion, not UpdateSecret's own
+//     SecretNode argument. Left as a documented residual gap; UpdateSecret was
+//     out of #499's scope (CreateUser/CreateSecret only).
 type secretCreateWireRequest struct {
 	Name           string      `json:"name"`
+	Value          string      `json:"value"`
 	ProjectID      uint        `json:"project_id"`
 	EnvironmentID  uint        `json:"environment_id"`
 	Type           string      `json:"type"`
@@ -66,9 +65,10 @@ type secretCreateWireRequest struct {
 	Classification string      `json:"classification,omitempty"`
 }
 
-func newSecretCreateWireRequest(secret *models.SecretNode) secretCreateWireRequest {
+func newSecretCreateWireRequest(secret *models.SecretNode, plaintextValue string) secretCreateWireRequest {
 	return secretCreateWireRequest{
 		Name:           secret.Name,
+		Value:          plaintextValue,
 		ProjectID:      secret.ProjectID,
 		EnvironmentID:  secret.EnvironmentID,
 		Type:           secret.Type,
@@ -103,9 +103,23 @@ func newSecretUpdateWireRequest(secret *models.SecretNode) secretUpdateWireReque
 	return req
 }
 
-// CreateSecret creates a new secret via remote API.
-func (rs *RemoteStorage) CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/secrets", newSecretCreateWireRequest(secret))
+// CreateSecret creates a new secret via remote API. plaintextValue is optional
+// (#499) — see the interface doc and secretCreateWireRequest's comment above
+// for why it is a call argument rather than a models.SecretNode field. At most
+// the first value is used; the rest is accepted only to satisfy the variadic
+// interface signature (callers pass zero or one).
+//
+// When plaintextValue is supplied, the upstream server's CreateSecret handler
+// creates version 1 atomically as part of this same request — so the returned
+// node has ValueStored set, telling core.CreateSecret its own separate
+// CreateSecretVersion call is unnecessary (and would otherwise try to mint a
+// conflicting duplicate version 1).
+func (rs *RemoteStorage) CreateSecret(ctx context.Context, secret *models.SecretNode, plaintextValue ...string) (*models.SecretNode, error) {
+	var value string
+	if len(plaintextValue) > 0 {
+		value = plaintextValue[0]
+	}
+	resp, err := rs.client.Post(ctx, "/api/v1/secrets", newSecretCreateWireRequest(secret, value))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret: %w", err)
 	}
@@ -115,6 +129,9 @@ func (rs *RemoteStorage) CreateSecret(ctx context.Context, secret *models.Secret
 	var result models.SecretNode
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if value != "" {
+		result.ValueStored = true
 	}
 	return &result, nil
 }

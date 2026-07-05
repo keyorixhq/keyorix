@@ -354,7 +354,12 @@ func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, projectID, id ui
 // --- Secrets ---
 
 // CreateSecret creates a new secret in the database.
-func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
+// CreateSecret ignores the optional plaintextValue variadic (#499): the value
+// continues to flow through the existing, unchanged CreateSecretVersion path —
+// this is a no-op parameter here, never read, never persisted. secret.ValueStored
+// is deliberately left false (the zero value): the caller (core.CreateSecret)
+// must still make its own CreateSecretVersion call for LocalStorage.
+func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretNode, _ ...string) (*models.SecretNode, error) {
 	if err := ls.db.WithContext(ctx).Create(secret).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

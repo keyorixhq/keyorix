@@ -52,9 +52,16 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 
 	if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
 		return nil, "", fmt.Errorf("%s: username already exists", i18n.T("ErrorValidation", nil))
-	} else if err != nil && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
+	} else if !errors.Is(err, storage.ErrUnsupportedByBackend) && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	// RemoteStorage.GetUserByUsername is unimplemented (ErrUnsupportedByBackend, #499):
+	// it has no by-username lookup route to call. Rather than hard-failing every
+	// remote CreateUser on a pre-check the backend can't perform, skip it here — the
+	// upstream server's own CreateUser handler runs this exact same buildUserForCreate
+	// check against its own LocalStorage when it receives the forwarded request, so the
+	// duplicate-username invariant is still enforced authoritatively, just on the other
+	// side of the wire instead of redundantly on both.
 
 	existing, err := c.storage.GetUserByEmail(ctx, req.Email)
 	if err == nil && existing != nil {
@@ -92,7 +99,14 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		return nil, err
 	}
 
-	createdUser, err := c.storage.CreateUser(ctx, user)
+	// req.Password is forwarded as the optional plaintext argument (#499): LocalStorage
+	// ignores it (a no-op — it already has the hash above), while RemoteStorage forwards
+	// it over the wire so the real upstream handler can hash its own copy. This covers
+	// every core.CreateUser caller uniformly (the admin classic path, CreateUserWithSetupLink,
+	// and CreateUserWithOneTimePassword all populate req.Password with a real, hashable
+	// string before reaching here — see buildUserForCreate above and setup_delivery.go),
+	// and it is never logged.
+	createdUser, err := c.storage.CreateUser(ctx, user, req.Password)
 	if err != nil {
 		// #117: the pre-check above (GetUserByEmail) is a check-then-act read that races
 		// with a concurrent create for the identical email — both can pass it before

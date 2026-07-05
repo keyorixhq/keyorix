@@ -344,7 +344,27 @@ type Storage interface {
 	CountProjectMembershipsByUsers(ctx context.Context, userIDs []uint) (map[uint]MembershipCounts, error)
 
 	// Secret Management
-	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
+	//
+	// CreateSecret persists secret's metadata; secret itself carries no value
+	// field at all (models.SecretNode has none — the plaintext normally lives
+	// only in core.CreateSecretRequest.Value and is routed to a separate
+	// CreateSecretVersion call core.CreateSecret makes right after this one).
+	// The optional plaintextValue variadic (#499) exists ONLY for RemoteStorage:
+	// the real upstream HTTP handler (server/http/handlers/secrets_crud.go)
+	// requires "value" in the SAME POST /api/v1/secrets body and creates version
+	// 1 atomically as part of handling it — there is no separate
+	// "create metadata now, add the value later" route to call instead. At most
+	// one value is meaningful; callers pass zero or one. LocalStorage's
+	// implementation MUST ignore this parameter (its CreateSecret has never
+	// touched the value and must keep not doing so — the value continues to
+	// flow through the existing, unchanged CreateSecretVersion path). When
+	// RemoteStorage successfully forwards a plaintextValue, the *models.SecretNode
+	// it returns has ValueStored set (a transient, never-persisted field — see
+	// models.SecretNode) so core.CreateSecret knows version 1 already exists
+	// upstream and must NOT also call CreateSecretVersion itself, which would
+	// otherwise mint a conflicting duplicate version 1 (or, until that route
+	// exists server-side, simply fail).
+	CreateSecret(ctx context.Context, secret *models.SecretNode, plaintextValue ...string) (*models.SecretNode, error)
 	GetSecret(ctx context.Context, id uint) (*models.SecretNode, error)
 	// GetSecretsByIDs is the batch form of GetSecret: every secret in ids, in one
 	// query, instead of one GetSecret call per ID. IDs with no matching row are
@@ -442,7 +462,26 @@ type Storage interface {
 	DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error)
 
 	// User Management
-	CreateUser(ctx context.Context, user *models.User) (*models.User, error)
+	//
+	// CreateUser persists user, which by this point already carries its final
+	// bcrypt PasswordHash (`json:"-"` — core.buildUserForCreate hashes and
+	// discards the caller-supplied plaintext before ever reaching here). The
+	// optional plaintextPassword variadic (#499) exists ONLY for RemoteStorage:
+	// the real upstream HTTP handler (server/http/handlers/users_crud.go)
+	// re-hashes its own bcrypt copy server-side and therefore requires the
+	// PLAINTEXT password in its request body, not a hash it cannot verify was
+	// produced honestly. Passing it through here — rather than adding it to
+	// models.User itself — keeps the plaintext out of the persisted/logged user
+	// record entirely; it exists only as a function-call argument for the single
+	// call that needs it. At most one value is meaningful; callers pass zero or
+	// one. LocalStorage's implementation MUST ignore this parameter (it already
+	// has the hash and must never additionally receive, log, or persist the
+	// plaintext) — a no-op, not a new capability. Callers with no real plaintext
+	// to offer (SSO/SCIM auto-provisioning, which mints an unusable random
+	// password precisely because the account is never meant to authenticate
+	// with one) must not pass anything here; RemoteStorage.CreateUser then omits
+	// the wire field entirely, exactly as it did before #499 for those flows.
+	CreateUser(ctx context.Context, user *models.User, plaintextPassword ...string) (*models.User, error)
 	// CreateUserWithRoleGrants creates the user and applies all role grants in a
 	// single transaction (ADR-028 atomic provisioning); on any failure nothing is
 	// persisted.
