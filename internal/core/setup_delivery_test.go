@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -304,12 +306,10 @@ func TestGenerateOneTimePassword(t *testing.T) {
 
 // helpers ---------------------------------------------------------------------
 
-// assertNotFoundErr returns an error whose message contains the not-found marker
-// CreateUser checks for, so the "does this user already exist?" probes read as absent.
+// assertNotFoundErr mirrors the real storage "not found" error (wrapping the typed
+// storage.ErrUserNotFound sentinel, same as LocalStorage's GetUser/GetUserByEmail/
+// GetUserByUsername/etc., #504) so the mock is detected the same way CreateUser's
+// "does this user already exist?" probes detect the real thing.
 func assertNotFoundErr() error {
-	return &notFoundError{msg: i18n.T("ErrorUserNotFound", nil)}
+	return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 }
-
-type notFoundError struct{ msg string }
-
-func (e *notFoundError) Error() string { return e.msg }

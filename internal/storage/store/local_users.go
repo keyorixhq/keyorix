@@ -144,7 +144,11 @@ func (ls *LocalStorage) GetUserByEmail(ctx context.Context, email string) (*mode
 	// sides matches regardless of stored casing (covers legacy mixed-case rows).
 	if err := ls.db.WithContext(ctx).Where("LOWER(email) = LOWER(?)", email).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+			// Wrap the typed sentinel (matching GetUser/LockUserForUpdate, #504) so
+			// callers can detect "genuinely absent" via
+			// errors.Is/storage.IsUserNotFound instead of matching this i18n text,
+			// which is a rendering detail, not a contract.
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -155,7 +159,7 @@ func (ls *LocalStorage) GetUserByUsername(ctx context.Context, username string) 
 	var user models.User
 	if err := ls.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -166,7 +170,7 @@ func (ls *LocalStorage) GetUserByExternalID(ctx context.Context, externalID stri
 	var user models.User
 	if err := ls.db.WithContext(ctx).Where("external_id = ?", externalID).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -287,7 +291,9 @@ func (ls *LocalStorage) RestoreUser(ctx context.Context, id uint) error {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+		// Wrap the typed sentinel (#504) so RestoreUser's "not found" is detectable
+		// the same way as the other user lookups, instead of only via i18n text.
+		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 	}
 	return nil
 }

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -52,7 +51,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 
 	if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
 		return nil, "", fmt.Errorf("%s: username already exists", i18n.T("ErrorValidation", nil))
-	} else if !errors.Is(err, storage.ErrUnsupportedByBackend) && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
+	} else if !errors.Is(err, storage.ErrUnsupportedByBackend) && !storage.IsUserNotFound(err) {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	// RemoteStorage.GetUserByUsername is unimplemented (ErrUnsupportedByBackend, #499):
@@ -67,7 +66,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	if err == nil && existing != nil {
 		return nil, "", fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
 	}
-	if err != nil && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
+	if err != nil && !storage.IsUserNotFound(err) {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
@@ -260,7 +259,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if req.Username != "" && req.Username != user.Username {
 		if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
 			return nil, fmt.Errorf("%s: username already exists", i18n.T("ErrorValidation", nil))
-		} else if err != nil && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
+		} else if err != nil && !storage.IsUserNotFound(err) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}
 		user.Username = req.Username
@@ -270,7 +269,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		if err == nil && existing != nil && existing.ID != user.ID {
 			return nil, fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
 		}
-		if err != nil && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
+		if err != nil && !storage.IsUserNotFound(err) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}
 		user.Email = req.Email
@@ -359,7 +358,7 @@ func (c *KeyorixCore) RestoreUser(ctx context.Context, actorID, id uint) error {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 	if err := c.storage.RestoreUser(ctx, id); err != nil {
-		if strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
+		if storage.IsUserNotFound(err) {
 			return fmt.Errorf("%s: user not found or not deleted", i18n.T("ErrorUserNotFound", nil))
 		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

@@ -12,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -134,7 +135,11 @@ func TestVerifyIDToken_EmailVerified(t *testing.T) {
 }
 
 func TestResolveSSOUser(t *testing.T) {
-	notFound := func() error { return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)) }
+	// Mirrors the real storage "not found" error (wrapping the typed
+	// storage.ErrUserNotFound sentinel, #504), so the mock matches the real path.
+	notFound := func() error {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
+	}
 
 	t.Run("externalId match wins", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
@@ -206,7 +211,9 @@ func TestResolveSSOUser(t *testing.T) {
 }
 
 func TestProvisionSSOUser(t *testing.T) {
-	notFound := func() error { return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)) }
+	notFound := func() error {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
+	}
 
 	t.Run("JIT-creates an active passwordless user with the default role", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)

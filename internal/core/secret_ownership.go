@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -87,12 +86,17 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 // currentOwnerGone reports whether a secret's owner is positively absent: ownerless
 // (0) or an account confirmed not to exist. It FAILS CLOSED — a transient GetUser
 // error returns false (owner assumed present), so a non-owner cannot ride a momentary
-// lookup failure into seizing an actively-owned secret. Only the typed not-found
-// sentinel counts as "gone".
+// lookup failure into seizing an actively-owned secret. Only a confirmed "not found"
+// counts as "gone" — checked under BOTH storage backends (#504 sibling): LocalStorage
+// wraps the typed ErrUserNotFound sentinel, while RemoteStorage instead returns a
+// remote.HTTPError; matching the sentinel alone (via errors.Is) silently never
+// recognized a gone owner under storage.type: remote, which — since this still fails
+// closed — only meant a legitimately recoverable secret couldn't be recovered, not a
+// security regression, but was worth closing alongside the rest of #504.
 func (c *KeyorixCore) currentOwnerGone(ctx context.Context, ownerID uint) bool {
 	if ownerID == 0 {
 		return true
 	}
 	_, err := c.storage.GetUser(ctx, ownerID)
-	return errors.Is(err, storage.ErrUserNotFound)
+	return storage.IsUserNotFound(err)
 }

@@ -78,7 +78,6 @@ func (c *KeyorixCore) deriveSCIMUsername(ctx context.Context, userName string) (
 	if len(base) > 40 {
 		base = base[:40]
 	}
-	notFound := i18n.T("ErrorUserNotFound", nil)
 	for i := 0; i < 1000; i++ {
 		candidate := base
 		if i > 0 {
@@ -88,7 +87,7 @@ func (c *KeyorixCore) deriveSCIMUsername(ctx context.Context, userName string) (
 		if err == nil {
 			continue // taken — try the next suffix
 		}
-		if strings.Contains(err.Error(), notFound) {
+		if storage.IsUserNotFound(err) {
 			return candidate, nil // available
 		}
 		return "", err // a real lookup error
@@ -114,18 +113,17 @@ func randomPasswordHash() (string, error) {
 // (SCIM userName). Returns (nil, nil) when neither matches — used by the handler to
 // implement userName-filter reconciliation.
 func (c *KeyorixCore) FindSCIMUser(ctx context.Context, externalID, email string) (*models.User, error) {
-	notFound := i18n.T("ErrorUserNotFound", nil)
 	if externalID != "" {
 		if u, err := c.storage.GetUserByExternalID(ctx, externalID); err == nil {
 			return u, nil
-		} else if !strings.Contains(err.Error(), notFound) {
+		} else if !storage.IsUserNotFound(err) {
 			return nil, err
 		}
 	}
 	if email != "" {
 		if u, err := c.storage.GetUserByEmail(ctx, email); err == nil {
 			return u, nil
-		} else if !strings.Contains(err.Error(), notFound) {
+		} else if !storage.IsUserNotFound(err) {
 			return nil, err
 		}
 	}
@@ -251,7 +249,7 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 			if existing != nil && existing.ID != id {
 				return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
 			}
-		case strings.Contains(eerr.Error(), i18n.T("ErrorUserNotFound", nil)):
+		case storage.IsUserNotFound(eerr):
 			// Genuinely unused — proceed.
 		default:
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), eerr)
