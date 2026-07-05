@@ -22,25 +22,36 @@ import (
 // this shape (#496); a raw-model mock would silently paper over the same
 // request/response field-name mismatch #496 fixed, since both sides would share the
 // identical (wrong) assumption.
+//
+// #500: failed_login_attempts/login_lockout_count/last_failed_login_at are now also
+// part of that real shape (alongside the pre-existing login_locked_until), so this
+// mock includes them unconditionally too — omitting them here would silently
+// reintroduce the exact stale-mock blind spot #496's own fix was written to avoid.
 func apiOKUser(t *testing.T, w http.ResponseWriter, user *models.User) {
 	t.Helper()
 	data := map[string]interface{}{
-		"id":            user.ID,
-		"username":      user.Username,
-		"email":         user.Email,
-		"display_name":  user.DisplayName,
-		"active":        user.IsActive,
-		"account_state": user.AccountState,
-		"created_at":    user.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":    user.UpdatedAt.UTC().Format(time.RFC3339),
-		"last_login_at": nil,
-		"deleted_at":    nil,
+		"id":                    user.ID,
+		"username":              user.Username,
+		"email":                 user.Email,
+		"display_name":          user.DisplayName,
+		"active":                user.IsActive,
+		"account_state":         user.AccountState,
+		"created_at":            user.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":            user.UpdatedAt.UTC().Format(time.RFC3339),
+		"last_login_at":         nil,
+		"deleted_at":            nil,
+		"failed_login_attempts": user.FailedLoginAttempts,
+		"login_lockout_count":   user.LoginLockoutCount,
+		"last_failed_login_at":  nil,
 	}
 	if user.LastLoginAt != nil {
 		data["last_login_at"] = user.LastLoginAt.UTC().Format(time.RFC3339)
 	}
 	if user.LoginLockedUntil != nil {
 		data["login_locked_until"] = user.LoginLockedUntil.UTC().Format(time.RFC3339)
+	}
+	if user.LastFailedLoginAt != nil {
+		data["last_failed_login_at"] = user.LastFailedLoginAt.UTC().Format(time.RFC3339)
 	}
 	type resp struct {
 		Success bool        `json:"success"`
@@ -109,25 +120,30 @@ func TestLockout_RemoteStorageFailsOpenLoudlyOnce(t *testing.T) {
 	// being permanently unable to clear the counters is not the same as a transient
 	// storage error, and lockout is a backstop, not the primary auth boundary.
 	//
-	// NOTE (discovered fixing #496, filed separately — a different root cause, not a
-	// field-name mismatch): unlike recordFailedLogin above, this path does NOT log the
-	// INERT warning against a REAL remote server. checkLockAndClearLoginFailures
-	// (login_lockout.go) has a "nothing to clear" fast path keyed on the freshly-fetched
-	// u.FailedLoginAttempts/LoginLockedUntil/LoginLockoutCount — fields userToAPIResponse
-	// (server/http/handlers/users_handler.go) never puts on the wire at all (deliberately:
-	// they are internal security-accounting state, not public API surface). Under
-	// storage.type: remote that fast path always observes zero/nil, so it always takes
-	// the early return: UpdateLoginLockoutState is never even attempted and the warning
-	// never fires, silently leaving any real stale accounting uncleared. This is a
-	// pre-existing, independent gap — not introduced by #496 — that #496's response-shape
-	// fix (decodeUserResponse in remote_users.go) simply stopped masking: this test's own
-	// former apiOKUser mock round-tripped FailedLoginAttempts as a raw model field, which
-	// no real server response ever does, exactly the hand-rolled-mock blind spot #496's
-	// own fix was written to avoid repeating.
+	// #500 (this used to be a separately-filed gap, discovered fixing #496): before
+	// this fix, this path did NOT log the INERT warning against a real remote server.
+	// checkLockAndClearLoginFailures's (login_lockout.go) "nothing to clear" fast path
+	// is keyed on the freshly-fetched u.FailedLoginAttempts/LoginLockedUntil/
+	// LoginLockoutCount; when userToAPIResponse (server/http/handlers/users_handler.go)
+	// never put failed_login_attempts/login_lockout_count on the wire at all, that fast
+	// path always observed a false all-zero snapshot under storage.type: remote, so it
+	// always took the early return — UpdateLoginLockoutState was never even attempted
+	// and the warning never fired, silently leaving any real stale accounting
+	// unreported (though, since #454, still safely unpersisted either way — this was an
+	// observability gap in the "loudly" half of "fail open loudly", not a security one).
+	// Now that those fields are on the wire, a user with genuine unreset accounting
+	// (FailedLoginAttempts: 2 below) is no longer mistaken for "nothing to clear": the
+	// fast path is skipped, UpdateLoginLockoutState is attempted, fails unsupported, and
+	// the operator warning correctly fires from this call path too.
 	lockedUser := &models.User{ID: 43, Username: "carol", AccountState: AccountActive, IsActive: true, FailedLoginAttempts: 2}
 	c2 := newRemoteLockoutCore(t, lockedUser, policy)
-	err := c2.checkLockAndClearLoginFailures(ctx, lockedUser)
-	assert.NoError(t, err, "must not block login just because lockout accounting can't be persisted")
+	out3 := captureLog(t, func() {
+		err := c2.checkLockAndClearLoginFailures(ctx, lockedUser)
+		assert.NoError(t, err, "must not block login just because lockout accounting can't be persisted")
+	})
+	assert.Contains(t, out3, "login lockout accounting is INERT",
+		"#500: real unreset accounting (FailedLoginAttempts>0) must no longer be mistaken "+
+			"for 'nothing to clear' now that these fields are on the wire")
 }
 
 // TestUnlockUser_RemoteStorageFailsOpenLoudly is the (#484) regression for the admin

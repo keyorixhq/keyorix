@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -93,32 +94,46 @@ func newUserUpdateWireRequest(user *models.User) userUpdateWireRequest {
 // "active", "account_state", "created_at", "updated_at", "last_login_at" all fail
 // the case-insensitive fallback against models.User's untagged field names, so
 // every field but ID/Username/Email came back silently zeroed.
+//
+// FailedLoginAttempts/LoginLockoutCount/LastFailedLoginAt (#500) round out the
+// lockout-accounting fields alongside LoginLockedUntil: LockUserForUpdate is just
+// GetUser (see below) over HTTP, and checkLockAndClearLoginFailures
+// (internal/core/login_lockout.go) reads all four of these off that same response
+// to decide both "is this account currently locked" and its "nothing to clear"
+// fast path — without them on the wire, the fast path always saw a false all-zero
+// snapshot under storage.type: remote.
 type userWireResponse struct {
-	ID               uint       `json:"id"`
-	Username         string     `json:"username"`
-	Email            string     `json:"email"`
-	DisplayName      string     `json:"display_name"`
-	Active           bool       `json:"active"`
-	AccountState     string     `json:"account_state"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	LastLoginAt      *time.Time `json:"last_login_at"`
-	DeletedAt        *time.Time `json:"deleted_at"`
-	LoginLockedUntil *time.Time `json:"login_locked_until,omitempty"`
+	ID                  uint       `json:"id"`
+	Username            string     `json:"username"`
+	Email               string     `json:"email"`
+	DisplayName         string     `json:"display_name"`
+	Active              bool       `json:"active"`
+	AccountState        string     `json:"account_state"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	LastLoginAt         *time.Time `json:"last_login_at"`
+	DeletedAt           *time.Time `json:"deleted_at"`
+	LoginLockedUntil    *time.Time `json:"login_locked_until,omitempty"`
+	FailedLoginAttempts int        `json:"failed_login_attempts"`
+	LoginLockoutCount   int        `json:"login_lockout_count"`
+	LastFailedLoginAt   *time.Time `json:"last_failed_login_at"`
 }
 
 func (w userWireResponse) toModel() *models.User {
 	u := &models.User{
-		ID:               w.ID,
-		Username:         w.Username,
-		Email:            w.Email,
-		DisplayName:      w.DisplayName,
-		IsActive:         w.Active,
-		AccountState:     w.AccountState,
-		CreatedAt:        w.CreatedAt,
-		UpdatedAt:        w.UpdatedAt,
-		LastLoginAt:      w.LastLoginAt,
-		LoginLockedUntil: w.LoginLockedUntil,
+		ID:                  w.ID,
+		Username:            w.Username,
+		Email:               w.Email,
+		DisplayName:         w.DisplayName,
+		IsActive:            w.Active,
+		AccountState:        w.AccountState,
+		CreatedAt:           w.CreatedAt,
+		UpdatedAt:           w.UpdatedAt,
+		LastLoginAt:         w.LastLoginAt,
+		LoginLockedUntil:    w.LoginLockedUntil,
+		FailedLoginAttempts: w.FailedLoginAttempts,
+		LoginLockoutCount:   w.LoginLockoutCount,
+		LastFailedLoginAt:   w.LastFailedLoginAt,
 	}
 	if w.DeletedAt != nil {
 		u.DeletedAt = gorm.DeletedAt{Time: *w.DeletedAt, Valid: true}
@@ -163,9 +178,34 @@ func (rs *RemoteStorage) GetUser(ctx context.Context, id uint) (*models.User, er
 
 // LockUserForUpdate has no row lock to take over HTTP — each remote API call is already
 // atomic server-side, and the server's own LocalStorage takes the real FOR UPDATE lock
-// when it runs the lockout accounting. So this is a plain read.
+// when it runs the lockout accounting. So this is a plain read — but, unlike GetUser, it
+// deliberately does NOT go through rs.client.Get's 5-minute response cache
+// (internal/storage/remote/client.go).
+//
+// #500: this exact call is internal/core/login_lockout.go's anti-TOCTOU recheck
+// (checkLockAndClearLoginFailures) run immediately before minting a session, and
+// recordFailedLogin's own read-increment-write needs the row's genuinely-current
+// state, not whatever GetUser's blanket path-keyed cache last saw for up to 5
+// minutes. Before this fix, LockUserForUpdate simply called GetUser and so shared
+// its cache: a lock tripped by ANY caller (including this same client's own earlier
+// LockUserForUpdate call for a prior failed attempt in the same burst, or an
+// unrelated admin "view user" GetUser call) since the cache entry was populated
+// would go completely unobserved for up to 5 minutes — silently defeating the
+// recheck exactly as the finding describes, but via response-cache staleness
+// rather than a missing wire field. Cache invalidation on write (client.go's
+// Request) does not help here either: RemoteStorage's own write path for these
+// columns (UpdateLoginLockoutState) is a hard, permanent stub (#454) that never
+// makes an HTTP call at all, so it can never trigger that invalidation.
 func (rs *RemoteStorage) LockUserForUpdate(ctx context.Context, id uint) (*models.User, error) {
-	return rs.GetUser(ctx, id)
+	path := fmt.Sprintf("/api/v1/users/%d", id)
+	resp, err := rs.client.Request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get user failed: %s", resp.Error.Error())
+	}
+	return decodeUserResponse(resp.Data)
 }
 
 // GetUserByEmail retrieves a user by email via remote API.
