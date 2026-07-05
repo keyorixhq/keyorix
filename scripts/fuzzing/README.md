@@ -28,8 +28,17 @@ Debian or Alpine, ~512MB RAM is plenty for a single-target-at-a-time rotation
 `targets.conf` to run more in parallel — this setup deliberately runs targets
 one at a time, not concurrently).
 
-1. **Install Go** (same version as `go.mod` — check the repo's current
-   `go.mod`/CI config for the exact version) and `git`, `rsync`, `curl`.
+1. **Install Go** — matching whatever version `go.mod` currently declares, not
+   whatever your distro's package manager ships (usually older). Install from
+   the official tarball instead:
+   ```
+   curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go<VERSION>.linux-amd64.tar.gz
+   # verify the checksum against https://go.dev/dl/?mode=json first
+   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
+   echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
+   chmod +x /etc/profile.d/go.sh
+   ```
+   Also install `git`, `rsync`, `curl`, `ca-certificates`, `sudo`.
 
 2. **Create a dedicated user** to run the service as (never run this as
    root):
@@ -39,26 +48,44 @@ one at a time, not concurrently).
    chown fuzzer:fuzzer /opt/keyorix-fuzz
    ```
 
-3. **Generate an SSH deploy key** for this box, as the `fuzzer` user:
-   ```
-   sudo -u fuzzer ssh-keygen -t ed25519 -f /home/fuzzer/.ssh/id_ed25519 -N ""
-   cat /home/fuzzer/.ssh/id_ed25519.pub
-   ```
-   Add the printed public key to the repo's GitHub settings under **Settings
-   → Deploy keys → Add deploy key**, with **"Allow write access"** checked
-   (needed to push the `fuzz-corpus` branch). Scope this key to *this repo
-   only* — deploy keys are always single-repo, which is exactly the
-   least-privilege shape you want here (unlike a personal PAT, which this
-   setup deliberately avoids).
+3. **Get GitHub push access for the `fuzzer` user.** Two options, in order of
+   preference:
+   - **Deploy key** (preferred — repo-scoped by construction): generate one as
+     the `fuzzer` user (`sudo -u fuzzer ssh-keygen -t ed25519 -f
+     /home/fuzzer/.ssh/id_ed25519 -N ""`), add the public key under the repo's
+     **Settings → Deploy keys → Add deploy key** with **"Allow write access"**
+     checked, and clone via SSH (`git@github.com:...`).
+   - **Fine-grained PAT** (use this if deploy keys are disabled at the org
+     level — `gh repo deploy-key add` fails with "Deploy keys are disabled for
+     this repository" if so): create one at **Settings → Developer settings →
+     Personal access tokens → Fine-grained tokens**, scoped to just this repo,
+     with **Contents: Read and write** permission only. Store it in a single
+     restricted file rather than embedding it in `.git/config` or the
+     plaintext `.git-credentials` file a plain `credential.helper=store` would
+     create:
+     ```
+     echo "<the token>" > /etc/keyorix-fuzz-github-token
+     chown fuzzer:fuzzer /etc/keyorix-fuzz-github-token
+     chmod 600 /etc/keyorix-fuzz-github-token
+     sudo -u fuzzer git config --global credential.'https://github.com'.helper \
+       '!f() { echo username=x-access-token; echo password=$(cat /etc/keyorix-fuzz-github-token); }; f'
+     ```
+     Clone via HTTPS (`https://github.com/...`) with this option, not SSH.
 
 4. **Clone the repo twice** as the `fuzzer` user — once for fuzzing (stays on
-   `main`), once as a worktree for the corpus branch:
+   `main`), once as a worktree for the corpus branch. Use whichever URL scheme
+   matches the auth method from step 3:
    ```
-   sudo -u fuzzer git clone git@github.com:keyorixhq/keyorix.git /opt/keyorix-fuzz/keyorix
+   sudo -u fuzzer git clone https://github.com/keyorixhq/keyorix.git /opt/keyorix-fuzz/keyorix
+   sudo -u fuzzer git config --global --add safe.directory /opt/keyorix-fuzz/keyorix
    cd /opt/keyorix-fuzz/keyorix
    sudo -u fuzzer git worktree add ../keyorix-fuzz-corpus -b fuzz-corpus
+   sudo -u fuzzer git config --global --add safe.directory /opt/keyorix-fuzz/keyorix-fuzz-corpus
    sudo -u fuzzer git -C ../keyorix-fuzz-corpus push -u origin fuzz-corpus
    ```
+   (`safe.directory` avoids git's "dubious ownership" refusal, which fires
+   whenever the directory owner and invoking user's default checks disagree —
+   harmless here since `fuzzer` owns these clones outright.)
 
 5. **Pick an ntfy.sh topic.** Topics are unauthenticated by default (anyone
    who guesses the name can read/publish to it), so generate something long
@@ -70,10 +97,14 @@ one at a time, not concurrently).
    [ntfy app](https://ntfy.sh/#getting-started) (iOS/Android/web) so you
    actually see the pushes.
 
-6. **Write the config file:**
+6. **Write the config file.** Systemd's `EnvironmentFile=` does NOT source
+   `/etc/profile.d/`, so `PATH` needs `/usr/local/go/bin` added explicitly or
+   the service will fail with "go: command not found":
    ```
    cp scripts/fuzzing/config.env.example /etc/keyorix-fuzz/config.env
    $EDITOR /etc/keyorix-fuzz/config.env   # fill in NTFY_TOPIC at minimum
+   echo 'PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
+     >> /etc/keyorix-fuzz/config.env
    chmod 600 /etc/keyorix-fuzz/config.env
    chown fuzzer:fuzzer /etc/keyorix-fuzz/config.env
    ```
@@ -84,6 +115,24 @@ one at a time, not concurrently).
    systemctl daemon-reload
    systemctl enable --now keyorix-fuzz.service
    systemctl enable --now keyorix-fuzz-heartbeat.timer
+   ```
+   **If this is an unprivileged Proxmox LXC**, check `systemctl status
+   systemd-journald` first — a fresh Debian 13 template can fail to start
+   journald entirely (`code=exited, status=243/CREDENTIALS`) because its
+   shipped unit has `ImportCredential=journal.*`, a credential-import feature
+   this container's kernel namespace doesn't support. If you see that, this
+   silently breaks BOTH `journalctl` for every service on the box AND swallows
+   `keyorix-fuzz.service`'s own progress echoes (though the underlying `go
+   test` output still lands in real log files under `$NOTIFIED_STATE_DIR`, so
+   fuzzing itself isn't affected — only visibility is). Fix with a drop-in
+   that clears the directive, then restart both journald and the fuzz service
+   so its output gets captured from the start:
+   ```
+   mkdir -p /etc/systemd/system/systemd-journald.service.d
+   printf '[Service]\nImportCredential=\n' > /etc/systemd/system/systemd-journald.service.d/override.conf
+   systemctl daemon-reload
+   systemctl restart systemd-journald
+   systemctl restart keyorix-fuzz.service
    ```
 
 8. **Verify:**
