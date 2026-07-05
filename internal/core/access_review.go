@@ -112,15 +112,20 @@ var nonSecretsAdminPermissions = map[string]bool{
 // detection (#258): a role's grant should only be considered "used" by ordinary
 // secret-read/write activity when the role ITSELF is only read/write-tier. An
 // admin-tier role (e.g. project_admin) needs evidence of an actually-exercised
-// elevated action (see LastUserElevatedActivity) — a user reading secrets under a
-// separate, lower-tier grant must not mask an unused admin-tier standing grant.
+// elevated action (see LastUserRoleManagementActivity / LastUserSecretDeletionActivity)
+// — a user reading secrets under a separate, lower-tier grant must not mask an
+// unused admin-tier standing grant.
 //
 // This is a practical approximation, not a perfect per-permission attribution: the
 // audit trail records WHICH ACTION occurred (e.g. "a role was assigned"), not
-// WHICH GRANT the actor invoked to authorize it. A user holding two admin-tier
-// role grants in the same project who exercises either one will show both as
-// "used" — this only distinguishes admin-tier activity from pure read/write
-// activity, not one admin-tier grant from another.
+// WHICH GRANT the actor invoked to authorize it. countDormantRoleGrants (#487)
+// narrows this further than a single combined "elevated activity" bucket by
+// checking each grant's OWN permission bundle against the specific capability the
+// observed action demonstrates (role-management vs. secrets-deletion), so two
+// admin-tier grants conferring DIFFERENT elevated capabilities no longer mask each
+// other. Two admin-tier grants that bundle the SAME specific capability remain
+// genuinely indistinguishable — either would have authorized the observed action,
+// so both are credited.
 func roleIsAdminTier(perms []*models.Permission) bool {
 	for _, p := range perms {
 		if p.Resource == "secrets" && (p.Action == "delete" || p.Action == "admin") {

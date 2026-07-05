@@ -39,7 +39,7 @@ type AccessGovernancePosture struct {
 	OpenCampaigns            int `json:"open_campaigns"`
 	PendingItems             int `json:"pending_items"`       // undecided items across open campaigns
 	ProjectsOverdue          int `json:"projects_overdue"`    // overdue for recertification (A.5.18 cadence)
-	DormantRoleGrants        int `json:"dormant_role_grants"` // per-grant: no/old activity at the capability tier the grant confers (#258)
+	DormantRoleGrants        int `json:"dormant_role_grants"` // per-grant: no/old activity at the specific capability the grant confers (#258/#487)
 	SoDViolations            int `json:"sod_violations"`      // principals holding a forbidden permission pair (A.5.3)
 }
 
@@ -723,15 +723,26 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 //     read a secret's value back at all.
 //   - An admin-tier role (secrets.delete/admin, or a role-management permission
 //     like roles.assign) additionally requires an entry in
-//     LastUserElevatedActivity — an actually-observed elevated action — since
-//     ordinary secret reads/writes don't attest to the ADMIN capability being used
-//     at all.
+//     LastUserRoleManagementActivity / LastUserSecretDeletionActivity — an
+//     actually-observed elevated action MATCHING the specific capability this
+//     grant's own permission bundle confers (#487) — since ordinary secret
+//     reads/writes don't attest to any ADMIN capability being used at all, and an
+//     elevated action of a DIFFERENT kind doesn't attest to THIS grant's specific
+//     admin capability being used either.
 //
 // This is an approximation, not a perfect per-grant attribution: the audit trail
 // doesn't record which specific grant authorized a given action, only that SOME
-// elevated action occurred. A user holding two admin-tier grants in the project
-// who exercises either one will show both as "used". See roleIsAdminTier's doc for
-// the exact boundary and its limits.
+// action satisfying a given permission occurred. Two admin-tier grants in the same
+// project are distinguished when they confer DIFFERENT specific admin capabilities
+// (#487) — e.g. one bundles only roles.assign, the other only secrets.delete: only
+// the grant whose OWN permission bundle covers the observed action's capability is
+// credited, so exercising one no longer masks the other. Two grants that bundle the
+// SAME specific capability (e.g. two roles that both carry secrets.delete) remain
+// genuinely indistinguishable — either would have authorized the observed action,
+// so there is no principled way to credit one over the other; both are credited
+// (neither shown falsely dormant), which is the same "no worse than before"
+// behaviour as pre-#487 for that narrower, harder case. See roleIsAdminTier's doc
+// for the exact tier boundary.
 func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture) int {
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
@@ -743,34 +754,46 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 		cp.degrade(fmt.Sprintf("dormant_role_grants:activity:project=%d", projectID), err)
 		return 0
 	}
-	elevated, err := c.storage.LastUserElevatedActivity(ctx, projectID)
+	roleMgmtActivity, err := c.storage.LastUserRoleManagementActivity(ctx, projectID)
 	if err != nil {
-		cp.degrade(fmt.Sprintf("dormant_role_grants:elevated_activity:project=%d", projectID), err)
+		cp.degrade(fmt.Sprintf("dormant_role_grants:role_management_activity:project=%d", projectID), err)
+		return 0
+	}
+	secretsDeletionActivity, err := c.storage.LastUserSecretDeletionActivity(ctx, projectID)
+	if err != nil {
+		cp.degrade(fmt.Sprintf("dormant_role_grants:secrets_deletion_activity:project=%d", projectID), err)
 		return 0
 	}
 	cutoff := c.now().Add(-dormantThreshold)
 
-	adminTierByRole := map[uint]bool{}
+	permsByRole := map[uint][]*models.Permission{}
 	degradedRoles := map[uint]bool{}
-	isAdminTier := func(roleID uint) bool {
-		if v, ok := adminTierByRole[roleID]; ok {
+	rolePerms := func(roleID uint) []*models.Permission {
+		if v, ok := permsByRole[roleID]; ok {
 			return v
 		}
 		perms, err := c.storage.GetRolePermissions(ctx, roleID)
 		if err != nil {
-			// Can't classify this role's tier; degrade once per role and fall back to
-			// the plain read/write activity check rather than silently under- or
-			// over-counting.
+			// Can't resolve this role's permission bundle; degrade once per role and
+			// fall back to treating it as non-admin-tier (the plain read/write
+			// activity check) rather than silently under- or over-counting.
 			if !degradedRoles[roleID] {
 				degradedRoles[roleID] = true
 				cp.degrade(fmt.Sprintf("dormant_role_grants:role_permissions:project=%d:role=%d", projectID, roleID), err)
 			}
-			adminTierByRole[roleID] = false
-			return false
+			permsByRole[roleID] = nil
+			return nil
 		}
-		v := roleIsAdminTier(perms)
-		adminTierByRole[roleID] = v
-		return v
+		permsByRole[roleID] = perms
+		return perms
+	}
+	hasPermission := func(perms []*models.Permission, name string) bool {
+		for _, p := range perms {
+			if p.Name == name {
+				return true
+			}
+		}
+		return false
 	}
 
 	seen := map[[2]uint]bool{} // dedup identical (principal, role) grant rows
@@ -785,15 +808,31 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 		}
 		seen[key] = true
 
-		if isAdminTier(a.RoleID) {
-			last, ok := elevated[a.PrincipalID]
+		perms := rolePerms(a.RoleID)
+		if !roleIsAdminTier(perms) {
+			last, ok := activity[a.PrincipalID]
 			if !ok || last.Before(cutoff) {
 				dormant++
 			}
 			continue
 		}
-		last, ok := activity[a.PrincipalID]
-		if !ok || last.Before(cutoff) {
+
+		// Admin-tier: credit only the activity bucket(s) this SPECIFIC grant's own
+		// permission bundle actually confers (#487) — narrower than "any elevated
+		// action anywhere", so a role-management-only grant and a
+		// secrets-deletion-only grant no longer mask each other.
+		used := false
+		if hasPermission(perms, "roles.assign") {
+			if last, ok := roleMgmtActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
+				used = true
+			}
+		}
+		if !used && (hasPermission(perms, "secrets.delete") || hasPermission(perms, "secrets.admin")) {
+			if last, ok := secretsDeletionActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
+				used = true
+			}
+		}
+		if !used {
 			dormant++
 		}
 	}

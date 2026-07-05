@@ -266,3 +266,48 @@ func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotDormantWhenExercis
 	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants,
 		"alice actually exercised the admin-tier grant — neither grant should be dormant")
 }
+
+// #487: #258's admin-tier check treated ALL elevated activity (role-management OR
+// secrets-deletion) as one combined per-user bucket, so two DIFFERENT admin-tier
+// grants in the same project — one conferring only role-management, the other only
+// secrets-deletion — still masked each other: exercising either satisfied BOTH
+// grants' dormancy check. countDormantRoleGrants now credits a grant only when its
+// OWN permission bundle covers the specific capability the observed elevated action
+// demonstrates, so alice's exercised "secrets_admin" (secrets.delete-only) grant no
+// longer masks her separate, genuinely-unused "role_manager" (roles.assign-only)
+// grant.
+func TestCompliancePosture_DormantRoleGrants_DistinctAdminTierGrantsNotMaskedByEachOther(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.AuditEvent{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.RotationPolicy{},
+	))
+
+	// Two custom admin-tier roles conferring DIFFERENT specific admin capabilities:
+	// "secrets_admin" (secrets.delete only) and "role_manager" (roles.assign only).
+	h.CreateTestRole(t, "secrets_admin", "delete-only admin role", 20)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT 20, p.id FROM permissions p WHERE p.name = 'secrets.delete'`)
+	h.CreateTestRole(t, "role_manager", "role-management-only admin role", 21)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT 21, p.id FROM permissions p WHERE p.name = 'roles.assign'`)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 20, uptr(proj)) // secrets_admin — she exercises this one
+	h.AssignUserRole(t, 10, 21, uptr(proj)) // role_manager — never exercised
+
+	aid := uint(10)
+	pid := proj
+	// Alice deletes a secret (exercising secrets_admin) but never performs a role
+	// assignment/removal (role_manager stays genuinely unused).
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.deleted", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+
+	p, err := h.CoreService.GetCompliancePosture(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, p.AccessGovernance.DormantRoleGrants,
+		"exercising secrets_admin must not mask the separate, unused role_manager grant")
+}
