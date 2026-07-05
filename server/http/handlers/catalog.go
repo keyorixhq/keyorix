@@ -11,6 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
+	"github.com/keyorixhq/keyorix/server/validation"
 )
 
 // actorID returns the acting user's ID from the request context (0 when absent).
@@ -24,11 +25,12 @@ func actorID(r *http.Request) uint {
 // CatalogHandler handles project and environment endpoints.
 type CatalogHandler struct {
 	coreService *core.KeyorixCore
+	validator   *validation.Validator
 }
 
 // NewCatalogHandler creates a new CatalogHandler.
 func NewCatalogHandler(svc *core.KeyorixCore) *CatalogHandler {
-	return &CatalogHandler{coreService: svc}
+	return &CatalogHandler{coreService: svc, validator: validation.NewValidator()}
 }
 
 // ListProjects handles GET /api/v1/projects — returns projects with secret and
@@ -110,7 +112,14 @@ func (h *CatalogHandler) GetProjectDrift(w http.ResponseWriter, r *http.Request)
 // CreateProject handles POST /api/v1/projects
 func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string `json:"name"`
+		// #189: a Project name is a plain human-readable identifier (no existing
+		// naming-policy mechanism, unlike SecretNode.Name's dedicated conformance
+		// check), and it's routinely shown to higher-trust approvers in access-review
+		// UIs, audit logs, and CLI confirmation prompts — so it's restricted to the
+		// `identifier` charset (letters/digits/space/`-`/`_`) to block zero-width,
+		// RTL-override, and homograph-lookalike characters that could otherwise make
+		// a malicious project visually indistinguishable from a legitimate one.
+		Name        string `json:"name" validate:"required,max=200,identifier"`
 		Description string `json:"description"`
 		// Environments, when non-empty, seeds the project with exactly these
 		// environments instead of the default development/staging/production set —
@@ -119,6 +128,10 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.validator.Validate(&body); err != nil {
+		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
 
@@ -165,12 +178,17 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name        string `json:"name"`
+		// See CreateProject's Name field comment for why `identifier` is applied here.
+		Name        string `json:"name" validate:"required,max=200,identifier"`
 		Description string `json:"description"`
 		RequireMFA  *bool  `json:"require_mfa"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.validator.Validate(&body); err != nil {
+		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
 	// require_mfa is a per-project SECURITY-POLICY control (ADR-037), not ordinary content.

@@ -69,7 +69,12 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name        string `json:"name" validate:"required,min=1,max=255"`
+		// #189: a Group name has no dedicated naming-policy mechanism (unlike
+		// SecretNode.Name) and is human-visible in access-review UIs, audit logs, and
+		// CLI confirmation prompts — restrict it to the `identifier` charset so a
+		// zero-width, RTL-override, or homograph-lookalike character can't be used to
+		// visually disguise the group.
+		Name        string `json:"name" validate:"required,min=1,max=255,identifier"`
 		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -137,7 +142,8 @@ func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name        string `json:"name" validate:"omitempty,min=1,max=255"`
+		// See CreateGroup's Name field comment for why `identifier` is applied here.
+		Name        string `json:"name" validate:"omitempty,min=1,max=255,identifier"`
 		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

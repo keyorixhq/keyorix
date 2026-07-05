@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,4 +80,43 @@ func TestCreateProject_BlankEnvironmentsFallBackToDefaults(t *testing.T) {
 	var p models.Project
 	require.NoError(t, db.Where("name = ?", "svc").First(&p).Error)
 	assert.ElementsMatch(t, []string{"development", "staging", "production"}, envNames(t, db, p.ID))
+}
+
+// #189: Project.Name is wired to the `identifier` validator so a name carrying an
+// invisible or visually-deceptive character is rejected, rather than silently
+// accepted and later shown, apparently-legitimate, in an access-review UI or audit log.
+func TestCreateProject_RejectsDangerousNames(t *testing.T) {
+	cases := map[string]string{
+		"zero-width space":        "prod\u200bteam", // U+200B ZERO WIDTH SPACE
+		"RTL override":            "prod\u202eteam", // U+202E RIGHT-TO-LEFT OVERRIDE
+		"non-breaking space":      "prod team", // U+00A0 NO-BREAK SPACE (not in allowlist)
+		"cyrillic homograph 'a'":  "prodаpi",   // U+0430 CYRILLIC SMALL LETTER A looks like Latin "a"
+		"CSV-formula-like prefix": "=cmd|'/calc'",
+	}
+	for name, dangerous := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, _ := newCreateProjectHandler(t)
+			body, err := json.Marshal(map[string]string{"name": dangerous})
+			require.NoError(t, err)
+			w := postCreateProject(t, h, string(body))
+			assert.Equal(t, http.StatusBadRequest, w.Code, "response body: %s", w.Body.String())
+		})
+	}
+}
+
+// Non-regression: ordinary alphanumeric/space/hyphen/underscore names — the vast
+// majority of real project names — must keep working.
+func TestCreateProject_AcceptsLegitimateNames(t *testing.T) {
+	legit := []string{"web", "api-gateway", "Payments_2026", "team one"}
+	for _, name := range legit {
+		t.Run(name, func(t *testing.T) {
+			h, db := newCreateProjectHandler(t)
+			body, err := json.Marshal(map[string]string{"name": name})
+			require.NoError(t, err)
+			w := postCreateProject(t, h, string(body))
+			require.Equal(t, http.StatusCreated, w.Code, "response body: %s", w.Body.String())
+			var p models.Project
+			require.NoError(t, db.Where("name = ?", name).First(&p).Error)
+		})
+	}
 }

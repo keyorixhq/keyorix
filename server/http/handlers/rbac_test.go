@@ -539,6 +539,28 @@ func TestCreateRole(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
+			// #189: a zero-width space (U+200B) can't be used to disguise a role name.
+			name:      "name with zero-width space is rejected",
+			authToken: "valid-token",
+			requestBody: map[string]interface{}{
+				"name":        "dev\u200bteam",
+				"description": "Developer role with limited access",
+				"permissions": []string{"secrets.read", "secrets.write"},
+			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			// #189: an RTL override (U+202E) can't be used to disguise a role name.
+			name:      "name with RTL override is rejected",
+			authToken: "valid-token",
+			requestBody: map[string]interface{}{
+				"name":        "dev\u202eteam",
+				"description": "Developer role with limited access",
+				"permissions": []string{"secrets.read", "secrets.write"},
+			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
 			name:           "unauthorized",
 			authToken:      "",
 			requestBody:    map[string]interface{}{},
