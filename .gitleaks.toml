@@ -17,6 +17,8 @@ description = "Demo / docs / scripts / test fixtures — non-real sample credent
 # the `…KeyInfo = "…"` shape.
 regexes = [
   '''keyorix-audit-checkpoint-v1''',
+  '''keyorix-audit-checkpoint-kek-v2''',
+  '''keyorix-audit-checkpoint-kek-id-v2''',
   '''keyorix-evidence-signature-v1''',
   '''keyorix-evidence-signature-kek-v2''',
   '''keyorix-evidence-signature-kek-id-v2''',
