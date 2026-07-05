@@ -20,6 +20,7 @@ env:
   # fetched live regardless of binary version.
   GOSEC_VERSION: v2.26.1
   GOLANGCI_LINT_VERSION: v2.12.2
+  GO_LICENSES_VERSION: v1.6.0
   GITLEAKS_VERSION: 8.30.1
   GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   KUBECONFORM_VERSION: 0.8.0
@@ -127,6 +128,62 @@ jobs:
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
           gosec -severity medium -exclude-generated ./...
+
+  # Dependency license compliance. Keyorix is dual-licensed -- the repo is
+  # AGPL-3.0, but the same code is also commercially licensed to customers who
+  # don't want AGPL obligations (see LICENSING.md's "Our principles"). Nothing
+  # today stops a future `go get` from silently pulling in a dependency under
+  # a license that's actually incompatible with that model: real copyleft
+  # (GPL/AGPL/LGPL) that could "infect" the ability to relicense the resulting
+  # binary commercially, or a source-available-but-restrictive license (SSPL,
+  # BSL, Commons Clause, Elastic License) that explicitly bars commercial
+  # redistribution. This job fails the build if any dependency -- direct or
+  # transitive, in either Go module -- carries a license outside the allowlist.
+  #
+  # Allowlist verified against the ACTUAL dependency tree of both modules
+  # (`go-licenses csv ./...`), not assumed: every third-party dependency in
+  # both modules today is MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, or
+  # MPL-2.0 (github.com/go-sql-driver/mysql) -- ordinary permissive/weak
+  # file-level-copyleft licenses standard in the Go/cloud ecosystem. MPL-2.0's
+  # copyleft is scoped to modifications of MPL-licensed files themselves; using
+  # an unmodified MPL-2.0 dependency imposes no obligation on the rest of this
+  # program. No GPL/AGPL/LGPL/SSPL/BSL/Commons-Clause/Elastic/Unknown licenses
+  # were found in either module's real dependency tree.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26'
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@${GO_LICENSES_VERSION}
+
+      # `--ignore` excludes each module's OWN code from the license check --
+      # this repo is itself AGPL-3.0, which is expected and not a dependency
+      # finding, not a license this job should flag. (The operator module has
+      # no LICENSE file of its own inside operator/, so without --ignore its
+      # own packages would misleadingly show up as "Unknown" too.)
+      - name: go-licenses check (root module)
+        run: |
+          go-licenses check ./... \
+            --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0 \
+            --ignore github.com/keyorixhq/keyorix
+
+      # The operator is a separate Go module (see the `operator` job above);
+      # GOWORK=off keeps it out of this repo's go.work, mirroring that job's
+      # own established convention for module-specific checks.
+      - name: go-licenses check (operator module)
+        working-directory: operator
+        env:
+          GOWORK: off
+        run: |
+          go-licenses check ./... \
+            --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0 \
+            --ignore github.com/keyorixhq/keyorix/operator
 
   gitleaks:
     runs-on: ubuntu-latest
