@@ -139,6 +139,12 @@ func (rs *RemoteStorage) UnusedSecrets(_ context.Context, _ *uint, _ time.Time) 
 	return nil, fmt.Errorf("UnusedSecrets not available in remote mode")
 }
 
+// CountUnusedSecretsByProject is not available in remote mode; the grouped
+// hygiene-rollup query (#393) runs server-side.
+func (rs *RemoteStorage) CountUnusedSecretsByProject(_ context.Context, _ []uint, _ time.Time) (map[uint]int, error) {
+	return nil, fmt.Errorf("CountUnusedSecretsByProject not available in remote mode")
+}
+
 // AuditRetentionStats is not available in remote mode; retention coverage aggregates server-side.
 func (rs *RemoteStorage) AuditRetentionStats(_ context.Context) (*storage.AuditRetentionStats, error) {
 	return nil, fmt.Errorf("AuditRetentionStats not available in remote mode")

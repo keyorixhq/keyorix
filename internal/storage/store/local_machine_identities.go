@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm/clause"
 
@@ -77,4 +78,43 @@ func (ls *LocalStorage) ListAllMachineIdentities(ctx context.Context) ([]*models
 
 func (ls *LocalStorage) CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error) {
 	return countByClassification(ctx, ls.db, &models.MachineIdentity{})
+}
+
+// machineIdentityStateActive mirrors core.MachineActive (the store package cannot
+// import core: core already imports storage/store). Keeps
+// CountStaleMachineIdentitiesByProject's "only ACTIVE identities count as stale"
+// rule in lockstep with ListStaleMachineIdentities's in-memory filter.
+const machineIdentityStateActive = "active"
+
+// CountStaleMachineIdentitiesByProject returns, for every project in projectIDs,
+// the count of ACTIVE machine identities not seen since olderThan (an identity
+// never seen counts from its creation time) — the same definition
+// ListStaleMachineIdentities uses, but as a single grouped query instead of one
+// ListMachineIdentities call per project. Used by the deployment-wide hygiene
+// rollup (#393) instead of fanning out one call per project. A project with no
+// stale machine identities is simply absent from the returned map.
+func (ls *LocalStorage) CountStaleMachineIdentitiesByProject(ctx context.Context, projectIDs []uint, olderThan time.Time) (map[uint]int, error) {
+	counts := make(map[uint]int)
+	if len(projectIDs) == 0 {
+		return counts, nil
+	}
+	type row struct {
+		ProjectID uint
+		N         int64
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).Model(&models.MachineIdentity{}).
+		Select("project_id, COUNT(*) AS n").
+		Where("project_id IN ?", projectIDs).
+		Where("state = ?", machineIdentityStateActive).
+		Where("(last_seen_at IS NULL AND created_at < ?) OR last_seen_at < ?", olderThan, olderThan).
+		Group("project_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range rows {
+		counts[r.ProjectID] = int(r.N)
+	}
+	return counts, nil
 }

@@ -214,6 +214,49 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notR
 	return stats, nil
 }
 
+// CountUnusedSecretsByProject returns, for every project in projectIDs, the count
+// of secrets qualifying under the same "not read since notReadSince (or never
+// read)" definition UnusedSecrets uses, via a single grouped query — the
+// deployment-wide counterpart used by the hygiene rollup (#393) instead of calling
+// UnusedSecrets once per project. Two aggregation levels are needed (UnusedSecrets'
+// own per-secret MAX(access_time)/HAVING, then a COUNT(*) of the qualifying secrets
+// per project), so the per-secret query runs as a FROM subquery. A project with no
+// unused secrets is simply absent from the returned map.
+func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, projectIDs []uint, notReadSince time.Time) (map[uint]int, error) {
+	counts := make(map[uint]int)
+	if len(projectIDs) == 0 {
+		return counts, nil
+	}
+
+	perSecret := ls.db.WithContext(ctx).
+		Table("secret_nodes AS s").
+		Select("s.project_id AS project_id").
+		Joins("LEFT JOIN secret_access_logs l ON l.secret_node_id = s.id AND l.action = ?", "read").
+		Where("s.is_secret = ?", true).
+		Where("s.deleted_at IS NULL").
+		Where("s.project_id IN ?", projectIDs).
+		Group("s.id, s.project_id").
+		Having("MAX(l.access_time) IS NULL OR MAX(l.access_time) < ?", notReadSince)
+
+	type row struct {
+		ProjectID uint
+		N         int64
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).
+		Table("(?) AS unused", perSecret).
+		Select("project_id, COUNT(*) AS n").
+		Group("project_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		counts[r.ProjectID] = int(r.N)
+	}
+	return counts, nil
+}
+
 // AuditRetentionStats returns the total audit event count plus the oldest and
 // newest event_time in a single aggregate query. Keyorix applies no retention
 // cap, so MIN(event_time) is the true start of the trail — the basis for the

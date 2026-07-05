@@ -40,6 +40,12 @@ func (rs *RemoteStorage) CountMachineIdentitiesByClassification(_ context.Contex
 	return nil, remoteUnsupported("CountMachineIdentitiesByClassification")
 }
 
+// CountStaleMachineIdentitiesByProject is not available in remote mode; the
+// grouped hygiene-rollup query (#393) runs server-side.
+func (rs *RemoteStorage) CountStaleMachineIdentitiesByProject(_ context.Context, _ []uint, _ time.Time) (map[uint]int, error) {
+	return nil, remoteUnsupported("CountStaleMachineIdentitiesByProject")
+}
+
 func (rs *RemoteStorage) CreateMachineIdentityCredential(_ context.Context, _ *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {
 	return nil, remoteUnsupported("CreateMachineIdentityCredential")
 }
