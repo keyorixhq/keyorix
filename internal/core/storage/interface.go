@@ -149,6 +149,16 @@ type Storage interface {
 	CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error)
 	GetAccessReviewCampaign(ctx context.Context, id uint) (*models.AccessReviewCampaign, error)
 	ListAccessReviewCampaigns(ctx context.Context, projectID uint) ([]*models.AccessReviewCampaign, error)
+	// GetOpenAccessReviewCampaign returns the project's currently open campaign, or
+	// nil if none is open — a targeted single-row lookup for callers (e.g. the
+	// recertification scheduler tick, #238) that only need to know whether a review
+	// is already in flight, not the project's full historical campaign list.
+	GetOpenAccessReviewCampaign(ctx context.Context, projectID uint) (*models.AccessReviewCampaign, error)
+	// GetLatestClosedAccessReviewCampaign returns the project's most recently closed
+	// campaign (by CreatedAt), or nil if it has never had one. A targeted
+	// ORDER BY ... LIMIT 1 lookup for callers that only need the anchor point for the
+	// next recertification due-date, not the entire historical corpus (#238).
+	GetLatestClosedAccessReviewCampaign(ctx context.Context, projectID uint) (*models.AccessReviewCampaign, error)
 	// UpdateAccessReviewCampaign persists a campaign state transition with a
 	// conditional UPDATE (only a campaign whose CURRENT stored state is still "open"
 	// may be transitioned). The bool reports whether the row matched and was updated;
@@ -157,6 +167,11 @@ type Storage interface {
 	UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error)
 	CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error
 	ListAccessReviewItems(ctx context.Context, campaignID uint) ([]*models.AccessReviewItem, error)
+	// CountPendingAccessReviewItems returns the number of items in a campaign still
+	// awaiting a decision (decision = "pending"), without loading the item rows
+	// themselves — used by the recertification scheduler tick (#238) to size an
+	// in-flight campaign's remaining work for a reminder.
+	CountPendingAccessReviewItems(ctx context.Context, campaignID uint) (int, error)
 	GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error)
 	// UpdateAccessReviewItem persists a decision with a conditional UPDATE (only an
 	// item whose CURRENT stored decision is still "pending", in a campaign whose

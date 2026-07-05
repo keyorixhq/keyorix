@@ -63,26 +63,43 @@ func (c *KeyorixCore) RunScheduledRecertification(ctx context.Context, cadenceDa
 
 	for _, proj := range projects {
 		pid := proj.ID
-		campaigns, err := c.ListAccessReviewCampaigns(ctx, pid)
+
+		// #238: this used to call ListAccessReviewCampaigns, which loads the
+		// project's ENTIRE historical campaign+item corpus (every campaign the
+		// project has ever had, plus every item within each, just to tally
+		// progress) on every single tick, for every project. That cost grows
+		// unboundedly with a deployment's accumulated campaign history, not with
+		// what a tick actually needs to decide. The tick only needs two targeted
+		// facts: (1) is a campaign already open, and if so how much of it is still
+		// pending; (2) if not, when did the most recent one close. Both are now
+		// single-row, indexed lookups instead of a full per-project reload.
+		open, err := c.storage.GetOpenAccessReviewCampaign(ctx, pid)
 		if err != nil {
 			continue // a per-project read error must not abort the whole sweep
 		}
-		open, lastClosed := splitCampaigns(campaigns)
 
 		// A review is already in progress — nudge admins only if items remain.
 		if open != nil {
-			if open.Progress.Pending > 0 {
+			pending, err := c.storage.CountPendingAccessReviewItems(ctx, open.ID)
+			if err != nil {
+				continue
+			}
+			if pending > 0 {
 				res.Reminded += c.remindRecertificationAdmins(ctx, pid,
 					fmt.Sprintf("Access recertification for %s has %d item(s) still pending review.",
-						c.projectLabel(ctx, pid), open.Progress.Pending))
+						c.projectLabel(ctx, pid), pending))
 			}
 			continue
 		}
 
 		// No open campaign — is the project due for one?
+		lastClosed, err := c.storage.GetLatestClosedAccessReviewCampaign(ctx, pid)
+		if err != nil {
+			continue
+		}
 		due := lastClosed == nil // never reviewed
-		if lastClosed != nil && lastClosed.Campaign.ClosedAt != nil {
-			anchor := lastClosed.Campaign.ClosedAt
+		if lastClosed != nil && lastClosed.ClosedAt != nil {
+			anchor := lastClosed.ClosedAt
 			// #237: a force-close performed while items were still pending
 			// (ForcedIncomplete) is evidence of an ABANDONED cycle, not a
 			// completed recertification — some access was never reviewed. Anchor
@@ -92,8 +109,8 @@ func (c *KeyorixCore) RunScheduledRecertification(ctx context.Context, cadenceDa
 			// force-closing early; the next campaign becomes due sooner,
 			// proportional to how little of the cadence window the abandoned
 			// cycle actually covered.
-			if lastClosed.Campaign.ForcedIncomplete {
-				anchor = &lastClosed.Campaign.CreatedAt
+			if lastClosed.ForcedIncomplete {
+				anchor = &lastClosed.CreatedAt
 			}
 			due = anchor.Before(cutoff)
 		}
@@ -120,7 +137,11 @@ func (c *KeyorixCore) RunScheduledRecertification(ctx context.Context, cadenceDa
 }
 
 // splitCampaigns returns the open campaign (if any) and the most-recent closed one.
-// The list is newest-first, so the first match in each case is the latest.
+// The list is newest-first, so the first match in each case is the latest. Used by
+// the compliance-posture snapshot (compliance_posture.go), which — unlike the
+// recertification scheduler tick above — genuinely needs the full per-project
+// campaign list for its dashboard tallies (e.g. counting every open campaign's
+// pending items across the deployment); it is not part of the #238 fix.
 func splitCampaigns(campaigns []*CampaignWithProgress) (open *CampaignWithProgress, lastClosed *CampaignWithProgress) {
 	for _, cw := range campaigns {
 		if cw.Campaign.State == CampaignStateOpen {
