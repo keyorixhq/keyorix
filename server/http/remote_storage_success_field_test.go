@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -147,25 +148,45 @@ func TestRemoteStorage_SuccessFieldFix_RealServerRoundTrip(t *testing.T) {
 	// failure even though the upstream had genuinely applied the update and
 	// returned 200.
 	//
-	// NOTE: models.SecretNode carries no JSON tags (its fields serialize as plain
-	// Go field names, e.g. "MaxReads"), while UpdateSecret's handler decodes a
-	// snake_case DTO (e.g. "max_reads") — a separate, pre-existing wire-shape
-	// mismatch (same class of issue as CreateUser's DisplayName/display_name
-	// mismatch found during investigation) that silently no-ops any field-level
-	// change sent this way. That's out of this fix's scope, so this step proves
-	// the PUT round-trip genuinely reached and re-persisted the row server-side —
-	// via UpdatedAt, which core.UpdateSecret always bumps — rather than asserting
-	// a specific field value changed.
+	// #496 fixed a SEPARATE, previously-undressed gap this test used to work around:
+	// models.SecretNode carries no JSON tags (its fields serialize as plain Go field
+	// names, e.g. "MaxReads"), while UpdateSecret's handler decodes a snake_case DTO
+	// ("max_reads") — silently no-op'ing any field-level change sent this way. This
+	// step now asserts the field itself landed, not just that UpdatedAt bumped.
 	beforeUpdatedAt := secret.UpdatedAt
 	newMaxReads := 7
 	updated, err := rs.UpdateSecret(ctx, &models.SecretNode{ID: secret.ID, MaxReads: &newMaxReads})
 	require.NoError(t, err, "UpdateSecret must not be misreported as a failure for a genuinely successful upstream response")
 	require.NotNil(t, updated)
+	require.NotNil(t, updated.MaxReads, "#496: max_reads must round-trip in the response, not silently drop")
+	assert.Equal(t, 7, *updated.MaxReads)
 
 	// Confirm the write genuinely landed by reading it back directly from the
-	// upstream's OWN storage (not just "the client call didn't error").
+	// upstream's OWN storage (not just "the client call didn't error", and not just
+	// what RemoteStorage's own decode claims).
 	directRead, err := upstreamCore.Storage().GetSecret(ctx, secret.ID)
 	require.NoError(t, err)
 	assert.True(t, directRead.UpdatedAt.After(beforeUpdatedAt),
 		"the downstream's forwarded PUT must be a real row-level write reaching the upstream's own secret_nodes table, not a call that merely didn't error")
+	require.NotNil(t, directRead.MaxReads, "#496: max_reads must genuinely persist server-side, not silently no-op")
+	assert.Equal(t, 7, *directRead.MaxReads)
+
+	// --- clearing an expiration (the ClearExpiration/nil-Expiration convention) ---
+	future := time.Now().Add(48 * time.Hour)
+	withExpiry, err := upstreamCore.Storage().UpdateSecret(ctx, &models.SecretNode{
+		ID: secret.ID, ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID,
+		Name: secret.Name, Type: secret.Type, Status: secret.Status, CreatedBy: secret.CreatedBy,
+		OwnerID: secret.OwnerID, IsSecret: secret.IsSecret, MaxReads: updated.MaxReads,
+		Expiration: &future, CreatedAt: secret.CreatedAt, UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, withExpiry.Expiration, "test setup: the direct (non-remote) write must have set an expiration")
+
+	cleared, err := rs.UpdateSecret(ctx, &models.SecretNode{ID: secret.ID, MaxReads: updated.MaxReads})
+	require.NoError(t, err, "#496: UpdateSecret with a nil Expiration must still succeed (interpreted as clear_expiration)")
+	assert.Nil(t, cleared.Expiration, "#496: a nil Expiration must map to clear_expiration:true and genuinely clear it")
+
+	directAfterClear, err := upstreamCore.Storage().GetSecret(ctx, secret.ID)
+	require.NoError(t, err)
+	assert.Nil(t, directAfterClear.Expiration, "#496: the expiration clear must genuinely land server-side")
 }

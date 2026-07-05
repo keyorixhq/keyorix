@@ -20,9 +20,92 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// --- Wire DTOs (#496) ---
+//
+// models.SecretNode carries no json tags at all, so marshaling it directly (as
+// CreateSecret/UpdateSecret used to) sends Go field names verbatim: "ProjectID",
+// "EnvironmentID", "MaxReads", etc. server/http/handlers/secrets_crud.go's
+// CreateSecret/UpdateSecret handlers decode into their own snake_case DTOs.
+// encoding/json's case-insensitive decode fallback only saves single-word fields
+// ("Name"/"name", "Type"/"type", "Classification"/"classification" — no
+// underscore, so they happen to still match); every underscore-separated field —
+// project_id, environment_id, max_reads, clear_expiration — does NOT
+// case-insensitively equal its PascalCase Go counterpart and was silently
+// dropped, landing at its zero value server-side (confirmed empirically by the
+// existing TestRemoteStorage_SuccessFieldFix_RealServerRoundTrip end-to-end test
+// in server/http, which already had to work around the MaxReads/max_reads gap by
+// asserting on UpdatedAt instead of the field it actually changed).
+//
+// Note what is deliberately NOT sent, in both directions, because there is no
+// channel in the storage.Storage interface to carry it:
+//   - CreateSecret: "value" (required by the handler). models.SecretNode has no
+//     value field at all — the plaintext lives only in
+//     core.CreateSecretRequest.Value (internal/core/secrets.go), which
+//     core.CreateSecret hands to storeSecretVersion/CreateSecretVersion
+//     separately, never to CreateSecret's own SecretNode argument. So this call
+//     will still fail the handler's "value" required validation today — a
+//     separate, deeper gap (the interface itself never receives the value) than
+//     this fix's field-name-mismatch scope. This fix only ensures the OTHER
+//     fields are no longer ALSO silently wrong, so the resulting error
+//     accurately blames the missing value, not a coincidentally-also-broken
+//     project_id/environment_id/max_reads.
+//   - CreateSecret: "tags". core.CreateSecret applies create-time tags via a
+//     separate SetSecretTags storage call (already documented as
+//     remote-unsupported below), never through the SecretNode passed to
+//     CreateSecret, so there is nothing to forward here either.
+//   - UpdateSecret: "value" (optional). Same reasoning as CreateSecret — value
+//     changes go through storeNextSecretVersion/CreateSecretVersion, not
+//     UpdateSecret's own SecretNode argument.
+type secretCreateWireRequest struct {
+	Name           string      `json:"name"`
+	ProjectID      uint        `json:"project_id"`
+	EnvironmentID  uint        `json:"environment_id"`
+	Type           string      `json:"type"`
+	MaxReads       *int        `json:"max_reads,omitempty"`
+	Metadata       models.JSON `json:"metadata,omitempty"`
+	Classification string      `json:"classification,omitempty"`
+}
+
+func newSecretCreateWireRequest(secret *models.SecretNode) secretCreateWireRequest {
+	return secretCreateWireRequest{
+		Name:           secret.Name,
+		ProjectID:      secret.ProjectID,
+		EnvironmentID:  secret.EnvironmentID,
+		Type:           secret.Type,
+		MaxReads:       secret.MaxReads,
+		Metadata:       secret.Metadata,
+		Classification: secret.Classification,
+	}
+}
+
+// secretUpdateWireRequest mirrors UpdateSecret's handler DTO. By the time
+// core.UpdateSecret calls storage.UpdateSecret, secret.Expiration already
+// reflects the FULLY resolved final desired state (it first fetches the
+// existing row via GetSecret, then only mutates Expiration for an explicit
+// clear-or-set request) — so a nil Expiration here unambiguously means "the
+// final state has no expiration," and unconditionally sending
+// clear_expiration:true in that case is always correct: it is a harmless no-op
+// against a row that already has no expiration, and correctly clears one that
+// does.
+type secretUpdateWireRequest struct {
+	MaxReads        *int   `json:"max_reads,omitempty"`
+	Expiration      string `json:"expiration,omitempty"`
+	ClearExpiration bool   `json:"clear_expiration,omitempty"`
+}
+
+func newSecretUpdateWireRequest(secret *models.SecretNode) secretUpdateWireRequest {
+	req := secretUpdateWireRequest{MaxReads: secret.MaxReads}
+	if secret.Expiration != nil {
+		req.Expiration = secret.Expiration.UTC().Format(time.RFC3339)
+	} else {
+		req.ClearExpiration = true
+	}
+	return req
+}
+
 // CreateSecret creates a new secret via remote API.
 func (rs *RemoteStorage) CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/secrets", secret)
+	resp, err := rs.client.Post(ctx, "/api/v1/secrets", newSecretCreateWireRequest(secret))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret: %w", err)
 	}
@@ -94,7 +177,7 @@ func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, proje
 // UpdateSecret updates an existing secret via remote API.
 func (rs *RemoteStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
 	path := fmt.Sprintf("/api/v1/secrets/%d", secret.ID)
-	resp, err := rs.client.Put(ctx, path, secret)
+	resp, err := rs.client.Put(ctx, path, newSecretUpdateWireRequest(secret))
 	if err != nil {
 		return nil, fmt.Errorf("failed to update secret: %w", err)
 	}
