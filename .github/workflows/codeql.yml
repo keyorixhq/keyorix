@@ -1,0 +1,67 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly deep scan: catches newly-published CodeQL query packs against
+    # unchanged code, not just what a push/PR diff touches.
+    - cron: '17 3 * * 1'
+
+# Workflow-level default: read-only, except the one permission CodeQL's own
+# upload step needs (security-events: write, to publish SARIF results to the
+# repo's Security tab). Mirrors ci.yml's least-privilege convention (#115).
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Root module: server, CLI, operator excluded (its own module below).
+          - name: server
+            working-directory: .
+            gowork: auto
+          # The operator is a separate Go module (controller-runtime/client-go
+          # kept out of the root go.work) — same reasoning as ci.yml's
+          # dedicated `operator` job, so it needs its own CodeQL build+analyze
+          # pass rather than being swept up by the root module's build.
+          - name: operator
+            working-directory: operator
+            gowork: off
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+        with:
+          languages: go
+          build-mode: manual
+
+      - name: Build (${{ matrix.name }})
+        working-directory: ${{ matrix.working-directory }}
+        env:
+          GOWORK: ${{ matrix.gowork }}
+        run: go build ./...
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+        with:
+          category: '/language:go-${{ matrix.name }}'
