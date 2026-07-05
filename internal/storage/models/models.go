@@ -316,9 +316,21 @@ type User struct {
 // user (UserID unique). Activated flips true on the first valid code at
 // enrolment; a row with Activated=false is a pending enrolment not yet confirmed.
 type MFASecret struct {
-	ID         uint   `gorm:"primaryKey"`
-	UserID     uint   `gorm:"uniqueIndex"`
-	SecretEnc  []byte `json:"-"` // encrypted TOTP secret (passthrough plaintext when encryption is disabled)
+	ID     uint `gorm:"primaryKey"`
+	UserID uint `gorm:"uniqueIndex"`
+	// SecretEnc is the encrypted TOTP secret. Unlike a general secret VALUE (whose
+	// at-rest encryption is an explicit, informed operator trade-off when disabled —
+	// see encryption.SecretEncryption.StoreSecret) or a dynamic-secret admin DSN
+	// (same plaintext-passthrough via core.encryptAuthSecret), MFA does NOT fall
+	// back to plaintext when encryption is off: the sole write path,
+	// core.BeginMFAEnrollment, refuses outright ("... requires at-rest encryption
+	// to be enabled") rather than ever calling encryptAuthSecret with a
+	// disabled/nil encryptor for this row. So although encryptAuthSecret's
+	// plaintext-passthrough branch exists in the shared helper (and is genuinely
+	// used by its other two callers), it is unreachable for MFASecret in
+	// practice — a row here is either genuinely encrypted or, for a pre-#94
+	// legacy row, holds an already-encrypted-under-the-old-scheme value.
+	SecretEnc  []byte `json:"-"`
 	SecretMeta []byte `json:"-"` // encryption metadata (key version etc.)
 	Activated  bool   `gorm:"default:false"`
 	// LastUsedStep is the TOTP time-step (unix/period) of the most recently accepted
