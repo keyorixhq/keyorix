@@ -163,9 +163,33 @@ func (rs *RemoteStorage) AssignRoleToGroupWithExpiry(_ context.Context, _, _ uin
 	return remoteUnsupported("AssignRoleToGroupWithExpiry")
 }
 
-// DeleteExpiredRoleGrants is server-side only (run by the expiry scheduler).
-func (rs *RemoteStorage) DeleteExpiredRoleGrants(_ context.Context, _ time.Time) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("DeleteExpiredRoleGrants")
+// DeleteExpiredRoleGrants proxies onto POST
+// /api/v1/system/retention/role-grants/purge-expired
+// (server/http/handlers/retention_proxy.go, finding #520) — the SAME
+// "RemoteStorage stub -> thin proxy route" pattern established for login-attempts
+// (#452). Returns the full removed storage.RoleAssignment rows, not just a
+// count: the calling server's own internal/core.RemoveExpiredRoleGrants writes
+// one role.expired audit event per grant using exactly this data, which a bare
+// count could not reconstruct. storage.RoleAssignment already carries full
+// snake_case json tags, so no separate wire DTO is needed on either side.
+func (rs *RemoteStorage) DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]storage.RoleAssignment, error) {
+	body := struct {
+		Before time.Time `json:"before"`
+	}{Before: before}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/role-grants/purge-expired", body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to purge expired role grants: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("purge expired role grants failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Removed []storage.RoleAssignment `json:"removed"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Removed, nil
 }
 
 // RemoveRole removes a role from a user at scope via remote API.

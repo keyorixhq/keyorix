@@ -72,7 +72,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	}))
 
 	// Initialize handlers
-	_, groupHandler, err := handlers.InitCoreHandlers(coreService)
+	userHandler, groupHandler, err := handlers.InitCoreHandlers(coreService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init core HTTP handlers: %w", err)
 	}
@@ -1243,6 +1243,45 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/sod-policies", catalogHandler.ListSoDPoliciesProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod-policies/{id}", catalogHandler.DeleteSoDPolicyProxy)
+
+			// Data-retention/purge-sweep storage-primitive proxy (finding #520). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// PurgeDeletedSecretsBefore/DeleteAnomalyAlertsBefore/
+			// DeleteClosedAccessReviewsBefore/DeleteExpiredBreakGlassBefore/
+			// DeleteResolvedAccessRequestsBefore/DeleteExpiredRoleGrants/
+			// DeleteExpiredShareRecords/PurgeDeletedUsersBefore/
+			// PurgeDeletedProjectsBefore/PurgeDeletedEnvironmentsBefore/
+			// ListUsersInStateBefore to THIS server's real storage backend, instead of
+			// RemoteStorage's eleven data-retention/purge-sweep methods being
+			// unconditional stubs (every scheduled retention/purge/lifecycle sweep —
+			// ADR-032 soft-delete purge, ADR-033/A.5.33 compliance-record retention, the
+			// JIT access-expiry sweep, ADR-025 stale-account warnings — was completely
+			// non-functional under storage.type: remote). Exactly the same pattern as
+			// the SoD-policies/risk-exceptions proxies above: a thin passthrough onto
+			// storage.Storage (no retention POLICY decision — which window applies, the
+			// legal-hold guard, which rows are "in flight" and excluded — is made here;
+			// that stays entirely in the CALLING server's own internal/core.KeyorixCore,
+			// exactly as it does against a local backend), reusing the SAME
+			// system.read/system.write tier — no new privilege class. See
+			// retention_proxy.go's package doc for the atomicity analysis (every method
+			// already resolves in one storage.Storage call server-side, so proxying it
+			// as one HTTP round trip preserves whatever transactional guarantee the local
+			// implementation has) and for why DeleteExpiredRoleGrants/
+			// DeleteExpiredShareRecords return the removed rows rather than a bare count
+			// (their callers write one audit-log entry per removed row). Every route here
+			// is destructive except the one List, gated system.read; every mutating
+			// route requires system.write.
+			r.Get("/retention/users/stale", userHandler.ListUsersInStateBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/anomaly-alerts/purge", auditHandler.DeleteAnomalyAlertsBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/access-reviews/purge-closed", catalogHandler.DeleteClosedAccessReviewsBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/break-glass/purge-expired", catalogHandler.DeleteExpiredBreakGlassBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/access-requests/purge-resolved", catalogHandler.DeleteResolvedAccessRequestsBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/role-grants/purge-expired", rbacHandler.DeleteExpiredRoleGrantsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/share-records/purge-expired", shareHandler.DeleteExpiredShareRecordsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.

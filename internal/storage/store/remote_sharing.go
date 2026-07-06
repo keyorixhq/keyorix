@@ -198,7 +198,32 @@ func (rs *RemoteStorage) CheckSharePermission(ctx context.Context, secretID, use
 	return result.Permission, nil
 }
 
-// DeleteExpiredShareRecords is server-side only (run by the JIT expiry scheduler).
-func (rs *RemoteStorage) DeleteExpiredShareRecords(_ context.Context, _ time.Time) ([]*models.ShareRecord, error) {
-	return nil, remoteUnsupported("DeleteExpiredShareRecords")
+// DeleteExpiredShareRecords proxies onto POST
+// /api/v1/system/retention/share-records/purge-expired
+// (server/http/handlers/retention_proxy.go, finding #520) — the SAME
+// "RemoteStorage stub -> thin proxy route" pattern established for login-attempts
+// (#452). Returns the full removed *models.ShareRecord rows, not just a count:
+// the calling server's own internal/core.RemoveExpiredShares writes one
+// share.expired audit event per share using exactly this data, which a bare
+// count could not reconstruct. models.ShareRecord carries no json tags of its
+// own, so this marshals/unmarshals the model directly — matching every other
+// ShareRecord round trip in this file (CreateShareRecord, GetShareRecord, ...).
+func (rs *RemoteStorage) DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error) {
+	body := struct {
+		Before time.Time `json:"before"`
+	}{Before: before}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/share-records/purge-expired", body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to purge expired share records: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("purge expired share records failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Removed []*models.ShareRecord `json:"removed"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Removed, nil
 }
