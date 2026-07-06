@@ -239,6 +239,49 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, map[string]interface{}{"role": role, "permissions": perms}, "")
 }
 
+// GetRoleByName handles GET /api/v1/roles/by-name?name=X — looks up a role by
+// name for callers (e.g. RemoteStorage, #512) that only have the role's name
+// rather than its numeric ID (InviteToProject resolves every invited role —
+// system and project roles alike — by name this way). The route's permission
+// gate (roles.read, inherited from the /roles group — the same gate GetRole-
+// by-id uses) is the sole authz check, matching GetRole's model exactly; there
+// is no additional per-record check to bypass. Deliberately mirrors GetRole's
+// generic NotFound response (same status code, same static message) rather
+// than a distinct shape, so a caller cannot use response differences to probe
+// for valid role names — a caller without roles.read never reaches this
+// handler at all (401/403 from the route middleware, identical for every
+// name), and a caller WITH roles.read can already enumerate every role
+// (including name) via GET /roles, so this route grants no new capability at
+// that permission level. Unlike GetRole, this returns the bare role (no
+// permissions payload), matching what RemoteStorage.GetRoleByName's remote-API
+// contract expects (models.Role).
+func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		sendError(w, "InvalidParameter", "name is required", http.StatusBadRequest, nil)
+		return
+	}
+
+	role, err := h.coreService.Storage().GetRoleByName(r.Context(), name)
+	if err != nil {
+		log.Printf("Error getting role by name: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+		} else {
+			sendError(w, "InternalError", "Failed to get role", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	sendSuccess(w, role, "")
+}
+
 // UpdateRole handles PUT /api/v1/roles/{id}
 func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

@@ -689,6 +689,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission("roles.read"))
 			r.Get("/", rbacHandler.ListRoles)
 			r.With(customMiddleware.RequirePermission("roles.write")).Post("/", rbacHandler.CreateRole)
+			// By-name lookup, scoped by the group-wide roles.read gate above — the
+			// server-side counterpart RemoteStorage.GetRoleByName (#512) needs, for a
+			// caller (e.g. InviteToProject resolving an invited role by name) with
+			// only a role's name, not its numeric ID. Deliberately the SAME gate as
+			// GetRole-by-id (not a stricter one): roles.read already lets a caller
+			// enumerate every role (including name) via GET /roles with no filter,
+			// so this route grants no new capability at that permission level.
+			// Static path, before /{id} — mirrors GetUserByEmail (#503) /
+			// GetSecretByName (#497)'s query-param "by-X" convention.
+			r.Get("/by-name", rbacHandler.GetRoleByName)
 			r.Get("/{id}", rbacHandler.GetRole)
 			r.With(customMiddleware.RequirePermission("roles.write")).Put("/{id}", rbacHandler.UpdateRole)
 			r.With(customMiddleware.RequirePermission("roles.write")).Delete("/{id}", rbacHandler.DeleteRole)
