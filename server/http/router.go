@@ -909,6 +909,76 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
 			r.Get("/users/{id}/groups", groupHandler.GetUserGroupsProxy)
 
+			// Machine-identity storage-primitive proxy (finding #518). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateMachineIdentity/GetMachineIdentity/
+			// LockMachineIdentityForUpdate/UpdateMachineIdentity/ListMachineIdentities/
+			// ListAllMachineIdentities/CountMachineIdentitiesByClassification/
+			// CreateMachineIdentityCredential/GetMachineIdentityCredentialByHash/
+			// GetMachineIdentityCredentialByID/ListMachineIdentityCredentials/
+			// ListActiveMachineIdentityCredentials/UpdateMachineIdentityCredential/
+			// CountMachineIdentityCredentialsByClassification/
+			// RevokeMachineIdentityCredential/TouchMachineIdentityCredential/
+			// AssignMachineRole/RemoveMachineRole/GetMachineRoleIDsAt/GetMachineRoles/
+			// CreateOIDCBinding/GetMachineByOIDCSubject/ListOIDCBindings/
+			// GetOIDCBindingByID/DeleteOIDCBinding to THIS server's real storage
+			// backend, instead of every one of these methods unconditionally
+			// returning ErrRemoteUnsupported (machine-identity provisioning,
+			// machine-token issuance/validation, machine role grants, and
+			// Kubernetes/OIDC workload federation were entirely non-functional under
+			// storage.type: remote). Exactly the same pattern as the groups/
+			// dynamic-secrets proxies above: a thin passthrough onto storage.Storage
+			// (no machine-identity POLICY decision — state-machine transition
+			// legality, role-grant authorization, token issuance/hashing, OIDC
+			// federation policy — is made here; that stays entirely in the CALLING
+			// server's own internal/core.KeyorixCore, exactly as it does against a
+			// local backend), reusing the SAME system.read/system.write tier rather
+			// than the project-scoped roles.assign the human-facing
+			// /projects/{id}/machine-identities routes use — no new privilege class.
+			// Read is baseline system.read; every mutating operation requires
+			// system.write, matching every other admin-level mutation in this group.
+			//
+			// TransitionMachineIdentityState is a dedicated conditional-write route
+			// (NOT a generic Update), preserving #388's "revoked is terminal"
+			// row-lock guarantee across this HTTP hop — see
+			// machine_identities_proxy.go's package doc for the full atomicity
+			// investigation. CountStaleMachineIdentitiesByProject has no route here;
+			// it remains an intentional RemoteStorage stub (the #393 grouped
+			// hygiene-rollup query stays server-side, out of this finding's scope).
+			//
+			// Static sub-paths ("all", "classification-counts", "active", "by-hash/
+			// {hash}", "by-subject", and "roles/ids") are registered ahead of their
+			// sibling {id}/{roleId} routes, matching chi's static-before-dynamic
+			// preference at the same path position (the same ordering the
+			// dynamic-secrets/groups proxies above already rely on).
+			r.Get("/machine-identities/classification-counts", catalogHandler.CountMachineIdentitiesByClassificationProxy)
+			r.Get("/machine-identities/all", catalogHandler.ListAllMachineIdentitiesProxy)
+			r.Get("/machine-identities", catalogHandler.ListMachineIdentitiesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-identities", catalogHandler.CreateMachineIdentityProxy)
+			r.Get("/machine-identities/{id}", catalogHandler.GetMachineIdentityProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-identities/{id}", catalogHandler.UpdateMachineIdentityProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-identities/{id}/transition", catalogHandler.TransitionMachineIdentityStateProxy)
+			r.Get("/machine-identities/{id}/credentials", catalogHandler.ListMachineIdentityCredentialsProxy)
+			r.Get("/machine-identities/{id}/roles/ids", catalogHandler.GetMachineRoleIDsAtProxy)
+			r.Get("/machine-identities/{id}/roles", catalogHandler.GetMachineRolesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-identities/{id}/roles/{roleId}", catalogHandler.AssignMachineRoleProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/machine-identities/{id}/roles/{roleId}", catalogHandler.RemoveMachineRoleProxy)
+			r.Get("/machine-identities/{id}/oidc-bindings", catalogHandler.ListOIDCBindingsProxy)
+
+			r.Get("/machine-credentials/classification-counts", catalogHandler.CountMachineIdentityCredentialsByClassificationProxy)
+			r.Get("/machine-credentials/active", catalogHandler.ListActiveMachineIdentityCredentialsProxy)
+			r.Get("/machine-credentials/by-hash/{hash}", catalogHandler.GetMachineIdentityCredentialByHashProxy)
+			r.Get("/machine-credentials/{id}", catalogHandler.GetMachineIdentityCredentialByIDProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials", catalogHandler.CreateMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-credentials/{id}", catalogHandler.UpdateMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials/{id}/revoke", catalogHandler.RevokeMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials/{id}/touch", catalogHandler.TouchMachineIdentityCredentialProxy)
+
+			r.Get("/machine-oidc-bindings/by-subject", catalogHandler.GetMachineByOIDCSubjectProxy)
+			r.Get("/machine-oidc-bindings/{id}", catalogHandler.GetOIDCBindingByIDProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-oidc-bindings", catalogHandler.CreateOIDCBindingProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/machine-oidc-bindings/{id}", catalogHandler.DeleteOIDCBindingProxy)
+
 			// Setup-token storage-primitive proxy (#510). Lets a downstream Keyorix
 			// server booted with storage.type: remote (ADR-049) proxy
 			// CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/
@@ -993,6 +1063,186 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Delete("/secret-dependencies/{id}", secretHandler.DeleteSecretDependencyProxy)
+
+			// WebAuthn / passkey storage-primitive proxy (finding #517). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateWebAuthnCredential/ListWebAuthnCredentials/
+			// GetWebAuthnCredentialByCredID/LockWebAuthnCredentialForUpdate/
+			// UpdateWebAuthnCredential/AdvanceWebAuthnCredentialCounter/
+			// DeleteWebAuthnCredential/CountWebAuthnCredentials/
+			// SetUserWebAuthnEnabled/CreateWebAuthnSession/ConsumeWebAuthnSession to
+			// THIS server's real storage backend, instead of RemoteStorage's ten
+			// WebAuthn methods having no server endpoint to call at all (every
+			// passkey registration/login flow was completely non-functional under
+			// storage.type: remote). Unlike the MFA/TOTP proxy above (a
+			// verification proxy — the raw TOTP secret must never leave the server
+			// that can decrypt it), a passkey's public key and ceremony session
+			// state are not secret, so this is an ordinary CRUD passthrough — no
+			// WebAuthn ceremony/ownership/reauth POLICY decision is made here; that
+			// stays entirely in the CALLING server's own internal/core.KeyorixCore,
+			// exactly as it does against a local backend. Reuses the SAME
+			// system.read/system.write tier — no new privilege class. See
+			// webauthn_proxy.go's package doc for the signature-counter race fix:
+			// AdvanceWebAuthnCredentialCounter is the one route here that performs
+			// a full locked compare-and-swap in a single request rather than a
+			// plain CRUD read/write, closing the cloned-authenticator TOCTOU a
+			// naive Lock-then-Update pair over two separate remote calls would
+			// reopen (#306/#517). Static sub-paths (lookup, count,
+			// advance-counter) are registered before their sibling {id} routes.
+			r.Get("/webauthn/credentials/lookup", authHandler.GetWebAuthnCredentialByCredIDProxy)
+			r.Get("/webauthn/credentials/count", authHandler.CountWebAuthnCredentialsProxy)
+			r.Get("/webauthn/credentials", authHandler.ListWebAuthnCredentialsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/credentials", authHandler.CreateWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/credentials/{id}", authHandler.UpdateWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Patch("/webauthn/credentials/advance-counter", authHandler.AdvanceWebAuthnCredentialCounterProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/webauthn/users/{userId}/credentials/{id}", authHandler.DeleteWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
+
+			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateLegalHold/GetActiveLegalHold/UpdateLegalHold to THIS server's real
+			// storage backend, instead of RemoteStorage's three legal-hold methods
+			// having no server endpoint to call at all (core.PlaceLegalHold/
+			// LiftLegalHold/IsLegalHoldActive — and therefore every purge/prune
+			// scheduler's legalHoldGuard check — were completely non-functional under
+			// storage.type: remote; the schedulers fail SAFE on that error, so the
+			// practical effect was "purges never run" rather than silent data loss,
+			// but the legal-hold control itself did not work). Exactly the same
+			// pattern as the project-membership proxy above: a thin passthrough onto
+			// storage.Storage (no legal-hold POLICY decision — the admin-tier
+			// placement gate, the placer-or-admin-tier lift gate, the required-reason
+			// validation, the audit events — is made here; that stays entirely in the
+			// CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the SAME system.read/system.write
+			// tier — no new privilege class. There is no competing GET "{id}" route
+			// at this depth (unlike groups/project-memberships, this subsystem has
+			// only ever one active row, looked up by "active" rather than by ID), so
+			// route registration order here is purely cosmetic.
+			r.Get("/legal-hold/active", dashboardHandler.GetActiveLegalHoldProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.CreateLegalHoldProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/legal-hold/{id}", dashboardHandler.UpdateLegalHoldProxy)
+
+			// Access-review-campaign storage-primitive proxy (ISO 27001 A.5.18,
+			// finding #519). Lets a downstream Keyorix server booted with
+			// storage.type: remote (ADR-049) proxy CreateAccessReviewCampaign/
+			// GetAccessReviewCampaign/ListAccessReviewCampaigns/
+			// GetOpenAccessReviewCampaign/GetLatestClosedAccessReviewCampaign/
+			// UpdateAccessReviewCampaign/CreateAccessReviewItems/
+			// ListAccessReviewItems/CountPendingAccessReviewItems/
+			// GetAccessReviewItem/UpdateAccessReviewItem to THIS server's real
+			// storage backend, instead of RemoteStorage's eleven access-review
+			// -campaign methods having no server endpoint to call at all (every
+			// ISO 27001 A.5.18 periodic-recertification flow was completely
+			// non-functional under storage.type: remote). Exactly the same
+			// pattern as the project-memberships proxy above: a thin passthrough
+			// onto storage.Storage (no campaign-lifecycle POLICY decision —
+			// snapshotting the live access-review report into items, the
+			// reviewer-independence check, the pending-vs-force-close gate,
+			// revoking the underlying grant on a "revoke" decision — is made
+			// here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local
+			// backend), reusing the SAME system.read/system.write tier rather
+			// than the project-scoped roles.read/roles.assign the human-facing
+			// /projects/{id}/access-review/campaigns routes use — no new
+			// privilege class. Read is baseline system.read; create/update
+			// require system.write, matching every other admin-level mutation
+			// in this group. Static sub-paths ("open", "latest-closed",
+			// "items/{itemID}", "items/pending-count") are registered ahead of
+			// the "/{id}" wildcard, the same static-vs-wildcard precedence
+			// project-memberships' "active"/"stale"/"counts"/"by-user" above
+			// already rely on — see access_review_campaigns_proxy.go's package
+			// doc for the UpdateAccessReviewCampaign/UpdateAccessReviewItem
+			// atomicity analysis (both are already a single conditional UPDATE
+			// on the LocalStorage side, so one proxied round trip preserves the
+			// guarantee exactly; no new atomic primitive was needed).
+			r.Get("/access-review-campaigns/open", catalogHandler.GetOpenAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/latest-closed", catalogHandler.GetLatestClosedAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/items/{itemID}", catalogHandler.GetAccessReviewItemProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/access-review-campaigns/items/{itemID}", catalogHandler.UpdateAccessReviewItemProxy)
+			r.Get("/access-review-campaigns", catalogHandler.ListAccessReviewCampaignsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-review-campaigns", catalogHandler.CreateAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/{id}", catalogHandler.GetAccessReviewCampaignProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/access-review-campaigns/{id}", catalogHandler.UpdateAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/{id}/items/pending-count", catalogHandler.CountPendingAccessReviewItemsProxy)
+			r.Get("/access-review-campaigns/{id}/items", catalogHandler.ListAccessReviewItemsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-review-campaigns/{id}/items", catalogHandler.CreateAccessReviewItemsProxy)
+
+			// Break-glass activation storage-primitive proxy (#519). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateBreakGlassActivation/GetBreakGlassActivation/
+			// ListBreakGlassActivations/UpdateBreakGlassActivation/
+			// RevokeBreakGlassActivation to THIS server's real storage backend,
+			// instead of RemoteStorage's five break-glass methods having no server
+			// endpoint to call at all (emergency-access self-activation —
+			// NIS2/DORA incident response — was completely non-functional under
+			// storage.type: remote). Exactly the same pattern as the
+			// project-memberships/invitations proxies above: a thin passthrough
+			// onto storage.Storage (no break-glass POLICY decision — enablement,
+			// project-affiliation, emergency-role containment, TTL clamping, the
+			// actual JIT role grant — is made here; that stays entirely in the
+			// CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the SAME system.read/system.write
+			// tier — no new privilege class. Critically, CreateBreakGlassActivationProxy
+			// and RevokeBreakGlassActivationProxy call storage.Storage's own
+			// unique-index-backed create and conditional `WHERE state = 'active'`
+			// update DIRECTLY (see break_glass_proxy.go's package doc), preserving
+			// the #104/PR #670 concurrent-activation race fix across this HTTP hop.
+			// Read is baseline system.read; create/update/revoke require
+			// system.write, matching every other admin-level mutation in this group.
+			r.Get("/break-glass/{id}", catalogHandler.GetBreakGlassActivationProxy)
+			r.Get("/break-glass", catalogHandler.ListBreakGlassActivationsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
+
+			// Risk-exception storage-primitive proxy (#519). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateRiskException/GetRiskException/ListRiskExceptions/
+			// UpdateRiskException to THIS server's real storage backend, instead of
+			// RemoteStorage's four RiskException methods being unconditional stubs
+			// (the risk register — ISO 27001 A.5.8 — was completely non-functional
+			// under storage.type: remote). Exactly the same pattern as the
+			// project-memberships proxy above: a thin passthrough onto
+			// storage.Storage (no risk-exception POLICY decision —
+			// title/category/justification validation, the expiry-in-the-future and
+			// max-365-day-sunset bounds, dual-control approval, or the
+			// effective-status computation from the revoked flag + expiry — is made
+			// here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local
+			// backend), reusing the SAME system.read/system.write tier rather than
+			// the audit.read the human-facing /risk-exceptions routes use, since a
+			// RemoteStorage credential already needs system.write for the
+			// project-memberships proxy above — no new privilege class.
+			r.Get("/risk-exceptions/{id}", dashboardHandler.GetRiskExceptionProxy)
+			r.Get("/risk-exceptions", dashboardHandler.ListRiskExceptionsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskExceptionProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/risk-exceptions/{id}", dashboardHandler.UpdateRiskExceptionProxy)
+
+			// Separation-of-duties (SoD) policy storage-primitive proxy (finding
+			// #519). Lets a downstream Keyorix server booted with storage.type:
+			// remote (ADR-049) proxy CreateSoDPolicy/GetSoDPolicy/ListSoDPolicies/
+			// DeleteSoDPolicy to THIS server's real storage backend, instead of
+			// RemoteStorage's four SoD-policy methods having no server endpoint to
+			// call at all (internal/core/sod.go's policy CRUD, plus every preventive
+			// grant-time gate that lists policies — requireNoSoDViolation and
+			// friends, #419 — was completely non-functional under storage.type:
+			// remote). Exactly the same pattern as the project-memberships proxy
+			// above: a thin passthrough onto storage.Storage (no SoD-policy POLICY
+			// decision — name/permission-pair validation, the audit-log event, the
+			// violation-detection scan itself — is made here; that stays entirely in
+			// the CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the SAME system.read/system.write
+			// tier rather than the human-facing /sod/policies routes' calibration,
+			// since a RemoteStorage credential already needs system.write for the
+			// proxies above — no new privilege class. Read is baseline system.read;
+			// create/delete require system.write, matching every other admin-level
+			// mutation in this group.
+			r.Get("/sod-policies/{id}", catalogHandler.GetSoDPolicyProxy)
+			r.Get("/sod-policies", catalogHandler.ListSoDPoliciesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod-policies/{id}", catalogHandler.DeleteSoDPolicyProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.

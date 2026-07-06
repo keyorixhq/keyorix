@@ -98,6 +98,34 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// SecretDependency CRUD (and the atomic duplicate/cycle-checked create)
 		// through the real router.
 		&models.SecretDependency{},
+		// #518: the machine-identity-proxy end-to-end tests exercise
+		// MachineIdentity/MachineIdentityCredential/MachineIdentityRole/
+		// MachineIdentityOIDCBinding CRUD through the real router.
+		&models.MachineIdentity{},
+		&models.MachineIdentityCredential{},
+		&models.MachineIdentityRole{},
+		&models.MachineIdentityOIDCBinding{},
+		// #517: the webauthn-proxy end-to-end tests exercise WebAuthnCredential/
+		// WebAuthnSession CRUD (including the atomic signature-counter advance)
+		// through the real router.
+		&models.WebAuthnCredential{},
+		&models.WebAuthnSession{},
+		// finding #519: the legal-hold-proxy end-to-end tests exercise LegalHold
+		// CRUD through the real router.
+		&models.LegalHold{},
+		// #519: the access-review-campaign-proxy end-to-end tests exercise
+		// AccessReviewCampaign/AccessReviewItem CRUD through the real router.
+		&models.AccessReviewCampaign{},
+		&models.AccessReviewItem{},
+		// #519: the break-glass-proxy end-to-end tests exercise BreakGlassActivation
+		// CRUD through the real router.
+		&models.BreakGlassActivation{},
+		// #519: the risk-exception-proxy end-to-end tests exercise RiskException
+		// CRUD through the real router.
+		&models.RiskException{},
+		// finding #519: the SoD-policy-proxy end-to-end tests exercise SoDPolicy
+		// CRUD through the real router.
+		&models.SoDPolicy{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
@@ -109,6 +137,21 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 	// isUniqueViolation branch depends on.
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
 		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error)
+	// Mirror internal/storage/factory.go's ensureLegalHoldActiveIndex exactly: without
+	// this partial unique index, the legal-hold-proxy test exercising the
+	// "already active" rejection path would silently miss the real DB-level guard
+	// CreateLegalHold's isUniqueConstraintErr branch depends on.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active "+
+		"ON legal_holds (released) WHERE released = false").Error)
+	// Mirror internal/storage/factory.go's ensureBreakGlassActiveIndex exactly (the
+	// same production migration path TestCreateBreakGlassActivation_
+	// ConcurrentRaceYieldsExactlyOneWinner relies on,
+	// internal/storage/store/local_break_glass_test.go): AutoMigrate alone does not
+	// create this partial unique index, so without it, the #519 break-glass-proxy
+	// concurrent-activation test would silently miss the real DB-level guard
+	// CreateBreakGlassActivation's OnConflict DoNothing branch depends on.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user "+
+		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 

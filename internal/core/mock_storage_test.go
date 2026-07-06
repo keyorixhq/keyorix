@@ -1682,6 +1682,11 @@ func (m *MockStorage) UpdateMachineIdentity(ctx context.Context, mi *models.Mach
 	return args.Error(0)
 }
 
+func (m *MockStorage) TransitionMachineIdentityState(ctx context.Context, mi *models.MachineIdentity, fromState string) (bool, error) {
+	args := m.Called(ctx, mi, fromState)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {
@@ -2033,6 +2038,9 @@ func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byt
 }
 func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
 	return nil
+}
+func (m *MockStorage) AdvanceWebAuthnCredentialCounter(_ context.Context, _ []byte, _ uint, _ []byte, _ uint32, _ time.Time) (bool, error) {
+	return false, nil
 }
 func (m *MockStorage) DeleteWebAuthnCredential(_ context.Context, _, _ uint) error { return nil }
 func (m *MockStorage) CountWebAuthnCredentials(_ context.Context, _ uint) (int64, error) {
