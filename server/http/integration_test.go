@@ -75,8 +75,20 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
 		// CRUD through the real router.
 		&models.ProjectInvitation{},
+		// #511: the project-membership-proxy end-to-end tests exercise
+		// ProjectMembership CRUD through the real router.
+		&models.ProjectMembership{},
 	)
 	require.NoError(t, err)
+	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
+	// same production migration path #309's TestConcurrency_InviteMember_
+	// NoDuplicateActiveMembership relies on, internal/core/concurrency_invite_member_test.go):
+	// AutoMigrate alone does not create this partial unique index, so without it, the
+	// #511 project-membership-proxy tests exercising the "duplicate active membership"
+	// path would silently miss the real DB-level guard CreateProjectMembership's
+	// isUniqueViolation branch depends on.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
+		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
