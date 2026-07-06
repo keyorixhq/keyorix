@@ -15,7 +15,6 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -503,13 +502,18 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 // predicate, a blind Save would let the loser's stale (lower) counter overwrite the
 // winner's already-persisted higher one — last UPDATE wins — silently regressing the
 // on-disk counter and suppressing the clone-detection audit signal on subsequent
-// logins (#306). webauthnCredentialMu serializes same-process callers (and so the
-// whole single-process SQLite case); combined with the row lock
-// LockWebAuthnCredentialForUpdate takes on Postgres, the read-validate-write stays
-// correct across replicas too. Inside the transaction the counter check is re-done
-// against the row's CURRENT persisted value (re-read under the lock), not the value
-// `cred` was validated against at the top of Finish*Login, so only a genuinely higher
-// counter is ever persisted.
+// logins (#306). The actual read-validate-write now happens in ONE atomic
+// storage-layer call, storage.Storage.AdvanceWebAuthnCredentialCounter (#517) — see
+// its doc (internal/core/storage/interface.go) for why this had to move down a
+// layer: RemoteStorage.WithTransaction is a no-op passthrough (each remote call is
+// independent), so composing LockWebAuthnCredentialForUpdate + UpdateWebAuthnCredential
+// as two separate remote round trips (as this function used to, against
+// LocalStorage only) would reopen the exact TOCTOU race the transaction was built to
+// prevent. webauthnCredentialMu still serializes same-process callers (belt-and-
+// suspenders for the single-process SQLite case, where AdvanceWebAuthnCredentialCounter's
+// own row lock is a no-op); combined with LocalStorage's row lock on Postgres, or the
+// upstream server's own equivalent lock for a storage.type: remote deployment, the
+// counter stays monotonic across replicas too.
 func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint, cred *webauthn.Credential) {
 	blob, err := json.Marshal(cred)
 	if err != nil {
@@ -520,32 +524,7 @@ func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint,
 	c.webauthnCredentialMu.Lock()
 	defer c.webauthnCredentialMu.Unlock()
 
-	_ = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		row, err := tx.LockWebAuthnCredentialForUpdate(ctx, cred.ID, userID)
-		if err != nil {
-			return err
-		}
-		var stored webauthn.Credential
-		if err := json.Unmarshal(row.CredentialBlob, &stored); err != nil {
-			return err
-		}
-		// Mirrors go-webauthn's own Authenticator.UpdateCounter gate: many platform
-		// authenticators (Touch ID, Windows Hello, and most passkeys) never implement a
-		// counter and always report 0, so a (0, 0) comparison must NOT be treated as
-		// stale — that would silently stop LastUsedAt/blob updates from ever persisting
-		// again for the common case. Only reject when at least one side is nonzero and
-		// the new value fails to advance past the row's CURRENT stored value.
-		newCount, storedCount := cred.Authenticator.SignCount, stored.Authenticator.SignCount
-		if newCount <= storedCount && (newCount != 0 || storedCount != 0) {
-			// A concurrent request already advanced the stored counter past (or to) this
-			// assertion's value: this write is stale, so skip it rather than regress the
-			// persisted counter.
-			return nil
-		}
-		row.CredentialBlob = blob
-		row.LastUsedAt = &now
-		return tx.UpdateWebAuthnCredential(ctx, row)
-	})
+	_, _ = c.storage.AdvanceWebAuthnCredentialCounter(ctx, cred.ID, userID, blob, cred.Authenticator.SignCount, now)
 }
 
 func (c *KeyorixCore) auditWebAuthnFailed(ctx context.Context, userID uint, phase string) {

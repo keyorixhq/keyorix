@@ -2031,6 +2031,9 @@ func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byt
 func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
 	return nil
 }
+func (m *MockStorage) AdvanceWebAuthnCredentialCounter(_ context.Context, _ []byte, _ uint, _ []byte, _ uint32, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (m *MockStorage) DeleteWebAuthnCredential(_ context.Context, _, _ uint) error { return nil }
 func (m *MockStorage) CountWebAuthnCredentials(_ context.Context, _ uint) (int64, error) {
 	return 0, nil
