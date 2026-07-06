@@ -962,6 +962,51 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
 
+			// Access-review-campaign storage-primitive proxy (ISO 27001 A.5.18,
+			// finding #519). Lets a downstream Keyorix server booted with
+			// storage.type: remote (ADR-049) proxy CreateAccessReviewCampaign/
+			// GetAccessReviewCampaign/ListAccessReviewCampaigns/
+			// GetOpenAccessReviewCampaign/GetLatestClosedAccessReviewCampaign/
+			// UpdateAccessReviewCampaign/CreateAccessReviewItems/
+			// ListAccessReviewItems/CountPendingAccessReviewItems/
+			// GetAccessReviewItem/UpdateAccessReviewItem to THIS server's real
+			// storage backend, instead of RemoteStorage's eleven access-review
+			// -campaign methods having no server endpoint to call at all (every
+			// ISO 27001 A.5.18 periodic-recertification flow was completely
+			// non-functional under storage.type: remote). Exactly the same
+			// pattern as the project-memberships proxy above: a thin passthrough
+			// onto storage.Storage (no campaign-lifecycle POLICY decision —
+			// snapshotting the live access-review report into items, the
+			// reviewer-independence check, the pending-vs-force-close gate,
+			// revoking the underlying grant on a "revoke" decision — is made
+			// here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local
+			// backend), reusing the SAME system.read/system.write tier rather
+			// than the project-scoped roles.read/roles.assign the human-facing
+			// /projects/{id}/access-review/campaigns routes use — no new
+			// privilege class. Read is baseline system.read; create/update
+			// require system.write, matching every other admin-level mutation
+			// in this group. Static sub-paths ("open", "latest-closed",
+			// "items/{itemID}", "items/pending-count") are registered ahead of
+			// the "/{id}" wildcard, the same static-vs-wildcard precedence
+			// project-memberships' "active"/"stale"/"counts"/"by-user" above
+			// already rely on — see access_review_campaigns_proxy.go's package
+			// doc for the UpdateAccessReviewCampaign/UpdateAccessReviewItem
+			// atomicity analysis (both are already a single conditional UPDATE
+			// on the LocalStorage side, so one proxied round trip preserves the
+			// guarantee exactly; no new atomic primitive was needed).
+			r.Get("/access-review-campaigns/open", catalogHandler.GetOpenAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/latest-closed", catalogHandler.GetLatestClosedAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/items/{itemID}", catalogHandler.GetAccessReviewItemProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/access-review-campaigns/items/{itemID}", catalogHandler.UpdateAccessReviewItemProxy)
+			r.Get("/access-review-campaigns", catalogHandler.ListAccessReviewCampaignsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-review-campaigns", catalogHandler.CreateAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/{id}", catalogHandler.GetAccessReviewCampaignProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/access-review-campaigns/{id}", catalogHandler.UpdateAccessReviewCampaignProxy)
+			r.Get("/access-review-campaigns/{id}/items/pending-count", catalogHandler.CountPendingAccessReviewItemsProxy)
+			r.Get("/access-review-campaigns/{id}/items", catalogHandler.ListAccessReviewItemsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-review-campaigns/{id}/items", catalogHandler.CreateAccessReviewItemsProxy)
+
 			// Break-glass activation storage-primitive proxy (#519). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
 			// proxy CreateBreakGlassActivation/GetBreakGlassActivation/

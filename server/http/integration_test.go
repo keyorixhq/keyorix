@@ -94,6 +94,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// #519: the access-review-campaign-proxy end-to-end tests exercise
+		// AccessReviewCampaign/AccessReviewItem CRUD through the real router.
+		&models.AccessReviewCampaign{},
+		&models.AccessReviewItem{},
 		// #519: the break-glass-proxy end-to-end tests exercise BreakGlassActivation
 		// CRUD through the real router.
 		&models.BreakGlassActivation{},
