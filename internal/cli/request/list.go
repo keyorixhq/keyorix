@@ -46,11 +46,15 @@ func runList(cmd *cobra.Command, args []string) error {
 		fmt.Println("No access requests found.")
 		return nil
 	}
-	fmt.Printf("%-6s %-24s %-14s %-14s %-11s %s\n", "ID", "USER", "SUGGESTED", "GRANTED", "STATE", "REASON")
+	fmt.Printf("%-6s %-24s %-14s %-14s %-11s %-10s %s\n", "ID", "USER", "SUGGESTED", "GRANTED", "STATE", "SECRET", "REASON")
 	for _, req := range requests {
-		fmt.Printf("%-6d %-24s %-14s %-14s %-11s %s\n",
+		secretCol := "-"
+		if req.SecretID != nil {
+			secretCol = fmt.Sprintf("#%d", *req.SecretID)
+		}
+		fmt.Printf("%-6d %-24s %-14s %-14s %-11s %-10s %s\n",
 			req.ID, userLabel(ctx, service, req.UserID), dashIfEmpty(req.SuggestedRole),
-			dashIfEmpty(req.GrantedRole), req.State, dashIfEmpty(req.Reason))
+			dashIfEmpty(req.GrantedRole), req.State, secretCol, dashIfEmpty(req.Reason))
 	}
 	return nil
 }

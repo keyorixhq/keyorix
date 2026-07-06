@@ -186,6 +186,13 @@ type KeyorixCore struct {
 	// dualControlRequiredApprovals is the N-of-M approval threshold for access
 	// requests (A.5.3); 0/1 = single approval (disabled). Set via SetDualControlPolicy.
 	dualControlRequiredApprovals int
+	// classificationRestrictedRequiresApproval mirrors config classification.
+	// restricted_requires_approval; false (the default) = "restricted" stays purely
+	// informational metadata, matching every deployment's behaviour today. When
+	// true, a direct value read of a "restricted"-classified secret requires an
+	// approved, secret-scoped access request (see classification_gate.go). Set from
+	// config at startup via SetClassificationRestrictedRequiresApproval.
+	classificationRestrictedRequiresApproval bool
 	// retentionPolicy holds the configured per-record-type data-retention windows
 	// (ISO A.5.33) so the compliance posture can report them; zero value = no
 	// retention configured. Set from config at startup via SetRetentionPolicy.

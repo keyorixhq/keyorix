@@ -16,9 +16,16 @@ func TestRequestCommandStructure(t *testing.T) {
 	for _, c := range RequestCmd.Commands() {
 		names = append(names, c.Use)
 	}
-	for _, expected := range []string{"access", "list", "withdraw", "review"} {
+	for _, expected := range []string{"access", "secret-access", "list", "withdraw", "review"} {
 		assert.Contains(t, names, expected, "expected subcommand %q", expected)
 	}
+}
+
+func TestRequestSecretAccessFlags(t *testing.T) {
+	for _, name := range []string{"secret-id", "ref", "user", "reason"} {
+		assert.NotNil(t, secretAccessCmd.Flags().Lookup(name), "secret-access should have --%s", name)
+	}
+	assert.NotEmpty(t, secretAccessCmd.Flags().Lookup("user").Annotations[cobraRequired], "--user should be required")
 }
 
 func TestRequestAccessFlags(t *testing.T) {

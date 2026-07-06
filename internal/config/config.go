@@ -48,6 +48,13 @@ type Config struct {
 	BreakGlass BreakGlassConfig `yaml:"break_glass"`
 	// DualControl configures N-of-M approval for access-request grants (A.5.3).
 	DualControl DualControlConfig `yaml:"dual_control"`
+	// Classification configures whether the "restricted" data-classification label
+	// (the highest tier, see internal/core/classification.go) changes read-time
+	// behaviour. Disabled (zero value) = the label stays purely informational,
+	// exactly like every deployment today — required so enabling this feature is
+	// never a surprise breaking change for an install that already uses
+	// "restricted" as a label with no enforcement behind it.
+	Classification ClassificationConfig `yaml:"classification"`
 	// AnomalyAlerts configures proactive alerting for detected access anomalies.
 	AnomalyAlerts AnomalyAlertsConfig `yaml:"anomaly_alerts"`
 	// DataRetention configures the opt-in scheduler that hard-deletes compliance
@@ -1449,6 +1456,31 @@ func (c DualControlConfig) GetRequiredApprovals() int {
 		return c.RequiredApprovals
 	}
 	return 1
+}
+
+// ClassificationConfig configures label-driven read-time enforcement for the
+// highest data-classification tier ("restricted", ISO 27001 A.5.12/A.5.13).
+//
+// RestrictedRequiresApproval defaults to false — off. Today, "restricted" is
+// purely informational metadata (internal/core/classification.go's package doc
+// documents this as a deliberate scope decision): setting it changes nothing at
+// read time. Turning this on for the first time is a BREAKING BEHAVIOUR CHANGE
+// for any deployment that already has "restricted" secrets, since those secrets
+// were previously readable like any other with sufficient RBAC — an operator
+// must opt in explicitly, which is why the default stays false rather than
+// enforcing the label the moment it exists.
+//
+// When true, a direct read of a "restricted" secret's VALUE (not its metadata —
+// GetSecret/ListSecrets are unaffected) requires an approved, secret-scoped
+// access request (RequestSecretAccess / ApproveSecretAccessRequest, reusing the
+// AccessRequest model/flow ADR-024 introduced for project/role requests) or is
+// denied. A read whose acting principal cannot be identified as a specific user
+// — a machine/service-account credential, or any other caller with no user ID to
+// check an approval against — is ALWAYS denied when this is on: there is no
+// "wait for approval" for automation, and no silent bypass either (fail-closed,
+// matching this codebase's established posture for ambiguous authorization).
+type ClassificationConfig struct {
+	RestrictedRequiresApproval bool `yaml:"restricted_requires_approval"`
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the

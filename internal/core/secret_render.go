@@ -64,7 +64,7 @@ func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string,
 		if _, err := c.ValidateSecretAccess(ctx, secret.ID, userID); err != nil {
 			return "", ErrSecretRefNotFound
 		}
-		val, err := c.GetSecretValue(ctx, secret.ID)
+		val, err := c.getSecretValueForUser(ctx, secret.ID, userID)
 		if err != nil {
 			return "", err
 		}

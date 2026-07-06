@@ -94,7 +94,22 @@ func (c *KeyorixCore) GetLatestSecretVersionWithPermissionCheck(ctx context.Cont
 }
 
 // GetSecretValue retrieves the decrypted value of the latest version of a secret.
+// It has no user principal of its own — used both directly by machine/embedded
+// callers (server/http's isMachine branch, the embedded CLI) and, via
+// getSecretValueForUser, as the shared tail of the *WithPermissionCheck variants.
+// A direct call here is always treated as userID 0 for the classification gate
+// (see checkRestrictedSecretReadApproval) — there is no user to check an approval
+// against, matching the machine-read design decision.
 func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte, error) {
+	return c.getSecretValueForUser(ctx, secretID, 0)
+}
+
+// getSecretValueForUser is GetSecretValue's real body, plus the classification
+// gate keyed on userID (0 = no identifiable user). Kept unexported and separate
+// from GetSecretValue's public, userID-less signature so *WithPermissionCheck
+// callers — which already resolved a real userID via ValidateSecretAccess — can
+// thread it through instead of losing it at the handoff.
+func (c *KeyorixCore) getSecretValueForUser(ctx context.Context, secretID, userID uint) ([]byte, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -107,6 +122,9 @@ func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte
 	}
 	if secret.Status == SecretStatusSuspended {
 		return nil, fmt.Errorf("secret is suspended")
+	}
+	if err := c.checkRestrictedSecretReadApproval(ctx, secret, userID); err != nil {
+		return nil, err
 	}
 	version, err := c.storage.GetLatestSecretVersion(ctx, secretID)
 	if err != nil {
@@ -123,12 +141,22 @@ func (c *KeyorixCore) GetSecretValueWithPermissionCheck(ctx context.Context, sec
 	if _, err := c.ValidateSecretAccess(ctx, secretID, userID); err != nil {
 		return nil, err
 	}
-	// Delegate to base method — avoids duplicating max-reads logic.
-	return c.GetSecretValue(ctx, secretID)
+	// Delegate to the shared body with the real userID — avoids duplicating
+	// max-reads logic while still giving the classification gate a user to check
+	// an approved secret-scoped access request against.
+	return c.getSecretValueForUser(ctx, secretID, userID)
 }
 
 // GetSecretValueByVersion retrieves the decrypted value of a specific version of a secret.
+// Like GetSecretValue, a direct call has no user principal — see
+// getSecretValueByVersionForUser.
 func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint, versionNumber int) ([]byte, error) {
+	return c.getSecretValueByVersionForUser(ctx, secretID, versionNumber, 0)
+}
+
+// getSecretValueByVersionForUser is GetSecretValueByVersion's real body, plus the
+// classification gate keyed on userID (0 = no identifiable user).
+func (c *KeyorixCore) getSecretValueByVersionForUser(ctx context.Context, secretID uint, versionNumber int, userID uint) ([]byte, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -144,6 +172,9 @@ func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint
 	}
 	if secret.Status == SecretStatusSuspended {
 		return nil, fmt.Errorf("secret is suspended")
+	}
+	if err := c.checkRestrictedSecretReadApproval(ctx, secret, userID); err != nil {
+		return nil, err
 	}
 	version, err := c.GetSecretVersion(ctx, secretID, versionNumber)
 	if err != nil {
@@ -200,7 +231,7 @@ func (c *KeyorixCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Con
 	if _, err := c.ValidateSecretAccess(ctx, secretID, userID); err != nil {
 		return nil, err
 	}
-	return c.GetSecretValueByVersion(ctx, secretID, versionNumber)
+	return c.getSecretValueByVersionForUser(ctx, secretID, versionNumber, userID)
 }
 
 // readVersionValue applies max-reads enforcement and decryption for a secret version.
