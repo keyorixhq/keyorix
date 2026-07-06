@@ -94,6 +94,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// #519: the access-review-campaign-proxy end-to-end tests exercise
+		// AccessReviewCampaign/AccessReviewItem CRUD through the real router.
+		&models.AccessReviewCampaign{},
+		&models.AccessReviewItem{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
