@@ -56,13 +56,22 @@ git rebase --exec 'git commit --amend --no-edit -s' <base>    # every commit sin
 
 ## What CI checks
 
+11 required checks gate every merge to `main` (branch protection, no bypass):
+
 - `go vet`, `go build`, `go test -race` (full suite)
 - `gosec` (medium+ severity) and `golangci-lint`
 - `govulncheck` against known vulnerabilities in dependencies
-- `gitleaks` (full history of the PR's own commits)
+- `gitleaks` (the PR's own commit history, not the whole repo's other branches)
 - `CodeQL` (dataflow/taint analysis, both Go modules)
 - Helm chart lint + schema validation (`kubeconform`) for all three charts
-- DCO sign-off on every commit
+- `checkov` — Helm chart security-policy scanning (pod security context,
+  RBAC-escalation checks), distinct from `kubeconform`'s schema-only validation
+- Go dependency license compliance (`go-licenses`) — rejects any dependency
+  outside an explicit permissive-license allowlist, both Go modules
+- Fuzz-target staleness — `scripts/fuzzing/targets.conf` (the self-hosted
+  continuous-fuzzing rig's config) must exactly match every real `func FuzzXxx`
+  in the tree; adding a fuzz target without declaring it here fails CI
+- DCO sign-off (`git commit -s` on every commit — see above)
 
 ## Code style
 
