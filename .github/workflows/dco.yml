@@ -34,7 +34,25 @@ jobs:
       # email matches that commit's own author email (the standard DCO 1.1
       # check, https://developercertificate.org/) — i.e. `git commit -s`.
       - name: Check DCO sign-off
+        env:
+          # Dependabot has no mechanism to add a Signed-off-by trailer to its
+          # own commits, and its diffs are machine-generated version bumps
+          # with no attributable human author to certify authorship of in the
+          # DCO sense — exempt it rather than block every automated
+          # dependency-update PR forever. `check` is a REQUIRED status check
+          # (branch protection), so this exemption must still let the JOB
+          # complete with a real success exit code, not skip the step
+          # entirely — a skipped/never-run required check blocks merge
+          # exactly as much as a failed one ("Expected — waiting for status").
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
+          case "$PR_AUTHOR" in
+            'dependabot[bot]'|'app/dependabot')
+              echo "Skipping DCO check for automated dependency-update PR from $PR_AUTHOR."
+              exit 0
+              ;;
+          esac
+
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           fail=0

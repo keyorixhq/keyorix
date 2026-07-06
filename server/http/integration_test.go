@@ -75,6 +75,12 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
 		// CRUD through the real router.
 		&models.ProjectInvitation{},
+		// #509: the MFA-login-proxy end-to-end tests exercise TOTP enrolment,
+		// challenge issuance, and second-factor verification through the real
+		// router.
+		&models.MFASecret{},
+		&models.MFARecoveryCode{},
+		&models.MFAChallenge{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))

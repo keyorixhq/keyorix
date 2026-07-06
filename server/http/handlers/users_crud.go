@@ -316,17 +316,28 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 	sendSuccess(w, resp, "")
 }
 
-// VerifyCredentials handles POST /api/v1/users/verify-credentials (#506) — the
-// upstream half of the RemoteLoginVerifier proxy-login mechanism
+// VerifyCredentials handles POST /api/v1/users/verify-credentials (#506/#508)
+// — the upstream half of the RemoteLoginVerifier proxy-login mechanism
 // (internal/core/auth.go). It exists SOLELY so a storage.type: remote
 // deployment's own core.Login can authenticate a password at all:
 // models.User.PasswordHash never crosses the wire, so a "spoke" server backed
 // by RemoteStorage has no real hash to bcrypt-compare against locally — this
-// endpoint runs that compare on the "hub" server that actually has it,
-// against the SAME core.VerifyPasswordCredentials the hub's own direct login
-// uses (not a parallel bcrypt reimplementation), so the per-account lockout
-// gate/accounting and account-active/account-state checks apply identically
-// regardless of which path reached them.
+// endpoint runs the ENTIRE login on the "hub" server that actually has it, by
+// calling the hub's own core.Login (not a parallel reimplementation of either
+// the bcrypt compare or of session minting), so the per-account lockout
+// gate/accounting, account-active/account-state checks, and — #508 — session
+// issuance all apply IDENTICALLY regardless of which path reached them.
+//
+// #508: this is the atomic verify-AND-mint step. A successful, non-MFA-gated
+// call mints a REAL session on the hub (via core.Login, the exact same
+// function the hub's own direct /auth/login handler calls) and returns its
+// token in this SAME response — never via a second, separately callable
+// "create a session for this user_id" endpoint. That second-call shape is
+// exactly the confused-deputy risk this design avoids: splitting verification
+// from issuance would let anyone holding the RemoteStorage service credential
+// mint a session for an arbitrary user without ever proving that user's real
+// credentials. See internal/storage/store/remote_login_verify.go's package
+// doc for the full rationale.
 //
 // Gated by users.write — the SAME permission CreateUser/UnlockUser already
 // require of the RemoteStorage service credential (server/http/router.go) —
@@ -343,7 +354,11 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 // user (server/http/handlers/auth.go). A compromised RemoteStorage credential
 // must not be able to use this endpoint to enumerate accounts or their
 // lockout state beyond "that attempt failed" — nor is any of this logged with
-// per-reason detail, for the same reason.
+// per-reason detail, for the same reason. ErrMFARequired is the one
+// distinguished outcome: it is still a SUCCESSFUL verification (the password
+// was correct), just one core.Login itself declines to mint a session for —
+// the response reports mfa_enabled/webauthn_enabled with no session, so the
+// spoke's own Login can apply the identical MFA gate it always has.
 func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -351,8 +366,10 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		UserAgent string `json:"user_agent"`
+		IPAddress string `json:"ip_address"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -362,17 +379,26 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "ValidationError", "username and password are required", http.StatusBadRequest, nil)
 		return
 	}
-	u, err := h.coreService.VerifyPasswordCredentials(r.Context(), body.Username, body.Password)
-	if err != nil {
+	session, u, err := h.coreService.Login(r.Context(), &core.LoginRequest{
+		Username:  body.Username,
+		Password:  body.Password,
+		UserAgent: body.UserAgent,
+		IPAddress: body.IPAddress,
+	})
+	if err != nil && !errors.Is(err, core.ErrMFARequired) {
 		// Deliberately no log.Printf here (unlike every other handler in this
 		// file): logging the real error would record which of "no such user" /
 		// "wrong password" / "locked" / "not active" / "suspended" applied,
 		// re-opening exactly the oracle the generic response below exists to
-		// close.
+		// close. The audit event mirrors the real /auth/login handler's
+		// LogAuthFailure exactly — username + IP, no per-reason detail — so the
+		// hub's own audit trail still sees brute-force attempts proxied through
+		// a spoke, without widening the oracle.
+		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, body.IPAddress) })
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":               u.ID,
 		"username":         u.Username,
 		"email":            u.Email,
@@ -380,6 +406,114 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		"account_state":    core.NormalizeAccountState(u.AccountState),
 		"mfa_enabled":      u.MFAEnabled,
 		"webauthn_enabled": u.WebAuthnEnabled,
+	}
+	// session is nil exactly when err is ErrMFARequired (core.Login's contract) —
+	// no session to report in that case; the spoke applies its own MFA gate from
+	// mfa_enabled/webauthn_enabled above.
+	if session != nil {
+		resp["session"] = map[string]interface{}{
+			"id":                  session.ID,
+			"token":               session.SessionToken,
+			"family_id":           session.FamilyID,
+			"created_at":          session.CreatedAt,
+			"expires_at":          session.ExpiresAt,
+			"absolute_expires_at": session.AbsoluteExpiresAt,
+		}
+		// The hub's own audit trail should reflect this login exactly like a
+		// direct one — best-effort, non-blocking, mirroring the real /auth/login
+		// handler (server/http/handlers/auth.go).
+		goSafe(func() {
+			h.coreService.LogAuthLogin(context.Background(), u.ID, u.Username, body.IPAddress, body.UserAgent)
+		})
+	}
+	sendSuccess(w, resp, "")
+}
+
+// IssueMFAChallenge handles POST /api/v1/users/{id}/mfa-challenge (#509) — the
+// upstream half of the core.RemoteMFAVerifier proxy-login mechanism
+// (internal/core/mfa.go), mirroring VerifyCredentials above: it exists SOLELY
+// so a storage.type: remote deployment's own core.CreateMFAChallenge (called
+// right after VerifyCredentials/VerifyPasswordCredentials reports MFA is
+// required) can mint a challenge at all — RemoteStorage has nowhere of its own
+// to persist one. It mints and persists the SAME MFAChallenge row
+// core.CreateMFAChallenge always has, just on this (the hub's) LocalStorage,
+// and returns only the opaque token, never any storage internals.
+//
+// Gated by users.write, the SAME permission verify-credentials already
+// requires — see its doc above and the RemoteMFAVerifier doc for why a
+// challenge alone (with no valid TOTP/recovery code to redeem it) grants
+// nothing and so is not a new, weaker trust boundary.
+func (h *UserHandler) IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		return
+	}
+	challenge, err := h.coreService.CreateMFAChallenge(r.Context(), uint(id))
+	if err != nil {
+		sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"challenge": challenge}, "")
+}
+
+// VerifyMFACredentials handles POST /api/v1/users/verify-mfa (#509) — the
+// upstream half of the core.RemoteMFAVerifier proxy-login mechanism
+// (internal/core/mfa.go): checks a plaintext TOTP or recovery code against the
+// real, decrypted TOTP secret this server holds and returns only a verdict,
+// never the secret, so a RemoteStorage-backed "spoke" deployment (which never
+// receives the secret at all) can complete a second-factor login by proxying
+// the ENTIRE check here rather than reimplementing it. Calls
+// core.VerifyMFACredentials directly — the SAME function the hub's own direct
+// second-factor login uses — so the per-account lockout gate/accounting,
+// anti-replay (MarkTOTPStepUsed), and account-active/account-state checks
+// apply identically regardless of which path reached them.
+//
+// Gated by users.write, the SAME permission verify-credentials already
+// requires. Like VerifyCredentials, the response never distinguishes WHY a
+// check failed — an expired challenge, a wrong code, a tripped lockout, or a
+// suspended/inactive account all produce the SAME generic 401 here, mirroring
+// how /auth/mfa/verify itself already collapses every failure reason to one
+// generic message for the actual end user (server/http/handlers/mfa.go). A
+// compromised RemoteStorage credential must not be able to use this endpoint
+// to enumerate accounts or lockout state beyond "that attempt failed" — nor is
+// any of this logged with per-reason detail, for the same reason.
+func (h *UserHandler) VerifyMFACredentials(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		Challenge string `json:"challenge"`
+		Code      string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.Challenge == "" || body.Code == "" {
+		sendError(w, "ValidationError", "challenge and code are required", http.StatusBadRequest, nil)
+		return
+	}
+	u, usedRecovery, err := h.coreService.VerifyMFACredentials(r.Context(), body.Challenge, body.Code)
+	if err != nil {
+		// Deliberately no log.Printf here (see VerifyCredentials above): logging
+		// the real error would re-open exactly the oracle the generic response
+		// below exists to close.
+		sendError(w, "Unauthorized", "Invalid code", http.StatusUnauthorized, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"id":            u.ID,
+		"username":      u.Username,
+		"used_recovery": usedRecovery,
 	}, "")
 }
 
