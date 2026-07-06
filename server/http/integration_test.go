@@ -72,6 +72,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// needs both the global Tag table and the per-secret SecretTag join table.
 		&models.Tag{},
 		&models.SecretTag{},
+		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
+		// CRUD through the real router.
+		&models.ProjectInvitation{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))

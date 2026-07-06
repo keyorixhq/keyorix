@@ -764,6 +764,28 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/login-attempts/count", authHandler.CountLoginAttemptsProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/login-attempts", authHandler.RecordLoginAttemptProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/login-attempts/prune", authHandler.PruneLoginAttemptsProxy)
+
+			// Project-invitation storage-primitive proxy (#507). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateProjectInvitation/GetProjectInvitation/UpdateProjectInvitation/
+			// ListProjectInvitations to THIS server's real storage backend, instead of
+			// RemoteStorage's four ProjectInvitation methods having no server endpoint
+			// to call at all (setup_consume.go's completeInvitationAccept — and every
+			// other invitation flow — was completely non-functional under
+			// storage.type: remote). Exactly the same pattern as the login-attempts
+			// proxy above: a thin passthrough onto storage.Storage (no invitation
+			// POLICY decision made here — the calling server's own core.KeyorixCore
+			// still decides that, exactly as it does against a local backend), reusing
+			// the SAME system.read/system.write tier rather than the project-scoped
+			// roles.assign the human-facing /projects/{id}/invitations routes use,
+			// since a RemoteStorage credential already needs system.write for the
+			// login-attempts proxy — no new privilege class. Read is baseline
+			// system.read; create/update require system.write, matching every other
+			// admin-level mutation in this group.
+			r.Get("/invitations/{id}", catalogHandler.GetInvitationProxy)
+			r.Get("/invitations", catalogHandler.ListInvitationsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/invitations", catalogHandler.CreateInvitationProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
