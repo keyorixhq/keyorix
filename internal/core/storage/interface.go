@@ -222,11 +222,42 @@ type Storage interface {
 	// ListSecretDependenciesForProjectForUpdate is ListSecretDependenciesForProject,
 	// taking a row-level write lock on every returned edge on backends that support
 	// one (Postgres FOR UPDATE), mirroring LockUserForUpdate/
-	// ListGlobalAdminAssignmentsForUpdate (#260). Used inside a WithTransaction so
-	// AddSecretDependency's cycle-check read and the edge it writes serialize
-	// against a concurrent racing edge addition for the same project on Postgres/HA;
-	// secretDependencyMu covers same-process callers (SQLite, single instance).
+	// ListGlobalAdminAssignmentsForUpdate (#260). Retained as a raw storage
+	// primitive (parity with LocalStorage/RemoteStorage's other List*ForUpdate
+	// methods) but no longer used by AddSecretDependency
+	// (internal/core/secret_dependencies.go) — see CreateSecretDependencyExclusive
+	// below for why the cycle-check read and the edge write had to be collapsed
+	// into ONE storage-layer call rather than orchestrated by the caller across
+	// this method and CreateSecretDependency.
 	ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
+	// CreateSecretDependencyExclusive atomically validates and persists one secret
+	// dependency edge under a project-scoped exclusive lock (Postgres FOR UPDATE on
+	// LocalStorage; a single request handled by the upstream's own LocalStorage, on
+	// RemoteStorage), rejecting it with storage.ErrDuplicateSecretDependency or
+	// storage.ErrSecretDependencyCycle if the CURRENT edge set (read under that
+	// same lock) already contains the pair, or adding it would close a cycle.
+	//
+	// This is what AddSecretDependency now calls instead of orchestrating
+	// ListSecretDependenciesForProjectForUpdate + CreateSecretDependency itself
+	// inside a WithTransaction (#260's original design): RemoteStorage.
+	// WithTransaction is a no-op passthrough — no real transaction spans the wire
+	// — so a caller-driven "list under lock, decide, then create" sequence against
+	// a RemoteStorage backend is really two independent HTTP round trips with no
+	// lock held between them, silently losing #260's whole guarantee for any
+	// downstream server booted with storage.type: remote (ADR-049) — including
+	// the exact case that guarantee exists for: multiple such downstream replicas
+	// racing to add a reciprocal edge pair against the SAME upstream project
+	// concurrently. Collapsing the check-and-write into one storage-interface call
+	// fixes that: LocalStorage's implementation runs the identical duplicate/cycle
+	// logic AddSecretDependency used to run itself, just moved down a layer and
+	// wrapped in one real DB transaction; RemoteStorage's implementation is a
+	// single POST to a dedicated upstream route whose handler runs that SAME
+	// LocalStorage method, so the atomicity guarantee is enforced by whichever
+	// server ultimately owns the row — the same wire-code-translation technique
+	// that preserves CreateProjectMembership's DB-level unique-index atomicity
+	// across this boundary (#511), just for an invariant (acyclicity) no unique
+	// index can express.
+	CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error)
 
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.

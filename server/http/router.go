@@ -961,6 +961,38 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
+
+			// Secret-dependency storage-primitive proxy (finding #519). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateSecretDependency/GetSecretDependency/
+			// ListSecretDependenciesForProject/
+			// ListSecretDependenciesForProjectForUpdate/DeleteSecretDependency/
+			// CreateSecretDependencyExclusive to THIS server's real storage backend,
+			// instead of RemoteStorage's six secret-dependency methods having no
+			// server endpoint to call at all (ADR-052's dependency graph — used per
+			// ADR-053 for rotation-wave ordering and cascading soft-delete/restore/
+			// purge through the graph — was completely non-functional under
+			// storage.type: remote). Same pattern as the invitations/memberships
+			// proxies above: a thin passthrough onto storage.Storage (no
+			// dependency-graph POLICY decision — same-project/same-environment
+			// scoping, audit logging — is made here; that stays entirely in the
+			// CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the SAME system.read/system.write
+			// tier — no new privilege class. The ONE exception is
+			// CreateSecretDependencyExclusiveProxy: it DOES evaluate the
+			// duplicate/cycle invariant server-side, because no real transaction can
+			// span this HTTP hop (RemoteStorage.WithTransaction is a no-op
+			// passthrough) — see secret_dependencies_proxy.go's package doc and the
+			// storage.Storage interface doc for why AddSecretDependency now calls
+			// this instead of orchestrating a list-under-lock-then-create sequence
+			// itself. Static sub-paths ("for-update", "exclusive") are registered
+			// before the "{id}" wildcard.
+			r.Get("/secret-dependencies/for-update", secretHandler.ListSecretDependenciesForProjectForUpdateProxy)
+			r.Get("/secret-dependencies/{id}", secretHandler.GetSecretDependencyProxy)
+			r.Get("/secret-dependencies", secretHandler.ListSecretDependenciesForProjectProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/secret-dependencies/{id}", secretHandler.DeleteSecretDependencyProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
