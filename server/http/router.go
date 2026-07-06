@@ -962,6 +962,29 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
 
+			// Risk-exception storage-primitive proxy (#519). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateRiskException/GetRiskException/ListRiskExceptions/
+			// UpdateRiskException to THIS server's real storage backend, instead of
+			// RemoteStorage's four RiskException methods being unconditional stubs
+			// (the risk register — ISO 27001 A.5.8 — was completely non-functional
+			// under storage.type: remote). Exactly the same pattern as the
+			// project-memberships proxy above: a thin passthrough onto
+			// storage.Storage (no risk-exception POLICY decision —
+			// title/category/justification validation, the expiry-in-the-future and
+			// max-365-day-sunset bounds, dual-control approval, or the
+			// effective-status computation from the revoked flag + expiry — is made
+			// here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local
+			// backend), reusing the SAME system.read/system.write tier rather than
+			// the audit.read the human-facing /risk-exceptions routes use, since a
+			// RemoteStorage credential already needs system.write for the
+			// project-memberships proxy above — no new privilege class.
+			r.Get("/risk-exceptions/{id}", dashboardHandler.GetRiskExceptionProxy)
+			r.Get("/risk-exceptions", dashboardHandler.ListRiskExceptionsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskExceptionProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/risk-exceptions/{id}", dashboardHandler.UpdateRiskExceptionProxy)
+
 			// Separation-of-duties (SoD) policy storage-primitive proxy (finding
 			// #519). Lets a downstream Keyorix server booted with storage.type:
 			// remote (ADR-049) proxy CreateSoDPolicy/GetSoDPolicy/ListSoDPolicies/
