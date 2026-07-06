@@ -94,6 +94,13 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// #518: the machine-identity-proxy end-to-end tests exercise
+		// MachineIdentity/MachineIdentityCredential/MachineIdentityRole/
+		// MachineIdentityOIDCBinding CRUD through the real router.
+		&models.MachineIdentity{},
+		&models.MachineIdentityCredential{},
+		&models.MachineIdentityRole{},
+		&models.MachineIdentityOIDCBinding{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

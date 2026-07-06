@@ -1674,6 +1674,11 @@ func (m *MockStorage) UpdateMachineIdentity(ctx context.Context, mi *models.Mach
 	return args.Error(0)
 }
 
+func (m *MockStorage) TransitionMachineIdentityState(ctx context.Context, mi *models.MachineIdentity, fromState string) (bool, error) {
+	args := m.Called(ctx, mi, fromState)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {
