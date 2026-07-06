@@ -94,6 +94,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// #519: the risk-exception-proxy end-to-end tests exercise RiskException
+		// CRUD through the real router.
+		&models.RiskException{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
