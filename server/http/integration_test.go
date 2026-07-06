@@ -75,6 +75,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
 		// CRUD through the real router.
 		&models.ProjectInvitation{},
+		// In-app notifications (ADR-024) — exercised end-to-end through the real
+		// router by the RemoteStorage notification proxy tests.
+		&models.Notification{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
