@@ -353,6 +353,85 @@ func TestSetSecretAutoRotate_InKeyorixRotationNoAdminRequired(t *testing.T) {
 		"enabling in-Keyorix rotation (no backend) needs no elevated authority")
 }
 
+// TestSetSecretAutoRotate_RejectsDangerousRefChars pins the earliest, shared layer of
+// defense against a malicious rotation_ref: SetSecretAutoRotate is the single
+// core-layer choke point every transport (HTTP/gRPC/CLI) goes through to set a
+// rotation ref, so rejecting dangerous metacharacters here — BEFORE the ref is ever
+// persisted to secret.RotationRef — covers every backend without relying solely on
+// each backend's own (partial, discovered-after-the-fact) defenses.
+func TestSetSecretAutoRotate_RejectsDangerousRefChars(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"slash", "svc/app"},
+		{"question-mark", "svc?app"},
+		{"hash", "svc#app"},
+		{"percent", "svc%app"},
+		{"single-quote", "svc'app"},
+		{"double-quote", `svc"app`},
+		{"backslash", `svc\app`},
+		{"semicolon", "svc;app"},
+		{"sql-injection-attempt", "app_svc'; DROP TABLE users; --"},
+		{"path-traversal-attempt", "allowed-prefix/../victim"},
+		{"control-null", "svc\x00app"},
+		{"control-newline", "svc\napp"},
+		{"control-tab", "svc\tapp"},
+		{"control-del", "svc\x7fapp"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, db, fixed := rotationExecCore(t)
+			seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+			c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
+			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+			require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
+
+			err := c.SetSecretAutoRotate(context.Background(), 1,
+				AutoRotateSpec{Enabled: true, Backend: "pg", Ref: tc.ref}, 9)
+			require.Error(t, err, "ref %q must be rejected", tc.ref)
+			assert.Contains(t, err.Error(), "disallowed")
+
+			var s models.SecretNode
+			require.NoError(t, db.First(&s, 1).Error)
+			assert.Empty(t, s.RotationRef, "the dangerous ref must never be persisted")
+		})
+	}
+}
+
+// TestSetSecretAutoRotate_AllowsRealisticLegitimateRefs pins that the new denylist does
+// NOT break real ref shapes already exercised by the per-backend tests (awsiam_test.go,
+// gcpsa_test.go, postgres_test.go, mysql_test.go): a strict allowlist would have broken
+// these, which is why validateRotationRef is a denylist instead.
+func TestSetSecretAutoRotate_AllowsRealisticLegitimateRefs(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"gcp-service-account-email", "svc-app@my-project.iam.gserviceaccount.com"},
+		{"aws-iam-username-with-allowed-punctuation", "svc-app+ci=prod,tier1"},
+		{"plain-postgres-mysql-role-name", "app_svc"},
+		{"azure-app-object-id-guid", "3fa85f64-5717-4562-b3fc-2c963f66afa6"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, db, fixed := rotationExecCore(t)
+			seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+			c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
+			require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+			require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
+
+			err := c.SetSecretAutoRotate(context.Background(), 1,
+				AutoRotateSpec{Enabled: true, Backend: "pg", Ref: tc.ref}, 9)
+			require.NoError(t, err, "legitimate ref %q must be accepted", tc.ref)
+
+			var s models.SecretNode
+			require.NoError(t, db.First(&s, 1).Error)
+			assert.Equal(t, tc.ref, s.RotationRef)
+		})
+	}
+}
+
 // fakeGenExecutor is a generate-upstream backend: GenerateUpstream mints the value.
 type fakeGenExecutor struct {
 	name   string
