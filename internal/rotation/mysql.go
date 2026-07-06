@@ -98,7 +98,13 @@ func (e *MySQLExecutor) Rotate(ctx context.Context, ref, newValue string) error 
 
 // quoteMySQLString renders s as a single-quoted MySQL string literal with internal
 // backslashes and single-quotes doubled — injection-safe under both the default and
-// NO_BACKSLASH_ESCAPES sql_modes.
+// NO_BACKSLASH_ESCAPES sql_modes. This is layer TWO of defense in depth: layer ONE is
+// core.validateRotationRef (internal/core/rotation_executor.go), which already rejects
+// quotes/backslashes/semicolons (plus path/query metacharacters and control characters)
+// in the ref at configuration time, before it is ever persisted. Keep both — this
+// quoting must not be removed just because the earlier layer also covers it; this
+// function is the only defense against a ref/host reaching this backend through any
+// future write path.
 func quoteMySQLString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `'`, `''`)

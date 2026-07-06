@@ -80,7 +80,11 @@ func (e *AzureAppSecretExecutor) GenerateUpstream(ctx context.Context, ref strin
 	// ref is interpolated into the Graph URL path; an app object id is a GUID, so reject
 	// any path/query metacharacter. Without this, a crafted ref that begins with an
 	// allowed prefix (e.g. "<allowed-guid>/../<victim-guid>") could path-traverse to a
-	// different application and defeat allowed_refs.
+	// different application and defeat allowed_refs. This is layer TWO of defense in
+	// depth: layer ONE is core.validateRotationRef (internal/core/rotation_executor.go),
+	// which already rejects this same "/?#%" class (plus SQL metacharacters and control
+	// characters) at configuration time, before the ref is ever persisted. Keep both —
+	// this check must not be removed just because the earlier layer also covers it.
 	if strings.ContainsAny(ref, "/?#%") {
 		return "", fmt.Errorf("azure-app: invalid application object id %q (must be a bare GUID)", ref)
 	}

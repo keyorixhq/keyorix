@@ -504,6 +504,39 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 	}
 }
 
+// rotationRefDisallowedChars are the URL/path and SQL metacharacters rejected in a
+// rotation_ref (validateRotationRef also separately rejects control characters). This
+// is a DENYLIST, not a strict allowlist: a strict allowlist would break real, already-
+// exercised ref shapes — GCP service-account refs are emails ('@', '.'), AWS IAM
+// usernames can legitimately contain '+', '=', ',' per AWS's own naming rules — so we
+// only reject characters that have no legitimate role in a service-account email, IAM
+// username, or DB role/user name.
+const rotationRefDisallowedChars = "/?#%'\"\\;"
+
+// validateRotationRef rejects a rotation_ref containing a URL/path metacharacter, a SQL
+// metacharacter, or a control character, BEFORE it is ever persisted to
+// secret.RotationRef in SetSecretAutoRotate. This is the single choke point every
+// transport (HTTP/gRPC/CLI) goes through to set a rotation ref, so this is the earliest
+// and only fully-shared layer of defense against a malicious ref (e.g. SQL injection via
+// a crafted role name, or path traversal via "<allowed-prefix>/../<victim>").
+//
+// This is layer ONE of defense-in-depth, not a replacement for the backend-specific
+// checks in internal/rotation/{azure,gcpsa}.go (layer TWO, at ROTATION time) or the
+// SQL-quoting functions in internal/rotation/{postgres,mysql}.go (also layer TWO) — keep
+// all of them; each guards a slightly different trust boundary and this function must
+// never narrow to only what one particular backend needs.
+func validateRotationRef(ref string) error {
+	for i := 0; i < len(ref); i++ {
+		if b := ref[i]; b <= 0x1F || b == 0x7F {
+			return fmt.Errorf("rotation_ref %q contains a disallowed control character %#02x — refs must not contain quotes, backslashes, semicolons, path/query metacharacters, or control characters", ref, b)
+		}
+	}
+	if i := strings.IndexAny(ref, rotationRefDisallowedChars); i >= 0 {
+		return fmt.Errorf("rotation_ref %q contains a disallowed character %q — refs must not contain quotes, backslashes, semicolons, path/query metacharacters, or control characters", ref, ref[i])
+	}
+	return nil
+}
+
 // knownRotationCharset reports whether name is a recognized charset (or "" = default).
 func knownRotationCharset(name string) bool {
 	switch name {
@@ -542,6 +575,14 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	// ref with no backend is meaningless.
 	if (spec.Backend == "") != (spec.Ref == "") {
 		return fmt.Errorf("rotation_backend and rotation_ref must be set together (or both empty)")
+	}
+	// Reject dangerous ref metacharacters here, at CONFIGURATION time — the single
+	// shared choke point every transport goes through — rather than relying solely on
+	// the per-backend defenses discovered/added after the fact (see validateRotationRef).
+	if spec.Ref != "" {
+		if err := validateRotationRef(spec.Ref); err != nil {
+			return err
+		}
 	}
 	// Reject an unknown backend at configuration time (the backend's own allowed_refs
 	// then bounds, at rotation time, which refs it will actually rotate).

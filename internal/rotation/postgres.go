@@ -89,14 +89,21 @@ func (e *PostgresExecutor) Rotate(ctx context.Context, ref, newValue string) err
 }
 
 // quoteIdentifier renders s as a double-quoted PostgreSQL identifier (internal quotes
-// doubled), so a crafted role name cannot break out into SQL.
+// doubled), so a crafted role name cannot break out into SQL. This is layer TWO of
+// defense in depth: layer ONE is core.validateRotationRef
+// (internal/core/rotation_executor.go), which already rejects quotes/backslashes/
+// semicolons (plus path/query metacharacters and control characters) in the ref at
+// configuration time, before it is ever persisted. Keep both — this quoting must not be
+// removed just because the earlier layer also covers it; this function is the only
+// defense against a role name reaching this backend through any future write path.
 func quoteIdentifier(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 // quoteLiteral renders s as a single-quoted PostgreSQL string literal (internal quotes
 // doubled). Relies on standard_conforming_strings (the default), so backslashes are
-// literal.
+// literal. See quoteIdentifier's comment above: this is layer TWO of defense in depth
+// alongside core.validateRotationRef.
 func quoteLiteral(s string) string {
 	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
 }
