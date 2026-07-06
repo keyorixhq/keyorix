@@ -798,6 +798,41 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/invitations", catalogHandler.ListInvitationsProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/invitations", catalogHandler.CreateInvitationProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
+
+			// Dynamic-secrets storage-primitive proxy (round-116 finding). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateDynamicSecretConfig/GetDynamicSecretConfig/
+			// ListDynamicSecretConfigs/UpdateDynamicSecretConfig/
+			// CountDynamicSecretConfigsByClassification/CreateDynamicSecretLease/
+			// GetDynamicSecretLease/ListDynamicSecretLeases/CountActiveLeases/
+			// UpdateDynamicSecretLease/ListExpiredActiveLeases to THIS server's real
+			// storage backend, instead of RemoteStorage's eleven dynamic-secrets
+			// methods having no server endpoint to call at all (dynamic secrets —
+			// ADR-035 — were entirely non-functional under storage.type: remote).
+			// Exactly the same pattern as the invitations/login-attempts proxies
+			// above: a thin passthrough onto storage.Storage (no dynamic-secrets
+			// POLICY decision — admin-authority checks, TTL/lease-count clamping, the
+			// admin-DSN/credential encrypt-decrypt — is made here; that stays
+			// entirely in the CALLING server's own core.KeyorixCore, exactly as it
+			// does against a local backend), reusing the SAME system.read/
+			// system.write tier — no new privilege class. See
+			// dynamic_secrets_proxy.go's package doc for why the admin-DSN/
+			// credential ciphertext crossing this boundary is safe (it is already
+			// opaque ciphertext by the time it reaches here, encrypted with the
+			// CALLING server's own key). Static sub-paths
+			// (classification-counts, active-count, expired) are registered before
+			// their sibling {id}/{leaseID} routes.
+			r.Get("/dynamic-secrets/configs/classification-counts", dynamicSecretHandler.CountDynamicSecretConfigsByClassificationProxy)
+			r.Get("/dynamic-secrets/configs/{id}", dynamicSecretHandler.GetDynamicSecretConfigProxy)
+			r.Get("/dynamic-secrets/configs", dynamicSecretHandler.ListDynamicSecretConfigsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/dynamic-secrets/configs/{id}", dynamicSecretHandler.UpdateDynamicSecretConfigProxy)
+			r.Get("/dynamic-secrets/leases/active-count", dynamicSecretHandler.CountActiveLeasesProxy)
+			r.Get("/dynamic-secrets/leases/expired", dynamicSecretHandler.ListExpiredActiveLeasesProxy)
+			r.Get("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.GetDynamicSecretLeaseProxy)
+			r.Get("/dynamic-secrets/leases", dynamicSecretHandler.ListDynamicSecretLeasesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/dynamic-secrets/leases", dynamicSecretHandler.CreateDynamicSecretLeaseProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.UpdateDynamicSecretLeaseProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.

@@ -75,6 +75,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
 		// CRUD through the real router.
 		&models.ProjectInvitation{},
+		// round-116 finding: the dynamic-secrets-proxy end-to-end tests exercise
+		// DynamicSecretConfig/DynamicSecretLease CRUD through the real router.
+		&models.DynamicSecretConfig{},
+		&models.DynamicSecretLease{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
