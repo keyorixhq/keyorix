@@ -204,8 +204,21 @@ func TestRemoteStorageMachineIdentities_TransitionState_ConcurrentRaceIsSerializ
 	// Whatever the final state, it must be internally consistent: if ANY revoke
 	// succeeded, the persisted state must be "revoked" (terminal) — never
 	// silently un-revoked by a racing suspend that observed a stale pre-revoke
-	// read. Exactly one racer transitioning FROM "active" can ever win (#388);
-	// every other racer must have observed the loser's error.
+	// read.
+	//
+	// winners is 1 OR 2, not always exactly 1: machineTransitions allows
+	// active->suspended->revoked as a legitimate TWO-HOP chain (suspended is
+	// NOT terminal), so it's possible for one racer to win active->suspended
+	// and a DIFFERENT racer — one that happened to read the resulting
+	// "suspended" row via its own LockMachineIdentityForUpdate call rather
+	// than a stale "active" snapshot — to then legitimately win
+	// suspended->revoked. That is a real, correctly-serialized second
+	// transition, not a broken invariant: each individual conditional write is
+	// still gated on its own fromState still being current at commit time
+	// (#388), and machineTransitions[MachineRevoked] is empty, so once
+	// *any* revoke commits, no further transition (from either "target") can
+	// ever succeed — a 2-winner outcome is therefore only ever reachable via
+	// exactly that suspended->revoked order, never revoked->anything.
 	direct, err := upstream.Storage().GetMachineIdentity(ctx, m.ID)
 	require.NoError(t, err)
 	assert.Contains(t, []string{core.MachineSuspended, core.MachineRevoked}, direct.State)
@@ -220,9 +233,17 @@ func TestRemoteStorageMachineIdentities_TransitionState_ConcurrentRaceIsSerializ
 			}
 		}
 	}
-	require.Equal(t, 1, winners, "exactly one racing transition from the same pre-transition state must win (#388)")
+	require.GreaterOrEqualf(t, winners, 1, "at least one racer transitioning from the same pre-transition state must win (#388)")
+	require.LessOrEqualf(t, winners, 2, "at most 2 winners are ever possible: one hop from active, optionally followed by one legal suspended->revoked hop")
 	if revokeWon {
 		assert.Equal(t, core.MachineRevoked, direct.State, "once a revoke commits, the persisted state must never be un-revoked")
+	}
+	if winners == 2 {
+		// The only 2-hop chain the state machine allows from "active" is
+		// active->suspended->revoked (revoked is terminal, suspended is not),
+		// so a 2-winner outcome must always end in "revoked".
+		assert.Equal(t, core.MachineRevoked, direct.State,
+			"a legitimate second hop is only ever suspended->revoked, so 2 winners must end in the revoked state")
 	}
 }
 
