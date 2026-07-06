@@ -74,6 +74,14 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 		"display_name":  dn,
 		"active":        u.IsActive,
 		"account_state": core.NormalizeAccountState(u.AccountState),
+		// external_id (#505): the IdP-assigned SCIM/SSO identifier (empty for a
+		// native account). RemoteStorage's GetUserByExternalID/GetUserByEmail/GetUser
+		// decode this exact field — without it on the wire, every decoded user's
+		// ExternalID silently read back as "" under storage.type: remote, which
+		// defeated resolveSSOUser's (internal/core/sso.go) cross-provider-takeover
+		// guard on the already-shipped email-fallback path, not just the new
+		// by-external-id lookup.
+		"external_id":   u.ExternalID,
 		"created_at":    u.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":    u.UpdatedAt.UTC().Format(time.RFC3339),
 		"last_login_at": nil,
@@ -284,6 +292,24 @@ func GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defaultUserHandler.GetUserByEmail(w, r)
+}
+
+// GetUserByUsername handles GET /api/v1/users/by-username?username=X (#505).
+func GetUserByUsername(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.GetUserByUsername(w, r)
+}
+
+// GetUserByExternalID handles GET /api/v1/users/by-external-id?external_id=X (#505).
+func GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.GetUserByExternalID(w, r)
 }
 
 // UpdateUser handles PUT /api/v1/users/{id}

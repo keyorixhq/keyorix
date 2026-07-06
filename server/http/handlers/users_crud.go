@@ -255,6 +255,67 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, resp, "")
 }
 
+// GetUserByUsername handles GET /api/v1/users/by-username?username=X (#505) —
+// the server-side counterpart RemoteStorage.GetUserByUsername needs. Same gate
+// and NotFound shape as GetUserByEmail: users.read (the group-wide gate above),
+// generic NotFound on a miss so the route adds no username-enumeration surface
+// beyond what GET /users already exposes to a users.read caller.
+func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	username := strings.TrimSpace(r.URL.Query().Get("username"))
+	if username == "" {
+		sendError(w, "InvalidParameter", "username is required", http.StatusBadRequest, nil)
+		return
+	}
+	u, err := h.coreService.GetUserByUsername(r.Context(), username)
+	if err != nil {
+		log.Printf("Error getting user by username: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
+		return
+	}
+	resp := userToAPIResponse(u)
+	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	sendSuccess(w, resp, "")
+}
+
+// GetUserByExternalID handles GET /api/v1/users/by-external-id?external_id=X
+// (#505) — the server-side counterpart RemoteStorage.GetUserByExternalID needs
+// for SSO/SCIM identity resolution. Same gate and NotFound shape as
+// GetUserByEmail/GetUserByUsername: users.read, generic NotFound on a miss.
+func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	externalID := strings.TrimSpace(r.URL.Query().Get("external_id"))
+	if externalID == "" {
+		sendError(w, "InvalidParameter", "external_id is required", http.StatusBadRequest, nil)
+		return
+	}
+	u, err := h.coreService.GetUserByExternalID(r.Context(), externalID)
+	if err != nil {
+		log.Printf("Error getting user by external id: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
+		return
+	}
+	resp := userToAPIResponse(u)
+	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	sendSuccess(w, resp, "")
+}
+
 // UpdateUser handles PUT /api/v1/users/{id}
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
