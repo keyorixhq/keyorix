@@ -84,12 +84,19 @@ func TestGCPSA_GenerateUpstream_Errors(t *testing.T) {
 		_, err := gcpWith(&fakeGCP{}, "svc-").GenerateUpstream(context.Background(), "")
 		require.Error(t, err)
 	})
-	t.Run("ref with slash rejected", func(t *testing.T) {
-		fake := &fakeGCP{newJSON: "{}"}
-		_, err := gcpWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app@p.iam/keys/x")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "resource path")
-		assert.Empty(t, fake.createdAt, "a path-shaped ref never reaches GCP")
+	t.Run("ref with path metacharacters rejected", func(t *testing.T) {
+		for _, ref := range []string{
+			"svc-app@p.iam/keys/x",     // path segment
+			"svc-app@p.iam?query=x",    // query
+			"svc-app@p.iam#fragment",   // fragment
+			"svc-app@p.iam%2Fkeys%2Fx", // percent-encoded path
+		} {
+			fake := &fakeGCP{newJSON: "{}"}
+			_, err := gcpWith(fake, "svc-").GenerateUpstream(context.Background(), ref)
+			require.Error(t, err, "ref %q must be rejected", ref)
+			assert.Contains(t, err.Error(), "resource path")
+			assert.Empty(t, fake.createdAt, "a path-shaped ref %q never reaches GCP", ref)
+		}
 	})
 	t.Run("fail-closed without allowed_refs", func(t *testing.T) {
 		_, err := gcpWith(&fakeGCP{}).GenerateUpstream(context.Background(), "svc-app@p.iam")

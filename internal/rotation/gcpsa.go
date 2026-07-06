@@ -68,14 +68,15 @@ func (e *GCPServiceAccountKeyExecutor) GenerateUpstream(ctx context.Context, ref
 	if ref == "" {
 		return "", fmt.Errorf("gcp-service-account: service-account email (ref) is required")
 	}
-	// ref is concatenated into the SA resource name; an email never contains '/', so
-	// reject one defensively (it cannot then introduce extra path segments). This is
-	// layer TWO of defense in depth: layer ONE is core.validateRotationRef
-	// (internal/core/rotation_executor.go), which already rejects '/' (plus other path/
-	// query/SQL metacharacters and control characters) at configuration time, before the
+	// ref is concatenated into the SA resource name; a service-account email never
+	// contains any of "/?#%", so reject them defensively (they cannot then introduce
+	// extra path segments or otherwise reshape the resource name). This is layer TWO of
+	// defense in depth: layer ONE is core.validateRotationRef
+	// (internal/core/rotation_executor.go), which already rejects this same "/?#%" class
+	// (plus SQL metacharacters and control characters) at configuration time, before the
 	// ref is ever persisted. Keep both — this check must not be removed just because the
 	// earlier layer also covers it.
-	if strings.ContainsRune(ref, '/') {
+	if strings.ContainsAny(ref, "/?#%") {
 		return "", fmt.Errorf("gcp-service-account: ref %q must be a service-account email, not a resource path", ref)
 	}
 	if len(e.allowedRefs) == 0 {
