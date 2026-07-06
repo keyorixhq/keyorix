@@ -1,12 +1,31 @@
-// remote_notifications.go — in-app notifications for RemoteStorage.
+// remote_notifications.go — in-app notifications for RemoteStorage (ADR-024).
 //
-// Notifications are processed server-side in remote mode; these are stubs. For
-// the local (GORM) equivalent see local_notifications.go.
+// The self-scoped user-facing surface (GET /notifications, POST /notifications/
+// {id}/read, POST /notifications/read-all — see server/http/router.go and
+// notifications_handler.go) is real and proxied below for ListNotifications/
+// CountUnreadNotifications/MarkNotificationRead/MarkAllNotificationsRead.
+//
+// CreateNotification/HasUnreadNotification/GetUnreadNotification/
+// UpdateNotification stay unconditional stubs: these are the reminder/dedup
+// write path (internal/core/notifications.go's notify(), and the escalation
+// dedup in rotation_reminders.go et al.), invoked only from server-internal
+// background jobs and the system.write-gated POST /admin/jobs/* on-demand
+// triggers — both of which always run against the server's own LocalStorage,
+// never against a remote client's storage.Storage. There is no self-scoped route
+// that lets an authenticated end user create/escalate an arbitrary notification
+// for themselves (rightly so: that would let a self-scoped-only credential forge
+// notifications, e.g. impersonate a "your access was approved" system message),
+// so there is nothing for these four to proxy to.
+//
+// For the local (GORM) equivalent see local_notifications.go.
 package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -15,12 +34,111 @@ func (rs *RemoteStorage) CreateNotification(_ context.Context, _ *models.Notific
 	return nil, remoteUnsupported("CreateNotification")
 }
 
-func (rs *RemoteStorage) ListNotifications(_ context.Context, _ uint, _ bool, _ int) ([]*models.Notification, error) {
-	return nil, remoteUnsupported("ListNotifications")
+// notificationWireResponse mirrors notificationToAPI's response shape
+// (server/http/handlers/notifications_handler.go) — the actual wire shape GET
+// /notifications returns. models.Notification carries no json tags of its own,
+// so decoding straight into it would suffer the identical field-name mismatch
+// class as #496: encoding/json's case-insensitive fallback saves single-word
+// fields ("id"/"type"/"title"/"message"/"link" happen to still match "ID"/
+// "Type"/"Title"/"Message"/"Link"), but "is_read"/"created_at"/"project_id" do
+// NOT case-insensitively equal "IsRead"/"CreatedAt"/"ProjectID" — those three
+// would silently come back zeroed (a read notification would misreport as
+// unread, and every list/scoping decision keyed on CreatedAt ordering or
+// ProjectID would be wrong) without this explicit tagging.
+type notificationWireResponse struct {
+	ID        uint      `json:"id"`
+	Type      string    `json:"type"`
+	Title     string    `json:"title"`
+	Message   string    `json:"message"`
+	Link      string    `json:"link"`
+	IsRead    bool      `json:"is_read"`
+	CreatedAt time.Time `json:"created_at"`
+	ProjectID *uint     `json:"project_id,omitempty"`
 }
 
-func (rs *RemoteStorage) CountUnreadNotifications(_ context.Context, _ uint) (int64, error) {
-	return 0, remoteUnsupported("CountUnreadNotifications")
+func (w notificationWireResponse) toModel() *models.Notification {
+	return &models.Notification{
+		ID:        w.ID,
+		ProjectID: w.ProjectID,
+		Type:      w.Type,
+		Title:     w.Title,
+		Message:   w.Message,
+		Link:      w.Link,
+		IsRead:    w.IsRead,
+		CreatedAt: w.CreatedAt,
+	}
+}
+
+// notificationListResponse is the full GET /notifications envelope: the page of
+// notifications plus the bell-badge unread count, computed server-side
+// independently of the list's own unread/limit filters.
+type notificationListResponse struct {
+	Notifications []notificationWireResponse `json:"notifications"`
+	UnreadCount   int64                      `json:"unread_count"`
+}
+
+// fetchNotifications calls the self-scoped GET /notifications route. userID is
+// deliberately not sent: like MarkNotificationRead/MarkAllNotificationsRead
+// below, the server derives the caller from the authenticated session/token
+// (ADR-024, "self-scoped, no permission gate") — there is no user_id query
+// parameter honored server-side, so a caller can never widen this beyond its own
+// identity by passing a different userID here.
+func (rs *RemoteStorage) fetchNotifications(ctx context.Context, unreadOnly bool, limit int) (*notificationListResponse, error) {
+	path := "/api/v1/notifications"
+	q := ""
+	if unreadOnly {
+		q += "unread=true"
+	}
+	if limit > 0 {
+		if q != "" {
+			q += "&"
+		}
+		q += "limit=" + strconv.Itoa(limit)
+	}
+	if q != "" {
+		path += "?" + q
+	}
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list notifications: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list notifications failed: %s", resp.Error.Error())
+	}
+	var result notificationListResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListNotifications returns the caller's notifications, newest first, via the
+// self-scoped GET /notifications route. See fetchNotifications for the
+// userID-is-implicit scoping note.
+func (rs *RemoteStorage) ListNotifications(ctx context.Context, _ uint, unreadOnly bool, limit int) ([]*models.Notification, error) {
+	result, err := rs.fetchNotifications(ctx, unreadOnly, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*models.Notification, 0, len(result.Notifications))
+	for _, w := range result.Notifications {
+		out = append(out, w.toModel())
+	}
+	return out, nil
+}
+
+// CountUnreadNotifications reads the unread count off the same GET
+// /notifications response used by ListNotifications — there is no separate
+// count-only endpoint. limit=1 keeps the accompanying (here-discarded)
+// notification page minimal; the server computes unread_count independently of
+// the list's own unread/limit filters, so a small limit does not affect the
+// count itself.
+func (rs *RemoteStorage) CountUnreadNotifications(ctx context.Context, _ uint) (int64, error) {
+	result, err := rs.fetchNotifications(ctx, false, 1)
+	if err != nil {
+		return 0, err
+	}
+	return result.UnreadCount, nil
 }
 
 func (rs *RemoteStorage) HasUnreadNotification(_ context.Context, _ uint, _ string, _ uint) (bool, error) {
