@@ -119,6 +119,28 @@ var ErrDuplicateDynamicSecretConfig = errors.New("a dynamic-secret config with t
 // benign no-op skip, not a failure.
 var ErrDuplicateReminderNotification = errors.New("an unread reminder notification already exists for this user, type, and project")
 
+// ErrDuplicateSecretDependency is returned (wrapped) by CreateSecretDependencyExclusive
+// when the CURRENT edge set (read under this call's own lock — see that method's doc)
+// already contains the same (dependent, depends_on) pair. Backed by the real unique
+// index on secret_dependencies (idx_secret_dep_edge), so a plain CreateSecretDependency
+// insert would also fail with a unique-constraint violation for the exact same case;
+// CreateSecretDependencyExclusive additionally checks it up front (alongside the cycle
+// check, which the index cannot express) so both rejections share one code path and one
+// sentinel. Callers translate this into a clean "already exists" validation error.
+var ErrDuplicateSecretDependency = errors.New("this secret dependency already exists")
+
+// ErrSecretDependencyCycle is returned (wrapped) by CreateSecretDependencyExclusive when
+// adding the edge would make the depends_on secret transitively depend on the dependent
+// secret, closing a cycle in the project's dependency graph (ADR-052). Unlike
+// ErrDuplicateSecretDependency, no DB constraint can express "acyclic" directly, so this
+// is evaluated in application code against the lock-consistent edge read
+// CreateSecretDependencyExclusive takes — see its doc for why that check must run in the
+// SAME storage-layer call as the write (#260), not as a separate caller-orchestrated
+// read-then-write, once a real cross-call transaction can no longer be assumed
+// (RemoteStorage.WithTransaction is a no-op passthrough). Callers translate this into a
+// clean "would create a cycle" validation error.
+var ErrSecretDependencyCycle = errors.New("this secret dependency would create a cycle")
+
 // IsUserNotFound reports whether err represents "this user positively does not
 // exist" under EITHER active storage backend (#504). LocalStorage wraps the
 // ErrUserNotFound sentinel above (errors.Is); RemoteStorage instead returns a

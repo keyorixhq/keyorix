@@ -94,6 +94,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// #519: the secret-dependency-proxy end-to-end tests exercise
+		// SecretDependency CRUD (and the atomic duplicate/cycle-checked create)
+		// through the real router.
+		&models.SecretDependency{},
 		// #518: the machine-identity-proxy end-to-end tests exercise
 		// MachineIdentity/MachineIdentityCredential/MachineIdentityRole/
 		// MachineIdentityOIDCBinding CRUD through the real router.

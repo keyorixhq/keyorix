@@ -8,8 +8,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -63,4 +65,80 @@ func (ls *LocalStorage) DeleteSecretDependency(ctx context.Context, id uint) err
 		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 	}
 	return nil
+}
+
+// CreateSecretDependencyExclusive is the storage-layer half of #260's fix (see the
+// interface doc, internal/core/storage/interface.go): it runs the SAME duplicate/cycle
+// validation AddSecretDependency (internal/core/secret_dependencies.go) used to
+// orchestrate itself across ListSecretDependenciesForProjectForUpdate +
+// CreateSecretDependency, but now as ONE call wrapped in a single real DB transaction —
+// so the guarantee survives being called over HTTP by RemoteStorage's implementation
+// (remote_secret_dependencies.go), where no transaction can span two separate round
+// trips.
+func (ls *LocalStorage) CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
+	var created *models.SecretDependency
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		q := tx
+		if tx.Dialector.Name() == "postgres" {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var edges []*models.SecretDependency
+		if err := q.Where("project_id = ?", d.ProjectID).Order("id ASC").Find(&edges).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, e := range edges {
+			if e.DependentSecretID == d.DependentSecretID && e.DependsOnSecretID == d.DependsOnSecretID {
+				return storage.ErrDuplicateSecretDependency
+			}
+		}
+		if secretDependencyReachable(edges, d.DependsOnSecretID, d.DependentSecretID) {
+			return storage.ErrSecretDependencyCycle
+		}
+		if err := tx.Create(d).Error; err != nil {
+			if isUniqueViolation(err) {
+				// Belt-and-suspenders: idx_secret_dep_edge caught a concurrent insert of
+				// the exact same pair that committed between this transaction's own read
+				// above and its write (possible on Postgres if the project had ZERO
+				// existing edges to lock — see the interface doc's parity note).
+				return storage.ErrDuplicateSecretDependency
+			}
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		created = d
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
+// secretDependencyReachable reports whether `to` is reachable from `from` following
+// depends-on edges (from depends on … depends on to). Mirrors
+// internal/core/secret_dependencies.go's dependencyReachable exactly (that package
+// cannot be imported here — internal/core depends on this package, not the reverse —
+// so this is intentionally duplicated rather than shared; keep both in sync, and see
+// TestDependencyReachable/TestSecretDependencyReachable for the shared truth table both
+// must satisfy).
+func secretDependencyReachable(edges []*models.SecretDependency, from, to uint) bool {
+	adj := make(map[uint][]uint)
+	for _, e := range edges {
+		adj[e.DependentSecretID] = append(adj[e.DependentSecretID], e.DependsOnSecretID)
+	}
+	seen := map[uint]bool{from: true}
+	stack := []uint{from}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, next := range adj[n] {
+			if next == to {
+				return true
+			}
+			if !seen[next] {
+				seen[next] = true
+				stack = append(stack, next)
+			}
+		}
+	}
+	return false
 }
