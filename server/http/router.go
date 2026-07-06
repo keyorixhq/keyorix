@@ -989,6 +989,53 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
+
+			// Risk-exception storage-primitive proxy (#519). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateRiskException/GetRiskException/ListRiskExceptions/
+			// UpdateRiskException to THIS server's real storage backend, instead of
+			// RemoteStorage's four RiskException methods being unconditional stubs
+			// (the risk register — ISO 27001 A.5.8 — was completely non-functional
+			// under storage.type: remote). Exactly the same pattern as the
+			// project-memberships proxy above: a thin passthrough onto
+			// storage.Storage (no risk-exception POLICY decision —
+			// title/category/justification validation, the expiry-in-the-future and
+			// max-365-day-sunset bounds, dual-control approval, or the
+			// effective-status computation from the revoked flag + expiry — is made
+			// here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local
+			// backend), reusing the SAME system.read/system.write tier rather than
+			// the audit.read the human-facing /risk-exceptions routes use, since a
+			// RemoteStorage credential already needs system.write for the
+			// project-memberships proxy above — no new privilege class.
+			r.Get("/risk-exceptions/{id}", dashboardHandler.GetRiskExceptionProxy)
+			r.Get("/risk-exceptions", dashboardHandler.ListRiskExceptionsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskExceptionProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/risk-exceptions/{id}", dashboardHandler.UpdateRiskExceptionProxy)
+
+			// Separation-of-duties (SoD) policy storage-primitive proxy (finding
+			// #519). Lets a downstream Keyorix server booted with storage.type:
+			// remote (ADR-049) proxy CreateSoDPolicy/GetSoDPolicy/ListSoDPolicies/
+			// DeleteSoDPolicy to THIS server's real storage backend, instead of
+			// RemoteStorage's four SoD-policy methods having no server endpoint to
+			// call at all (internal/core/sod.go's policy CRUD, plus every preventive
+			// grant-time gate that lists policies — requireNoSoDViolation and
+			// friends, #419 — was completely non-functional under storage.type:
+			// remote). Exactly the same pattern as the project-memberships proxy
+			// above: a thin passthrough onto storage.Storage (no SoD-policy POLICY
+			// decision — name/permission-pair validation, the audit-log event, the
+			// violation-detection scan itself — is made here; that stays entirely in
+			// the CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the SAME system.read/system.write
+			// tier rather than the human-facing /sod/policies routes' calibration,
+			// since a RemoteStorage credential already needs system.write for the
+			// proxies above — no new privilege class. Read is baseline system.read;
+			// create/delete require system.write, matching every other admin-level
+			// mutation in this group.
+			r.Get("/sod-policies/{id}", catalogHandler.GetSoDPolicyProxy)
+			r.Get("/sod-policies", catalogHandler.ListSoDPoliciesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod-policies/{id}", catalogHandler.DeleteSoDPolicyProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
