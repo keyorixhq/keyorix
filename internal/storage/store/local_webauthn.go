@@ -4,9 +4,11 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -37,11 +39,15 @@ func (ls *LocalStorage) GetWebAuthnCredentialByCredID(ctx context.Context, crede
 
 // LockWebAuthnCredentialForUpdate re-reads a credential by (credential_id, user_id),
 // taking a row-level write lock on backends that support one (Postgres: SELECT …
-// FOR UPDATE). Used inside WithTransaction so a read-modify-write of the advanced
-// signature counter serializes against a concurrent write for the same credential
-// (#306). On backends without row locks (SQLite) it is a plain scoped read, and the
-// caller is responsible for its own process-level serialization — mirrors
-// LockUserForUpdate.
+// FOR UPDATE). Historically used inside WithTransaction so a read-modify-write of
+// the advanced signature counter serialized against a concurrent write for the same
+// credential (#306) — that specific path now goes through
+// AdvanceWebAuthnCredentialCounter below instead (a single atomic call, required so
+// RemoteStorage — whose WithTransaction is a no-op passthrough — gets the same
+// guarantee, #517). This method remains for callers that need a locked read outside
+// that race (e.g. rejectIfCloned's best-effort disable). On backends without row
+// locks (SQLite) it is a plain scoped read, and the caller is responsible for its
+// own process-level serialization — mirrors LockUserForUpdate.
 func (ls *LocalStorage) LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error) {
 	q := ls.db.WithContext(ctx)
 	if ls.db.Dialector.Name() == "postgres" {
@@ -56,6 +62,62 @@ func (ls *LocalStorage) LockWebAuthnCredentialForUpdate(ctx context.Context, cre
 
 func (ls *LocalStorage) UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error {
 	return ls.db.WithContext(ctx).Save(c).Error
+}
+
+// webauthnStoredCounter decodes just the one field this package needs out of a
+// WebAuthnCredential.CredentialBlob (the JSON-serialized go-webauthn Credential) —
+// deliberately NOT the full github.com/go-webauthn/webauthn.Credential type, so this
+// storage-layer package doesn't need to import that library merely to read back a
+// uint32 it never otherwise interprets. The field name mirrors go-webauthn's own
+// Authenticator.SignCount json tag (`json:"signCount,omitempty"`,
+// webauthn/authenticator.go) exactly; encoding/json ignores every other field in the
+// blob it doesn't recognize.
+type webauthnStoredCounter struct {
+	Authenticator struct {
+		SignCount uint32 `json:"signCount"`
+	} `json:"authenticator"`
+}
+
+// AdvanceWebAuthnCredentialCounter is the storage.Storage primitive
+// persistUpdatedCredential (internal/core/webauthn.go) is built on: it conditionally
+// persists newBlob/lastUsedAt for the credential identified by (credentialID,
+// userID) IFF newSignCount is not stale relative to whatever counter is CURRENTLY
+// persisted, all inside ONE row-locked transaction — extracted, unchanged in
+// behavior, from what persistUpdatedCredential used to run inline via
+// WithTransaction(Lock+compare+Update) (#306), just moved down a layer so every
+// backend gets it for free, not only LocalStorage (#517). See the interface doc
+// (internal/core/storage/interface.go) for the full contract, including the (0, 0)
+// "authenticator doesn't implement a counter" carve-out.
+func (ls *LocalStorage) AdvanceWebAuthnCredentialCounter(ctx context.Context, credentialID []byte, userID uint, newBlob []byte, newSignCount uint32, lastUsedAt time.Time) (bool, error) {
+	advanced := false
+	err := ls.WithTransaction(ctx, func(tx storage.Storage) error {
+		row, err := tx.LockWebAuthnCredentialForUpdate(ctx, credentialID, userID)
+		if err != nil {
+			return err
+		}
+		var stored webauthnStoredCounter
+		if err := json.Unmarshal(row.CredentialBlob, &stored); err != nil {
+			return err
+		}
+		storedCount := stored.Authenticator.SignCount
+		if newSignCount <= storedCount && (newSignCount != 0 || storedCount != 0) {
+			// A concurrent writer already advanced the stored counter past (or to)
+			// this candidate: stale, so skip the write rather than regress the
+			// persisted counter.
+			return nil
+		}
+		row.CredentialBlob = newBlob
+		row.LastUsedAt = &lastUsedAt
+		if err := tx.UpdateWebAuthnCredential(ctx, row); err != nil {
+			return err
+		}
+		advanced = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return advanced, nil
 }
 
 // DeleteWebAuthnCredential removes one of the user's credentials (scoped by user

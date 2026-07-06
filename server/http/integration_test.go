@@ -94,6 +94,11 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// #517: the webauthn-proxy end-to-end tests exercise WebAuthnCredential/
+		// WebAuthnSession CRUD (including the atomic signature-counter advance)
+		// through the real router.
+		&models.WebAuthnCredential{},
+		&models.WebAuthnSession{},
 		// finding #519: the legal-hold-proxy end-to-end tests exercise LegalHold
 		// CRUD through the real router.
 		&models.LegalHold{},

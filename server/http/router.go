@@ -962,6 +962,42 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
 
+			// WebAuthn / passkey storage-primitive proxy (finding #517). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateWebAuthnCredential/ListWebAuthnCredentials/
+			// GetWebAuthnCredentialByCredID/LockWebAuthnCredentialForUpdate/
+			// UpdateWebAuthnCredential/AdvanceWebAuthnCredentialCounter/
+			// DeleteWebAuthnCredential/CountWebAuthnCredentials/
+			// SetUserWebAuthnEnabled/CreateWebAuthnSession/ConsumeWebAuthnSession to
+			// THIS server's real storage backend, instead of RemoteStorage's ten
+			// WebAuthn methods having no server endpoint to call at all (every
+			// passkey registration/login flow was completely non-functional under
+			// storage.type: remote). Unlike the MFA/TOTP proxy above (a
+			// verification proxy — the raw TOTP secret must never leave the server
+			// that can decrypt it), a passkey's public key and ceremony session
+			// state are not secret, so this is an ordinary CRUD passthrough — no
+			// WebAuthn ceremony/ownership/reauth POLICY decision is made here; that
+			// stays entirely in the CALLING server's own internal/core.KeyorixCore,
+			// exactly as it does against a local backend. Reuses the SAME
+			// system.read/system.write tier — no new privilege class. See
+			// webauthn_proxy.go's package doc for the signature-counter race fix:
+			// AdvanceWebAuthnCredentialCounter is the one route here that performs
+			// a full locked compare-and-swap in a single request rather than a
+			// plain CRUD read/write, closing the cloned-authenticator TOCTOU a
+			// naive Lock-then-Update pair over two separate remote calls would
+			// reopen (#306/#517). Static sub-paths (lookup, count,
+			// advance-counter) are registered before their sibling {id} routes.
+			r.Get("/webauthn/credentials/lookup", authHandler.GetWebAuthnCredentialByCredIDProxy)
+			r.Get("/webauthn/credentials/count", authHandler.CountWebAuthnCredentialsProxy)
+			r.Get("/webauthn/credentials", authHandler.ListWebAuthnCredentialsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/credentials", authHandler.CreateWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/credentials/{id}", authHandler.UpdateWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Patch("/webauthn/credentials/advance-counter", authHandler.AdvanceWebAuthnCredentialCounterProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/webauthn/users/{userId}/credentials/{id}", authHandler.DeleteWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
+
 			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateLegalHold/GetActiveLegalHold/UpdateLegalHold to THIS server's real
