@@ -78,6 +78,12 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #511: the project-membership-proxy end-to-end tests exercise
 		// ProjectMembership CRUD through the real router.
 		&models.ProjectMembership{},
+		// #509: the MFA-login-proxy end-to-end tests exercise TOTP enrolment,
+		// challenge issuance, and second-factor verification through the real
+		// router.
+		&models.MFASecret{},
+		&models.MFARecoveryCode{},
+		&models.MFAChallenge{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

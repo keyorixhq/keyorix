@@ -183,7 +183,10 @@ one at a time, not concurrently).
 
 - The main clone (`KEYORIX_REPO`) is treated as disposable and dedicated
   solely to fuzzing — `run-rotation.sh` runs `git reset --hard origin/main`
-  against it once per cycle. Don't use this clone for anything else.
+  against it before every target (not just once per cycle — this repo merges
+  dozens of commits a day, so a once-per-cycle pull could leave a target
+  fuzzing code that was already stale for most of a ~14h rotation by the time
+  it ran). Don't use this clone for anything else.
 - Corpus commits land on `fuzz-corpus`, never `main` — nothing here touches
   CI or requires a PR to keep running; you decide when (and whether) to open
   a PR merging an interesting find into `main`.
