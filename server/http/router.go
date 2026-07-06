@@ -649,6 +649,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("users.impersonate")).
 			Post("/admin/impersonate", impersonationHandler.Start)
 
+		// Sessions (#508) — the server-side counterparts RemoteStorage.GetSession/
+		// DeleteSession need so a storage.type: remote deployment can validate and
+		// revoke sessions minted upstream by POST /api/v1/users/verify-credentials
+		// (#506/#508's atomic verify+mint). Deliberately NO POST "/" here — there is
+		// no generic "create a session" route; see remote_auth.go's CreateSession
+		// doc for why that would be a privilege-escalation oracle. Gated by
+		// users.write, the SAME permission verify-credentials/CreateUser/UnlockUser
+		// already require of the RemoteStorage service credential.
+		r.Route("/sessions", func(r chi.Router) {
+			r.With(customMiddleware.RequirePermission("users.write")).Get("/{token}", handlers.GetSessionByToken)
+			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", handlers.DeleteSessionByID)
+		})
+
 		// Groups endpoints
 		r.Route("/groups", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("users.read"))
