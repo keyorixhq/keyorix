@@ -98,6 +98,15 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// AccessReviewCampaign/AccessReviewItem CRUD through the real router.
 		&models.AccessReviewCampaign{},
 		&models.AccessReviewItem{},
+		// #519: the break-glass-proxy end-to-end tests exercise BreakGlassActivation
+		// CRUD through the real router.
+		&models.BreakGlassActivation{},
+		// #519: the risk-exception-proxy end-to-end tests exercise RiskException
+		// CRUD through the real router.
+		&models.RiskException{},
+		// finding #519: the SoD-policy-proxy end-to-end tests exercise SoDPolicy
+		// CRUD through the real router.
+		&models.SoDPolicy{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
@@ -109,6 +118,15 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 	// isUniqueViolation branch depends on.
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
 		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error)
+	// Mirror internal/storage/factory.go's ensureBreakGlassActiveIndex exactly (the
+	// same production migration path TestCreateBreakGlassActivation_
+	// ConcurrentRaceYieldsExactlyOneWinner relies on,
+	// internal/storage/store/local_break_glass_test.go): AutoMigrate alone does not
+	// create this partial unique index, so without it, the #519 break-glass-proxy
+	// concurrent-activation test would silently miss the real DB-level guard
+	// CreateBreakGlassActivation's OnConflict DoNothing branch depends on.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user "+
+		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
