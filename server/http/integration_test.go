@@ -94,6 +94,11 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// #517: the webauthn-proxy end-to-end tests exercise WebAuthnCredential/
+		// WebAuthnSession CRUD (including the atomic signature-counter advance)
+		// through the real router.
+		&models.WebAuthnCredential{},
+		&models.WebAuthnSession{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
