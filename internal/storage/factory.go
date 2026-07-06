@@ -1031,7 +1031,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if projectsExists {
 		return nil
 	}
-	if err := db.AutoMigrate(
+	// Migrated one model per AutoMigrate call, not as one bulk variadic call: on a
+	// fresh Postgres, re-inspecting a table that AutoMigrate already created
+	// earlier in this same run trips a pgx prepared-statement cache bug
+	// ("insufficient arguments") on whichever query runs afterward — the same
+	// hazard the Notification/RotationPolicy exclusions above already guard
+	// against. Any model already migrated by a dedicated block above (e.g.
+	// AuditCheckpoint, guarded by auditCkptExists) must NOT also appear in this
+	// list, or its re-inspection here will corrupt the cache for later models.
+	for _, m := range []interface{}{
 		&models.Project{},
 		&models.Environment{},
 		&models.User{},
@@ -1051,12 +1059,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.PasswordReset{},
 		&models.Tag{},
 		&models.SecretTag{},
-		// NOTE: Notification is intentionally NOT listed here — it is migrated by the
-		// dedicated block above (create-if-absent / add-columns-if-present). Listing
-		// it again re-inspects the just-created table and trips the pgx "insufficient
-		// arguments" bug on a fresh Postgres first boot (same hazard as RotationPolicy).
 		&models.AuditEvent{},
-		&models.AuditCheckpoint{},
+		// NOTE: AuditCheckpoint is intentionally NOT listed here — it is migrated
+		// by the dedicated block above (guarded by auditCkptExists). Listing it
+		// again re-inspects the just-created table and trips the pgx
+		// "insufficient arguments" bug (same hazard as Notification/RotationPolicy).
 		&models.Setting{},
 		&models.SystemMetadata{},
 		&models.APIClient{},
@@ -1067,14 +1074,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
 		&models.AnomalyAlert{},
-		// NOTE: RotationPolicy is intentionally NOT listed here. It is migrated
-		// by the standalone block above (which runs before this guarded full
-		// AutoMigrate and also covers existing DBs that predate the rotation
-		// feature). Including it here too made the full AutoMigrate re-inspect
-		// the already-created rotation_policies table, tripping the pgx
-		// "insufficient arguments" bug on a fresh DB's first boot.
-	); err != nil {
-		return err
+	} {
+		if err := db.AutoMigrate(m); err != nil {
+			return fmt.Errorf("failed to migrate %T: %w", m, err)
+		}
 	}
 	// The Group, User, and Project models carry no plain unique tag on
 	// name/username/name; enforce uniqueness only among live rows via partial indexes
