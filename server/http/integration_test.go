@@ -78,6 +78,12 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// In-app notifications (ADR-024) — exercised end-to-end through the real
 		// router by the RemoteStorage notification proxy tests.
 		&models.Notification{},
+		// #509: the MFA-login-proxy end-to-end tests exercise TOTP enrolment,
+		// challenge issuance, and second-factor verification through the real
+		// router.
+		&models.MFASecret{},
+		&models.MFARecoveryCode{},
+		&models.MFAChallenge{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
