@@ -79,6 +79,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// DynamicSecretConfig/DynamicSecretLease CRUD through the real router.
 		&models.DynamicSecretConfig{},
 		&models.DynamicSecretLease{},
+		// In-app notifications (ADR-024) — exercised end-to-end through the real
+		// router by the RemoteStorage notification proxy tests.
+		&models.Notification{},
 		// #510: the setup-token-proxy end-to-end tests exercise SetupToken CRUD
 		// through the real router.
 		&models.SetupToken{},
