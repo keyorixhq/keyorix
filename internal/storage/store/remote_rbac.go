@@ -56,8 +56,16 @@ func (rs *RemoteStorage) GetRole(ctx context.Context, id uint) (*models.Role, er
 }
 
 // GetRoleByName retrieves a role by name via remote API.
+//
+// The server registers this lookup as GET /api/v1/roles/by-name with the name as
+// a query parameter (mirroring GetSecretByName's #497 / GetUserByEmail's #503
+// query-scoped convention), not as a path segment (#512: an earlier version of
+// this method requested /api/v1/roles/by-name/{name}, a route
+// server/http/router.go never registered, so every call 404'd against a real
+// server regardless of whether the role existed — blocking InviteToProject for
+// EVERY role, not just admin roles, under storage.type: remote).
 func (rs *RemoteStorage) GetRoleByName(ctx context.Context, name string) (*models.Role, error) {
-	path := fmt.Sprintf("/api/v1/roles/by-name/%s", url.PathEscape(name))
+	path := fmt.Sprintf("/api/v1/roles/by-name?name=%s", url.QueryEscape(name))
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role by name: %w", err)

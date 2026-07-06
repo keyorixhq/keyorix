@@ -23,10 +23,11 @@ func TestRemoteStorage_UnsupportedSentinel(t *testing.T) {
 	ctx := context.Background()
 
 	calls := map[string]func() error{
-		"CreateGroup":             func() error { _, e := rs.CreateGroup(ctx, &models.Group{}); return e },
-		"CreateProjectMembership": func() error { _, e := rs.CreateProjectMembership(ctx, &models.ProjectMembership{}); return e },
-		// ListProjectInvitations (#507) now makes a real HTTP call rather than
-		// stubbing out — see server/http/remote_storage_invitations_test.go for its
+		"CreateGroup": func() error { _, e := rs.CreateGroup(ctx, &models.Group{}); return e },
+		// ListProjectInvitations (#507) and CreateProjectMembership (#511) now make
+		// a real HTTP call rather than stubbing out — see
+		// server/http/remote_storage_invitations_test.go and
+		// server/http/remote_storage_project_memberships_test.go for their
 		// end-to-end coverage against a real router.
 		"CreateAccessRequest":   func() error { _, e := rs.CreateAccessRequest(ctx, &models.AccessRequest{}); return e },
 		"CreateNotification":    func() error { _, e := rs.CreateNotification(ctx, &models.Notification{}); return e },
