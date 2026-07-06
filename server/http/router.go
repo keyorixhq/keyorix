@@ -606,6 +606,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// deliberately not a new, separately-provisioned permission. Static path,
 			// before /{id}.
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/verify-credentials", handlers.VerifyCredentials)
+			// VerifyMFACredentials (#509) — the upstream half of the storage.type:
+			// remote second-factor login proxy (internal/core/mfa.go's
+			// RemoteMFAVerifier): checks a plaintext TOTP/recovery code against the
+			// real, decrypted TOTP secret this server holds and returns only a
+			// verdict, never the secret. Same gate and reasoning as
+			// verify-credentials above. Static path, before /{id}.
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/verify-mfa", handlers.VerifyMFACredentials)
 			r.Get("/{id}", handlers.GetUser)
 			// Mutations need users.write, not the group-wide users.read (which the
 			// read-only system_auditor persona holds) — these were the missed
@@ -617,6 +624,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.delete")).Delete("/{id}", handlers.DeleteUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", handlers.RestoreUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/unlock", handlers.UnlockUser)
+			// IssueMFAChallenge (#509) — the upstream half of the storage.type: remote
+			// second-factor login proxy (internal/core/mfa.go's RemoteMFAVerifier):
+			// mints and persists the short-lived, single-use MFA challenge on this
+			// (the hub's) LocalStorage on behalf of a RemoteStorage-backed "spoke"
+			// deployment, which has nowhere of its own to persist one. Same gate and
+			// reasoning as verify-credentials/verify-mfa above.
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/mfa-challenge", handlers.IssueMFAChallenge)
 			// Admin force-logout: revoke all of a user's sessions (no state change).
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/revoke-sessions", handlers.RevokeSessions)
 			// Account state transitions (ADR-025).

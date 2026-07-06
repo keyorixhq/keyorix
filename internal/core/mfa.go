@@ -197,9 +197,53 @@ func (c *KeyorixCore) MFARecoveryCodesRemaining(ctx context.Context, userID uint
 	return remaining, mfaRecoveryCodeCount, nil
 }
 
+// RemoteMFAVerifier is implemented by storage backends that cannot themselves
+// hold the raw TOTP secret (#509), for the identical reason RemoteLoginVerifier
+// (auth.go) exists for passwords: the shared secret is stored reversibly
+// ENCRYPTED specifically so it must never leave the server that can decrypt it,
+// so RemoteStorage's GetMFASecret is an unconditional stub — loadTOTPSecret/
+// validateTOTPStep can never run locally against a "spoke" server backed by
+// RemoteStorage.
+//
+// Mirrors #506's proxy-login pattern exactly, extended to the second factor:
+// the upstream server (the one actually backed by LocalStorage, which HAS the
+// encrypted secret and the key to decrypt it) performs BOTH steps —
+//
+//  1. IssueMFAChallenge mints the short-lived, single-use challenge (the same
+//     shape CreateMFAChallenge always minted, just persisted upstream instead
+//     of locally) via POST /api/v1/users/{id}/mfa-challenge.
+//  2. VerifyMFALoginCredentials consumes that challenge and performs the ENTIRE
+//     TOTP/recovery-code check — validateTOTPStep, MarkTOTPStepUsed (anti-
+//     replay), ConsumeMFARecoveryCode, AND the per-account lockout gate/
+//     accounting and account-active/account-state checks (the exact set
+//     VerifyPasswordCredentials's proxy already delegates for the first
+//     factor) — via POST /api/v1/users/verify-mfa, calling the upstream's own
+//     core.VerifyMFACredentials, the SAME function the upstream's own direct
+//     second-factor login uses, not a parallel reimplementation.
+//
+// Both endpoints are gated by the SAME users.write permission CreateUser/
+// UnlockUser/verify-credentials already require of the RemoteStorage service
+// credential — not a new, weaker trust boundary. Minting a challenge here is
+// specifically NOT the privilege-escalation oracle #508 identified for a
+// generic "create a session for this user_id" primitive (deliberately NOT
+// implemented for that reason): a challenge alone grants nothing by itself —
+// the caller must still supply the correct plaintext TOTP code or recovery
+// code, throttled by the identical per-account lockout #506 already proxies —
+// so at most it lets this already-highly-trusted credential skip re-proving a
+// password it (or rather, the legitimate #506 proxy call preceding this one)
+// already proved once, exactly as CreateUser/UnlockUser already let it act on
+// an arbitrary account without a fresh password check.
+type RemoteMFAVerifier interface {
+	IssueMFAChallenge(ctx context.Context, userID uint) (string, error)
+	VerifyMFALoginCredentials(ctx context.Context, challenge, code string) (*models.User, bool, error)
+}
+
 // CreateMFAChallenge issues a short-lived single-use challenge for an MFA-enabled
 // user that has passed the password step. Only the token hash is stored.
 func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (string, error) {
+	if verifier, ok := c.storage.(RemoteMFAVerifier); ok {
+		return verifier.IssueMFAChallenge(ctx, userID)
+	}
 	token, err := generateSecureToken()
 	if err != nil {
 		return "", err
@@ -212,16 +256,29 @@ func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (stri
 	return token, nil
 }
 
-// VerifyMFALogin consumes a challenge, verifies a TOTP code or a recovery code,
-// and on success mints and returns the session (the second login step).
-func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, error) {
+// VerifyMFACredentials consumes a challenge and verifies a TOTP code or a
+// recovery code against LocalStorage — everything VerifyMFALogin does EXCEPT
+// minting the session and the two post-mint audit writes, extracted (#509) so
+// it can ALSO be called directly by the server-side handler for POST
+// /api/v1/users/verify-mfa, the upstream half of the RemoteMFAVerifier proxy
+// (see its doc above) — the identical split #506 already established between
+// VerifyPasswordCredentials (the shared check) and Login (which additionally
+// mints the session). This keeps the direct LocalStorage second-factor login
+// and the proxied storage.type: remote path running through IDENTICAL TOTP/
+// recovery-code/lockout/account-state logic — never two, potentially-
+// diverging implementations of the same security check. Returns the verified
+// user (ID and Username only are guaranteed populated — see
+// verifyMFAWireResponse in internal/storage/store for why nothing else is
+// needed past this point) and whether a recovery code (rather than a TOTP
+// code) was used.
+func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code string) (*models.User, bool, error) {
 	ch, err := c.storage.ConsumeMFAChallenge(ctx, sha256Hex(challenge), c.now())
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid or expired challenge")
+		return nil, false, fmt.Errorf("invalid or expired challenge")
 	}
 	user, err := c.storage.GetUser(ctx, ch.UserID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("user not found")
+		return nil, false, fmt.Errorf("user not found")
 	}
 	// Completing a second factor still mints a login session, so a suspended or
 	// deactivated account must be refused here too — the challenge may have been
@@ -229,7 +286,7 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	// nothing rechecks the state between the two steps. Mirrors the password,
 	// session, PAT, and passwordless-WebAuthn gates.
 	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
-		return nil, nil, fmt.Errorf("account is not active")
+		return nil, false, fmt.Errorf("account is not active")
 	}
 	// Per-account lockout also gates the second factor. The per-IP rate limiter is
 	// spoofable behind a misconfigured proxy, and it is otherwise the ONLY online
@@ -237,7 +294,7 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	// by ch.UserID, which the attacker does not control) makes second-factor brute force
 	// cost the same lockout as password brute force.
 	if c.loginLocked(user) {
-		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+		return nil, false, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	verified, usedRecovery := false, false
 	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil {
@@ -259,20 +316,37 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	if !verified {
 		c.auditMFAFailed(ctx, ch.UserID, "login")
 		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout
-		return nil, nil, fmt.Errorf("invalid code")
+		return nil, false, fmt.Errorf("invalid code")
 	}
 	// Cleared the second factor — but a concurrent burst of failed second-factor
 	// attempts against this account may have tripped the lock since the
 	// pre-verification snapshot check above (TOCTOU). Re-check under the same
 	// serialization recordFailedLogin uses before minting a session.
 	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return nil, nil, err
+		return nil, false, err
 	}
-	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
+	return user, usedRecovery, nil
+}
+
+// VerifyMFALogin consumes a challenge, verifies a TOTP code or a recovery code,
+// and on success mints and returns the session (the second login step).
+func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, error) {
+	var user *models.User
+	var usedRecovery bool
+	var err error
+	if verifier, ok := c.storage.(RemoteMFAVerifier); ok {
+		user, usedRecovery, err = verifier.VerifyMFALoginCredentials(ctx, challenge, code)
+	} else {
+		user, usedRecovery, err = c.VerifyMFACredentials(ctx, challenge, code)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
-	uid := ch.UserID
+	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
+	if err != nil {
+		return nil, nil, err
+	}
+	uid := user.ID
 	if usedRecovery {
 		c.writeAuditEventFull(ctx, "mfa.recovery_used", &uid, nil, nil, ip, fmt.Sprintf("user %s used a recovery code", user.Username))
 	}
