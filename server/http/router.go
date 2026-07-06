@@ -825,6 +825,36 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/invitations", catalogHandler.ListInvitationsProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/invitations", catalogHandler.CreateInvitationProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
+
+			// Project-membership storage-primitive proxy (#511). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateProjectMembership/GetProjectMembership/UpdateProjectMembership/
+			// ListProjectMemberships/GetActiveProjectMembership/
+			// ListStaleInvitedMemberships/ListUserProjectMemberships/
+			// CountProjectMembershipsByUsers to THIS server's real storage backend,
+			// instead of RemoteStorage's eight ProjectMembership methods having no
+			// server endpoint to call at all (applyInvitationGrants' own
+			// membership-materialization step — the last stage of accepting a project
+			// invitation — was completely non-functional under storage.type: remote,
+			// even after #507 made the invitation-accept step itself work). Same
+			// pattern as the invitations proxy above: a thin passthrough onto
+			// storage.Storage (no membership-lifecycle POLICY decision made here — the
+			// calling server's own core.KeyorixCore still decides which state a new
+			// invite starts in, which transitions are legal, and when the backing role
+			// grant is applied/reverted, exactly as it does against a local backend),
+			// reusing the SAME system.read/system.write tier — no new privilege class.
+			// Static literal segments ("active", "stale", "counts", "by-user/{userID}")
+			// take priority over the "{id}" wildcard at the same route depth (chi's
+			// router always matches a static child before a param child), so they
+			// coexist safely regardless of registration order.
+			r.Get("/project-memberships/active", catalogHandler.GetActiveMembershipProxy)
+			r.Get("/project-memberships/stale", catalogHandler.ListStaleInvitedMembershipsProxy)
+			r.Get("/project-memberships/counts", catalogHandler.CountMembershipsByUsersProxy)
+			r.Get("/project-memberships/by-user/{userID}", catalogHandler.ListUserMembershipsProxy)
+			r.Get("/project-memberships/{id}", catalogHandler.GetMembershipProxy)
+			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
