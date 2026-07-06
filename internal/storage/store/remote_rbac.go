@@ -146,8 +146,11 @@ func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
-// GetGroupRoleGrants is server-side only (the HTTP handler reads it from local
-// storage); the remote client uses GetGroupRoles for the role list.
+// GetGroupRoleGrants is a confirmed genuine gap (round 119 completeness
+// audit), not the "HTTP handler reads it from local storage instead" claim
+// this comment previously made — GetGroupRoles (server/http/handlers/rbac.go)
+// calls THIS method, not a different one. Tracked in
+// docs/security/HARDENING-BACKLOG.md; see remote_unsupported_completeness_test.go.
 func (rs *RemoteStorage) GetGroupRoleGrants(_ context.Context, _ uint) ([]*storage.GroupRoleGrant, error) {
 	return nil, remoteUnsupported("GetGroupRoleGrants")
 }
