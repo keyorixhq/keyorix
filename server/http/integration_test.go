@@ -126,6 +126,13 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// finding #519: the SoD-policy-proxy end-to-end tests exercise SoDPolicy
 		// CRUD through the real router.
 		&models.SoDPolicy{},
+		// finding #520: the retention-proxy end-to-end tests exercise
+		// DeleteAnomalyAlertsBefore/DeleteResolvedAccessRequestsBefore through the
+		// real router. AccessReviewCampaign/AccessReviewItem/BreakGlassActivation
+		// are already migrated above (#519).
+		&models.AnomalyAlert{},
+		&models.AccessRequest{},
+		&models.AccessRequestApproval{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

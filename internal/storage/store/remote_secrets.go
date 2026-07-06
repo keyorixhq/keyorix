@@ -245,26 +245,127 @@ func (rs *RemoteStorage) RestoreSecret(ctx context.Context, id uint) error {
 	return nil
 }
 
-// Retention purge runs server-side (ADR-032/033); not available in remote mode.
-func (rs *RemoteStorage) PurgeDeletedSecretsBefore(_ context.Context, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("PurgeDeletedSecretsBefore")
+// --- Retention/purge-sweep proxies (finding #520) ---
+//
+// These proxy onto NEW server-side routes under /api/v1/system/retention
+// (server/http/handlers/retention_proxy.go), the SAME "RemoteStorage stub -> thin
+// proxy route" pattern established for login-attempts (#452), project
+// invitations (#507), and dynamic secrets (round 116): a raw passthrough onto
+// storage.Storage's own retention primitives — no purge/retention POLICY decision
+// (which window applies, the legal-hold guard, which rows are "in flight" and
+// therefore excluded) is made server-side; that stays entirely in the CALLING
+// server's own internal/core.KeyorixCore, exactly as it does against a local
+// backend. Gated on the SAME system.read/system.write tier every other
+// RemoteStorage call already needs — no new privilege class. See
+// retention_proxy.go's package doc for the full atomicity and timezone analysis
+// (short version: each of these already resolves in ONE storage.Storage call
+// server-side, so one HTTP round trip preserves whatever transactional guarantee
+// the local implementation has; RemoteStorage.WithTransaction's no-op status is
+// irrelevant here since none of these needed to span multiple calls).
+func (rs *RemoteStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
+	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/secrets/purge", before, "purge deleted secrets")
 }
 
-// Data-retention purges run server-side (the scheduler); not available remotely.
-func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("DeleteAnomalyAlertsBefore")
+// DeleteAnomalyAlertsBefore proxies onto POST
+// /api/v1/system/retention/anomaly-alerts/purge. ackBefore/unackCeiling are sent
+// as-is (including when zero) — DeleteAnomalyAlertsBefore's own contract treats a
+// zero time.Time as "this clause is disabled", not "purge everything before year
+// 1" (see local_purge.go), and the proxy handler preserves that by decoding both
+// fields unconditionally rather than rejecting a zero value as invalid.
+func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore, unackCeiling time.Time) (int64, error) {
+	body := struct {
+		AckBefore    time.Time `json:"ack_before"`
+		UnackCeiling time.Time `json:"unack_ceiling"`
+	}{AckBefore: ackBefore, UnackCeiling: unackCeiling}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/anomaly-alerts/purge", body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to purge anomaly alerts: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("purge anomaly alerts failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Purged int64 `json:"purged"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Purged, nil
 }
 
-func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
-	return 0, 0, remoteUnsupported("DeleteClosedAccessReviewsBefore")
+// DeleteClosedAccessReviewsBefore proxies onto POST
+// /api/v1/system/retention/access-reviews/purge-closed.
+func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
+	body := struct {
+		Before time.Time `json:"before"`
+	}{Before: before}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/access-reviews/purge-closed", body)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to purge closed access reviews: %w", err)
+	}
+	if !resp.Success {
+		return 0, 0, fmt.Errorf("purge closed access reviews failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		CampaignsPurged int64 `json:"campaigns_purged"`
+		ItemsPurged     int64 `json:"items_purged"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.CampaignsPurged, result.ItemsPurged, nil
 }
 
-func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(_ context.Context, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("DeleteExpiredBreakGlassBefore")
+// DeleteExpiredBreakGlassBefore proxies onto POST
+// /api/v1/system/retention/break-glass/purge-expired.
+func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
+	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/break-glass/purge-expired", before, "purge expired break-glass activations")
 }
 
-func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
-	return 0, 0, remoteUnsupported("DeleteResolvedAccessRequestsBefore")
+// DeleteResolvedAccessRequestsBefore proxies onto POST
+// /api/v1/system/retention/access-requests/purge-resolved.
+func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
+	body := struct {
+		Before time.Time `json:"before"`
+	}{Before: before}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/retention/access-requests/purge-resolved", body)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to purge resolved access requests: %w", err)
+	}
+	if !resp.Success {
+		return 0, 0, fmt.Errorf("purge resolved access requests failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		RequestsPurged  int64 `json:"requests_purged"`
+		ApprovalsPurged int64 `json:"approvals_purged"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.RequestsPurged, result.ApprovalsPurged, nil
+}
+
+// postRetentionBeforeCountResp is the shared shape for every retention-purge
+// route whose body is a single {"before": ...} timestamp and whose response is a
+// single {"purged": <count>} integer.
+func postRetentionBeforeCountResp(ctx context.Context, rs *RemoteStorage, path string, before time.Time, verb string) (int64, error) {
+	body := struct {
+		Before time.Time `json:"before"`
+	}{Before: before}
+	resp, err := rs.client.Post(ctx, path, body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to %s: %w", verb, err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("%s failed: %s", verb, resp.Error.Error())
+	}
+	var result struct {
+		Purged int64 `json:"purged"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Purged, nil
 }
 
 // ListSecrets lists secrets with optional filtering via remote API.

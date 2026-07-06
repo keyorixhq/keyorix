@@ -414,17 +414,27 @@ func (rs *RemoteStorage) RestoreUser(ctx context.Context, id uint) error {
 	return nil
 }
 
-// Retention purge runs server-side (ADR-032); not available in remote mode.
-func (rs *RemoteStorage) PurgeDeletedUsersBefore(_ context.Context, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("PurgeDeletedUsersBefore")
+// PurgeDeletedUsersBefore, PurgeDeletedProjectsBefore, PurgeDeletedEnvironmentsBefore
+// (finding #520) proxy onto NEW server-side routes under
+// /api/v1/system/retention (server/http/handlers/retention_proxy.go) — the SAME
+// "RemoteStorage stub -> thin proxy route" pattern established for login-attempts
+// (#452). See remote_secrets.go's package-level retention-proxy doc comment (next
+// to PurgeDeletedSecretsBefore) for the shared atomicity/timezone analysis; each
+// of these three cascades (users -> role grants/memberships/received
+// shares/PATs/sessions; projects -> role grants; environments, no cascade) runs
+// entirely inside the upstream server's own single storage.Storage call, so one
+// HTTP round trip preserves the LOCAL implementation's own transactional
+// guarantee unchanged.
+func (rs *RemoteStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) {
+	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/users/purge", before, "purge deleted users")
 }
 
-func (rs *RemoteStorage) PurgeDeletedProjectsBefore(_ context.Context, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("PurgeDeletedProjectsBefore")
+func (rs *RemoteStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
+	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/projects/purge", before, "purge deleted projects")
 }
 
-func (rs *RemoteStorage) PurgeDeletedEnvironmentsBefore(_ context.Context, _ time.Time) (int64, error) {
-	return 0, remoteUnsupported("PurgeDeletedEnvironmentsBefore")
+func (rs *RemoteStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {
+	return postRetentionBeforeCountResp(ctx, rs, "/api/v1/system/retention/environments/purge", before, "purge deleted environments")
 }
 
 // ListUsers lists users with optional filtering via remote API.
@@ -451,8 +461,39 @@ func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilt
 	return users, result.Total, nil
 }
 
-func (rs *RemoteStorage) ListUsersInStateBefore(_ context.Context, _ string, _ time.Time) ([]*models.User, error) {
-	return nil, remoteUnsupported("ListUsersInStateBefore")
+// ListUsersInStateBefore proxies onto GET
+// /api/v1/system/retention/users/stale?state=&before=<RFC3339Nano> (finding
+// #520) — backing the calling server's OWN stale-account warning sweep
+// (internal/core.StaleAccounts, ADR-025) against this server's real storage
+// backend, the SAME "RemoteStorage stub -> thin proxy route" pattern established
+// for login-attempts (#452). A READ, not a delete, so the server-side route is
+// gated system.read rather than system.write (see router.go). Decodes into the
+// SAME userWireResponse type ListUsers already uses, since the server's wire
+// shape (userRetentionProxyWire, server/http/handlers/retention_proxy.go) is a
+// deliberate field-for-field mirror.
+func (rs *RemoteStorage) ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error) {
+	q := url.Values{}
+	q.Set("state", state)
+	q.Set("before", before.UTC().Format(time.RFC3339Nano))
+	path := "/api/v1/system/retention/users/stale?" + q.Encode()
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list stale users: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list stale users failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Users []userWireResponse `json:"users"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	users := make([]*models.User, 0, len(result.Users))
+	for _, w := range result.Users {
+		users = append(users, w.toModel())
+	}
+	return users, nil
 }
 
 func (rs *RemoteStorage) CreateUserWithRoleGrants(_ context.Context, _ *models.User, _ []storage.RoleGrant) (*models.User, error) {
