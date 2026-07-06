@@ -36,10 +36,14 @@ services:
       # first boot makes all stored secrets undecryptable.
       KEYORIX_MASTER_PASSWORD: ${KEYORIX_MASTER_PASSWORD:?KEYORIX_MASTER_PASSWORD is required}
       # Optional first-boot admin bootstrap (idempotent). Omit to initialise
-      # manually with `keyorix system init`.
+      # manually with `keyorix system init`. KEYORIX_BOOTSTRAP_TOKEN must be set
+      # alongside KEYORIX_ADMIN_PASSWORD — /system/init always requires a matching
+      # bootstrap token, and the entrypoint has no way to read back the random one
+      # the server would otherwise generate for itself.
       KEYORIX_ADMIN_USERNAME: ${KEYORIX_ADMIN_USERNAME:-admin}
       KEYORIX_ADMIN_EMAIL: ${KEYORIX_ADMIN_EMAIL:-admin@keyorix.local}
       KEYORIX_ADMIN_PASSWORD: ${KEYORIX_ADMIN_PASSWORD:-}
+      KEYORIX_BOOTSTRAP_TOKEN: ${KEYORIX_BOOTSTRAP_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
