@@ -798,6 +798,29 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/invitations", catalogHandler.ListInvitationsProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/invitations", catalogHandler.CreateInvitationProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
+
+			// Setup-token storage-primitive proxy (#510). Lets a downstream Keyorix
+			// server booted with storage.type: remote (ADR-049) proxy
+			// CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/
+			// MarkSetupTokenConsumed/MarkSetupTokenExpired/CountSetupTokensSince to
+			// THIS server's real storage backend, instead of RemoteStorage's six
+			// SetupToken methods having no server endpoint to call at all
+			// (setup_consume.go's CompleteSetup — every setup-token purpose:
+			// account_setup, password_reset_link, invitation_accept — was completely
+			// non-functional under storage.type: remote). Exactly the same pattern as
+			// the invitations proxy above: a thin passthrough onto storage.Storage (no
+			// setup-token POLICY decision made here — the calling server's own
+			// core.KeyorixCore still decides that), reusing the SAME
+			// system.read/system.write tier — no new privilege class. Read is baseline
+			// system.read; every mutating operation (including the single-use
+			// consume) requires system.write, matching every other admin-level
+			// mutation in this group.
+			r.Get("/setup-tokens/by-hash/{hash}", authHandler.GetSetupTokenByHashProxy)
+			r.Get("/setup-tokens/count", authHandler.CountSetupTokensSinceProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/supersede", authHandler.SupersedeSetupTokensProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.

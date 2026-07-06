@@ -159,29 +159,221 @@ func (rs *RemoteStorage) TouchPersonalAccessToken(_ context.Context, _ uint, _ t
 	return nil // best-effort; no-op on remote storage
 }
 
-// Setup Token Management (ADR-028) — credential delivery is a server-side concern;
-// a remote CLI client does not mint or consume setup tokens.
-
-func (rs *RemoteStorage) CreateSetupToken(_ context.Context, _ *models.SetupToken) (*models.SetupToken, error) {
-	return nil, errUnsupportedRemote
+// Setup Token Management (ADR-028, #510).
+//
+// A remote CLI client does not mint or consume setup tokens — but a DOWNSTREAM
+// Keyorix SERVER booted with storage.type: remote (ADR-049) does: its own
+// core.KeyorixCore issues and consumes setup tokens against ITS storage backend,
+// which happens to be this RemoteStorage. Before #510 every method here was a hard
+// stub, so CompleteSetup's very first step (inspectActiveSetupToken →
+// GetSetupTokenByHash) failed unconditionally under storage.type: remote for EVERY
+// setup-token purpose (account_setup, password_reset_link, invitation_accept), not
+// just invitations.
+//
+// These are thin passthroughs onto six new routes under
+// /api/v1/system/setup-tokens (server/http/handlers/setup_tokens_proxy.go),
+// following the EXACT #507 pattern (remote_invitations.go): gated on the same
+// broad system.read/system.write RBAC tier a RemoteStorage credential already
+// needs for every other proxied call — no new privilege class — and making NO
+// setup-token POLICY decision server-side (purpose validation, TTL, which
+// transitions are legal). That all stays in the CALLING server's own
+// internal/core.KeyorixCore (setup_token.go/setup_consume.go), exactly as it does
+// against a local backend.
+//
+// Critically, MarkSetupTokenConsumed proxies onto local_auth.go's OWN
+// `WHERE id = ? AND state = 'active'` conditional UPDATE — the single-use-consume
+// guarantee consumeInspectedToken (setup_token.go) depends on to reject a
+// concurrent replay. One HTTP round trip maps to one atomic server-side
+// conditional UPDATE, not a client-side "GET, check state, then mark" sequence,
+// which would reopen exactly that TOCTOU race.
+func (rs *RemoteStorage) CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/setup-tokens", newSetupTokenWire(t))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create setup token: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("create setup token failed: %s", resp.Error.Error())
+	}
+	return decodeSetupTokenResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) GetSetupTokenByHash(_ context.Context, _ string) (*models.SetupToken, error) {
-	return nil, errUnsupportedRemote
+// GetSetupTokenByHash is the consumption lookup (indexed equality on token_hash) via
+// GET /api/v1/system/setup-tokens/by-hash/{hash}. The hash is a SHA-256 hex digest,
+// never the raw plaintext token, and is path-escaped defensively like GetSession's
+// bearer token above.
+func (rs *RemoteStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error) {
+	path := fmt.Sprintf("/api/v1/system/setup-tokens/by-hash/%s", url.PathEscape(hash))
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get setup token: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get setup token failed: %s", resp.Error.Error())
+	}
+	return decodeSetupTokenResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) SupersedeActiveSetupTokens(_ context.Context, _, _ string) error {
-	return errUnsupportedRemote
+// SupersedeActiveSetupTokens flips every active token for (purpose, email) to
+// superseded via POST /api/v1/system/setup-tokens/supersede, preserving
+// local_auth.go's exact semantics: a reissue kills the prior link atomically.
+func (rs *RemoteStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error {
+	body := struct {
+		Purpose      string `json:"purpose"`
+		SubjectEmail string `json:"subject_email"`
+	}{Purpose: purpose, SubjectEmail: email}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/setup-tokens/supersede", body)
+	if err != nil {
+		return fmt.Errorf("failed to supersede setup tokens: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("supersede setup tokens failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) MarkSetupTokenConsumed(_ context.Context, _ uint, _ time.Time) (bool, error) {
-	return false, errUnsupportedRemote
+// MarkSetupTokenConsumed transitions active → consumed only if still active, via
+// POST /api/v1/system/setup-tokens/{id}/consume. See the package doc above: the
+// server performs the SAME conditional `WHERE id = ? AND state = 'active'` write
+// local_auth.go's MarkSetupTokenConsumed does and reports whether it actually
+// matched a row — the single round trip a concurrent-consume race resolves in.
+func (rs *RemoteStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/setup-tokens/%d/consume", id)
+	// UTC-normalized for the same reason newSetupTokenWire below normalizes
+	// CreatedAt/ExpiresAt: CountSetupTokensSince's own `since` parameter is
+	// always sent UTC-converted, and SQLite (LocalStorage's backend) compares
+	// these TIMESTAMP columns as plain TEXT, not real chronological values — a
+	// timestamp stored with the calling server's local offset (whatever
+	// core.KeyorixCore.now() happens to return there) would sort incorrectly
+	// against a UTC-formatted comparison threshold. Consistently normalizing
+	// every setup-token timestamp that crosses this wire to UTC keeps every
+	// column's stored representation directly comparable.
+	body := struct {
+		ConsumedAt time.Time `json:"consumed_at"`
+	}{ConsumedAt: consumedAt.UTC()}
+	resp, err := rs.client.Post(ctx, path, body)
+	if err != nil {
+		return false, fmt.Errorf("failed to consume setup token: %w", err)
+	}
+	if !resp.Success {
+		return false, fmt.Errorf("consume setup token failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Consumed bool `json:"consumed"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return false, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Consumed, nil
 }
 
-func (rs *RemoteStorage) MarkSetupTokenExpired(_ context.Context, _ uint) error {
-	return errUnsupportedRemote
+// MarkSetupTokenExpired transitions active → expired (lazy expiry on read) via
+// POST /api/v1/system/setup-tokens/{id}/expire.
+func (rs *RemoteStorage) MarkSetupTokenExpired(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/setup-tokens/%d/expire", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to expire setup token: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("expire setup token failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) CountSetupTokensSince(_ context.Context, _, _ string, _ time.Time) (int64, error) {
-	return 0, errUnsupportedRemote
+// CountSetupTokensSince counts tokens minted for (purpose, email) since a cutoff via
+// GET /api/v1/system/setup-tokens/count, backing resend throttling and the daily cap.
+func (rs *RemoteStorage) CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error) {
+	q := url.Values{}
+	q.Set("purpose", purpose)
+	q.Set("subject_email", email)
+	q.Set("since", since.UTC().Format(time.RFC3339Nano))
+	path := "/api/v1/system/setup-tokens/count?" + q.Encode()
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count setup tokens: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("count setup tokens failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Count int64 `json:"count"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Count, nil
+}
+
+// setupTokenWire mirrors models.SetupToken's fields exactly (snake_case), used for
+// both the create-request body and every response (create/get), for the same
+// reason invitationWire (remote_invitations.go) does: models.SetupToken is a GORM
+// model with no json tags of its own (besides TokenHash's `json:"-"`, which exists
+// to keep the hash out of any USER-facing response — irrelevant here, since this is
+// an internal system-to-system wire format gated on system.read/system.write, the
+// same tier that already round-trips full user/secret/invitation records).
+type setupTokenWire struct {
+	ID            uint       `json:"id"`
+	TokenHash     string     `json:"token_hash"`
+	Purpose       string     `json:"purpose"`
+	SubjectUserID *uint      `json:"subject_user_id"`
+	SubjectEmail  string     `json:"subject_email"`
+	InvitationID  *uint      `json:"invitation_id"`
+	State         string     `json:"state"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	CreatedBy     uint       `json:"created_by"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ConsumedAt    *time.Time `json:"consumed_at"`
+}
+
+// newSetupTokenWire builds the CreateSetupToken request body. Every timestamp is
+// UTC-normalized: CountSetupTokensSince's `since` query parameter is always sent
+// UTC-converted (see that method below), and the upstream's LocalStorage backend
+// (SQLite) compares these columns as plain TEXT, not real chronological values —
+// a CreatedAt/ExpiresAt persisted with the calling server's local offset (whatever
+// core.KeyorixCore.now() returns there) would sort incorrectly against a
+// UTC-formatted comparison threshold. Normalizing here keeps every setup-token
+// timestamp that crosses this wire directly, lexicographically comparable.
+func newSetupTokenWire(t *models.SetupToken) setupTokenWire {
+	var consumedAt *time.Time
+	if t.ConsumedAt != nil {
+		utc := t.ConsumedAt.UTC()
+		consumedAt = &utc
+	}
+	return setupTokenWire{
+		ID:            t.ID,
+		TokenHash:     t.TokenHash,
+		Purpose:       t.Purpose,
+		SubjectUserID: t.SubjectUserID,
+		SubjectEmail:  t.SubjectEmail,
+		InvitationID:  t.InvitationID,
+		State:         t.State,
+		ExpiresAt:     t.ExpiresAt.UTC(),
+		CreatedBy:     t.CreatedBy,
+		CreatedAt:     t.CreatedAt.UTC(),
+		ConsumedAt:    consumedAt,
+	}
+}
+
+func (w setupTokenWire) toModel() *models.SetupToken {
+	return &models.SetupToken{
+		ID:            w.ID,
+		TokenHash:     w.TokenHash,
+		Purpose:       w.Purpose,
+		SubjectUserID: w.SubjectUserID,
+		SubjectEmail:  w.SubjectEmail,
+		InvitationID:  w.InvitationID,
+		State:         w.State,
+		ExpiresAt:     w.ExpiresAt,
+		CreatedBy:     w.CreatedBy,
+		CreatedAt:     w.CreatedAt,
+		ConsumedAt:    w.ConsumedAt,
+	}
+}
+
+func decodeSetupTokenResponse(data []byte) (*models.SetupToken, error) {
+	var wire setupTokenWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
 }

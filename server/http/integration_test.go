@@ -75,6 +75,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
 		// CRUD through the real router.
 		&models.ProjectInvitation{},
+		// #510: the setup-token-proxy end-to-end tests exercise SetupToken CRUD
+		// through the real router.
+		&models.SetupToken{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
