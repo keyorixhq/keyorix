@@ -980,12 +980,18 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	// but it is gated on audit.read which system_viewer lacks, so it is correctly DENIED
 	// and not exempted here.) /sw.js is the SPA service-worker static asset, served by the
 	// web handler for any method; serving the file for DELETE/PUT/etc. changes no state,
-	// so it's not an API mutation. These are the only exemptions; any other mutating route
-	// MUST be denied.
+	// so it's not an API mutation. POST .../access-requests and .../access-requests/
+	// {requestId}/withdraw are deliberately self-service (router.go: CreateAccessRequest/
+	// WithdrawAccessRequest carry no permission gate by design — any authenticated project
+	// member may request access to a role, or withdraw their own pending request; only the
+	// approve/reject step, ResolveAccessRequest, is gated on roles.assign). These are the
+	// only exemptions; any other mutating route MUST be denied.
 	allowExact := map[string]bool{
 		"/system/init": true, "/health": true, "/metrics": true,
-		"/api/v1/projects/{id}/secrets/render": true,
-		"/sw.js":                               true, // static service-worker asset, not an API route
+		"/api/v1/projects/{id}/secrets/render":  true,
+		"/sw.js":                                true, // static service-worker asset, not an API route
+		"/api/v1/projects/{id}/access-requests": true, // self-service create
+		"/api/v1/projects/{id}/access-requests/{requestId}/withdraw": true, // self-service withdraw
 	}
 	allowPrefix := []string{"/auth/", "/api/v1/auth/", "/notifications", "/api/v1/notifications"}
 	allowed := func(route string) bool {
