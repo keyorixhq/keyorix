@@ -19,20 +19,34 @@ import (
 
 // --- Sessions ---
 
-// CreateSession creates a new session via remote API.
-func (rs *RemoteStorage) CreateSession(ctx context.Context, session *models.Session) (*models.Session, error) {
-	resp, err := rs.client.Post(ctx, "/api/v1/sessions", session)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("create session failed: %s", resp.Error.Error())
-	}
-	var result models.Session
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &result, nil
+// CreateSession deliberately has NO working remote implementation, and never
+// will: a generic "persist this session" wire primitive — accepting an
+// arbitrary UserID and minting a session for it — would be a confused-deputy /
+// privilege-escalation oracle. Anyone holding the RemoteStorage service
+// credential could mint a session for ANY user without ever proving that
+// user's actual credentials, which is exactly the risk #508 was filed to
+// avoid introducing. (It would also be silently broken in a different way:
+// models.Session.SessionToken is tagged `json:"-"` specifically so a raw
+// session can never cross the wire generically, so even a naive server route
+// accepting this payload would receive an always-empty token.)
+//
+// Session issuance under storage.type: remote instead happens ATOMICALLY with
+// credential verification, via VerifyLoginCredentials (remote_login_verify.go)
+// — the upstream's own core.Login mints the session as part of the SAME call
+// that proves the password correct, and returns its token directly. core.Login
+// (internal/core/auth.go) uses that pre-minted session and never calls
+// mintSession/CreateSession for a RemoteStorage-backed core.
+//
+// The two other mintSession call sites (MFA/WebAuthn login completion,
+// internal/core/mfa.go; setup-token consume auto-login,
+// internal/core/setup_consume.go) still reach this stub under
+// storage.type: remote — both remain separately, pre-existingly unsupported
+// there regardless of this function (MFA/WebAuthn: #509; setup tokens: #510),
+// so failing loudly here is a strict improvement over a doomed 404 round-trip
+// with no explanation.
+func (rs *RemoteStorage) CreateSession(_ context.Context, _ *models.Session) (*models.Session, error) {
+	return nil, fmt.Errorf("create session is not supported as a standalone remote storage operation " +
+		"(see #508) — sessions are minted atomically as part of login verification instead")
 }
 
 // GetSession retrieves a session by token via remote API.
