@@ -85,9 +85,9 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		c := newMachineCore(store)
 		ctx := context.Background()
 		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineActive}, nil)
-		store.On("UpdateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+		store.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			return m.State == MachineSuspended
-		})).Return(nil)
+		}), MachineActive).Return(true, nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
 		m, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineSuspended, 9)
@@ -100,9 +100,9 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		c := newMachineCore(store)
 		ctx := context.Background()
 		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineActive}, nil)
-		store.On("UpdateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+		store.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			return m.State == MachineRevoked && m.RevokedAt != nil
-		})).Return(nil)
+		}), MachineActive).Return(true, nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
 		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineRevoked, 9)
@@ -118,7 +118,7 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineActive, 9)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot transition")
-		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "TransitionMachineIdentityState", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	// Cross-project guard: a machine in project 2 must not be reachable when the
@@ -132,7 +132,7 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineSuspended, 9)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
-		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "TransitionMachineIdentityState", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	// #388: a concurrent revoke and reactivate racing off the same pre-transition
@@ -152,6 +152,27 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineActive, 9)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot transition")
-		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "TransitionMachineIdentityState", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	// #518: even after the row-lock read reports a legal from-state, a
+	// concurrent writer (only possible under storage.type: remote, where
+	// WithTransaction is a no-op and the "lock" is a plain read — see
+	// TransitionMachineIdentityState's interface doc) can still win the actual
+	// write race. TransitionMachineIdentityState reporting matched=false must be
+	// treated exactly like an illegal transition, not silently accepted.
+	t.Run("lost race on the conditional write is reported like an illegal transition", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newMachineCore(store)
+		ctx := context.Background()
+		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineActive}, nil)
+		store.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+			return m.State == MachineSuspended
+		}), MachineActive).Return(false, nil)
+
+		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineSuspended, 9)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot transition")
+		store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 	})
 }

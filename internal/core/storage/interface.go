@@ -272,6 +272,29 @@ type Storage interface {
 	// #388) that must not lose an update under concurrency.
 	LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
+	// TransitionMachineIdentityState persists m's full row via a single
+	// conditional write — "UPDATE ... WHERE id = ? AND state = ?" — succeeding
+	// only if the row's CURRENT persisted state still equals fromState (the
+	// value TransitionMachineIdentity observed via LockMachineIdentityForUpdate
+	// immediately before mutating m in memory), mirroring
+	// UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'` pattern
+	// (#412). Returns whether the write actually matched a row.
+	//
+	// This exists because RemoteStorage.WithTransaction is a no-op passthrough
+	// (remote_transaction.go: "there is no client-side transaction to open over
+	// HTTP") — so a generic two-call Lock-then-Update sequence run against
+	// RemoteStorage gets NONE of the atomicity LocalStorage provides via a real
+	// DB transaction + row lock (Postgres: SELECT ... FOR UPDATE), silently
+	// reopening the exact #388 race (a concurrent revoke and reactivate racing
+	// off the same pre-transition state could un-revoke a just-revoked machine
+	// identity) across the HTTP hop. Routing the actual write through this one
+	// conditional round trip instead of a separate proxied Update restores the
+	// same guarantee LocalStorage already has, without making any
+	// transition-legality decision here: the caller (core.TransitionMachineIdentity)
+	// still decides fromState/to via canTransitionMachine before calling this;
+	// a false match result must be treated exactly like an illegal transition,
+	// not retried or silently overwritten.
+	TransitionMachineIdentityState(ctx context.Context, m *models.MachineIdentity, fromState string) (bool, error)
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 	// ListAllMachineIdentities returns every machine identity across all projects —
 	// for install-wide sweeps such as SoD conflict detection over non-human principals.

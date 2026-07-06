@@ -909,6 +909,76 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
 			r.Get("/users/{id}/groups", groupHandler.GetUserGroupsProxy)
 
+			// Machine-identity storage-primitive proxy (finding #518). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateMachineIdentity/GetMachineIdentity/
+			// LockMachineIdentityForUpdate/UpdateMachineIdentity/ListMachineIdentities/
+			// ListAllMachineIdentities/CountMachineIdentitiesByClassification/
+			// CreateMachineIdentityCredential/GetMachineIdentityCredentialByHash/
+			// GetMachineIdentityCredentialByID/ListMachineIdentityCredentials/
+			// ListActiveMachineIdentityCredentials/UpdateMachineIdentityCredential/
+			// CountMachineIdentityCredentialsByClassification/
+			// RevokeMachineIdentityCredential/TouchMachineIdentityCredential/
+			// AssignMachineRole/RemoveMachineRole/GetMachineRoleIDsAt/GetMachineRoles/
+			// CreateOIDCBinding/GetMachineByOIDCSubject/ListOIDCBindings/
+			// GetOIDCBindingByID/DeleteOIDCBinding to THIS server's real storage
+			// backend, instead of every one of these methods unconditionally
+			// returning ErrRemoteUnsupported (machine-identity provisioning,
+			// machine-token issuance/validation, machine role grants, and
+			// Kubernetes/OIDC workload federation were entirely non-functional under
+			// storage.type: remote). Exactly the same pattern as the groups/
+			// dynamic-secrets proxies above: a thin passthrough onto storage.Storage
+			// (no machine-identity POLICY decision — state-machine transition
+			// legality, role-grant authorization, token issuance/hashing, OIDC
+			// federation policy — is made here; that stays entirely in the CALLING
+			// server's own internal/core.KeyorixCore, exactly as it does against a
+			// local backend), reusing the SAME system.read/system.write tier rather
+			// than the project-scoped roles.assign the human-facing
+			// /projects/{id}/machine-identities routes use — no new privilege class.
+			// Read is baseline system.read; every mutating operation requires
+			// system.write, matching every other admin-level mutation in this group.
+			//
+			// TransitionMachineIdentityState is a dedicated conditional-write route
+			// (NOT a generic Update), preserving #388's "revoked is terminal"
+			// row-lock guarantee across this HTTP hop — see
+			// machine_identities_proxy.go's package doc for the full atomicity
+			// investigation. CountStaleMachineIdentitiesByProject has no route here;
+			// it remains an intentional RemoteStorage stub (the #393 grouped
+			// hygiene-rollup query stays server-side, out of this finding's scope).
+			//
+			// Static sub-paths ("all", "classification-counts", "active", "by-hash/
+			// {hash}", "by-subject", and "roles/ids") are registered ahead of their
+			// sibling {id}/{roleId} routes, matching chi's static-before-dynamic
+			// preference at the same path position (the same ordering the
+			// dynamic-secrets/groups proxies above already rely on).
+			r.Get("/machine-identities/classification-counts", catalogHandler.CountMachineIdentitiesByClassificationProxy)
+			r.Get("/machine-identities/all", catalogHandler.ListAllMachineIdentitiesProxy)
+			r.Get("/machine-identities", catalogHandler.ListMachineIdentitiesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-identities", catalogHandler.CreateMachineIdentityProxy)
+			r.Get("/machine-identities/{id}", catalogHandler.GetMachineIdentityProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-identities/{id}", catalogHandler.UpdateMachineIdentityProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-identities/{id}/transition", catalogHandler.TransitionMachineIdentityStateProxy)
+			r.Get("/machine-identities/{id}/credentials", catalogHandler.ListMachineIdentityCredentialsProxy)
+			r.Get("/machine-identities/{id}/roles/ids", catalogHandler.GetMachineRoleIDsAtProxy)
+			r.Get("/machine-identities/{id}/roles", catalogHandler.GetMachineRolesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-identities/{id}/roles/{roleId}", catalogHandler.AssignMachineRoleProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/machine-identities/{id}/roles/{roleId}", catalogHandler.RemoveMachineRoleProxy)
+			r.Get("/machine-identities/{id}/oidc-bindings", catalogHandler.ListOIDCBindingsProxy)
+
+			r.Get("/machine-credentials/classification-counts", catalogHandler.CountMachineIdentityCredentialsByClassificationProxy)
+			r.Get("/machine-credentials/active", catalogHandler.ListActiveMachineIdentityCredentialsProxy)
+			r.Get("/machine-credentials/by-hash/{hash}", catalogHandler.GetMachineIdentityCredentialByHashProxy)
+			r.Get("/machine-credentials/{id}", catalogHandler.GetMachineIdentityCredentialByIDProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials", catalogHandler.CreateMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-credentials/{id}", catalogHandler.UpdateMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials/{id}/revoke", catalogHandler.RevokeMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials/{id}/touch", catalogHandler.TouchMachineIdentityCredentialProxy)
+
+			r.Get("/machine-oidc-bindings/by-subject", catalogHandler.GetMachineByOIDCSubjectProxy)
+			r.Get("/machine-oidc-bindings/{id}", catalogHandler.GetOIDCBindingByIDProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-oidc-bindings", catalogHandler.CreateOIDCBindingProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/machine-oidc-bindings/{id}", catalogHandler.DeleteOIDCBindingProxy)
+
 			// Setup-token storage-primitive proxy (#510). Lets a downstream Keyorix
 			// server booted with storage.type: remote (ADR-049) proxy
 			// CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/

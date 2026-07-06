@@ -54,6 +54,24 @@ func (ls *LocalStorage) UpdateMachineIdentity(ctx context.Context, m *models.Mac
 	return nil
 }
 
+// TransitionMachineIdentityState persists m's full row via a conditional UPDATE
+// gated on the row's CURRENT state still being fromState (#388, see the
+// interface doc in internal/core/storage/interface.go for why this exists
+// alongside — not instead of — LockMachineIdentityForUpdate). Mirrors
+// UpdateProjectInvitation's `WHERE id = ? AND state = ?` + `Select("*")` shape
+// exactly, so every field the caller mutated on m (State, UpdatedAt, RevokedAt,
+// ...) is persisted in the same statement, not just a hardcoded column subset.
+func (ls *LocalStorage) TransitionMachineIdentityState(ctx context.Context, m *models.MachineIdentity, fromState string) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.MachineIdentity{}).
+		Where("id = ? AND state = ?", m.ID, fromState).
+		Select("*").
+		Updates(m)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 func (ls *LocalStorage) ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error) {
 	var rows []*models.MachineIdentity
 	err := ls.db.WithContext(ctx).
