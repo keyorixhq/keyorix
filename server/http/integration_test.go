@@ -94,6 +94,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.MFASecret{},
 		&models.MFARecoveryCode{},
 		&models.MFAChallenge{},
+		// finding #519: the legal-hold-proxy end-to-end tests exercise LegalHold
+		// CRUD through the real router.
+		&models.LegalHold{},
 		// #519: the access-review-campaign-proxy end-to-end tests exercise
 		// AccessReviewCampaign/AccessReviewItem CRUD through the real router.
 		&models.AccessReviewCampaign{},
@@ -118,6 +121,12 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 	// isUniqueViolation branch depends on.
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
 		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error)
+	// Mirror internal/storage/factory.go's ensureLegalHoldActiveIndex exactly: without
+	// this partial unique index, the legal-hold-proxy test exercising the
+	// "already active" rejection path would silently miss the real DB-level guard
+	// CreateLegalHold's isUniqueConstraintErr branch depends on.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active "+
+		"ON legal_holds (released) WHERE released = false").Error)
 	// Mirror internal/storage/factory.go's ensureBreakGlassActiveIndex exactly (the
 	// same production migration path TestCreateBreakGlassActivation_
 	// ConcurrentRaceYieldsExactlyOneWinner relies on,
