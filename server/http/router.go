@@ -961,6 +961,30 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
+
+			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateLegalHold/GetActiveLegalHold/UpdateLegalHold to THIS server's real
+			// storage backend, instead of RemoteStorage's three legal-hold methods
+			// having no server endpoint to call at all (core.PlaceLegalHold/
+			// LiftLegalHold/IsLegalHoldActive — and therefore every purge/prune
+			// scheduler's legalHoldGuard check — were completely non-functional under
+			// storage.type: remote; the schedulers fail SAFE on that error, so the
+			// practical effect was "purges never run" rather than silent data loss,
+			// but the legal-hold control itself did not work). Exactly the same
+			// pattern as the project-membership proxy above: a thin passthrough onto
+			// storage.Storage (no legal-hold POLICY decision — the admin-tier
+			// placement gate, the placer-or-admin-tier lift gate, the required-reason
+			// validation, the audit events — is made here; that stays entirely in the
+			// CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the SAME system.read/system.write
+			// tier — no new privilege class. There is no competing GET "{id}" route
+			// at this depth (unlike groups/project-memberships, this subsystem has
+			// only ever one active row, looked up by "active" rather than by ID), so
+			// route registration order here is purely cosmetic.
+			r.Get("/legal-hold/active", dashboardHandler.GetActiveLegalHoldProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.CreateLegalHoldProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/legal-hold/{id}", dashboardHandler.UpdateLegalHoldProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
