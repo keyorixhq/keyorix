@@ -78,6 +78,12 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #510: the setup-token-proxy end-to-end tests exercise SetupToken CRUD
 		// through the real router.
 		&models.SetupToken{},
+		// #509: the MFA-login-proxy end-to-end tests exercise TOTP enrolment,
+		// challenge issuance, and second-factor verification through the real
+		// router.
+		&models.MFASecret{},
+		&models.MFARecoveryCode{},
+		&models.MFAChallenge{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))

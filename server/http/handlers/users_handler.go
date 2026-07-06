@@ -321,6 +321,24 @@ func VerifyCredentials(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.VerifyCredentials(w, r)
 }
 
+// VerifyMFACredentials handles POST /api/v1/users/verify-mfa (#509).
+func VerifyMFACredentials(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.VerifyMFACredentials(w, r)
+}
+
+// IssueMFAChallenge handles POST /api/v1/users/{id}/mfa-challenge (#509).
+func IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.IssueMFAChallenge(w, r)
+}
+
 // UpdateUser handles PUT /api/v1/users/{id}
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
