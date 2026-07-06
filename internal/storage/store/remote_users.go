@@ -4,11 +4,35 @@
 // GetUserByExternalID, UpdateUser,
 //
 //	DeleteUser, RestoreUser, ListUsers, GetUserGroups,
-//	CreateGroup, GetGroup, UpdateGroup, DeleteGroup, ListGroups,
-//	AddUserToGroup, RemoveUserFromGroup, ListGroupMembers.
+//	CreateGroup, GetGroup, UpdateGroup, DeleteGroup, RestoreGroup, ListGroups,
+//	ListGroupsPage, AddUserToGroup, RemoveUserFromGroup, ListGroupMembers,
+//	ListGroupMembersByGroupIDs.
 //
-// Group methods (CreateGroup … ListGroupMembers) are stubs — not yet implemented
-// on the remote API. For the local (GORM) equivalent see local_users.go.
+// Group methods proxy onto NEW server-side routes under /api/v1/system/groups
+// and /api/v1/system/users/{id}/groups (server/http/handlers/groups_proxy.go),
+// mirroring the #452/#507 "RemoteStorage stub -> thin proxy route" pattern
+// established for login-attempts and project invitations: gated on the SAME
+// system.read/system.write RBAC tier every other RemoteStorage call already
+// needs (no new privilege class).
+//
+// These deliberately do NOT reuse the existing human-facing /api/v1/groups
+// routes (server/http/handlers/groups_handler.go, groups_members.go): those run
+// through the CALLING server's own core.KeyorixCore (validation, audit-log
+// events, and escalation-by-proxy ceilings — guardLastGlobalAdminGroupDelete,
+// guardLastGlobalAdminMembership, requireGlobalAdminToReinstateAdminRoles,
+// requireAuthorityForRole; internal/core/groups.go). A RemoteStorage-backed
+// core.KeyorixCore already evaluates all of that itself, client-side, before
+// ever calling down into this storage layer (exactly as it does against
+// LocalStorage) — proxying onto the business-logic routes would run that SAME
+// policy a second time on the upstream server, double-logging every mutation
+// and, worse, re-evaluating the admin-ceiling checks against the UPSTREAM
+// caller's own actor context (the RemoteStorage credential), not the original
+// actor who is already fully vetted by the client's own core layer. The new
+// routes below are raw passthroughs onto storage.Storage's own Group
+// primitives instead — the same semantics local_users.go's LocalStorage
+// implements — so this client's own core.KeyorixCore validation/audit/
+// escalation logic remains the ONLY policy evaluation, identical to a local
+// backend. For the local (GORM) equivalent see local_users.go.
 package store
 
 import (
@@ -17,6 +41,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -448,62 +474,301 @@ func buildUserFilterPath(filter *storage.UserFilter) string {
 	return "/api/v1/users" + params.String()
 }
 
-// GetUserGroups returns all groups a user belongs to.
-// Returns an empty slice — group membership resolution is not yet implemented remotely.
-func (rs *RemoteStorage) GetUserGroups(_ context.Context, _ uint) ([]*models.Group, error) {
-	return []*models.Group{}, nil
+// --- Group wire DTOs ---
+//
+// models.Group carries no json tags of its own (the same #496 class of gap as
+// models.User/models.ProjectInvitation), so a direct marshal would send Go
+// field names verbatim ("Name" and "Description" happen to survive the
+// case-insensitive decode fallback since they are single words, but
+// CreatedAt/UpdatedAt/DeletedAt would collide with server/http/handlers'
+// snake_case wire shape). Named explicitly instead, matching every other
+// RemoteStorage wire DTO in this codebase.
+type groupWire struct {
+	ID          uint       `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
-// --- Groups (stubs — not yet implemented on remote API) ---
-
-func (rs *RemoteStorage) CreateGroup(_ context.Context, _ *models.Group) (*models.Group, error) {
-	return nil, remoteUnsupported("CreateGroup")
+func newGroupWire(g *models.Group) groupWire {
+	w := groupWire{
+		ID:          g.ID,
+		Name:        g.Name,
+		Description: g.Description,
+		CreatedAt:   g.CreatedAt,
+		UpdatedAt:   g.UpdatedAt,
+	}
+	if g.DeletedAt.Valid {
+		t := g.DeletedAt.Time
+		w.DeletedAt = &t
+	}
+	return w
 }
 
-func (rs *RemoteStorage) GetGroup(_ context.Context, _ uint) (*models.Group, error) {
-	return nil, remoteUnsupported("GetGroup")
+func (w groupWire) toModel() *models.Group {
+	g := &models.Group{
+		ID:          w.ID,
+		Name:        w.Name,
+		Description: w.Description,
+		CreatedAt:   w.CreatedAt,
+		UpdatedAt:   w.UpdatedAt,
+	}
+	if w.DeletedAt != nil {
+		g.DeletedAt = gorm.DeletedAt{Time: *w.DeletedAt, Valid: true}
+	}
+	return g
 }
 
-func (rs *RemoteStorage) UpdateGroup(_ context.Context, _ *models.Group) (*models.Group, error) {
-	return nil, remoteUnsupported("UpdateGroup")
+func decodeGroupResponse(data []byte) (*models.Group, error) {
+	var wire groupWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
 }
 
-func (rs *RemoteStorage) DeleteGroup(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteGroup")
+// GetUserGroups returns all groups a user belongs to via GET
+// /api/v1/system/users/{id}/groups.
+//
+// Before this fix this unconditionally returned an empty slice instead of an
+// error — a "silent data loss" shape of bug, not a loud failure: every caller
+// (internal/core/permissions.go's effective-permission resolution,
+// internal/core/sso.go's group-membership sync, internal/core/
+// access_review_campaign.go) silently saw "this user belongs to zero groups"
+// under storage.type: remote, regardless of the upstream's real membership
+// data — under-granting every group-inherited role/permission with no error
+// surfaced anywhere, rather than the server genuinely having no groups
+// subsystem at all.
+func (rs *RemoteStorage) GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error) {
+	path := fmt.Sprintf("/api/v1/system/users/%d/groups", userID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user groups: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get user groups failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Groups []groupWire `json:"groups"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	groups := make([]*models.Group, 0, len(result.Groups))
+	for _, w := range result.Groups {
+		groups = append(groups, w.toModel())
+	}
+	return groups, nil
 }
 
-func (rs *RemoteStorage) RestoreGroup(_ context.Context, _ uint) error {
-	return remoteUnsupported("RestoreGroup")
+// --- Groups ---
+
+// CreateGroup creates a new group via POST /api/v1/system/groups — a raw
+// persist onto storage.Storage.CreateGroup, not the human-facing POST
+// /api/v1/groups (see the package doc for why).
+func (rs *RemoteStorage) CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/groups", newGroupWire(group))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create group: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("create group failed: %s", resp.Error.Error())
+	}
+	return decodeGroupResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) ListGroups(_ context.Context) ([]*models.Group, error) {
-	return nil, remoteUnsupported("ListGroups")
+// GetGroup retrieves a group by ID via GET /api/v1/system/groups/{id}.
+func (rs *RemoteStorage) GetGroup(ctx context.Context, id uint) (*models.Group, error) {
+	path := fmt.Sprintf("/api/v1/system/groups/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get group failed: %s", resp.Error.Error())
+	}
+	return decodeGroupResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) ListGroupsPage(_ context.Context, _, _ int) ([]*models.Group, int64, error) {
-	return nil, 0, remoteUnsupported("ListGroupsPage")
+// UpdateGroup updates an existing group via PUT /api/v1/system/groups/{id}.
+func (rs *RemoteStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	path := fmt.Sprintf("/api/v1/system/groups/%d", group.ID)
+	resp, err := rs.client.Put(ctx, path, newGroupWire(group))
+	if err != nil {
+		return nil, fmt.Errorf("failed to update group: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("update group failed: %s", resp.Error.Error())
+	}
+	return decodeGroupResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) AddUserToGroup(_ context.Context, _, _ uint) error {
-	return remoteUnsupported("AddUserToGroup")
+// DeleteGroup soft-deletes a group via DELETE /api/v1/system/groups/{id}.
+func (rs *RemoteStorage) DeleteGroup(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/groups/%d", id)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete group: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete group failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) RemoveUserFromGroup(_ context.Context, _, _ uint) error {
-	return remoteUnsupported("RemoveUserFromGroup")
+// RestoreGroup reverses a soft-delete via POST /api/v1/system/groups/{id}/restore.
+func (rs *RemoteStorage) RestoreGroup(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/groups/%d/restore", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to restore group: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("restore group failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) ListGroupMembers(_ context.Context, _ uint) ([]*models.User, error) {
-	return nil, remoteUnsupported("ListGroupMembers")
+// ListGroups lists every group via GET /api/v1/system/groups.
+func (rs *RemoteStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/system/groups")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list groups failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Groups []groupWire `json:"groups"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	groups := make([]*models.Group, 0, len(result.Groups))
+	for _, w := range result.Groups {
+		groups = append(groups, w.toModel())
+	}
+	return groups, nil
 }
 
-// ListGroupMembersByGroupIDs is the batch form of ListGroupMembers, which is itself
-// unsupported in remote mode — so is this, for the same reason (group membership is
-// server-side only). Matches ListGroupMembers' existing per-group unsupported error:
-// a caller (the rotation planner's risk-scoring batch, #409) already degrades a
-// secret's exposure factor to the worst case on this error, exactly as it already
-// does today when a group share's ListGroupMembers call fails in remote mode.
-func (rs *RemoteStorage) ListGroupMembersByGroupIDs(_ context.Context, _ []uint) (map[uint][]*models.User, error) {
-	return nil, remoteUnsupported("ListGroupMembersByGroupIDs")
+// ListGroupsPage returns one name-ordered page of groups and the total count
+// via GET /api/v1/system/groups/page?offset=&limit=.
+func (rs *RemoteStorage) ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error) {
+	path := fmt.Sprintf("/api/v1/system/groups/page?offset=%d&limit=%d", offset, pageSize)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list groups page: %w", err)
+	}
+	if !resp.Success {
+		return nil, 0, fmt.Errorf("list groups page failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Groups []groupWire `json:"groups"`
+		Total  int64       `json:"total"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	groups := make([]*models.Group, 0, len(result.Groups))
+	for _, w := range result.Groups {
+		groups = append(groups, w.toModel())
+	}
+	return groups, result.Total, nil
+}
+
+// AddUserToGroup adds userID to groupID via POST /api/v1/system/groups/{id}/members.
+func (rs *RemoteStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+	path := fmt.Sprintf("/api/v1/system/groups/%d/members", groupID)
+	body := struct {
+		UserID uint `json:"user_id"`
+	}{UserID: userID}
+	resp, err := rs.client.Post(ctx, path, body)
+	if err != nil {
+		return fmt.Errorf("failed to add user to group: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("add user to group failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// RemoveUserFromGroup removes userID from groupID via DELETE
+// /api/v1/system/groups/{id}/members/{userId}.
+func (rs *RemoteStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
+	path := fmt.Sprintf("/api/v1/system/groups/%d/members/%d", groupID, userID)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to remove user from group: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("remove user from group failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// ListGroupMembers lists a group's members via GET
+// /api/v1/system/groups/{id}/members.
+func (rs *RemoteStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {
+	path := fmt.Sprintf("/api/v1/system/groups/%d/members", groupID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group members: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list group members failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Members []userWireResponse `json:"members"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	users := make([]*models.User, 0, len(result.Members))
+	for _, w := range result.Members {
+		users = append(users, w.toModel())
+	}
+	return users, nil
+}
+
+// ListGroupMembersByGroupIDs is the batch form of ListGroupMembers via GET
+// /api/v1/system/groups/members-by-ids?ids=1,2,3 — one HTTP round trip for
+// every group ID, matching LocalStorage's single-query batch behavior (used by
+// the rotation planner's risk-scoring batch, #409).
+func (rs *RemoteStorage) ListGroupMembersByGroupIDs(ctx context.Context, groupIDs []uint) (map[uint][]*models.User, error) {
+	out := make(map[uint][]*models.User, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	ids := make([]string, 0, len(groupIDs))
+	for _, id := range groupIDs {
+		ids = append(ids, strconv.FormatUint(uint64(id), 10))
+	}
+	path := "/api/v1/system/groups/members-by-ids?ids=" + url.QueryEscape(strings.Join(ids, ","))
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group members by IDs: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list group members by IDs failed: %s", resp.Error.Error())
+	}
+	var result map[string][]userWireResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	for key, members := range result {
+		groupID, err := strconv.ParseUint(key, 10, 32)
+		if err != nil {
+			continue
+		}
+		users := make([]*models.User, 0, len(members))
+		for _, w := range members {
+			users = append(users, w.toModel())
+		}
+		out[uint(groupID)] = users
+	}
+	return out, nil
 }
 
 // --- Password history (ADR-025) ---

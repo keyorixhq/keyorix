@@ -871,6 +871,44 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/dynamic-secrets/leases", dynamicSecretHandler.CreateDynamicSecretLeaseProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.UpdateDynamicSecretLeaseProxy)
 
+			// Group CRUD/membership storage-primitive proxy (finding filed round 116).
+			// Lets a downstream Keyorix server booted with storage.type: remote
+			// (ADR-049) proxy CreateGroup/GetGroup/UpdateGroup/DeleteGroup/
+			// RestoreGroup/ListGroups/ListGroupsPage/AddUserToGroup/
+			// RemoveUserFromGroup/ListGroupMembers/ListGroupMembersByGroupIDs/
+			// GetUserGroups to THIS server's real storage backend, instead of
+			// RemoteStorage's Group methods having no server endpoint to call at all
+			// (every group-management CLI/API flow, and every group-inherited
+			// permission/role check, was completely non-functional — or, for
+			// GetUserGroups, silently returning "zero groups" rather than erroring —
+			// under storage.type: remote). Exactly the same pattern as the
+			// login-attempts and invitations proxies above: a thin passthrough onto
+			// storage.Storage (no group POLICY decision — name/description
+			// validation, audit-log events, the escalation-by-proxy admin ceilings —
+			// is made here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local backend),
+			// reusing the SAME system.read/system.write tier rather than the
+			// users.write/roles.assign the human-facing /groups routes use, since a
+			// RemoteStorage credential already needs system.write for the two proxies
+			// above — no new privilege class. Read is baseline system.read;
+			// create/update/delete/restore/membership-mutation require system.write,
+			// matching every other admin-level mutation in this group. The static
+			// "/page" and "/members-by-ids" routes are registered ahead of "/{id}" so
+			// chi's router (which prefers a static path segment over a wildcard at the
+			// same position) never mistakes either literal segment for a group ID.
+			r.Get("/groups/page", groupHandler.ListGroupsPageProxy)
+			r.Get("/groups/members-by-ids", groupHandler.ListGroupMembersByIDsProxy)
+			r.Get("/groups", groupHandler.ListGroupsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/groups", groupHandler.CreateGroupProxy)
+			r.Get("/groups/{id}", groupHandler.GetGroupProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/groups/{id}", groupHandler.UpdateGroupProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/groups/{id}", groupHandler.DeleteGroupProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/groups/{id}/restore", groupHandler.RestoreGroupProxy)
+			r.Get("/groups/{id}/members", groupHandler.ListGroupMembersProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/groups/{id}/members", groupHandler.AddGroupMemberProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
+			r.Get("/users/{id}/groups", groupHandler.GetUserGroupsProxy)
+
 			// Setup-token storage-primitive proxy (#510). Lets a downstream Keyorix
 			// server booted with storage.type: remote (ADR-049) proxy
 			// CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/
