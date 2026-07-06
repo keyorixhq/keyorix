@@ -97,6 +97,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #519: the risk-exception-proxy end-to-end tests exercise RiskException
 		// CRUD through the real router.
 		&models.RiskException{},
+		// finding #519: the SoD-policy-proxy end-to-end tests exercise SoDPolicy
+		// CRUD through the real router.
+		&models.SoDPolicy{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
