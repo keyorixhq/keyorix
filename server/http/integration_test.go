@@ -75,6 +75,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
 		// CRUD through the real router.
 		&models.ProjectInvitation{},
+		// #510: the setup-token-proxy end-to-end tests exercise SetupToken CRUD
+		// through the real router.
+		&models.SetupToken{},
 		// #511: the project-membership-proxy end-to-end tests exercise
 		// ProjectMembership CRUD through the real router.
 		&models.ProjectMembership{},
