@@ -594,6 +594,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// new capability at that permission level. Static paths, before /{id}.
 			r.Get("/by-username", handlers.GetUserByUsername)
 			r.Get("/by-external-id", handlers.GetUserByExternalID)
+			// VerifyCredentials (#506) — the upstream half of the storage.type: remote
+			// proxy-login mechanism (internal/core/auth.go's RemoteLoginVerifier):
+			// checks a plaintext username/password against the real bcrypt hash this
+			// server holds and returns only a verdict, never the hash, so a
+			// RemoteStorage-backed "spoke" deployment (which never receives the hash
+			// at all) can authenticate a password login by proxying the ENTIRE check
+			// here rather than reimplementing it. Gated by users.write, the same
+			// permission the RemoteStorage service credential already needs for
+			// CreateUser/UnlockUser — see the handler's doc for why this is
+			// deliberately not a new, separately-provisioned permission. Static path,
+			// before /{id}.
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/verify-credentials", handlers.VerifyCredentials)
 			r.Get("/{id}", handlers.GetUser)
 			// Mutations need users.write, not the group-wide users.read (which the
 			// read-only system_auditor persona holds) — these were the missed

@@ -43,14 +43,66 @@ type LoginRequest struct {
 // used as a username-existence oracle. Computed once at package load.
 var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("keyorix-login-timing-equalizer"), bcrypt.DefaultCost)
 
-// Login validates credentials, creates a session, and returns (session, user, error).
-func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
-	user, err := c.storage.GetUserByUsername(ctx, req.Username)
+// RemoteLoginVerifier is implemented by storage backends that cannot themselves
+// supply a real password hash for VerifyPasswordCredentials to compare against
+// (#506): models.User.PasswordHash is deliberately `json:"-"` and NEVER crosses
+// the wire, so RemoteStorage's GetUserByUsername always comes back with an
+// empty hash, and a bcrypt compare against it would fail unconditionally — every
+// password login was permanently broken under storage.type: remote before this.
+//
+// The fix is a proxy-login channel: the upstream server (the one actually
+// backed by LocalStorage, which HAS the real hash) performs the credential
+// check itself and returns only a verdict, never the hash. RemoteStorage
+// implements this interface by forwarding to a new POST
+// /api/v1/users/verify-credentials endpoint, whose handler calls the
+// UPSTREAM's own VerifyPasswordCredentials — the SAME function the direct
+// LocalStorage path uses, not a parallel reimplementation of the bcrypt
+// compare. Critically, this means the ENTIRE check is delegated — password
+// compare AND the per-account lockout gate/accounting AND the account-active/
+// account-state checks — not just a bare boolean. Splitting the lockout
+// accounting out and leaving it client-side would be a silent regression:
+// login_lockout.go's UpdateLoginLockoutState is a permanent, unconditional
+// stub under RemoteStorage (#454 — the wire format has no columns for it), so
+// a client-side-only lockout gate can never actually persist a trip and would
+// leave storage.type: remote with NO per-account brute-force backstop at all
+// (only the separate, coarser per-IP rate limiter, #452). Proxying the whole
+// check to the upstream's real, LocalStorage-persisted accounting is the only
+// way this deployment shape can enforce it.
+//
+// core.VerifyPasswordCredentials type-asserts c.storage against this interface
+// and, when present, delegates entirely to it instead of running its own
+// bcrypt.CompareHashAndPassword (which would always fail: it would be
+// comparing against an intentionally-absent hash).
+type RemoteLoginVerifier interface {
+	VerifyLoginCredentials(ctx context.Context, username, password string) (*models.User, error)
+}
+
+// VerifyPasswordCredentials resolves "is this username/password combination
+// valid", enforcing the per-account lockout gate and the account-active/
+// account-state checks Login has always required — extracted out of Login
+// (#506) as the single source of truth so it can ALSO be called directly by
+// the server-side handler for POST /api/v1/users/verify-credentials, the
+// upstream half of the RemoteLoginVerifier proxy-login mechanism (see its doc
+// above). This keeps both the direct LocalStorage login path and the proxied
+// storage.type: remote path running through IDENTICAL bcrypt/lockout/account-
+// state logic — never two, potentially-diverging implementations of the same
+// security check.
+//
+// On success the returned user's MFAEnabled/WebAuthnEnabled/ID/Username/Email/
+// DisplayName fields are populated (Login uses them to decide the MFA-required
+// gate and to mint/describe the session); other fields may be zero-valued when
+// this ran via the remote proxy (see verifyCredentialsWireResponse in
+// internal/storage/store), since nothing past this point needs them.
+func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, password string) (*models.User, error) {
+	if verifier, ok := c.storage.(RemoteLoginVerifier); ok {
+		return verifier.VerifyLoginCredentials(ctx, username, password)
+	}
+	user, err := c.storage.GetUserByUsername(ctx, username)
 	if err != nil {
 		// Spend an equivalent bcrypt comparison so a missing username doesn't return
 		// faster than a wrong password (account-enumeration timing side-channel).
-		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
-		return nil, nil, fmt.Errorf("invalid credentials")
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(password))
+		return nil, fmt.Errorf("invalid credentials")
 	}
 	// Per-account lockout gate: while locked, refuse regardless of the password, so
 	// repeated guessing can't progress. Spend an equivalent bcrypt comparison first so the
@@ -58,12 +110,12 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// fast (no-bcrypt) response on a locked account is a username-existence oracle (the
 	// attacker first forces the lockout, then probes by timing).
 	if c.loginLocked(user) {
-		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
-		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(password))
+		return nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		c.recordFailedLogin(ctx, user) // increment + lock at the threshold
-		return nil, nil, fmt.Errorf("invalid credentials")
+		return nil, fmt.Errorf("invalid credentials")
 	}
 	// Correct password — but a concurrent burst of failed attempts against this
 	// account may have tripped the lock between the snapshot read at the top of
@@ -72,7 +124,7 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// row lock) before minting a session, and only then clear any accumulated
 	// failure state — never trust the stale pre-bcrypt snapshot alone.
 	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// A deactivated account (IsActive=false — e.g. admin deactivation via UpdateUser,
 	// or a SCIM/IdP deactivation) is refused login regardless of account_state. The
@@ -80,13 +132,22 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	// still knew their password could authenticate; it also lets SCIM deactivation
 	// preserve a restricted account_state (forced reset) while still blocking login.
 	if !user.IsActive {
-		return nil, nil, fmt.Errorf("account is not active")
+		return nil, fmt.Errorf("account is not active")
 	}
 	// A suspended account is refused login outright (ADR-025). Restricted states
 	// (pending_first_login / password_reset_required) still log in, but the auth
 	// middleware confines the session to the password-change allowlist.
 	if AccountLoginBlocked(user.AccountState) {
-		return nil, nil, fmt.Errorf("account suspended")
+		return nil, fmt.Errorf("account suspended")
+	}
+	return user, nil
+}
+
+// Login validates credentials, creates a session, and returns (session, user, error).
+func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
+	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
+	if err != nil {
+		return nil, nil, err
 	}
 	// Accounts with any second factor (TOTP or a passkey) get no session from the
 	// password step — the caller must complete it (CreateMFAChallenge →

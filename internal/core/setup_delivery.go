@@ -28,6 +28,17 @@ import (
 // rather than a generic 500 — letting an admin fix the config.
 var ErrSetupBaseURLRequired = errors.New("credential_delivery.base_url is required to issue a setup link")
 
+// auditCredentialDisplayedOutOfBand records that a human saw a credential
+// out-of-band (ADR-028's one audited "a human saw this" checkpoint). Deliberately
+// takes ONLY the non-sensitive fields the description needs (subject email, actor,
+// artifact type label) — never the credential/password value itself — so the
+// actual secret is never even in scope in the function that builds the audit
+// description, not merely unreferenced by convention.
+func (c *KeyorixCore) auditCredentialDisplayedOutOfBand(ctx context.Context, actor *uint, subjectEmail, artifact string) {
+	c.writeAuditEventFull(ctx, "credential.displayed_out_of_band", actor, nil, nil, "",
+		fmt.Sprintf("credential shown out-of-band to admin (subject=%s, artifact=%s)", subjectEmail, artifact))
+}
+
 // Resend throttling (ADR-028 abuse section): a minimum interval between issues for
 // the same subject, and a daily cap, both per (purpose, email).
 const (
@@ -126,8 +137,7 @@ func (c *KeyorixCore) deliverSetupLink(ctx context.Context, issued *IssueSetupTo
 	// When the link is shown to the admin out of band, record that a human saw a
 	// credential — the one path the ADR singles out for compliance.
 	if result.LinkForAdmin != "" {
-		c.writeAuditEventFull(ctx, "credential.displayed_out_of_band", actor, nil, nil, "",
-			fmt.Sprintf("setup link shown out-of-band to admin (subject=%s, artifact=link)", req.SubjectEmail))
+		c.auditCredentialDisplayedOutOfBand(ctx, actor, req.SubjectEmail, "link")
 	}
 
 	return &ProvisionSetupResult{
@@ -211,10 +221,13 @@ func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *Cr
 	}
 
 	// Record that a human saw a credential — the one path the ADR singles out for
-	// compliance (artifact=one_time_password, vs the setup-link artifact).
+	// compliance (artifact=one_time_password, vs the setup-link artifact). Uses
+	// req.Email (the original request parameter, never touched by the
+	// otp-carrying reqCopy/CreateUser call above) rather than user.Email, so the
+	// audit description's only input never shares a struct/call with the actual
+	// generated password.
 	actor := actorOrSubject(createdBy, &user.ID)
-	c.writeAuditEventFull(ctx, "credential.displayed_out_of_band", actor, nil, nil, "",
-		fmt.Sprintf("one-time password shown out-of-band to admin (subject=%s, artifact=one_time_password)", user.Email))
+	c.auditCredentialDisplayedOutOfBand(ctx, actor, req.Email, "one_time_password")
 
 	return user, &OneTimePasswordResult{Email: user.Email, OneTimePassword: otp}, nil
 }

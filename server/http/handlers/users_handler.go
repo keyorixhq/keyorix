@@ -312,6 +312,15 @@ func GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.GetUserByExternalID(w, r)
 }
 
+// VerifyCredentials handles POST /api/v1/users/verify-credentials (#506).
+func VerifyCredentials(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.VerifyCredentials(w, r)
+}
+
 // UpdateUser handles PUT /api/v1/users/{id}
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
