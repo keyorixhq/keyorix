@@ -716,6 +716,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission("roles.read"))
 			r.Get("/", rbacHandler.ListRoles)
 			r.With(customMiddleware.RequirePermission("roles.write")).Post("/", rbacHandler.CreateRole)
+			// By-name lookup, scoped by the group-wide roles.read gate above — the
+			// server-side counterpart RemoteStorage.GetRoleByName (#512) needs, for a
+			// caller (e.g. InviteToProject resolving an invited role by name) with
+			// only a role's name, not its numeric ID. Deliberately the SAME gate as
+			// GetRole-by-id (not a stricter one): roles.read already lets a caller
+			// enumerate every role (including name) via GET /roles with no filter,
+			// so this route grants no new capability at that permission level.
+			// Static path, before /{id} — mirrors GetUserByEmail (#503) /
+			// GetSecretByName (#497)'s query-param "by-X" convention.
+			r.Get("/by-name", rbacHandler.GetRoleByName)
 			r.Get("/{id}", rbacHandler.GetRole)
 			r.With(customMiddleware.RequirePermission("roles.write")).Put("/{id}", rbacHandler.UpdateRole)
 			r.With(customMiddleware.RequirePermission("roles.write")).Delete("/{id}", rbacHandler.DeleteRole)
@@ -863,6 +873,59 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/groups/{id}/members", groupHandler.AddGroupMemberProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
 			r.Get("/users/{id}/groups", groupHandler.GetUserGroupsProxy)
+
+			// Setup-token storage-primitive proxy (#510). Lets a downstream Keyorix
+			// server booted with storage.type: remote (ADR-049) proxy
+			// CreateSetupToken/GetSetupTokenByHash/SupersedeActiveSetupTokens/
+			// MarkSetupTokenConsumed/MarkSetupTokenExpired/CountSetupTokensSince to
+			// THIS server's real storage backend, instead of RemoteStorage's six
+			// SetupToken methods having no server endpoint to call at all
+			// (setup_consume.go's CompleteSetup — every setup-token purpose:
+			// account_setup, password_reset_link, invitation_accept — was completely
+			// non-functional under storage.type: remote). Exactly the same pattern as
+			// the invitations proxy above: a thin passthrough onto storage.Storage (no
+			// setup-token POLICY decision made here — the calling server's own
+			// core.KeyorixCore still decides that), reusing the SAME
+			// system.read/system.write tier — no new privilege class. Read is baseline
+			// system.read; every mutating operation (including the single-use
+			// consume) requires system.write, matching every other admin-level
+			// mutation in this group.
+			r.Get("/setup-tokens/by-hash/{hash}", authHandler.GetSetupTokenByHashProxy)
+			r.Get("/setup-tokens/count", authHandler.CountSetupTokensSinceProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/supersede", authHandler.SupersedeSetupTokensProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
+
+			// Project-membership storage-primitive proxy (#511). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateProjectMembership/GetProjectMembership/UpdateProjectMembership/
+			// ListProjectMemberships/GetActiveProjectMembership/
+			// ListStaleInvitedMemberships/ListUserProjectMemberships/
+			// CountProjectMembershipsByUsers to THIS server's real storage backend,
+			// instead of RemoteStorage's eight ProjectMembership methods having no
+			// server endpoint to call at all (applyInvitationGrants' own
+			// membership-materialization step — the last stage of accepting a project
+			// invitation — was completely non-functional under storage.type: remote,
+			// even after #507 made the invitation-accept step itself work). Same
+			// pattern as the invitations proxy above: a thin passthrough onto
+			// storage.Storage (no membership-lifecycle POLICY decision made here — the
+			// calling server's own core.KeyorixCore still decides which state a new
+			// invite starts in, which transitions are legal, and when the backing role
+			// grant is applied/reverted, exactly as it does against a local backend),
+			// reusing the SAME system.read/system.write tier — no new privilege class.
+			// Static literal segments ("active", "stale", "counts", "by-user/{userID}")
+			// take priority over the "{id}" wildcard at the same route depth (chi's
+			// router always matches a static child before a param child), so they
+			// coexist safely regardless of registration order.
+			r.Get("/project-memberships/active", catalogHandler.GetActiveMembershipProxy)
+			r.Get("/project-memberships/stale", catalogHandler.ListStaleInvitedMembershipsProxy)
+			r.Get("/project-memberships/counts", catalogHandler.CountMembershipsByUsersProxy)
+			r.Get("/project-memberships/by-user/{userID}", catalogHandler.ListUserMembershipsProxy)
+			r.Get("/project-memberships/{id}", catalogHandler.GetMembershipProxy)
+			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.

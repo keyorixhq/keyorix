@@ -61,25 +61,55 @@ sha256sum --check --ignore-missing checksums.txt
 ```
 
 Release binaries are built with `-trimpath` and `CGO_ENABLED=0` from the tagged
-commit. Cryptographic release signing (Sigstore/cosign) and SLSA build provenance
-are being rolled out — this section will be updated with verification commands
-when they ship. Until then, download releases only from
-`github.com/keyorixhq/keyorix/releases` over HTTPS and verify checksums.
+commit. `checksums.txt` and every container image are keylessly signed with
+[Sigstore/cosign](https://www.sigstore.dev/) via GitHub's OIDC token — no
+long-lived signing key exists to leak. Verify with `cosign` installed:
+
+```bash
+# checksums.txt (release binaries)
+cosign verify-blob \
+  --certificate checksums.txt.pem --signature checksums.txt.sig \
+  --certificate-identity-regexp 'https://github.com/keyorixhq/keyorix/\.github/workflows/release\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+
+# container images (also carries an SBOM + SLSA build provenance attestation)
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/keyorixhq/keyorix/\.github/workflows/docker-publish\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/keyorixhq/keyorix-server:<tag>
+```
+
+Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
 
 ## Secure Development
 
 - Pre-commit gates: `gofmt`, `go vet`, `go build`, `gosec` (MEDIUM+ severity)
-- CI gates on every push and pull request: `go vet`, race-enabled tests,
-  `govulncheck`, `gosec` (pinned version), `golangci-lint` (errcheck, staticcheck,
-  unused, and more), `gitleaks` secret scan (scoped to the PR's own commit
-  history), `CodeQL` (dataflow/taint analysis, both Go modules), Helm chart
-  schema validation
+- CI gates on every push and pull request (11+ required checks, see
+  [CONTRIBUTING.md](CONTRIBUTING.md) for the full list): `go vet`, race-enabled
+  tests, `govulncheck`, `gosec` (pinned version), `golangci-lint`, `gitleaks`
+  secret scan (scoped to the PR's own commit history), `CodeQL` (dataflow/taint
+  analysis, both Go modules), Helm chart schema validation (`kubeconform`) and
+  security-policy scanning (`checkov` — pod security context, RBAC-escalation
+  checks), Go dependency license compliance (rejects any dependency outside an
+  explicit permissive-license allowlist), and DCO sign-off verification
+- Continuous fuzzing: native Go fuzz targets (`go test -fuzz`) at the
+  codebase's highest-risk parsing/escaping boundaries (Shamir secret-share
+  reconstruction, JWT/OIDC verification, rotation-credential SQL escaping and
+  ref interpolation, secret-template parsing) run for hours at a time on
+  dedicated infrastructure, well beyond what a CI job's budget allows — see
+  [`scripts/fuzzing/README.md`](scripts/fuzzing/README.md)
+- [CODEOWNERS](.github/CODEOWNERS) requires review on cryptography, auth/RBAC,
+  middleware, database migrations, the CI/CD pipeline itself, and this policy
+- GitHub-native repository security: secret scanning, push protection (blocks
+  a commit containing a detected secret before it lands), Dependabot security
+  updates, and private vulnerability reporting are all enabled
 - Any change to the encryption layer requires a written Architecture Decision
   Record before implementation
 - External contributions require DCO sign-off (`git commit -s` — see
   [CONTRIBUTING.md](CONTRIBUTING.md)) and maintainer review. Branch protection
-  on `main` requires every CI check to pass (enforced for maintainers too,
-  no bypass) before a PR can merge.
+  on `main` requires every required CI check to pass (enforced for maintainers
+  too, no bypass) before a PR can merge.
 
 ## Security-Relevant Configuration
 
