@@ -7,20 +7,23 @@ import (
 )
 
 // ErrRemoteUnsupported is returned by RemoteStorage methods whose operation has
-// no server REST endpoint to proxy to. These fall into two groups: server-internal
-// primitives that a remote (client-mode) caller never invokes directly — project
-// membership lifecycle, access-request primitives, notification creation,
-// low-level permission lookups — and a handful not yet exposed for client mode.
-// (Group CRUD/membership and project-invitation primitives used to fall in this
-// first category too, until each got its own thin /api/v1/system/* proxy route
-// — see internal/storage/store/remote_users.go's Group section and
-// remote_invitations.go's #507 doc comment.) Callers can errors.Is against it to
-// distinguish "not supported in remote mode" from a genuine transport/API
-// failure.
+// no server REST endpoint to proxy to. A round-119 completeness audit found
+// that most of these are NOT the "a remote caller never invokes this directly"
+// case an earlier version of this comment claimed — that assumption was
+// verified false for the majority of stubs still remaining (several of their
+// own per-method doc comments made the same false claim independently, e.g.
+// GetGroupRoleGrants's). Every remaining stub is now exhaustively classified
+// in remote_unsupported_completeness_test.go's remoteUnsupportedAllowlist as
+// either genuinely permanent (statusIntentional, with a verified reason — no
+// reachable caller exists, or a different mechanism already covers the need)
+// or a confirmed, currently-reachable gap (statusKnownGap, tracked in
+// docs/security/HARDENING-BACKLOG.md for a future fix round).
+// TestRemoteUnsupportedStubsAreAllowlisted enforces that this list stays an
+// exact, current match against the source — see that file before assuming any
+// new stub is safe to leave unclassified.
 //
-// The live data path for these features runs on the server (LocalStorage); the
-// remote client reaches them through higher-level REST endpoints, not raw storage
-// primitives, so faithful one-to-one proxying isn't possible.
+// Callers can errors.Is against ErrRemoteUnsupported to distinguish "not
+// supported in remote mode" from a genuine transport/API failure.
 //
 // Also wraps the backend-agnostic storage.ErrUnsupportedByBackend, so callers that
 // only know about the storage.Storage interface (e.g. internal/core) can detect
