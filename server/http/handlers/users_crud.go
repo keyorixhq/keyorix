@@ -316,6 +316,73 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 	sendSuccess(w, resp, "")
 }
 
+// VerifyCredentials handles POST /api/v1/users/verify-credentials (#506) — the
+// upstream half of the RemoteLoginVerifier proxy-login mechanism
+// (internal/core/auth.go). It exists SOLELY so a storage.type: remote
+// deployment's own core.Login can authenticate a password at all:
+// models.User.PasswordHash never crosses the wire, so a "spoke" server backed
+// by RemoteStorage has no real hash to bcrypt-compare against locally — this
+// endpoint runs that compare on the "hub" server that actually has it,
+// against the SAME core.VerifyPasswordCredentials the hub's own direct login
+// uses (not a parallel bcrypt reimplementation), so the per-account lockout
+// gate/accounting and account-active/account-state checks apply identically
+// regardless of which path reached them.
+//
+// Gated by users.write — the SAME permission CreateUser/UnlockUser already
+// require of the RemoteStorage service credential (server/http/router.go) —
+// deliberately not a new, separately-provisioned permission: a credential
+// trusted enough to create/unlock/suspend arbitrary accounts is already
+// trusted enough to check whether a password matches one, and requiring a
+// fresh grant here would silently strand every existing storage.type: remote
+// deployment's login until an operator noticed and granted it.
+//
+// The response never distinguishes WHY a check failed — wrong password, an
+// active lockout, or a suspended/inactive account all produce the SAME
+// generic 401 here, mirroring how /auth/login itself already collapses every
+// non-MFA-required Login error to one generic message for the actual end
+// user (server/http/handlers/auth.go). A compromised RemoteStorage credential
+// must not be able to use this endpoint to enumerate accounts or their
+// lockout state beyond "that attempt failed" — nor is any of this logged with
+// per-reason detail, for the same reason.
+func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.Username == "" || body.Password == "" {
+		sendError(w, "ValidationError", "username and password are required", http.StatusBadRequest, nil)
+		return
+	}
+	u, err := h.coreService.VerifyPasswordCredentials(r.Context(), body.Username, body.Password)
+	if err != nil {
+		// Deliberately no log.Printf here (unlike every other handler in this
+		// file): logging the real error would record which of "no such user" /
+		// "wrong password" / "locked" / "not active" / "suspended" applied,
+		// re-opening exactly the oracle the generic response below exists to
+		// close.
+		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"id":               u.ID,
+		"username":         u.Username,
+		"email":            u.Email,
+		"display_name":     u.DisplayName,
+		"account_state":    core.NormalizeAccountState(u.AccountState),
+		"mfa_enabled":      u.MFAEnabled,
+		"webauthn_enabled": u.WebAuthnEnabled,
+	}, "")
+}
+
 // UpdateUser handles PUT /api/v1/users/{id}
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

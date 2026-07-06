@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -194,71 +193,4 @@ func TestRemoteStorage_GetUserByExternalID_RealServerRoundTrip(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, existsHTTPErr.StatusCode)
 	assert.Equal(t, existsHTTPErr.StatusCode, notExistsHTTPErr.StatusCode,
 		"gating must not leak existence via a different status for an existing vs a non-existing external_id")
-}
-
-// TestLogin_RemoteStorage_StillFailsClosed_PasswordHashNeverOnWire documents a
-// discovery made while investigating #505, and proves this fix does not
-// accidentally change it: Login (internal/core/auth.go) resolves the submitted
-// username via c.storage.GetUserByUsername, which — before this fix — always
-// errored (storage.ErrUnsupportedByBackend), so Login always failed at the
-// lookup step under storage.type: remote. GetUserByUsername now genuinely
-// succeeds, but Login still cannot succeed: models.User.PasswordHash is tagged
-// `json:"-"` DELIBERATELY (see userCreateWireRequest's doc in remote_users.go —
-// "it must never be sent") and userWireResponse has no password_hash field
-// either, so bcrypt.CompareHashAndPassword always runs against an empty hash
-// and always fails. This is a real, pre-existing, and much larger architectural
-// gap (native password login cannot work through storage.type: remote at all,
-// by a deliberate security boundary — a proxy-login design would be needed to
-// close it) that is NOT part of #505's scope: #505 is about the externalId/
-// username LOOKUP being a stub, not about building a remote credential-
-// verification channel. This test exists so a future change to
-// GetUserByUsername/CreateUser's wire shape cannot silently start leaking
-// password hashes without an explicit, deliberate decision to do so — it must
-// keep failing exactly this way.
-func TestLogin_RemoteStorage_StillFailsClosed_PasswordHashNeverOnWire(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-	defer i18n.ResetForTesting()
-
-	// --- upstream: a real Keyorix server, the actual holder of user records ---
-	upstreamCore := newTestCore(t)
-	upstreamToken := createTestToken(t, upstreamCore)
-
-	cfg := &config.Config{
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{Enabled: true, Port: "0"},
-		},
-	}
-	upstreamRouter, err := NewRouter(cfg, upstreamCore)
-	require.NoError(t, err)
-	upstreamSrv := httptest.NewServer(upstreamRouter)
-	defer upstreamSrv.Close()
-
-	// --- downstream: storage.type: remote, pointed at the upstream ---
-	rs, err := store.NewRemoteStorage(&remote.Config{
-		BaseURL:        upstreamSrv.URL,
-		APIKey:         upstreamToken,
-		TimeoutSeconds: 5,
-		RetryAttempts:  0,
-		TLSVerify:      true,
-	})
-	require.NoError(t, err)
-	downstreamCore := core.NewKeyorixCore(rs)
-
-	ctx := context.Background()
-
-	// The lookup itself now genuinely succeeds (the #505 fix) — prove that
-	// directly first, so a failure below is attributable to the password-hash
-	// gap, not a regression of the lookup this PR just fixed.
-	found, err := rs.GetUserByUsername(ctx, "testadmin")
-	require.NoError(t, err, "the underlying username lookup must succeed (#505)")
-	require.Equal(t, "testadmin", found.Username)
-
-	// Even the CORRECT password must still fail closed — not because
-	// GetUserByUsername is broken (it isn't, anymore), but because the wire
-	// never carries a password hash to compare against.
-	_, _, err = downstreamCore.Login(ctx, &core.LoginRequest{
-		Username: "testadmin",
-		Password: "TestPassword123!",
-	})
-	require.Error(t, err, "native password Login cannot succeed through storage.type: remote — password_hash is deliberately never sent over the wire; this is a separate, larger gap, out of #505's scope")
 }
