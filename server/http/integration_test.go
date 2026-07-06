@@ -75,6 +75,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #507: the invitation-proxy end-to-end tests exercise ProjectInvitation
 		// CRUD through the real router.
 		&models.ProjectInvitation{},
+		// round-116 finding: the dynamic-secrets-proxy end-to-end tests exercise
+		// DynamicSecretConfig/DynamicSecretLease CRUD through the real router.
+		&models.DynamicSecretConfig{},
+		&models.DynamicSecretLease{},
 		// In-app notifications (ADR-024) — exercised end-to-end through the real
 		// router by the RemoteStorage notification proxy tests.
 		&models.Notification{},
