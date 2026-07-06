@@ -961,6 +961,34 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
+
+			// Break-glass activation storage-primitive proxy (#519). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049)
+			// proxy CreateBreakGlassActivation/GetBreakGlassActivation/
+			// ListBreakGlassActivations/UpdateBreakGlassActivation/
+			// RevokeBreakGlassActivation to THIS server's real storage backend,
+			// instead of RemoteStorage's five break-glass methods having no server
+			// endpoint to call at all (emergency-access self-activation —
+			// NIS2/DORA incident response — was completely non-functional under
+			// storage.type: remote). Exactly the same pattern as the
+			// project-memberships/invitations proxies above: a thin passthrough
+			// onto storage.Storage (no break-glass POLICY decision — enablement,
+			// project-affiliation, emergency-role containment, TTL clamping, the
+			// actual JIT role grant — is made here; that stays entirely in the
+			// CALLING server's own internal/core.KeyorixCore, exactly as it does
+			// against a local backend), reusing the SAME system.read/system.write
+			// tier — no new privilege class. Critically, CreateBreakGlassActivationProxy
+			// and RevokeBreakGlassActivationProxy call storage.Storage's own
+			// unique-index-backed create and conditional `WHERE state = 'active'`
+			// update DIRECTLY (see break_glass_proxy.go's package doc), preserving
+			// the #104/PR #670 concurrent-activation race fix across this HTTP hop.
+			// Read is baseline system.read; create/update/revoke require
+			// system.write, matching every other admin-level mutation in this group.
+			r.Get("/break-glass/{id}", catalogHandler.GetBreakGlassActivationProxy)
+			r.Get("/break-glass", catalogHandler.ListBreakGlassActivationsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
