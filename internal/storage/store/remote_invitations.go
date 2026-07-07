@@ -35,9 +35,44 @@
 // (CreateProjectInvitation/GetProjectInvitation/UpdateProjectInvitation/
 // ListProjectInvitations) — flagged as follow-up findings rather than folded in.
 //
-// Access-request methods (CreateAccessRequest.../CreateAccessRequestApproval...)
-// are unrelated to this finding and remain stubs. For the local (GORM) equivalent
-// of everything here see local_invitations.go.
+// Access-request methods (#523) — CreateAccessRequest/GetAccessRequest/
+// UpdateAccessRequest/ListAccessRequests/CreateAccessRequestApproval/
+// ListAccessRequestApprovals — are thin passthroughs onto four new server-side
+// routes under /api/v1/system/access-requests(+/{id}/approvals)
+// (server/http/handlers/access_request_proxy.go), gated on the SAME
+// system.read/system.write tier as everything else in this file — no new
+// privilege class. No access-request POLICY decision (dual-control threshold,
+// maker-checker, TTL/expiry, the role grant itself) is made in these routes —
+// that stays entirely in the CALLING server's own internal/core.KeyorixCore
+// (RequestProjectAccess/ApproveAccessRequestWithExpiry/RejectAccessRequest/
+// WithdrawAccessRequest in internal/core/invitations.go), exactly as it does
+// against a local backend.
+//
+// Atomicity analysis: every one of these 6 methods already resolves in exactly
+// ONE storage.Storage call server-side (there is no multi-call sequence inside
+// any single method that needs to become atomic). The state-transition race
+// guard local_invitations.go documents for UpdateProjectInvitation applies
+// identically here — UpdateAccessRequest performs a conditional
+// `WHERE id = ? AND state = 'pending'` write (local_invitations.go) and reports
+// whether it actually matched a row; ApproveAccessRequestWithExpiry/
+// RejectAccessRequest/WithdrawAccessRequest all rely on THIS write's atomicity
+// (not on spanning their own separate Get+Update calls transactionally) to
+// resolve concurrent approve/reject/withdraw races — see #277. Proxying
+// UpdateAccessRequest as one HTTP round trip onto the hub's own conditional
+// UPDATE preserves that guarantee unchanged; there is no client-side
+// "GET then check state then PUT" sequence here that could reopen it.
+// CreateAccessRequestApproval similarly relies on a DB-level UNIQUE index
+// (RequestID, ApproverID) plus ON CONFLICT DO NOTHING (local_invitations.go) to
+// keep one sign-off per distinct approver honest under concurrent approvals;
+// that constraint lives at the hub's own database and is enforced identically
+// whether the INSERT arrives locally or via this proxy. Unlike the WebAuthn
+// credential-counter / Machine-Identity state-transition / Secret-Dependency
+// cycle-check gaps this campaign hit previously, no NEW atomic storage
+// primitive was needed here — the existing conditional-UPDATE/unique-index
+// primitives already do the whole read-check-write (or insert-or-noop) in one
+// server-side operation, so a naive 1:1 proxy per method is correct.
+//
+// For the local (GORM) equivalent of everything here see local_invitations.go.
 package store
 
 import (
@@ -211,28 +246,219 @@ func (rs *RemoteStorage) ListProjectInvitations(ctx context.Context, projectID u
 	return rows, nil
 }
 
-// --- Access requests (unrelated to #507; still stubs) ---
+// --- Access requests (#523) ---
 
-func (rs *RemoteStorage) CreateAccessRequest(_ context.Context, _ *models.AccessRequest) (*models.AccessRequest, error) {
-	return nil, remoteUnsupported("CreateAccessRequest")
+// accessRequestWire mirrors models.AccessRequest's PERSISTED fields exactly
+// (snake_case). ApprovalsReceived/RequiredApprovals are deliberately excluded —
+// models.AccessRequest itself tags them `gorm:"-"` (transient, never
+// persisted); internal/core/invitations.go only ever populates them on a
+// value it's about to return to an HTTP caller, never on one it passes INTO
+// CreateAccessRequest/UpdateAccessRequest, so there is nothing for this wire
+// type to carry. See invitationWire's comment above for why every field is
+// named explicitly rather than relying on encoding/json's case-insensitive
+// fallback onto a GORM model with no json tags of its own.
+type accessRequestWire struct {
+	ID            uint       `json:"id"`
+	ProjectID     uint       `json:"project_id"`
+	UserID        uint       `json:"user_id"`
+	SuggestedRole string     `json:"suggested_role"`
+	GrantedRole   string     `json:"granted_role"`
+	SecretID      *uint      `json:"secret_id"`
+	State         string     `json:"state"`
+	Reason        string     `json:"reason"`
+	ResolvedBy    uint       `json:"resolved_by"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ResolvedAt    *time.Time `json:"resolved_at"`
 }
 
-func (rs *RemoteStorage) GetAccessRequest(_ context.Context, _ uint) (*models.AccessRequest, error) {
-	return nil, remoteUnsupported("GetAccessRequest")
+func newAccessRequestWire(req *models.AccessRequest) accessRequestWire {
+	return accessRequestWire{
+		ID:            req.ID,
+		ProjectID:     req.ProjectID,
+		UserID:        req.UserID,
+		SuggestedRole: req.SuggestedRole,
+		GrantedRole:   req.GrantedRole,
+		SecretID:      req.SecretID,
+		State:         req.State,
+		Reason:        req.Reason,
+		ResolvedBy:    req.ResolvedBy,
+		ExpiresAt:     req.ExpiresAt,
+		CreatedAt:     req.CreatedAt,
+		ResolvedAt:    req.ResolvedAt,
+	}
 }
 
-func (rs *RemoteStorage) UpdateAccessRequest(_ context.Context, _ *models.AccessRequest) (bool, error) {
-	return false, remoteUnsupported("UpdateAccessRequest")
+func (w accessRequestWire) toModel() *models.AccessRequest {
+	return &models.AccessRequest{
+		ID:            w.ID,
+		ProjectID:     w.ProjectID,
+		UserID:        w.UserID,
+		SuggestedRole: w.SuggestedRole,
+		GrantedRole:   w.GrantedRole,
+		SecretID:      w.SecretID,
+		State:         w.State,
+		Reason:        w.Reason,
+		ResolvedBy:    w.ResolvedBy,
+		ExpiresAt:     w.ExpiresAt,
+		CreatedAt:     w.CreatedAt,
+		ResolvedAt:    w.ResolvedAt,
+	}
 }
 
-func (rs *RemoteStorage) ListAccessRequests(_ context.Context, _ uint) ([]*models.AccessRequest, error) {
-	return nil, remoteUnsupported("ListAccessRequests")
+func decodeAccessRequestResponse(data []byte) (*models.AccessRequest, error) {
+	var wire accessRequestWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
 }
 
-func (rs *RemoteStorage) CreateAccessRequestApproval(_ context.Context, _ *models.AccessRequestApproval) error {
-	return remoteUnsupported("CreateAccessRequestApproval")
+// accessRequestApprovalWire mirrors models.AccessRequestApproval's fields
+// exactly (snake_case).
+type accessRequestApprovalWire struct {
+	ID         uint      `json:"id"`
+	RequestID  uint      `json:"request_id"`
+	ApproverID uint      `json:"approver_id"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
-func (rs *RemoteStorage) ListAccessRequestApprovals(_ context.Context, _ uint) ([]*models.AccessRequestApproval, error) {
-	return nil, remoteUnsupported("ListAccessRequestApprovals")
+func newAccessRequestApprovalWire(a *models.AccessRequestApproval) accessRequestApprovalWire {
+	return accessRequestApprovalWire{
+		ID:         a.ID,
+		RequestID:  a.RequestID,
+		ApproverID: a.ApproverID,
+		CreatedAt:  a.CreatedAt,
+	}
+}
+
+// CreateAccessRequest persists an already-built access request (every field —
+// state, TTL, suggested role, ... — is computed by the CALLING core.KeyorixCore
+// before this is invoked, exactly as RequestProjectAccess/RequestSecretAccess
+// build one for LocalStorage) via POST /api/v1/system/access-requests.
+func (rs *RemoteStorage) CreateAccessRequest(ctx context.Context, req *models.AccessRequest) (*models.AccessRequest, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/access-requests", newAccessRequestWire(req))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create access request: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("create access request failed: %s", resp.Error.Error())
+	}
+	return decodeAccessRequestResponse(resp.Data)
+}
+
+// GetAccessRequest retrieves an access request by ID via GET
+// /api/v1/system/access-requests/{id} — a raw fetch, gated by system.read.
+func (rs *RemoteStorage) GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error) {
+	path := fmt.Sprintf("/api/v1/system/access-requests/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get access request: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get access request failed: %s", resp.Error.Error())
+	}
+	return decodeAccessRequestResponse(resp.Data)
+}
+
+// UpdateAccessRequest persists an access-request state transition via PUT
+// /api/v1/system/access-requests/{id}, preserving local_invitations.go's exact
+// conditional `WHERE id = ? AND state = 'pending'` semantics end-to-end: the
+// server performs the SAME conditional write, and reports whether it actually
+// matched a row — NOT a client-side "GET then check state then PUT" sequence,
+// which would reintroduce the #277 TOCTOU race ApproveAccessRequestWithExpiry/
+// RejectAccessRequest/WithdrawAccessRequest all depend on this write to close.
+// One HTTP round trip maps to one atomic server-side conditional UPDATE.
+func (rs *RemoteStorage) UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/access-requests/%d", req.ID)
+	resp, err := rs.client.Put(ctx, path, newAccessRequestWire(req))
+	if err != nil {
+		return false, fmt.Errorf("failed to update access request: %w", err)
+	}
+	if !resp.Success {
+		return false, fmt.Errorf("update access request failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Updated bool `json:"updated"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return false, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Updated, nil
+}
+
+// ListAccessRequests lists a project's access requests via GET
+// /api/v1/system/access-requests?project_id=X.
+func (rs *RemoteStorage) ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error) {
+	q := url.Values{}
+	q.Set("project_id", strconv.FormatUint(uint64(projectID), 10))
+	path := "/api/v1/system/access-requests?" + q.Encode()
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list access requests: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list access requests failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		AccessRequests []accessRequestWire `json:"access_requests"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	rows := make([]*models.AccessRequest, 0, len(result.AccessRequests))
+	for _, w := range result.AccessRequests {
+		rows = append(rows, w.toModel())
+	}
+	return rows, nil
+}
+
+// CreateAccessRequestApproval records one approver's sign-off via POST
+// /api/v1/system/access-requests/{id}/approvals. The server performs the SAME
+// INSERT ... ON CONFLICT (request_id, approver_id) DO NOTHING
+// local_invitations.go does, backed by the DB-level unique index — a duplicate
+// sign-off from the same approver (including one racing a concurrent identical
+// call through this proxy) is a benign no-op here exactly as it is locally,
+// keeping the M-of-K dual-control count honest.
+func (rs *RemoteStorage) CreateAccessRequestApproval(ctx context.Context, a *models.AccessRequestApproval) error {
+	path := fmt.Sprintf("/api/v1/system/access-requests/%d/approvals", a.RequestID)
+	resp, err := rs.client.Post(ctx, path, newAccessRequestApprovalWire(a))
+	if err != nil {
+		return fmt.Errorf("failed to create access request approval: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("create access request approval failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// ListAccessRequestApprovals lists every approval recorded for a request via
+// GET /api/v1/system/access-requests/{id}/approvals — used both to annotate
+// dual-control progress (ListAccessRequests) and to enforce one-sign-off-per-
+// approver (ApproveAccessRequestWithExpiry).
+func (rs *RemoteStorage) ListAccessRequestApprovals(ctx context.Context, requestID uint) ([]*models.AccessRequestApproval, error) {
+	path := fmt.Sprintf("/api/v1/system/access-requests/%d/approvals", requestID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list access request approvals: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list access request approvals failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Approvals []accessRequestApprovalWire `json:"approvals"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	rows := make([]*models.AccessRequestApproval, 0, len(result.Approvals))
+	for _, w := range result.Approvals {
+		rows = append(rows, &models.AccessRequestApproval{
+			ID:         w.ID,
+			RequestID:  w.RequestID,
+			ApproverID: w.ApproverID,
+			CreatedAt:  w.CreatedAt,
+		})
+	}
+	return rows, nil
 }

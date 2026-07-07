@@ -24,15 +24,15 @@ func TestRemoteStorage_UnsupportedSentinel(t *testing.T) {
 
 	calls := map[string]func() error{
 		// ListProjectInvitations (#507), CreateProjectMembership (#511),
-		// CreateGroup (#514), and CreateMachineIdentity (#518) now make a real HTTP
-		// call rather than stubbing out — see
+		// CreateGroup (#514), CreateMachineIdentity (#518), and CreateAccessRequest
+		// (#523) now make a real HTTP call rather than stubbing out — see
 		// server/http/remote_storage_invitations_test.go,
 		// server/http/remote_storage_project_memberships_test.go,
-		// server/http/remote_storage_groups_test.go, and
-		// server/http/remote_storage_machine_identities_test.go for their
-		// end-to-end coverage against a real router.
-		"CreateAccessRequest": func() error { _, e := rs.CreateAccessRequest(ctx, &models.AccessRequest{}); return e },
-		"CreateNotification":  func() error { _, e := rs.CreateNotification(ctx, &models.Notification{}); return e },
+		// server/http/remote_storage_groups_test.go,
+		// server/http/remote_storage_machine_identities_test.go, and
+		// server/http/remote_storage_access_request_test.go for their end-to-end
+		// coverage against a real router.
+		"CreateNotification": func() error { _, e := rs.CreateNotification(ctx, &models.Notification{}); return e },
 		"ListPermissions":     func() error { _, e := rs.ListPermissions(ctx); return e },
 		// CountStaleMachineIdentitiesByProject (#393) legitimately stays a stub —
 		// the grouped hygiene-rollup query runs server-side, out of #518's scope
