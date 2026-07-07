@@ -118,9 +118,20 @@ func (rs *RemoteStorage) ListSharesBySecretIDs(ctx context.Context, secretIDs []
 	return out, nil
 }
 
-// ListSharesByUser lists all share records where userID is the recipient via remote API.
+// ListSharesByUser lists all share records where userID is the recipient, via
+// GET /api/v1/system/shares/by-user/{userID}. This used to target
+// /api/v1/users/{id}/shares — a route that was never registered server-side
+// (there is no, and never was, a human-facing "list shares received by an
+// arbitrary user ID" endpoint; the closest human-facing route, GET
+// /api/v1/shares, resolves the CALLER's own ID from the request's auth
+// context, not a path parameter). That meant core.ListSharesByUser (backing
+// both GET /api/v1/shares and gRPC ShareService.ListShares) 404'd on this half
+// unconditionally under storage.type: remote, even after #531 fixed the
+// ListSharesByOwner half. Same thin-passthrough pattern as ListSharesByOwner
+// immediately below: no policy decision made here, gated on the SAME
+// system.read tier.
 func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
-	path := fmt.Sprintf("/api/v1/users/%d/shares", userID)
+	path := fmt.Sprintf("/api/v1/system/shares/by-user/%d", userID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list shares by user: %w", err)
@@ -128,11 +139,13 @@ func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*
 	if !resp.Success {
 		return nil, fmt.Errorf("list shares by user failed: %s", resp.Error.Error())
 	}
-	var result []*models.ShareRecord
+	var result struct {
+		Shares []*models.ShareRecord `json:"shares"`
+	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return result, nil
+	return result.Shares, nil
 }
 
 // ListSharesByOwner lists currently-active share records created by ownerID, via
