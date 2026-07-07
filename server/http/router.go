@@ -1014,6 +1014,22 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
 
+			// SSO login-state storage-primitive proxy (#521). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateSSOLoginState/ConsumeSSOLoginState to THIS server's real storage
+			// backend, instead of RemoteStorage's two SSOLoginState methods having no
+			// server endpoint to call at all (BeginSSO/BeginSAML's very first step —
+			// persisting the CSRF-state/nonce row — was completely non-functional
+			// under storage.type: remote, breaking human SSO/SAML login end to end).
+			// Exactly the same pattern as the setup-token proxy above: a thin
+			// passthrough onto storage.Storage (no SSO policy decision made here —
+			// the calling server's own core.KeyorixCore still decides that), reusing
+			// the SAME system.read/system.write tier — no new privilege class. Both
+			// create and the single-use consume are mutations and require
+			// system.write.
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
+
 			// Project-membership storage-primitive proxy (#511). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateProjectMembership/GetProjectMembership/UpdateProjectMembership/
@@ -1111,6 +1127,30 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
+
+			// Login-lockout accounting storage-primitive proxy (backlog #529). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// UpdateLoginLockoutState to THIS server's real storage backend, instead of
+			// RemoteStorage's one remaining login-lockout method having no server endpoint
+			// to call at all (per-account brute-force lockout accounting — every
+			// recordFailedLogin/checkLockAndClearLoginFailures/clearLoginFailures/
+			// UnlockUser call in internal/core/login_lockout.go — silently failed OPEN
+			// under storage.type: remote, the last piece of the #454 gap left after the
+			// login-attempts/setup-tokens/groups/webauthn proxies above each closed their
+			// own slice of it). Exactly the same pattern as the webauthn proxy above: a
+			// thin passthrough onto storage.Storage (no lockout POLICY decision — the
+			// failure threshold, the exponential cooldown, WHEN to trip or clear — is made
+			// here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local backend),
+			// reusing the SAME system.read/system.write tier — no new privilege class.
+			// This is a single unconditional column UPDATE, not a compare-and-swap (see
+			// login_lockout_proxy.go's package doc for the atomicity analysis): every
+			// caller already computes the final values itself under its own
+			// LockUserForUpdate + WithTransaction + per-user mutex-shard serialization, so
+			// one proxied round trip preserves LocalStorage's own semantics unchanged —
+			// unlike AdvanceWebAuthnCredentialCounterProxy just above, no new atomic
+			// primitive is needed.
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
 
 			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
