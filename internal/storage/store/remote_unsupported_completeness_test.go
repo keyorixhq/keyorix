@@ -75,10 +75,13 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (34; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (24; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
-	// ref-grant CRUD closed by #527, project/environment catalog CRUD closed by #528) ---
+	// ref-grant CRUD closed by #527, self-service access-request workflow closed by
+	// #523, RBAC permission catalog (ListPermissions/GetPermission/
+	// GetRolePermissions) closed by #526, WithSchedulerLock closed by #530,
+	// project/environment catalog CRUD closed by #528) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -88,19 +91,12 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// (server/http/handlers/sso_state_proxy.go), no longer unconditional stubs —
 	// see internal/storage/store/remote_sso.go.
 
-	// Self-service access-requests — 100% broken (request/list/approve/reject/withdraw).
-	"CreateAccessRequest": {statusKnownGap,
-		"round 119: RequestProjectAccess, POST /projects/{id}/access-requests (self-service)"},
-	"GetAccessRequest": {statusKnownGap,
-		"round 119: ApproveAccessRequestWithExpiry/RejectAccessRequest, PUT /projects/{id}/access-requests/{requestId}"},
-	"UpdateAccessRequest": {statusKnownGap,
-		"round 119: same approve/reject paths, plus lazy-expiry in ListAccessRequests"},
-	"ListAccessRequests": {statusKnownGap,
-		"round 119: GET /projects/{id}/access-requests"},
-	"CreateAccessRequestApproval": {statusKnownGap,
-		"round 119: dual-control (N-of-M) approval recording inside ApproveAccessRequestWithExpiry"},
-	"ListAccessRequestApprovals": {statusKnownGap,
-		"round 119: progress annotation + duplicate-approver check during approve"},
+	// Self-service access-requests (request/list/approve/reject/withdraw) were
+	// fixed in #523: CreateAccessRequest/GetAccessRequest/UpdateAccessRequest/
+	// ListAccessRequests/CreateAccessRequestApproval/ListAccessRequestApprovals
+	// are now proxied via /api/v1/system/access-requests(+/{id}/approvals)
+	// (server/http/handlers/access_request_proxy.go), no longer unconditional
+	// stubs — see internal/storage/store/remote_invitations.go.
 
 	// MFA enrollment/management (not just login) — 100% broken.
 	"UpsertMFASecret": {statusKnownGap, "round 119: BeginMFAEnrollment, POST /auth/mfa/enroll"},
@@ -134,11 +130,8 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ListProjectMachineRoleAssignments": {statusKnownGap,
 		"round 119: machine-identity access-review coverage (#91), GET /projects/{id}/access-review"},
 
-	// RBAC permission catalog — no local fallback exists (RemoteStorage has no DB).
-	"ListPermissions": {statusKnownGap, "round 119: GET /permissions"},
-	"GetPermission":   {statusKnownGap, "round 119: AssignPermissionToRole, POST /roles/{id}/permissions"},
-	"GetRolePermissions": {statusKnownGap,
-		"round 119: role-permission view, access reviews, compliance posture, SoD conflict detection — GET /roles/{id}/permissions and multiple internal core callers"},
+	// RBAC permission catalog (ListPermissions/GetPermission/GetRolePermissions) was
+	// fixed in #526 — see internal/storage/store/remote_rbac.go.
 
 	// Project / environment catalog CRUD was fixed in #528: ListProjects/
 	// ListProjectsWithCounts/GetProject/UpdateProject/DeleteProject/RestoreProject/
@@ -155,13 +148,6 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// reopened across the HTTP hop (see that method's interface doc comment).
 	// GetEnvironment's #499 carve-out inside core.CreateSecret is unaffected —
 	// see internal/core/secrets.go.
-
-	// Scheduler locking — reached on EVERY tick regardless of storage.type
-	// (server/main.go starts all schedulers unconditionally), and is now the
-	// sole blocker preventing already-remote-proxied maintenance (e.g. #520's
-	// retention-purge fix) from ever running via its scheduler on a spoke server.
-	"WithSchedulerLock": {statusKnownGap,
-		"round 119: server/scheduler_run.go's lockedRun wraps every background scheduler (retention purge, auto-rotation, recertification, dynamic-secret sweep, JIT-access expiry, login-attempt prune, anomaly detection, reminders, compliance digest, evidence delivery) — its own doc comment claiming this, is never reached remotely is disproven by server/main.go starting every scheduler unconditionally"},
 
 	// Misc.
 	"LastUserSecretActivity": {statusKnownGap,

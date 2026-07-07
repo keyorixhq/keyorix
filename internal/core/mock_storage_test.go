@@ -19,6 +19,15 @@ func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() er
 	return true, fn()
 }
 
+// TryAcquireSchedulerLock/ReleaseSchedulerLock are no-ops in tests (single
+// instance, nothing to contend with) — mirrors WithSchedulerLock above.
+func (m *MockStorage) TryAcquireSchedulerLock(_ context.Context, _ int64, _ string, _ time.Duration) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) ReleaseSchedulerLock(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 // WithAuditCheckpointLock runs fn directly in tests (single instance, no DB lock).
 func (m *MockStorage) WithAuditCheckpointLock(_ context.Context, fn func() error) error {
 	return fn()
