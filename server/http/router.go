@@ -1356,6 +1356,56 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
+
+			// Misc storage-primitive proxies (finding #531 — four independent,
+			// unrelated small gaps grouped by similar low-to-moderate severity;
+			// see server/http/handlers/misc_remote_proxy.go's package doc for the
+			// full per-item detail). Every route here reuses the SAME
+			// system.read/system.write tier every other proxy above already
+			// needs — no new privilege class.
+			//
+			// Dormant-access activity lookup: lets a downstream Keyorix server
+			// booted with storage.type: remote (ADR-049) proxy
+			// LastUserSecretActivity/LastUserRoleManagementActivity/
+			// LastUserSecretDeletionActivity/LastUserSecretReadActivity/
+			// LastUserSecretWriteActivity to THIS server's real storage backend.
+			// GenerateProjectAccessReview (ISO 27001/SOC2 recertification) and
+			// compliance_posture.go's countDormantRoleGrants both degrade
+			// gracefully on a lookup failure, so this was a missing detective
+			// signal rather than an outage — but the dormant-access/dormant-
+			// role-grant signal was never available at all under storage.type:
+			// remote before this fix. Reads only, gated system.read.
+			r.Get("/access-activity/secret", userHandler.LastUserSecretActivityProxy)
+			r.Get("/access-activity/role-management", userHandler.LastUserRoleManagementActivityProxy)
+			r.Get("/access-activity/secret-deletion", userHandler.LastUserSecretDeletionActivityProxy)
+			r.Get("/access-activity/secret-read", userHandler.LastUserSecretReadActivityProxy)
+			r.Get("/access-activity/secret-write", userHandler.LastUserSecretWriteActivityProxy)
+
+			// GetSecretIncludingDeleted: lets a downstream server proxy an
+			// Unscoped (soft-delete-aware) secret lookup to THIS server's real
+			// storage backend. Before this fix, ScopeFromDeletedSecretParam (the
+			// scope resolver ahead of POST /secrets/{id}/restore,
+			// server/middleware/auth.go) hard-failed on this stub, so every
+			// restore request 404'd before ever reaching the
+			// already-correctly-proxied RestoreSecret. A read, gated
+			// system.read.
+			r.Get("/secrets/{id}/including-deleted", secretHandler.GetSecretIncludingDeletedProxy)
+
+			// ListSharesByOwner: lets a downstream server proxy the "shares I
+			// created" query to THIS server's real storage backend. Before this
+			// fix, core.ListSharesByUser (backing the gRPC "list my shares"
+			// call) hard-failed with no fallback, unlike the graceful-degrade
+			// access-activity gaps above. A read, gated system.read.
+			r.Get("/shares/by-owner/{ownerID}", shareHandler.ListSharesByOwnerProxy)
+
+			// CreateUserWithRoleGrants: the ONE atomic primitive in this group —
+			// see misc_remote_proxy.go's CreateUserWithRoleGrantsProxy doc and
+			// remote_users.go's CreateUserWithRoleGrants doc for the full
+			// atomicity analysis. Before this fix, core.CreateUserWithAssignments
+			// (atomic create-user+role-grants, backing POST /api/v1/users and
+			// gRPC CreateUser whenever role grants are included) hard-failed on
+			// this stub. A mutation, gated system.write.
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/users/with-role-grants", userHandler.CreateUserWithRoleGrantsProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.

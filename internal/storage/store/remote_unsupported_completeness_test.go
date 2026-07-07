@@ -75,10 +75,12 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (47; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (39; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
-	// ref-grant CRUD closed by #527) ---
+	// ref-grant CRUD closed by #527, the five LastUser*Activity methods/
+	// GetSecretIncludingDeleted/ListSharesByOwner/CreateUserWithRoleGrants (misc
+	// gaps closed by #531)) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -167,21 +169,6 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// retention-purge fix) from ever running via its scheduler on a spoke server.
 	"WithSchedulerLock": {statusKnownGap,
 		"round 119: server/scheduler_run.go's lockedRun wraps every background scheduler (retention purge, auto-rotation, recertification, dynamic-secret sweep, JIT-access expiry, login-attempt prune, anomaly detection, reminders, compliance digest, evidence delivery) — its own doc comment claiming this, is never reached remotely is disproven by server/main.go starting every scheduler unconditionally"},
-
-	// Misc.
-	"LastUserSecretActivity": {statusKnownGap,
-		"round 119: GenerateProjectAccessReview (ISO 27001/SOC2 recertification) — degrades gracefully but the dormant-access signal is never available"},
-	"LastUserRoleManagementActivity": {statusKnownGap,
-		"round 119: compliance_posture.go's countDormantRoleGrants — degrades gracefully, same missing-signal issue"},
-	"LastUserSecretDeletionActivity": {statusKnownGap, "round 119: same flow as LastUserRoleManagementActivity"},
-	"LastUserSecretReadActivity":     {statusKnownGap, "round 119: same flow as LastUserRoleManagementActivity"},
-	"LastUserSecretWriteActivity":    {statusKnownGap, "round 119: same flow as LastUserRoleManagementActivity"},
-	"GetSecretIncludingDeleted": {statusKnownGap,
-		"round 119: ScopeFromDeletedSecretParam's scope check ahead of POST /secrets/{id}/restore — every restore request 404s before ever reaching the (already-proxied) RestoreSecret"},
-	"ListSharesByOwner": {statusKnownGap,
-		"round 119: core.ListSharesByUser hard-fails (no fallback), backing the gRPC ListShares \"my shares\" call"},
-	"CreateUserWithRoleGrants": {statusKnownGap,
-		"round 119: CreateUserWithAssignments (atomic create-user+role-grants), POST /api/v1/users and gRPC CreateUser"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every

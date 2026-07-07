@@ -38,6 +38,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -47,6 +48,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"gorm.io/gorm"
 )
 
@@ -539,8 +541,110 @@ func (rs *RemoteStorage) ListUsersInStateBefore(ctx context.Context, state strin
 	return users, nil
 }
 
-func (rs *RemoteStorage) CreateUserWithRoleGrants(_ context.Context, _ *models.User, _ []storage.RoleGrant) (*models.User, error) {
-	return nil, remoteUnsupported("CreateUserWithRoleGrants")
+// roleGrantWire mirrors storage.RoleGrant's fields exactly.
+type roleGrantWire struct {
+	RoleID        uint `json:"role_id"`
+	ProjectID     uint `json:"project_id"`
+	EnvironmentID uint `json:"environment_id"`
+}
+
+func newRoleGrantWire(g storage.RoleGrant) roleGrantWire {
+	return roleGrantWire{RoleID: g.RoleID, ProjectID: g.Scope.ProjectID, EnvironmentID: g.Scope.EnvironmentID}
+}
+
+// duplicateEmailProxyCode is the machine-readable error code
+// CreateUserWithRoleGrantsProxy returns when the upstream's own partial
+// unique-index rejection (uniq_users_email_active, #117) fires — the wire-level
+// signal used below to reconstruct the same storage.ErrDuplicateEmail sentinel
+// core.CreateUserWithAssignments' own errors.Is check depends on, mirroring
+// legalHoldAlreadyActiveCode's identical two-package-duplicated-constant
+// pattern (server/http/handlers/legal_hold_proxy.go / remote_legal_hold.go).
+const duplicateEmailProxyCode = "DUPLICATE_EMAIL"
+
+// createUserWithRoleGrantsWireRequest is the wire body for CreateUserWithRoleGrants
+// (finding #531). Unlike CreateUser's userCreateWireRequest — which sends the
+// PLAINTEXT password and lets the upstream handler compute its own bcrypt hash,
+// because that route runs through the calling server's core.CreateUser business
+// logic a second time server-side — this is a raw storage-primitive passthrough,
+// exactly like AdvanceWebAuthnCredentialCounter/TransitionMachineIdentityState:
+// the CALLING server's own core.CreateUserWithAssignments (internal/core/users.go)
+// already ran buildUserForCreate (validation, password-policy check, bcrypt hash)
+// BEFORE ever reaching storage.Storage, so PasswordHash here carries that
+// already-computed hash directly — the upstream handler must persist it
+// unconditionally, not re-derive it from a plaintext it was never given.
+type createUserWithRoleGrantsWireRequest struct {
+	Username          string          `json:"username"`
+	Email             string          `json:"email"`
+	DisplayName       string          `json:"display_name"`
+	PasswordHash      string          `json:"password_hash"`
+	IsActive          bool            `json:"is_active"`
+	AccountState      string          `json:"account_state"`
+	PasswordChangedAt *time.Time      `json:"password_changed_at,omitempty"`
+	Grants            []roleGrantWire `json:"grants"`
+}
+
+func newCreateUserWithRoleGrantsWireRequest(user *models.User, grants []storage.RoleGrant) createUserWithRoleGrantsWireRequest {
+	wireGrants := make([]roleGrantWire, 0, len(grants))
+	for _, g := range grants {
+		wireGrants = append(wireGrants, newRoleGrantWire(g))
+	}
+	return createUserWithRoleGrantsWireRequest{
+		Username:          user.Username,
+		Email:             user.Email,
+		DisplayName:       user.DisplayName,
+		PasswordHash:      user.PasswordHash,
+		IsActive:          user.IsActive,
+		AccountState:      user.AccountState,
+		PasswordChangedAt: user.PasswordChangedAt,
+		Grants:            wireGrants,
+	}
+}
+
+// CreateUserWithRoleGrants creates a user and every role grant in ONE atomic
+// request via POST /api/v1/system/users/with-role-grants (finding #531).
+//
+// Atomicity note (investigated, not assumed safe): LocalStorage.CreateUserWithRoleGrants
+// wraps the user INSERT and every role-grant INSERT in a single real DB
+// transaction (ADR-028) — if any grant insert fails, the user insert is rolled
+// back too, so a create never leaves a half-provisioned account (a user with
+// SOME but not all intended grants, or a user with grants pointing at nothing).
+// RemoteStorage.WithTransaction is a no-op passthrough (remote_transaction.go —
+// each remote call is independent), so naively proxying this as "POST the user,
+// then POST each grant" as separate HTTP calls would silently drop that
+// guarantee: a failure partway through (a bad role ID, a SoD-policy violation
+// surfacing only at insert time, a network blip) would leave a user record
+// committed upstream with only the grants that happened to land before the
+// failure — exactly the partial-provisioning bug ADR-028's transaction exists to
+// prevent, reopened by composing two independent round trips. Instead, this is
+// ONE PATCH-equivalent POST whose server-side handler
+// (CreateUserWithRoleGrantsProxy, server/http/handlers/misc_remote_proxy.go)
+// calls storage.Storage.CreateUserWithRoleGrants DIRECTLY against THIS server's
+// own storage inside that single request — the real atomicity is achieved
+// server-side in one round trip, not orchestrated client-side across several,
+// mirroring AdvanceWebAuthnCredentialCounter's (#517) and
+// TransitionMachineIdentityState's (#518) identical "new atomic primitive,
+// not a naive multi-call proxy" precedent.
+//
+// A duplicate-email race (uniq_users_email_active, #117) is translated back
+// into storage.ErrDuplicateEmail from the wire-level duplicateEmailProxyCode
+// (see #501's note on makeRequest collapsing every 4xx/5xx into a non-nil
+// error before resp is ever populated — the same recovery-from-*remote.HTTPError
+// pattern remote_legal_hold.go's CreateLegalHold already uses), so
+// core.CreateUserWithAssignments' own errors.Is(err, storage.ErrDuplicateEmail)
+// check is preserved across this HTTP hop exactly as it is for a local backend.
+func (rs *RemoteStorage) CreateUserWithRoleGrants(ctx context.Context, user *models.User, grants []storage.RoleGrant) (*models.User, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/users/with-role-grants", newCreateUserWithRoleGrantsWireRequest(user, grants))
+	if err != nil {
+		var httpErr *remote.HTTPError
+		if errors.As(err, &httpErr) && httpErr.ErrorType == duplicateEmailProxyCode {
+			return nil, fmt.Errorf("%w: %s", storage.ErrDuplicateEmail, httpErr.Message)
+		}
+		return nil, fmt.Errorf("failed to create user with role grants: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("create user with role grants failed: %s", resp.Error.Error())
+	}
+	return decodeUserResponse(resp.Data)
 }
 
 // buildUserFilterPath constructs the /api/v1/users query string.
