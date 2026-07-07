@@ -339,6 +339,24 @@ func IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.IssueMFAChallenge(w, r)
 }
 
+// GetActiveMFAChallenge handles POST /api/v1/users/mfa-challenge/active (#522).
+func GetActiveMFAChallenge(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.GetActiveMFAChallenge(w, r)
+}
+
+// ConsumeMFAChallenge handles POST /api/v1/users/mfa-challenge/consume (#522).
+func ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.ConsumeMFAChallenge(w, r)
+}
+
 // UpdateUser handles PUT /api/v1/users/{id}
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
