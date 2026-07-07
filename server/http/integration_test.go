@@ -126,6 +126,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// finding #519: the SoD-policy-proxy end-to-end tests exercise SoDPolicy
 		// CRUD through the real router.
 		&models.SoDPolicy{},
+		// backlog #527: the Keyorix Connect ref-grant-proxy end-to-end tests
+		// exercise ConnectRefGrant CRUD through the real router.
+		&models.ConnectRefGrant{},
 		// finding #520: the retention-proxy end-to-end tests exercise
 		// DeleteAnomalyAlertsBefore/DeleteResolvedAccessRequestsBefore through the
 		// real router. AccessReviewCampaign/AccessReviewItem/BreakGlassActivation
