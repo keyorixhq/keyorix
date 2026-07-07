@@ -2426,6 +2426,20 @@ paths:
           description: "Envelope `data` has `permissions[]` (id, name, resource, ...) and `total`."
         '401': {$ref: '#/components/responses/Error'}
 
+  /api/v1/permissions/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Permissions]
+      summary: Get a single permission by ID
+      operationId: getPermission
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is the permission (id, name, description, resource, action)."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/user-roles:
     post:
       tags: [UserRoles]

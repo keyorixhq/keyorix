@@ -33,6 +33,35 @@ type Storage interface {
 	// when another replica holds the lock — the caller should simply skip this tick.
 	WithSchedulerLock(ctx context.Context, key int64, fn func() error) (ran bool, err error)
 
+	// TryAcquireSchedulerLock and ReleaseSchedulerLock (#530) are the two
+	// building blocks WithSchedulerLock is composed from. They exist as their
+	// own Storage methods (rather than being private to one implementation) so
+	// that RemoteStorage's WithSchedulerLock can acquire, run fn locally against
+	// itself (which may in turn make its own further proxied calls), and release
+	// as two separate HTTP round trips — a real cross-process transaction cannot
+	// span the acquire and release the way LocalStorage's single in-process call
+	// does, so each half must be independently atomic and safely idempotent.
+	//
+	// TryAcquireSchedulerLock atomically attempts to take (or renew, if holder
+	// already owns it) the named lock for ttl, in ONE round trip: acquired=true
+	// only when this holder now owns it (a fresh acquire, a reclaim of an
+	// expired lease, or a renewal of its own still-held lease); acquired=false
+	// when a DIFFERENT holder's lease has not yet expired. Calling it again with
+	// the SAME holder before ExpiresAt is therefore a safe heartbeat/renewal,
+	// not a new acquisition attempt.
+	TryAcquireSchedulerLock(ctx context.Context, key int64, holder string, ttl time.Duration) (acquired bool, err error)
+
+	// ReleaseSchedulerLock releases the named lock IFF it is still held by
+	// holder — a conditional delete, never a bare unconditional one, so a
+	// holder whose lease already expired (and was possibly reclaimed by a
+	// different holder in the meantime) can never clobber that newer holder's
+	// lease. A release for a lock this holder does not (or no longer) own is a
+	// silent no-op, not an error — mirroring ConsumeSSOLoginState's
+	// already-consumed-is-not-an-error stance for the same reason: the caller's
+	// own crashed-holder safety net is ExpiresAt, not a hard release
+	// requirement.
+	ReleaseSchedulerLock(ctx context.Context, key int64, holder string) error
+
 	// WithAuditCheckpointLock serializes the audit-checkpoint chain-walk + decide +
 	// create-checkpoint sequence (ADR-029) across every trigger — the scheduler tick,
 	// the HTTP POST /api/v1/audit/checkpoint endpoint, and the gRPC
@@ -58,6 +87,25 @@ type Storage interface {
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
 	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	DeleteProject(ctx context.Context, id uint) error
+	// DeleteProjectIfEmpty atomically enforces DeleteProject(force=false)'s guard —
+	// reject the delete if the project still has any live secret — and, only when the
+	// project IS empty, performs the SAME cascade soft-delete DeleteProject does, all as
+	// ONE storage operation (#528). It replaces core.DeleteProject's prior
+	// WithTransaction-wrapped ListSecrets+DeleteProject pair (#313): that pair depended
+	// on WithTransaction opening a REAL transaction to keep the guard's read and the
+	// cascade's write atomic, which holds for LocalStorage but NOT for RemoteStorage —
+	// WithTransaction there is a no-op passthrough over HTTP (see its doc comment above),
+	// so a naive two-call proxy of that same pair would reopen a TOCTOU window across a
+	// full network round trip: a secret created between the count and the cascade would
+	// silently let a force=false delete cascade over it anyway, the same check-then-act-
+	// split-by-a-non-transactional-WithTransaction bug class this campaign has already
+	// hit repeatedly. Folding the guard and the cascade into one call closes that gap for
+	// both backends alike — under LocalStorage it is (and always was) one DB transaction;
+	// under RemoteStorage it is now one HTTP round trip executing the whole guard+cascade
+	// server-side. Returns the count of live secrets blocking the delete (0 means the
+	// delete happened) so the caller can format the same "project has N secret(s)..."
+	// error DeleteProject(force=false) has always returned.
+	DeleteProjectIfEmpty(ctx context.Context, id uint) (blockingSecretCount int, err error)
 	// RestoreProject reverses a project soft-delete and cascades to the environments/
 	// secrets that were removed WITH it (matched by deletion timestamp — independently
 	// retired children stay deleted, see LocalStorage.RestoreProject). It returns the

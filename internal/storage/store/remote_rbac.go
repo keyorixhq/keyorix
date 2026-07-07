@@ -4,7 +4,9 @@
 //
 //	AssignRole, RemoveRole, GetUserRoles, GetUserPermissions,
 //	CreatePermission, AssignPermissionToRole,
-//	Project/Environment stubs.
+//	ListPermissions, GetPermission, GetRolePermissions (#526),
+//	Project/Environment catalog CRUD (proxied over HTTP, #528 — see
+//	server/http/handlers/project_catalog_proxy.go and environment_catalog_proxy.go).
 //
 // For the local (GORM) equivalent see local_rbac.go.
 package store
@@ -350,19 +352,97 @@ func (rs *RemoteStorage) AssignPermissionToRole(_ context.Context, _, _ uint) er
 	return fmt.Errorf("not supported in remote storage")
 }
 
-// ListPermissions is not implemented in remote storage.
-func (rs *RemoteStorage) ListPermissions(_ context.Context) ([]*models.Permission, error) {
-	return nil, remoteUnsupported("ListPermissions")
+// ListPermissions lists the full permission catalog via remote API. #526: the
+// permission catalog is a near-static, seeded-not-created-dynamically read —
+// RemoteStorage has no local database to fall back on, so a spoke server's
+// catalog view (and everything that depends on it) was 100% broken. Reuses
+// the EXISTING human-facing GET /api/v1/permissions route
+// (server/http/router.go, roles.read-gated), same as the interactive UI —
+// no new route needed. The handler wraps the list in {"permissions":...,
+// "total":...} (server/http/handlers/rbac.go's ListPermissions), so this
+// unmarshals into that shape rather than a bare array.
+func (rs *RemoteStorage) ListPermissions(ctx context.Context) ([]*models.Permission, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/permissions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list permissions: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list permissions failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Permissions []*models.Permission `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Permissions, nil
 }
 
-// GetPermission is not implemented in remote storage.
-func (rs *RemoteStorage) GetPermission(_ context.Context, _ uint) (*models.Permission, error) {
-	return nil, remoteUnsupported("GetPermission")
+// GetPermission retrieves a single permission by ID via remote API. #526:
+// AssignPermissionToRole (internal/core/rbac_management.go) calls this first
+// to resolve permissionID -> name for the #169 self-permission-check before
+// assigning — with no local DB, this was an unconditional stub, so assigning
+// a permission to a role hard-failed under storage.type: remote. Unlike
+// ListPermissions/GetRolePermissions, no existing route covered a per-ID
+// permission lookup, so this adds GET /api/v1/permissions/{id}
+// (server/http/router.go, server/http/handlers/rbac.go's new GetPermission
+// handler) as a sibling of the existing GET /api/v1/permissions collection,
+// gated by the SAME roles.read — a caller who can already enumerate every
+// permission via ListPermissions gains no new capability by looking one up
+// individually. Mirrors GetRoleByName's bare-object response shape (not
+// wrapped), since the new handler was written to return the permission
+// directly.
+func (rs *RemoteStorage) GetPermission(ctx context.Context, id uint) (*models.Permission, error) {
+	path := fmt.Sprintf("/api/v1/permissions/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get permission: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get permission failed: %s", resp.Error.Error())
+	}
+	var result models.Permission
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
 }
 
-// GetRolePermissions is not implemented in remote storage.
-func (rs *RemoteStorage) GetRolePermissions(_ context.Context, _ uint) ([]*models.Permission, error) {
-	return nil, remoteUnsupported("GetRolePermissions")
+// GetRolePermissions retrieves a role's assigned permissions via remote API.
+// #526: real callers span the role-permission view (GetRoleWithPermissions),
+// requireGranterHoldsRolePermissions's grant-time admin-rank-ceiling check
+// (authz.go), and several read-only RBAC-dependent reports — access reviews
+// (access_review.go), compliance posture's dormant-admin-tier-grant scan
+// (compliance_posture.go), and SoD conflict detection (sod.go) — all broken
+// with no local DB fallback. Reuses the EXISTING human-facing
+// GET /api/v1/roles/{id}/permissions route (server/http/router.go,
+// roles.read-gated), same as the interactive UI. Confirmed read-only: every
+// caller either renders a view or feeds a report; the one authorization use
+// (requireGranterHoldsRolePermissions) reads the role's CURRENT permission
+// bundle to check the actor's own standing authority, not as one half of a
+// check-then-act mutation on the bundle itself — the same sequential-read
+// exposure already exists for LocalStorage's two plain (non-transactional)
+// DB calls, so proxying over HTTP (RemoteStorage.WithTransaction is a no-op
+// passthrough) introduces no NEW atomicity gap. The handler wraps the list in
+// {"role_id":...,"role_name":...,"permissions":...} (server/http/handlers/
+// rbac.go's GetRolePermissions), so this unmarshals into that shape rather
+// than a bare array.
+func (rs *RemoteStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
+	path := fmt.Sprintf("/api/v1/roles/%d/permissions", roleID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role permissions: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get role permissions failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Permissions []*models.Permission `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Permissions, nil
 }
 
 // RemovePermissionFromRole revokes a permission from a role via the REST API.
@@ -605,7 +685,16 @@ func (rs *RemoteStorage) RoleSetHasPermission(_ context.Context, _ []uint, _ str
 	return false, fmt.Errorf("not supported in remote storage")
 }
 
-// --- Project / Environment (not supported in remote mode) ---
+// --- Project / Environment ---
+//
+// CreateProject/CreateEnvironment remain deliberately unsupported (below); every
+// OTHER project/environment catalog method is proxied over HTTP (#528) to
+// server/http/handlers/project_catalog_proxy.go and environment_catalog_proxy.go's
+// /api/v1/system/projects* and /api/v1/system/environments* routes — thin
+// passthroughs onto the SAME storage.Storage primitives internal/core/catalog.go
+// already uses against a local backend. See those handler files' package docs for
+// the reuse-vs-new-route rationale (why the human-facing /api/v1/projects routes are
+// NOT reused as the proxy target).
 
 func (rs *RemoteStorage) CreateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
 	return nil, fmt.Errorf("not supported in remote storage")
@@ -615,44 +704,341 @@ func (rs *RemoteStorage) CreateEnvironment(_ context.Context, _ *models.Environm
 	return nil, fmt.Errorf("not supported in remote storage")
 }
 
-func (rs *RemoteStorage) ListProjects(_ context.Context) ([]*models.Project, error) {
-	return nil, remoteUnsupported("ListProjects")
+// projectWire mirrors models.Project's fields exactly (snake_case) — the wire shape
+// project_catalog_proxy.go's projectProxyWire sends/expects.
+type projectWire struct {
+	ID          uint       `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	RequireMFA  bool       `json:"require_mfa"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
-func (rs *RemoteStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]storage.ProjectWithCounts, error) {
-	return nil, remoteUnsupported("ListProjectsWithCounts")
+func (w projectWire) toModel() *models.Project {
+	p := &models.Project{
+		ID:          w.ID,
+		Name:        w.Name,
+		Description: w.Description,
+		RequireMFA:  w.RequireMFA,
+		CreatedAt:   w.CreatedAt,
+		UpdatedAt:   w.UpdatedAt,
+	}
+	if w.DeletedAt != nil {
+		p.DeletedAt.Time = *w.DeletedAt
+		p.DeletedAt.Valid = true
+	}
+	return p
 }
 
-func (rs *RemoteStorage) GetProject(_ context.Context, _ uint) (*models.Project, error) {
-	return nil, remoteUnsupported("GetProject")
+func newProjectWire(p *models.Project) projectWire {
+	w := projectWire{
+		ID:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		RequireMFA:  p.RequireMFA,
+		CreatedAt:   p.CreatedAt,
+		UpdatedAt:   p.UpdatedAt,
+	}
+	if p.DeletedAt.Valid {
+		t := p.DeletedAt.Time
+		w.DeletedAt = &t
+	}
+	return w
 }
 
-func (rs *RemoteStorage) UpdateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
-	return nil, remoteUnsupported("UpdateProject")
+func decodeProjectResponse(data json.RawMessage) (*models.Project, error) {
+	var w projectWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return w.toModel(), nil
 }
 
-func (rs *RemoteStorage) DeleteProject(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteProject")
+// ListProjects lists every project via GET /api/v1/system/projects.
+func (rs *RemoteStorage) ListProjects(ctx context.Context) ([]*models.Project, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/system/projects")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list projects failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Projects []projectWire `json:"projects"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	projects := make([]*models.Project, 0, len(result.Projects))
+	for _, w := range result.Projects {
+		projects = append(projects, w.toModel())
+	}
+	return projects, nil
 }
 
-func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
-	return 0, 0, remoteUnsupported("RestoreProject")
+// ListProjectsWithCounts lists every project with secret/environment counts via GET
+// /api/v1/system/projects/with-counts?include_deleted=.
+func (rs *RemoteStorage) ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]storage.ProjectWithCounts, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/with-counts?include_deleted=%t", includeDeleted)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects with counts: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list projects with counts failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Projects []storage.ProjectWithCounts `json:"projects"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Projects, nil
 }
 
-func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
-	return nil, remoteUnsupported("ListEnvironments")
+// GetProject retrieves a project by ID via GET /api/v1/system/projects/{id}.
+func (rs *RemoteStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get project: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get project failed: %s", resp.Error.Error())
+	}
+	return decodeProjectResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*models.Environment, error) {
-	return nil, remoteUnsupported("ListEnvironmentsByProject")
+// UpdateProject updates an existing project via PUT /api/v1/system/projects/{id}.
+func (rs *RemoteStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d", project.ID)
+	resp, err := rs.client.Put(ctx, path, newProjectWire(project))
+	if err != nil {
+		return nil, fmt.Errorf("failed to update project: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("update project failed: %s", resp.Error.Error())
+	}
+	return decodeProjectResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) ListEnvironmentsByProjectIncludingDeleted(_ context.Context, _ uint) ([]*models.Environment, error) {
-	return nil, remoteUnsupported("ListEnvironmentsByProjectIncludingDeleted")
+// DeleteProject cascade-deletes a project (unconditionally — no empty-project guard)
+// via DELETE /api/v1/system/projects/{id}. This backs the force=true path; the
+// force=false guard+cascade is DeleteProjectIfEmpty below.
+func (rs *RemoteStorage) DeleteProject(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/projects/%d", id)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete project: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete project failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) ListProjectMembers(_ context.Context, _ uint) ([]storage.ProjectMember, error) {
-	return nil, remoteUnsupported("ListProjectMembers")
+// DeleteProjectIfEmpty is the atomic guard+cascade form of DeleteProject(force=false)
+// (#528), proxied as ONE HTTP call to POST
+// /api/v1/system/projects/{id}/delete-if-empty — see the storage.Storage interface
+// doc comment on this method for the full TOCTOU rationale this closes relative to a
+// naive two-call (count, then delete) proxy.
+func (rs *RemoteStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/delete-if-empty", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete project if empty: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("delete project if empty failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		BlockingSecretCount int `json:"blocking_secret_count"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.BlockingSecretCount, nil
+}
+
+// RestoreProject reverses a project soft-delete (and its cascade) via POST
+// /api/v1/system/projects/{id}/restore.
+func (rs *RemoteStorage) RestoreProject(ctx context.Context, id uint) (int, int, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/restore", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to restore project: %w", err)
+	}
+	if !resp.Success {
+		return 0, 0, fmt.Errorf("restore project failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		RestoredEnvironments int `json:"restored_environments"`
+		RestoredSecrets      int `json:"restored_secrets"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.RestoredEnvironments, result.RestoredSecrets, nil
+}
+
+// environmentWire mirrors models.Environment's fields exactly (snake_case) — the
+// wire shape environment_catalog_proxy.go's environmentProxyWire sends/expects.
+type environmentWire struct {
+	ID        uint       `json:"id"`
+	ProjectID uint       `json:"project_id"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+}
+
+func (w environmentWire) toModel() *models.Environment {
+	e := &models.Environment{
+		ID:        w.ID,
+		ProjectID: w.ProjectID,
+		Name:      w.Name,
+		CreatedAt: w.CreatedAt,
+		UpdatedAt: w.UpdatedAt,
+	}
+	if w.DeletedAt != nil {
+		e.DeletedAt.Time = *w.DeletedAt
+		e.DeletedAt.Valid = true
+	}
+	return e
+}
+
+func decodeEnvironmentResponse(data json.RawMessage) (*models.Environment, error) {
+	var w environmentWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return w.toModel(), nil
+}
+
+// ListEnvironments lists every environment via GET /api/v1/system/environments.
+func (rs *RemoteStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/system/environments")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list environments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list environments failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Environments []environmentWire `json:"environments"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	environments := make([]*models.Environment, 0, len(result.Environments))
+	for _, w := range result.Environments {
+		environments = append(environments, w.toModel())
+	}
+	return environments, nil
+}
+
+// listEnvironmentsByProject is the shared implementation behind
+// ListEnvironmentsByProject/ListEnvironmentsByProjectIncludingDeleted via GET
+// /api/v1/system/projects/{id}/environments?include_deleted=.
+func (rs *RemoteStorage) listEnvironmentsByProject(ctx context.Context, projectID uint, includeDeleted bool) ([]*models.Environment, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/environments?include_deleted=%t", projectID, includeDeleted)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list environments by project: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list environments by project failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Environments []environmentWire `json:"environments"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	environments := make([]*models.Environment, 0, len(result.Environments))
+	for _, w := range result.Environments {
+		environments = append(environments, w.toModel())
+	}
+	return environments, nil
+}
+
+func (rs *RemoteStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	return rs.listEnvironmentsByProject(ctx, projectID, false)
+}
+
+// ListEnvironmentsByProjectIncludingDeleted is like ListEnvironmentsByProject but
+// also returns soft-deleted environments, for the restore UI.
+func (rs *RemoteStorage) ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	return rs.listEnvironmentsByProject(ctx, projectID, true)
+}
+
+// GetEnvironment retrieves an environment by ID via GET
+// /api/v1/system/environments/{id}.
+//
+// #499 carve-out (untouched by #528): CreateSecret's own call site
+// (internal/core/secrets.go) special-cases errors.Is(ErrUnsupportedByBackend) to skip
+// its ownership pre-check when this was unsupported. Now that it's proxied for real,
+// that pre-check simply starts running for real too — no change was needed there.
+func (rs *RemoteStorage) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
+	path := fmt.Sprintf("/api/v1/system/environments/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get environment: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get environment failed: %s", resp.Error.Error())
+	}
+	return decodeEnvironmentResponse(resp.Data)
+}
+
+// DeleteEnvironment deletes an environment (refusing if it still has active secrets)
+// via DELETE /api/v1/system/environments/{id}.
+func (rs *RemoteStorage) DeleteEnvironment(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/environments/%d", id)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete environment: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete environment failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// RestoreEnvironment reverses a soft-delete, scoped to projectID, via POST
+// /api/v1/system/projects/{projectId}/environments/{id}/restore.
+func (rs *RemoteStorage) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/environments/%d/restore", projectID, id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to restore environment: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("restore environment failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// ListProjectMembers lists a project's user members via GET
+// /api/v1/system/projects/{id}/members.
+func (rs *RemoteStorage) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/members", projectID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project members: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list project members failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Members []storage.ProjectMember `json:"members"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Members, nil
 }
 
 // ListProjectRoleAssignments proxies onto GET
@@ -785,16 +1171,4 @@ func joinUintsCSV(ids []uint) string {
 		parts = append(parts, strconv.FormatUint(uint64(id), 10))
 	}
 	return strings.Join(parts, ",")
-}
-
-func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
-	return nil, remoteUnsupported("GetEnvironment")
-}
-
-func (rs *RemoteStorage) DeleteEnvironment(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteEnvironment")
-}
-
-func (rs *RemoteStorage) RestoreEnvironment(_ context.Context, _, _ uint) error {
-	return remoteUnsupported("RestoreEnvironment")
 }

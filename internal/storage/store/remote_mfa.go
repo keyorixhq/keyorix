@@ -1,26 +1,77 @@
-// remote_mfa.go — MFA persistence is server-side only; the remote client never
-// manages MFA state directly (enrolment/verify go through the server's REST API).
+// remote_mfa.go — MFA persistence for RemoteStorage: the login-verification
+// half (IssueMFAChallenge/VerifyMFALoginCredentials, below) and the
+// enrolment/management half (UpsertMFASecret..DeleteMFARecoveryCodes, also
+// below, finding #524) are two DIFFERENT proxy shapes for two different
+// problems — see each section's doc for why.
 //
 // IssueMFAChallenge and VerifyMFALoginCredentials below implement
 // core.RemoteMFAVerifier (#509): the upstream half of the storage.type: remote
-// TOTP second-factor login proxy, mirroring remote_login_verify.go's password
-// proxy (#506) exactly. The raw TOTP secret is stored reversibly encrypted
-// specifically so it must never leave the server that can decrypt it —
-// GetMFASecret below stays an unconditional stub for that reason — so the
-// ENTIRE TOTP/recovery-code check, not just a wire-DTO passthrough of the
-// storage primitives above, has to run upstream.
+// TOTP second-factor LOGIN proxy, mirroring remote_login_verify.go's password
+// proxy (#506) exactly. Login verification must run entirely upstream because
+// VerifyMFACredentials (internal/core/mfa.go) needs to compare a caller-supplied
+// code against the DECRYPTED secret, and account lockout accounting has to be
+// serialized with the password-step lockout check — a wire-DTO passthrough of
+// the storage primitives alone would still leave that whole check unreachable
+// on a spoke node.
 //
-// GetActiveMFAChallenge and ConsumeMFAChallenge below are DIFFERENT from that
-// pair: they are ordinary storage.Storage passthroughs (#522), not part of the
+// UpsertMFASecret/GetMFASecret/ActivateMFASecret/DeleteMFAForUser/
+// SetUserMFAEnabled/CreateMFARecoveryCodes/CountUnusedMFARecoveryCodes/
+// DeleteMFARecoveryCodes below are a DIFFERENT, CRUD-shaped problem
+// (finding #524): enrolment (BeginMFAEnrollment/ActivateMFA) and management
+// (DisableMFA/RegenerateMFARecoveryCodes/MFARecoveryCodesRemaining,
+// internal/core/mfa.go) ALWAYS run on whichever server terminates the
+// end-user's /auth/mfa/* request — never delegated to a RemoteMFAVerifier —
+// so before this fix these eight methods being unconditional stubs made MFA
+// enrolment and management 100% broken under storage.type: remote (login
+// itself, once already-active, was unaffected: it goes through the
+// RemotMFAVerifier proxy above). These are thin passthroughs onto new routes
+// under /api/v1/system/mfa (server/http/handlers/mfa_management_proxy.go),
+// gated on the SAME system.read/system.write RBAC tier every other
+// RemoteStorage proxy call already uses — no new privilege class. No MFA
+// POLICY decision (re-auth gate, single-active-method enforcement, recovery
+// code generation/hashing, session invalidation on activation) is made in
+// these routes; that stays entirely in the CALLING server's own
+// internal/core.KeyorixCore, exactly as it does against a local backend.
+//
+// Sensitive-data boundary (investigated, not assumed — mirrors
+// remote_dynamic.go's identical AdminDSN/Credential boundary exactly):
+// MFASecret.SecretEnc/SecretMeta is encrypted by internal/core
+// (KeyorixCore.encryptAuthSecret/decryptAuthSecret) using the CALLING
+// server's own encryption key BEFORE the row is ever handed to
+// UpsertMFASecret, and decrypted only after GetMFASecret returns it — never in
+// plaintext, and never by the upstream server these routes live on. The wire
+// type below carries SecretEnc/SecretMeta as opaque ciphertext bytes; the
+// upstream's proxy handlers never decrypt it. (BeginMFAEnrollment also
+// refuses outright when at-rest encryption is disabled — see
+// models.MFASecret's own doc — so this ciphertext is never actually plaintext
+// even in that degraded case.)
+//
+// Atomicity (checked against local_mfa.go, not assumed): every one of these
+// eight methods is ALREADY a single storage.Storage call in
+// internal/core/mfa.go — none of ActivateMFA/DisableMFA/
+// RegenerateMFARecoveryCodes wraps its several storage calls in
+// core.storage.WithTransaction (RemoteStorage.WithTransaction is a no-op
+// passthrough anyway, remote_transaction.go), and DeleteMFAForUser's OWN
+// internal secret+recovery-codes delete already happens inside ONE local GORM
+// transaction wholly inside local_mfa.go, not split across two core-level
+// calls. So proxying each of these eight as ONE HTTP round trip to the
+// upstream (which still executes local_mfa.go's own UPDATE/transaction
+// server-side) preserves whatever atomicity the local backend already had —
+// unlike AdvanceWebAuthnCredentialCounter (#517) or
+// CreateSecretDependencyExclusive (#519), no NEW combined atomic primitive is
+// needed here, because no caller here composes a Lock-then-Update (or
+// check-then-act) pair across two SEPARATE storage calls that this HTTP hop
+// could reopen a race in.
+//
+// GetActiveMFAChallenge and ConsumeMFAChallenge below are DIFFERENT again:
+// they are ordinary storage.Storage passthroughs (#522), not part of the
 // RemoteMFAVerifier proxy. models.MFAChallenge is a SHARED pre-auth token: the
 // SAME row backs both the TOTP path (proxied wholesale above, since it also
 // needs the encrypted secret) and WebAuthn-as-second-factor login
 // (internal/core/webauthn.go's BeginWebAuthnLogin/FinishWebAuthnLogin), which has
 // no secret of its own to protect — a spoke server that resolves the
 // challenge's user_id can run the entire passkey assertion ceremony locally
-// against its own (already-proxied, #517) WebAuthn credential rows. Before this
-// fix, BOTH were unconditional stubs, so WebAuthn login was 100% broken under
-// storage.type: remote even though the TOTP path already worked.
+// against its own (already-proxied, #517) WebAuthn credential rows.
 //
 // WebAuthn's OWN storage.Storage primitives (registered credentials, ceremony
 // sessions) are handled separately: see remote_webauthn.go / #517.
@@ -30,49 +81,220 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-func (rs *RemoteStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) error {
-	return remoteUnsupported("UpsertMFASecret")
+// mfaSecretWire mirrors models.MFASecret's fields exactly (snake_case).
+// SecretEnc/SecretMeta/LastUsedStep are tagged json:"-" on the model (to keep
+// them out of USER-facing responses) — irrelevant here, since this is an
+// internal system-to-system wire format gated on system.read/system.write,
+// matching webAuthnSessionWire's identical json:"-"-field precedent. SecretEnc/
+// SecretMeta carry the CALLING server's own ciphertext verbatim — see this
+// file's package doc for why that is safe to transmit as opaque bytes.
+type mfaSecretWire struct {
+	ID           uint      `json:"id"`
+	UserID       uint      `json:"user_id"`
+	SecretEnc    []byte    `json:"secret_enc"`
+	SecretMeta   []byte    `json:"secret_meta"`
+	Activated    bool      `json:"activated"`
+	LastUsedStep *int64    `json:"last_used_step"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
-func (rs *RemoteStorage) GetMFASecret(_ context.Context, _ uint) (*models.MFASecret, error) {
-	return nil, remoteUnsupported("GetMFASecret")
+func newMFASecretWire(s *models.MFASecret) mfaSecretWire {
+	return mfaSecretWire{
+		ID:           s.ID,
+		UserID:       s.UserID,
+		SecretEnc:    s.SecretEnc,
+		SecretMeta:   s.SecretMeta,
+		Activated:    s.Activated,
+		LastUsedStep: s.LastUsedStep,
+		CreatedAt:    s.CreatedAt,
+	}
 }
 
-func (rs *RemoteStorage) ActivateMFASecret(_ context.Context, _ uint) error {
-	return remoteUnsupported("ActivateMFASecret")
+func (w mfaSecretWire) toModel() *models.MFASecret {
+	return &models.MFASecret{
+		ID:           w.ID,
+		UserID:       w.UserID,
+		SecretEnc:    w.SecretEnc,
+		SecretMeta:   w.SecretMeta,
+		Activated:    w.Activated,
+		LastUsedStep: w.LastUsedStep,
+		CreatedAt:    w.CreatedAt,
+	}
+}
+
+func decodeMFASecretResponse(data []byte) (*models.MFASecret, error) {
+	var wire mfaSecretWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
+}
+
+// UpsertMFASecret persists the user's TOTP secret row via POST
+// /api/v1/system/mfa/secrets, then copies the upstream-assigned fields (ID,
+// CreatedAt) back into s — mirroring CreateWebAuthnCredential's identical
+// in-place-mutate contract, and LocalStorage's own GORM Create-with-OnConflict,
+// which does the same.
+func (rs *RemoteStorage) UpsertMFASecret(ctx context.Context, s *models.MFASecret) error {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/secrets", newMFASecretWire(s))
+	if err != nil {
+		return fmt.Errorf("failed to store MFA secret: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("store MFA secret failed: %s", resp.Error.Error())
+	}
+	saved, err := decodeMFASecretResponse(resp.Data)
+	if err != nil {
+		return err
+	}
+	*s = *saved
+	return nil
+}
+
+// GetMFASecret fetches a user's TOTP secret row via GET
+// /api/v1/system/mfa/secrets?user_id=X — the CALLING server then decrypts
+// SecretEnc/SecretMeta with its own key (loadTOTPSecret,
+// internal/core/mfa.go), exactly as it would against a local backend.
+func (rs *RemoteStorage) GetMFASecret(ctx context.Context, userID uint) (*models.MFASecret, error) {
+	q := url.Values{}
+	q.Set("user_id", strconv.FormatUint(uint64(userID), 10))
+	path := "/api/v1/system/mfa/secrets?" + q.Encode()
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MFA secret: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get MFA secret failed: %s", resp.Error.Error())
+	}
+	return decodeMFASecretResponse(resp.Data)
+}
+
+// ActivateMFASecret marks the user's pending TOTP secret activated via POST
+// /api/v1/system/mfa/secrets/{userId}/activate — an unconditional single-column
+// UPDATE, matching LocalStorage's own semantics exactly (no WHERE-activated
+// guard locally either; ActivateMFA's password/TOTP re-auth is the only gate).
+func (rs *RemoteStorage) ActivateMFASecret(ctx context.Context, userID uint) error {
+	path := fmt.Sprintf("/api/v1/system/mfa/secrets/%d/activate", userID)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to activate MFA secret: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("activate MFA secret failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
 func (rs *RemoteStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
 	return false, remoteUnsupported("MarkTOTPStepUsed")
 }
 
-func (rs *RemoteStorage) DeleteMFAForUser(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteMFAForUser")
+// DeleteMFAForUser clears a user's secret and all recovery codes via DELETE
+// /api/v1/system/mfa/users/{userId} — ONE HTTP round trip onto the upstream's
+// own DeleteMFAForUser, so this inherits local_mfa.go's internal
+// secret-then-codes GORM transaction unchanged; there is no separate
+// "delete secret, then delete codes" sequence here to reopen a partial-delete
+// gap across the HTTP hop.
+func (rs *RemoteStorage) DeleteMFAForUser(ctx context.Context, userID uint) error {
+	path := fmt.Sprintf("/api/v1/system/mfa/users/%d", userID)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete MFA for user: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete MFA for user failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error {
-	return remoteUnsupported("SetUserMFAEnabled")
+// setUserMFAEnabledWire is the wire body for SetUserMFAEnabledProxy, mirroring
+// setUserWebAuthnEnabledWire exactly.
+type setUserMFAEnabledWire struct {
+	Enabled bool `json:"enabled"`
 }
 
-func (rs *RemoteStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []string) error {
-	return remoteUnsupported("CreateMFARecoveryCodes")
+// SetUserMFAEnabled flips the user's MFAEnabled flag via PUT
+// /api/v1/system/mfa/users/{userId}/mfa-enabled.
+func (rs *RemoteStorage) SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error {
+	path := fmt.Sprintf("/api/v1/system/mfa/users/%d/mfa-enabled", userID)
+	resp, err := rs.client.Put(ctx, path, setUserMFAEnabledWire{Enabled: enabled})
+	if err != nil {
+		return fmt.Errorf("failed to set MFA enabled: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("set MFA enabled failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// createMFARecoveryCodesWire is the wire body for CreateMFARecoveryCodesProxy.
+type createMFARecoveryCodesWire struct {
+	CodeHashes []string `json:"code_hashes"`
+}
+
+// CreateMFARecoveryCodes bulk-inserts the user's hashed recovery codes via
+// POST /api/v1/system/mfa/recovery-codes. The plaintext codes themselves never
+// cross the wire — ActivateMFA/RegenerateMFARecoveryCodes
+// (internal/core/mfa.go) hash them locally first, exactly as they do against a
+// local backend.
+func (rs *RemoteStorage) CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error {
+	path := fmt.Sprintf("/api/v1/system/mfa/recovery-codes?user_id=%d", userID)
+	resp, err := rs.client.Post(ctx, path, createMFARecoveryCodesWire{CodeHashes: codeHashes})
+	if err != nil {
+		return fmt.Errorf("failed to store MFA recovery codes: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("store MFA recovery codes failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
 func (rs *RemoteStorage) ConsumeMFARecoveryCode(_ context.Context, _ uint, _ string, _ time.Time) (bool, error) {
 	return false, remoteUnsupported("ConsumeMFARecoveryCode")
 }
 
-func (rs *RemoteStorage) CountUnusedMFARecoveryCodes(_ context.Context, _ uint) (int, error) {
-	return 0, remoteUnsupported("CountUnusedMFARecoveryCodes")
+// CountUnusedMFARecoveryCodes reports how many of a user's recovery codes
+// remain unused via GET /api/v1/system/mfa/recovery-codes/count?user_id=X.
+func (rs *RemoteStorage) CountUnusedMFARecoveryCodes(ctx context.Context, userID uint) (int, error) {
+	q := url.Values{}
+	q.Set("user_id", strconv.FormatUint(uint64(userID), 10))
+	path := "/api/v1/system/mfa/recovery-codes/count?" + q.Encode()
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count MFA recovery codes: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("count MFA recovery codes failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Count, nil
 }
 
-func (rs *RemoteStorage) DeleteMFARecoveryCodes(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteMFARecoveryCodes")
+// DeleteMFARecoveryCodes removes ALL of a user's recovery codes via DELETE
+// /api/v1/system/mfa/recovery-codes/{userId} — the regenerate flow's "clear old
+// codes" half.
+func (rs *RemoteStorage) DeleteMFARecoveryCodes(ctx context.Context, userID uint) error {
+	path := fmt.Sprintf("/api/v1/system/mfa/recovery-codes/%d", userID)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete MFA recovery codes: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete MFA recovery codes failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
 func (rs *RemoteStorage) CreateMFAChallenge(_ context.Context, _ *models.MFAChallenge) error {

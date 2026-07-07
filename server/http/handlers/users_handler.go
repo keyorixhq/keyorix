@@ -121,6 +121,23 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 	if u.LastFailedLoginAt != nil {
 		out["last_failed_login_at"] = u.LastFailedLoginAt.UTC().Format(time.RFC3339)
 	}
+	// mfa_enabled (#524): this endpoint already surfaces the identical
+	// admin-level lockout-accounting fields just above (users.read/users.write
+	// trust boundary — not a lower-trust caller, and MFAEnabled is not
+	// sensitive the way PasswordHash is; VerifyCredentials's proxy response
+	// already sends it at the SAME trust tier, see auth #506/#509). Without it
+	// here, RemoteStorage's GetUser (internal/storage/store/remote_users.go)
+	// decoded every user's MFAEnabled as the Go zero value (false) regardless
+	// of the upstream's real state under storage.type: remote — silently
+	// breaking every internal/core/mfa.go caller that branches on
+	// user.MFAEnabled once #524's storage-primitive proxies made the rest of
+	// the enrolment/management flow reachable (MFARecoveryCodesRemaining
+	// always reported 0/0, DisableMFA/RegenerateMFARecoveryCodes always
+	// refused with "MFA is not enabled", and requireReauth's TOTP-code re-auth
+	// branch — the only re-auth path that can work under storage.type: remote,
+	// since PasswordHash is deliberately never sent — was unreachable dead
+	// code).
+	out["mfa_enabled"] = u.MFAEnabled
 	return out
 }
 
