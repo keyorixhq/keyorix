@@ -22,7 +22,12 @@ const (
 	// statusKnownGap means the stub is a confirmed, currently-reachable bug —
 	// something breaks under storage.type: remote today. Tracked in
 	// docs/security/HARDENING-BACKLOG.md; see Reason for the finding reference.
-	statusKnownGap
+	//
+	// Round 119's entire genuine-gap list is closed as of #531, so no allowlist
+	// entry currently uses this value — kept (not deleted) since the NEXT stub a
+	// future round finds needs it immediately; deleting and re-adding it every
+	// time the count round-trips through zero would just be churn.
+	statusKnownGap //nolint:unused
 )
 
 type remoteUnsupportedEntry struct {
@@ -75,14 +80,19 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (8; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (0; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
 	// ref-grant CRUD closed by #527, self-service access-request workflow closed by
 	// #523, RBAC permission catalog (ListPermissions/GetPermission/
 	// GetRolePermissions) closed by #526, WithSchedulerLock closed by #530,
 	// project/environment catalog CRUD closed by #528, MFA enrolment/management
-	// closed by #524, RBAC role-grant primitives closed by #525) ---
+	// closed by #524, RBAC role-grant primitives closed by #525, misc gaps (the
+	// five LastUser*Activity methods, GetSecretIncludingDeleted, ListSharesByOwner,
+	// CreateUserWithRoleGrants) closed by #531 — round 119's entire genuine-gap
+	// list is now closed; #97 (MEDIUM, no further code action planned) and
+	// #104/#253 (LOW, already settled) are the only backlog items left, see
+	// docs/security/HARDENING-BACKLOG.md) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -135,20 +145,24 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// GetEnvironment's #499 carve-out inside core.CreateSecret is unaffected —
 	// see internal/core/secrets.go.
 
-	// Misc.
-	"LastUserSecretActivity": {statusKnownGap,
-		"round 119: GenerateProjectAccessReview (ISO 27001/SOC2 recertification) — degrades gracefully but the dormant-access signal is never available"},
-	"LastUserRoleManagementActivity": {statusKnownGap,
-		"round 119: compliance_posture.go's countDormantRoleGrants — degrades gracefully, same missing-signal issue"},
-	"LastUserSecretDeletionActivity": {statusKnownGap, "round 119: same flow as LastUserRoleManagementActivity"},
-	"LastUserSecretReadActivity":     {statusKnownGap, "round 119: same flow as LastUserRoleManagementActivity"},
-	"LastUserSecretWriteActivity":    {statusKnownGap, "round 119: same flow as LastUserRoleManagementActivity"},
-	"GetSecretIncludingDeleted": {statusKnownGap,
-		"round 119: ScopeFromDeletedSecretParam's scope check ahead of POST /secrets/{id}/restore — every restore request 404s before ever reaching the (already-proxied) RestoreSecret"},
-	"ListSharesByOwner": {statusKnownGap,
-		"round 119: core.ListSharesByUser hard-fails (no fallback), backing the gRPC ListShares \"my shares\" call"},
-	"CreateUserWithRoleGrants": {statusKnownGap,
-		"round 119: CreateUserWithAssignments (atomic create-user+role-grants), POST /api/v1/users and gRPC CreateUser"},
+	// Scheduler locking was fixed in #530: TryAcquireSchedulerLock/
+	// ReleaseSchedulerLock are now proxied via /api/v1/system/scheduler-lock/*
+	// (server/http/handlers/scheduler_lock_proxy.go), no longer an unconditional
+	// stub — see internal/storage/store/remote_scheduler_lock.go. Each route
+	// resolves its entire acquire/release decision in ONE storage.Storage call,
+	// so no naive "check, then write" pair is ever exposed over the HTTP hop to
+	// reopen the exclusivity race the lock exists to prevent.
+
+	// Misc (#531): the five LastUser*Activity methods, GetSecretIncludingDeleted,
+	// and ListSharesByOwner are now proxied via /api/v1/system/access-activity/*,
+	// /api/v1/system/secrets/{id}/including-deleted, and
+	// /api/v1/system/shares/by-owner/{ownerID} (server/http/handlers/
+	// misc_remote_proxy.go). CreateUserWithRoleGrants required a new atomic
+	// primitive rather than a naive two-call proxy — LocalStorage wraps the
+	// user-create + role-grant inserts in one real DB transaction (ADR-028), and
+	// RemoteStorage.WithTransaction is a no-op passthrough, so it's proxied as
+	// ONE atomic call via POST /api/v1/system/users/with-role-grants instead —
+	// see internal/storage/store/remote_users.go.
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every

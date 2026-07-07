@@ -168,6 +168,8 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 	// CreateBreakGlassActivation's OnConflict DoNothing branch depends on.
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user "+
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
+		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 

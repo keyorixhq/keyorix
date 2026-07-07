@@ -228,9 +228,34 @@ func (rs *RemoteStorage) DeleteSecret(ctx context.Context, id uint) error {
 	return nil
 }
 
-// GetSecretIncludingDeleted is not available in remote mode; restore resolves server-side.
-func (rs *RemoteStorage) GetSecretIncludingDeleted(_ context.Context, _ uint) (*models.SecretNode, error) {
-	return nil, remoteUnsupported("GetSecretIncludingDeleted")
+// GetSecretIncludingDeleted loads a secret even when soft-deleted, via GET
+// /api/v1/system/secrets/{id}/including-deleted (finding #531). Before this fix,
+// the unconditional stub broke ScopeFromDeletedSecretParam — the scope resolver
+// ahead of POST /secrets/{id}/restore (server/middleware/auth.go) — so every
+// restore request 404'd before ever reaching the already-correctly-proxied
+// RestoreSecret. A thin passthrough onto storage.Storage's own Unscoped lookup
+// (no policy decision made here); gated on the SAME system.read tier every
+// other RemoteStorage read already needs. The response marshals models.SecretNode
+// directly (it carries no json tags of its own beyond ValueStored's `json:"-"`,
+// so a Go-to-Go round trip between this client and the handler's identical type
+// preserves every field exactly, mirroring DeleteExpiredShareRecords' identical
+// choice for models.ShareRecord), wrapped in a small envelope.
+func (rs *RemoteStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) (*models.SecretNode, error) {
+	path := fmt.Sprintf("/api/v1/system/secrets/%d/including-deleted", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get secret including deleted: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get secret including deleted failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Secret *models.SecretNode `json:"secret"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Secret, nil
 }
 
 func (rs *RemoteStorage) RestoreSecret(ctx context.Context, id uint) error {

@@ -135,14 +135,31 @@ func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*
 	return result, nil
 }
 
-// ListSharesByOwner is not implemented for remote storage: there is no server REST
-// endpoint to proxy this to. Returning an empty slice here would make a caller (and
-// any authz/audit logic downstream) see "user has zero shares" when the truth is
-// "we don't know" — potentially masking access it should have surfaced (#455).
-// Surface the unsupported-operation error instead, matching every sibling stub in
-// this file.
-func (rs *RemoteStorage) ListSharesByOwner(_ context.Context, _ uint) ([]*models.ShareRecord, error) {
-	return nil, remoteUnsupported("ListSharesByOwner")
+// ListSharesByOwner lists currently-active share records created by ownerID, via
+// GET /api/v1/system/shares/by-owner/{ownerID} (finding #531). Before this fix,
+// the unconditional stub made core.ListSharesByUser hard-fail (no fallback —
+// unlike the graceful-degrade access-activity gaps above, this one returns an
+// ERROR to its own caller), breaking the gRPC "list my shares" call (and the
+// owned-share half of ListSharesByUser generally) end to end under
+// storage.type: remote. A thin passthrough onto storage.Storage's own
+// active-share query (no policy decision made here); gated on the SAME
+// system.read tier every other RemoteStorage read already needs.
+func (rs *RemoteStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+	path := fmt.Sprintf("/api/v1/system/shares/by-owner/%d", ownerID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list shares by owner: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list shares by owner failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Shares []*models.ShareRecord `json:"shares"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Shares, nil
 }
 
 // ListSharesByGroup lists all share records where groupID is the recipient via remote API.
