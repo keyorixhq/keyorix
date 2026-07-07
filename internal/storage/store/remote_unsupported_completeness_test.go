@@ -22,7 +22,12 @@ const (
 	// statusKnownGap means the stub is a confirmed, currently-reachable bug —
 	// something breaks under storage.type: remote today. Tracked in
 	// docs/security/HARDENING-BACKLOG.md; see Reason for the finding reference.
-	statusKnownGap
+	//
+	// Round 119's entire genuine-gap list is closed as of #531, so no allowlist
+	// entry currently uses this value — kept (not deleted) since the NEXT stub a
+	// future round finds needs it immediately; deleting and re-adding it every
+	// time the count round-trips through zero would just be churn.
+	statusKnownGap //nolint:unused
 )
 
 type remoteUnsupportedEntry struct {
