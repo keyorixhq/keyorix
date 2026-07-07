@@ -75,12 +75,13 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (37; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (24; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
 	// ref-grant CRUD closed by #527, self-service access-request workflow closed by
 	// #523, RBAC permission catalog (ListPermissions/GetPermission/
-	// GetRolePermissions) closed by #526, WithSchedulerLock closed by #530) ---
+	// GetRolePermissions) closed by #526, WithSchedulerLock closed by #530,
+	// project/environment catalog CRUD closed by #528) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -129,26 +130,24 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ListProjectMachineRoleAssignments": {statusKnownGap,
 		"round 119: machine-identity access-review coverage (#91), GET /projects/{id}/access-review"},
 
-	// Project / environment catalog CRUD.
-	"ListProjects": {statusKnownGap,
-		"round 119: hygiene report, compliance posture, rotation planner, secret_ref/secret_render, deployment hygiene, name-conformance report, auth bootstrap"},
-	"ListProjectsWithCounts": {statusKnownGap, "round 119: GET /projects"},
-	"GetProject": {statusKnownGap,
-		"round 119: GET /projects/{id}; also invitations, membership lifecycle, notifications, users, dynamic-secrets' requireLiveProjectAndEnvironment"},
-	"UpdateProject":    {statusKnownGap, "round 119: PUT /projects/{id}"},
-	"DeleteProject":    {statusKnownGap, "round 119: DELETE /projects/{id}"},
-	"RestoreProject":   {statusKnownGap, "round 119: POST /projects/{id}/restore"},
-	"ListEnvironments": {statusKnownGap, "round 119: GET /environments; also dashboard, auth bootstrap"},
-	"ListEnvironmentsByProject": {statusKnownGap,
-		"round 119: GET /projects/{id}/environments; also drift, secret_ref, secret_render, secret_inventory"},
-	"ListEnvironmentsByProjectIncludingDeleted": {statusKnownGap,
-		"round 119: the environments-listing restore-UI branch (?include_deleted=true)"},
-	"ListProjectMembers": {statusKnownGap,
-		"round 119: GET /projects/{id}/members; also a wide swath of scheduled reminder/notification jobs (anomaly, break-glass, cert expiry, classification gate, expiry/rotation reminders, invitations, recertification)"},
-	"GetEnvironment": {statusKnownGap,
-		"round 119: secret copy (same-project and cross-environment), dynamic-secrets issue/renew-lease. NOTE: CreateSecret's own call site already has a deliberate errors.Is(ErrUnsupportedByBackend) carve-out (#499) and is NOT part of this gap — only every OTHER caller is broken"},
-	"DeleteEnvironment":  {statusKnownGap, "round 119: DELETE /environments/{id}"},
-	"RestoreEnvironment": {statusKnownGap, "round 119: POST /projects/{projectId}/environments/{id}/restore"},
+	// RBAC permission catalog (ListPermissions/GetPermission/GetRolePermissions) was
+	// fixed in #526 — see internal/storage/store/remote_rbac.go.
+
+	// Project / environment catalog CRUD was fixed in #528: ListProjects/
+	// ListProjectsWithCounts/GetProject/UpdateProject/DeleteProject/RestoreProject/
+	// ListEnvironments/ListEnvironmentsByProject/
+	// ListEnvironmentsByProjectIncludingDeleted/ListProjectMembers/GetEnvironment/
+	// DeleteEnvironment/RestoreEnvironment are now proxied via
+	// /api/v1/system/projects* and /api/v1/system/environments*
+	// (server/http/handlers/project_catalog_proxy.go,
+	// environment_catalog_proxy.go), no longer unconditional stubs — see
+	// internal/storage/store/remote_rbac.go's Project/Environment section. The
+	// force=false delete guard now runs as ONE atomic storage.Storage call
+	// (DeleteProjectIfEmpty) instead of a WithTransaction-wrapped
+	// ListSecrets+DeleteProject pair, closing a TOCTOU window that pair would have
+	// reopened across the HTTP hop (see that method's interface doc comment).
+	// GetEnvironment's #499 carve-out inside core.CreateSecret is unaffected —
+	// see internal/core/secrets.go.
 
 	// Misc.
 	"LastUserSecretActivity": {statusKnownGap,

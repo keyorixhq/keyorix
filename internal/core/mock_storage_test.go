@@ -96,6 +96,13 @@ func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
 	return nil
 }
 
+// DeleteProjectIfEmpty defaults to "empty, delete succeeded" (0 blocking secrets) —
+// the same trivial-success default DeleteProject above uses. Tests exercising the
+// #528 guard behavior use catalog_delete_project_test.go's dedicated spies instead.
+func (m *MockStorage) DeleteProjectIfEmpty(_ context.Context, _ uint) (int, error) {
+	return 0, nil
+}
+
 func (m *MockStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
 	return 0, 0, nil
 }

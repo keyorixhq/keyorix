@@ -1404,6 +1404,69 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
 
+			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
+			// Lets a downstream Keyorix server booted with storage.type: remote
+			// (ADR-049) proxy ListProjects/ListProjectsWithCounts/GetProject/
+			// UpdateProject/DeleteProject/RestoreProject/ListEnvironments/
+			// ListEnvironmentsByProject/ListEnvironmentsByProjectIncludingDeleted/
+			// ListProjectMembers/GetEnvironment/DeleteEnvironment/RestoreEnvironment to
+			// THIS server's real storage backend, instead of RemoteStorage's thirteen
+			// project/environment catalog methods being unconditional stubs (project and
+			// environment catalog CRUD was broadly broken under storage.type: remote —
+			// reachable via invitations, membership lifecycle, notifications, users,
+			// secret_ref/render, drift, the rotation planner, compliance posture,
+			// recertification, deployment hygiene, and a wide swath of scheduled
+			// reminder/notification jobs). Exactly the same pattern as the proxies
+			// above: a thin passthrough onto storage.Storage (no project/environment
+			// POLICY decision — name/description validation, the per-project MFA
+			// roles.assign gate, invitation/membership side effects, dynamic-secret
+			// lease revocation, audit-log events, the requireAuthorityToReinstateProjectRoles
+			// admin-ceiling check on restore — is made here; that stays entirely in the
+			// CALLING server's own internal/core.KeyorixCore, exactly as it does against
+			// a local backend), reusing the SAME system.read/system.write tier rather
+			// than the project-scoped secrets.read/write/roles.assign the human-facing
+			// /projects and /environments routes use — no new privilege class. Read is
+			// baseline system.read; every mutating operation requires system.write.
+			//
+			// CreateProject/CreateEnvironment remain deliberately unsupported here (no
+			// route registered) — see internal/storage/store/remote_rbac.go's Project/
+			// Environment section doc for why. #499's GetEnvironment carve-out inside
+			// core.CreateSecret (internal/core/secrets.go) is explicitly untouched by
+			// this finding — see environment_catalog_proxy.go's package doc.
+			//
+			// DeleteProjectIfEmptyProxy is the one atomicity exception here (see
+			// project_catalog_proxy.go's package doc and the storage.Storage
+			// interface's DeleteProjectIfEmpty doc comment): core.DeleteProject's
+			// force=false guard used to run as a WithTransaction-wrapped
+			// ListSecrets-then-DeleteProject pair — safe under LocalStorage (a real DB
+			// transaction) but WithTransaction is a no-op passthrough over HTTP for
+			// RemoteStorage, so a naive two-call proxy of that pair would reopen a
+			// TOCTOU window across a full network round trip (a secret created between
+			// the count and the cascade would let a force=false delete silently cascade
+			// over it anyway). DeleteProjectIfEmpty folds the guard and the cascade into
+			// ONE atomic call/route instead, closing that gap for both backends. Static
+			// sub-paths ("with-counts", "{id}/delete-if-empty", "{id}/restore",
+			// "{id}/members", "{id}/environments") are registered ahead of/alongside the
+			// "{id}" wildcard, matching the static-vs-wildcard precedence the proxies
+			// above already rely on; "/projects/{projectId}/environments/{id}/restore"
+			// reuses a DIFFERENT param name ("projectId") than "/projects/{id}" at the
+			// same path depth, exactly like the existing human-facing
+			// "/projects/{id}/environments/{envId}/copy-secrets" vs
+			// "/projects/{projectId}/environments/{id}/restore" routes already do.
+			r.Get("/projects/with-counts", catalogHandler.ListProjectsWithCountsProxy)
+			r.Get("/projects", catalogHandler.ListProjectsProxy)
+			r.Get("/projects/{id}", catalogHandler.GetProjectProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/projects/{id}", catalogHandler.UpdateProjectProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/projects/{id}", catalogHandler.DeleteProjectProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/projects/{id}/restore", catalogHandler.RestoreProjectProxy)
+			r.Get("/projects/{id}/members", catalogHandler.ListProjectMembersProxy)
+			r.Get("/projects/{id}/environments", catalogHandler.ListEnvironmentsByProjectProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironmentProxy)
+			r.Get("/environments", catalogHandler.ListEnvironmentsProxy)
+			r.Get("/environments/{id}", catalogHandler.GetEnvironmentProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/environments/{id}", catalogHandler.DeleteEnvironmentProxy)
+
 			// Scheduler-lock storage-primitive proxy (#530). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// TryAcquireSchedulerLock/ReleaseSchedulerLock to THIS server's real
