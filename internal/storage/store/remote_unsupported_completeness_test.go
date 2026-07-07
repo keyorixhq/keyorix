@@ -75,10 +75,11 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (47; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (41; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
-	// ref-grant CRUD closed by #527) ---
+	// ref-grant CRUD closed by #527, self-service access-request workflow closed by
+	// #523) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -88,19 +89,12 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// (server/http/handlers/sso_state_proxy.go), no longer unconditional stubs —
 	// see internal/storage/store/remote_sso.go.
 
-	// Self-service access-requests — 100% broken (request/list/approve/reject/withdraw).
-	"CreateAccessRequest": {statusKnownGap,
-		"round 119: RequestProjectAccess, POST /projects/{id}/access-requests (self-service)"},
-	"GetAccessRequest": {statusKnownGap,
-		"round 119: ApproveAccessRequestWithExpiry/RejectAccessRequest, PUT /projects/{id}/access-requests/{requestId}"},
-	"UpdateAccessRequest": {statusKnownGap,
-		"round 119: same approve/reject paths, plus lazy-expiry in ListAccessRequests"},
-	"ListAccessRequests": {statusKnownGap,
-		"round 119: GET /projects/{id}/access-requests"},
-	"CreateAccessRequestApproval": {statusKnownGap,
-		"round 119: dual-control (N-of-M) approval recording inside ApproveAccessRequestWithExpiry"},
-	"ListAccessRequestApprovals": {statusKnownGap,
-		"round 119: progress annotation + duplicate-approver check during approve"},
+	// Self-service access-requests (request/list/approve/reject/withdraw) were
+	// fixed in #523: CreateAccessRequest/GetAccessRequest/UpdateAccessRequest/
+	// ListAccessRequests/CreateAccessRequestApproval/ListAccessRequestApprovals
+	// are now proxied via /api/v1/system/access-requests(+/{id}/approvals)
+	// (server/http/handlers/access_request_proxy.go), no longer unconditional
+	// stubs — see internal/storage/store/remote_invitations.go.
 
 	// MFA enrollment/management (not just login) — 100% broken.
 	"UpsertMFASecret": {statusKnownGap, "round 119: BeginMFAEnrollment, POST /auth/mfa/enroll"},
