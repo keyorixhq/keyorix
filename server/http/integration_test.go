@@ -133,6 +133,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.AnomalyAlert{},
 		&models.AccessRequest{},
 		&models.AccessRequestApproval{},
+		// #521: the SSO-login-state-proxy end-to-end tests exercise
+		// SSOLoginState create/consume through the real router.
+		&models.SSOLoginState{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

@@ -1002,6 +1002,22 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
 
+			// SSO login-state storage-primitive proxy (#521). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateSSOLoginState/ConsumeSSOLoginState to THIS server's real storage
+			// backend, instead of RemoteStorage's two SSOLoginState methods having no
+			// server endpoint to call at all (BeginSSO/BeginSAML's very first step —
+			// persisting the CSRF-state/nonce row — was completely non-functional
+			// under storage.type: remote, breaking human SSO/SAML login end to end).
+			// Exactly the same pattern as the setup-token proxy above: a thin
+			// passthrough onto storage.Storage (no SSO policy decision made here —
+			// the calling server's own core.KeyorixCore still decides that), reusing
+			// the SAME system.read/system.write tier — no new privilege class. Both
+			// create and the single-use consume are mutations and require
+			// system.write.
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
+
 			// Project-membership storage-primitive proxy (#511). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateProjectMembership/GetProjectMembership/UpdateProjectMembership/

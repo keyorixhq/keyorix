@@ -75,16 +75,15 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (55) ---
+	// --- Confirmed genuine gaps, tracked for future fix rounds (53) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
-
-	// SSO login (both OIDC and SAML) — 100% broken under storage.type: remote.
-	"CreateSSOLoginState": {statusKnownGap,
-		"round 119: BeginSSO/BeginSAML call this unconditionally (auth/sso/{provider}/login, auth/saml/{provider}/login) — SSO login's first step fails immediately"},
-	"ConsumeSSOLoginState": {statusKnownGap,
-		"round 119: CompleteSSO/CompleteSAML's callback/ACS step (CSRF-state + nonce/InResponseTo binding) — same finding as CreateSSOLoginState"},
+	//
+	// SSO login (both OIDC and SAML) was fixed in #521: CreateSSOLoginState/
+	// ConsumeSSOLoginState are now proxied via /api/v1/system/sso-state
+	// (server/http/handlers/sso_state_proxy.go), no longer unconditional stubs —
+	// see internal/storage/store/remote_sso.go.
 
 	// Self-service access-requests — 100% broken (request/list/approve/reject/withdraw).
 	"CreateAccessRequest": {statusKnownGap,
