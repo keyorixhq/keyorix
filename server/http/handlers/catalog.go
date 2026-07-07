@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
@@ -151,7 +152,14 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("Error creating project: %v", err)
-		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		switch {
+		case strings.Contains(err.Error(), "already exists"):
+			sendError(w, "ConflictError", err.Error(), http.StatusConflict, nil)
+		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+		default:
+			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -279,6 +287,10 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 	env, err := h.coreService.CreateEnvironment(r.Context(), uint(id), body.Name)
 	if err != nil {
 		log.Printf("Error creating environment for project %d: %v", id, err)
+		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}

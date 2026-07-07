@@ -95,6 +95,10 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "ConflictError", "Group name already exists", http.StatusConflict, nil)
 			return
 		}
+		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
 		sendError(w, "InternalError", "Failed to create group", http.StatusInternalServerError, nil)
 		return
 	}
@@ -163,6 +167,10 @@ func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error updating group: %v", err)
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
 			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)
+			return
+		}
+		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 			return
 		}
 		sendError(w, "InternalError", "Failed to update group", http.StatusInternalServerError, nil)
