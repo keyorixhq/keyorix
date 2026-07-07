@@ -45,9 +45,15 @@ jobs:
       # SHA-256 of every release binary, so one signature transitively covers all
       # of them — verify checksums.txt's signature, then verify each downloaded
       # binary against its listed checksum.
+      # --new-bundle-format=false: cosign now defaults to writing a single
+      # `.bundle` file and silently ignores --output-signature/--output-certificate
+      # otherwise (it did so here, producing an empty output path and a hard
+      # failure). SECURITY.md documents verification via the separate
+      # checksums.txt.sig/.pem files, so pin the legacy split-file behavior.
       - name: Sign checksums.txt (keyless)
         run: |
           cosign sign-blob --yes \
+            --new-bundle-format=false \
             --output-signature dist/checksums.txt.sig \
             --output-certificate dist/checksums.txt.pem \
             dist/checksums.txt
