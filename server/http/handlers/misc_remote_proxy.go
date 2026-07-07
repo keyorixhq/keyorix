@@ -13,10 +13,14 @@
 //     system.read — unblocks ScopeFromDeletedSecretParam ahead of POST
 //     /secrets/{id}/restore, which 404'd on every request under
 //     storage.type: remote.
-//  3. ListSharesByOwner (internal/storage/store/remote_sharing.go): registered
-//     under /api/v1/system/shares/by-owner/{ownerID}, gated system.read —
-//     unblocks core.ListSharesByUser (the gRPC "list my shares" call), which
-//     hard-failed with no fallback.
+//  3. ListSharesByOwner and ListSharesByUser (internal/storage/store/
+//     remote_sharing.go): registered under /api/v1/system/shares/by-owner/
+//     {ownerID} and /api/v1/system/shares/by-user/{userID}, gated system.read
+//     — both halves core.ListSharesByUser (backing GET /api/v1/shares and
+//     gRPC ShareService.ListShares) needs. ListSharesByOwner hard-failed with
+//     no fallback; ListSharesByUser 404'd against a human-facing route
+//     (/api/v1/users/{id}/shares) that was never registered at all — see
+//     remote_sharing.go's doc for why that route could never have existed.
 //  4. CreateUserWithRoleGrants (internal/storage/store/remote_users.go):
 //     registered under /api/v1/system/users/with-role-grants, gated
 //     system.write — the ONE atomic primitive in this file (see its own doc
@@ -169,7 +173,7 @@ func (h *SecretHandler) GetSecretIncludingDeletedProxy(w http.ResponseWriter, r 
 	writeRemoteAPISuccess(w, map[string]interface{}{"secret": secret})
 }
 
-// --- 3. ListSharesByOwner proxy (ShareHandler) ---
+// --- 3. ListSharesByOwner / ListSharesByUser proxy (ShareHandler) ---
 
 // ListSharesByOwnerProxy handles GET /api/v1/system/shares/by-owner/{ownerID}.
 // The response marshals []*models.ShareRecord directly (no json tags of its
@@ -185,6 +189,25 @@ func (h *ShareHandler) ListSharesByOwnerProxy(w http.ResponseWriter, r *http.Req
 	shares, err := h.coreService.Storage().ListSharesByOwner(r.Context(), uint(ownerID))
 	if err != nil {
 		log.Printf("shares proxy: list shares by owner failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]interface{}{"shares": shares})
+}
+
+// ListSharesByUserProxy handles GET /api/v1/system/shares/by-user/{userID} —
+// the "received as recipient" half of core.ListSharesByUser, mirroring
+// ListSharesByOwnerProxy immediately above exactly (same response envelope,
+// same lack of a POLICY decision).
+func (h *ShareHandler) ListSharesByUserProxy(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseUint(chi.URLParam(r, "userID"), 10, 32)
+	if err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user id")
+		return
+	}
+	shares, err := h.coreService.Storage().ListSharesByUser(r.Context(), uint(userID))
+	if err != nil {
+		log.Printf("shares proxy: list shares by user failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}

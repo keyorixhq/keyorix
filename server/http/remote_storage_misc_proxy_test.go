@@ -184,7 +184,7 @@ func TestRemoteStorageGetSecretIncludingDeleted_RealServer(t *testing.T) {
 	require.Error(t, err)
 }
 
-// --- 3. ListSharesByOwner ---
+// --- 3. ListSharesByOwner / ListSharesByUser ---
 
 // TestRemoteStorageListSharesByOwner_RealServer proves the #531 fix:
 // core.ListSharesByUser's owned-share half no longer hard-fails under
@@ -235,15 +235,27 @@ func TestRemoteStorageListSharesByOwner_RealServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 
-	// NOTE: core.ListSharesByUser (the gRPC "list my shares" call) combines
-	// storage.ListSharesByUser (the recipient half) with storage.ListSharesByOwner
-	// (the owner half, fixed here). Only the latter is in scope for #531 —
-	// storage.ListSharesByUser itself is a SEPARATE, pre-existing gap (its
-	// client-side call targets GET /api/v1/users/{id}/shares, a route
-	// server/http/router.go never registers, so it 404s independently of this
-	// fix) discovered incidentally while testing this fix; core.ListSharesByUser
-	// is therefore not yet fully functional end to end and is intentionally not
-	// exercised here.
+	// The recipient half (storage.ListSharesByUser) — previously 404'd against
+	// a human-facing route that was never registered, closed as an incidental
+	// fix alongside this one — proxies correctly too.
+	received, err := downstream.Storage().ListSharesByUser(ctx, recipient.ID)
+	require.NoError(t, err, "listing shares by user must succeed via storage.type: remote")
+	require.Len(t, received, 1)
+	assert.Equal(t, secret.ID, received[0].SecretID)
+	assert.Equal(t, recipient.ID, received[0].RecipientID)
+
+	// A recipient with no shares cleanly returns an empty slice.
+	emptyReceived, err := downstream.Storage().ListSharesByUser(ctx, adminID)
+	require.NoError(t, err)
+	assert.Empty(t, emptyReceived)
+
+	// Now that both halves are fixed, core.ListSharesByUser itself (backing GET
+	// /api/v1/shares and gRPC ShareService.ListShares) works end to end under
+	// storage.type: remote for the first time.
+	combined, err := downstream.ListSharesByUser(ctx, recipient.ID)
+	require.NoError(t, err, "core.ListSharesByUser must succeed via storage.type: remote")
+	require.Len(t, combined, 1)
+	assert.Equal(t, created.ID, combined[0].ID)
 }
 
 // --- 4. CreateUserWithRoleGrants (basic success + duplicate-email) ---

@@ -1445,6 +1445,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// access-activity gaps above. A read, gated system.read.
 			r.Get("/shares/by-owner/{ownerID}", shareHandler.ListSharesByOwnerProxy)
 
+			// ListSharesByUser: the "shares I received" half of the same
+			// core.ListSharesByUser call. Its client method used to target a
+			// human-facing /api/v1/users/{id}/shares route that was never
+			// registered — there never was a "list an arbitrary user's
+			// received shares" endpoint (GET /api/v1/shares only resolves the
+			// CALLER's own ID from auth context, not a path parameter) — so
+			// this was a 404, not a stub, and slipped past the completeness
+			// guard for that reason. A read, gated system.read.
+			r.Get("/shares/by-user/{userID}", shareHandler.ListSharesByUserProxy)
+
 			// CreateUserWithRoleGrants: the ONE atomic primitive in this group —
 			// see misc_remote_proxy.go's CreateUserWithRoleGrantsProxy doc and
 			// remote_users.go's CreateUserWithRoleGrants doc for the full
