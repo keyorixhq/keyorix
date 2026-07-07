@@ -97,6 +97,10 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 				sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
 				return
 			}
+			if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+				sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+				return
+			}
 			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
 			return
 		}
@@ -119,6 +123,10 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			}
 			if errors.Is(err, core.ErrSetupBaseURLRequired) {
 				sendError(w, "ConfigError", err.Error(), http.StatusBadRequest, nil)
+				return
+			}
+			if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+				sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 				return
 			}
 			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
@@ -177,7 +185,8 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(err.Error(), "only an administrator can grant"):
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		case strings.Contains(err.Error(), "unknown role"), strings.Contains(err.Error(), "unknown project"),
-			strings.Contains(err.Error(), "each project assignment"):
+			strings.Contains(err.Error(), "each project assignment"),
+			strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
