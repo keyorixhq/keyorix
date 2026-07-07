@@ -141,6 +141,22 @@ func newUserUpdateWireRequest(user *models.User) userUpdateWireRequest {
 // never-federated account, regardless of what the upstream's own row actually
 // stored. This affected the already-shipped #504 email-fallback path, not just the
 // new by-external-id lookup this change adds.
+// MFAEnabled (#524) rounds out the wire response with the two-factor-enrolment
+// flag. The server side (users_crud.go) always sent "mfa_enabled" in its
+// response, but this wire type never had a field to decode it into, so every
+// decoded user's MFAEnabled read back as the Go zero value (false) under
+// storage.type: remote — regardless of what the upstream's own row actually
+// stored. This silently broke every internal/core/mfa.go caller that branches
+// on user.MFAEnabled once #524's storage-primitive proxies made the rest of
+// the enrolment/management flow reachable: MFARecoveryCodesRemaining always
+// reported 0/0, DisableMFA/RegenerateMFARecoveryCodes always refused with "MFA
+// is not enabled", and requireReauth's TOTP-code re-auth branch (the ONLY
+// re-auth path that works under storage.type: remote — its password fallback
+// needs PasswordHash, which is deliberately never sent, see above) was
+// unreachable dead code. A pre-existing gap in remote_users.go, not one of
+// #524's eight remote_mfa.go storage methods, but load-bearing for the SAME
+// described bug ("disabling [MFA], or viewing/regenerating recovery codes
+// cannot work at all in this mode") and fixed in the same PR for that reason.
 type userWireResponse struct {
 	ID                  uint       `json:"id"`
 	Username            string     `json:"username"`
@@ -149,6 +165,7 @@ type userWireResponse struct {
 	Active              bool       `json:"active"`
 	AccountState        string     `json:"account_state"`
 	ExternalID          string     `json:"external_id"`
+	MFAEnabled          bool       `json:"mfa_enabled"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 	LastLoginAt         *time.Time `json:"last_login_at"`
@@ -168,6 +185,7 @@ func (w userWireResponse) toModel() *models.User {
 		IsActive:            w.Active,
 		AccountState:        w.AccountState,
 		ExternalID:          w.ExternalID,
+		MFAEnabled:          w.MFAEnabled,
 		CreatedAt:           w.CreatedAt,
 		UpdatedAt:           w.UpdatedAt,
 		LastLoginAt:         w.LastLoginAt,
