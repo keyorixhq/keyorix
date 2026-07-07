@@ -631,6 +631,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// deployment, which has nowhere of its own to persist one. Same gate and
 			// reasoning as verify-credentials/verify-mfa above.
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/mfa-challenge", handlers.IssueMFAChallenge)
+			// GetActiveMFAChallenge/ConsumeMFAChallenge (#522) — the upstream half of
+			// the storage.type: remote WebAuthn-as-second-factor login proxy
+			// (internal/core/webauthn.go's BeginWebAuthnLogin/FinishWebAuthnLogin):
+			// unlike the TOTP path above, these are plain storage.Storage passthroughs
+			// on the SAME shared MFAChallenge model, not a verification proxy — a
+			// passkey assertion carries no server-held secret the way a TOTP shared
+			// secret does, so the ceremony itself still runs entirely in the calling
+			// (spoke) server's own core.KeyorixCore, exactly as it does locally. Same
+			// gate and reasoning as verify-mfa/mfa-challenge above. Static paths,
+			// before /{id}.
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/mfa-challenge/active", handlers.GetActiveMFAChallenge)
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/mfa-challenge/consume", handlers.ConsumeMFAChallenge)
 			// Admin force-logout: revoke all of a user's sessions (no state change).
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/revoke-sessions", handlers.RevokeSessions)
 			// Account state transitions (ADR-025).

@@ -75,8 +75,9 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (53; UpdateLoginLockoutState
-	// closed by #529, SSO login state closed by #521) ---
+	// --- Confirmed genuine gaps, tracked for future fix rounds (51; UpdateLoginLockoutState
+	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
+	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -99,13 +100,6 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 		"round 119: dual-control (N-of-M) approval recording inside ApproveAccessRequestWithExpiry"},
 	"ListAccessRequestApprovals": {statusKnownGap,
 		"round 119: progress annotation + duplicate-approver check during approve"},
-
-	// WebAuthn-as-second-factor login — 100% broken (distinct from #517's
-	// WebAuthn CREDENTIAL CRUD fix, which never touched this).
-	"GetActiveMFAChallenge": {statusKnownGap,
-		"round 119: BeginWebAuthnLogin calls this directly with NO RemoteMFAVerifier gate (unlike VerifyMFALogin's TOTP path) — POST /auth/webauthn/login/begin"},
-	"ConsumeMFAChallenge": {statusKnownGap,
-		"round 119: FinishWebAuthnLogin calls this directly with no gate — POST /auth/webauthn/login/finish"},
 
 	// MFA enrollment/management (not just login) — 100% broken.
 	"UpsertMFASecret": {statusKnownGap, "round 119: BeginMFAEnrollment, POST /auth/mfa/enroll"},
