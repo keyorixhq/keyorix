@@ -83,22 +83,6 @@ func TestRemoteStorage_SetPasswordHash_HardFails(t *testing.T) {
 	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
 }
 
-// TestRemoteStorage_UpdateLoginLockoutState_ReturnsUnsupportedSentinel proves the
-// #454 fix for the lockout-accounting columns: same wire-format gap as
-// SetAccountState, but this one is a passive backstop counter, not an explicit
-// security directive — the caller (login_lockout.go) distinguishes it from
-// SetAccountState's hard-fail treatment by matching storage.ErrUnsupportedByBackend
-// via isUnsupportedByBackend, so it must errors.Is-wrap that sentinel too.
-func TestRemoteStorage_UpdateLoginLockoutState_ReturnsUnsupportedSentinel(t *testing.T) {
-	rs, err := store.NewRemoteStorage(testConfig("https://unused.example"))
-	require.NoError(t, err)
-
-	err = rs.UpdateLoginLockoutState(context.Background(), 1, 3, nil, nil, 1)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported))
-	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
-}
-
 func TestRemoteStorage_MarkAllNotificationsRead(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)

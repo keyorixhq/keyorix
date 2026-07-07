@@ -75,7 +75,8 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (53) ---
+	// --- Confirmed genuine gaps, tracked for future fix rounds (53; UpdateLoginLockoutState
+	// closed by #529, SSO login state closed by #521) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -173,12 +174,6 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 		"round 119: secret copy (same-project and cross-environment), dynamic-secrets issue/renew-lease. NOTE: CreateSecret's own call site already has a deliberate errors.Is(ErrUnsupportedByBackend) carve-out (#499) and is NOT part of this gap — only every OTHER caller is broken"},
 	"DeleteEnvironment":  {statusKnownGap, "round 119: DELETE /environments/{id}"},
 	"RestoreEnvironment": {statusKnownGap, "round 119: POST /projects/{projectId}/environments/{id}/restore"},
-
-	// Login-lockout accounting — fails OPEN (silently continues) rather than
-	// closed; a real, currently-reachable security gap on every login attempt,
-	// only partly mitigated by the separate per-IP rate limiter (ADR-040/#452).
-	"UpdateLoginLockoutState": {statusKnownGap,
-		"round 119: recordFailedLogin/checkLockAndClearLoginFailures/clearLoginFailures/UnlockUser — per-account brute-force lockout is inert under storage.type: remote (fail-open, not fail-closed)"},
 
 	// Scheduler locking — reached on EVERY tick regardless of storage.type
 	// (server/main.go starts all schedulers unconditionally), and is now the
