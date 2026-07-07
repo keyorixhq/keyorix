@@ -139,6 +139,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #521: the SSO-login-state-proxy end-to-end tests exercise
 		// SSOLoginState create/consume through the real router.
 		&models.SSOLoginState{},
+		// #530: the scheduler-lock-proxy end-to-end tests exercise
+		// TryAcquireSchedulerLock/ReleaseSchedulerLock through the real router.
+		&models.SchedulerLockLease{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

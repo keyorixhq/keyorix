@@ -18,60 +18,44 @@ import (
 	"gorm.io/gorm"
 )
 
-// --- #313 structural regression -------------------------------------------------
+// --- #313 / #528 structural regression --------------------------------------------
 //
-// DeleteProject's non-force guard (count-then-reject) used to run as a separate
-// top-level storage call, entirely before — not inside — the cascade delete's own
-// transaction. A secret created in that window silently got swept into the cascade
-// despite the caller expecting the delete to be rejected. The fix runs the guard and
-// the cascade inside one storage.WithTransaction call, so the count the guard acts on
-// is read from, and committed alongside, the exact same transaction as the delete.
+// DeleteProject's non-force guard (count-then-reject) must never run as two separate
+// top-level storage calls with core-layer control flow in between — a secret created
+// in that window would silently get swept into the cascade despite the caller
+// expecting the delete to be rejected. #313 originally closed this by running the
+// guard and the cascade inside one storage.WithTransaction call. #528 replaced that
+// with DeleteProjectIfEmpty, a single atomic storage.Storage primitive doing the same
+// guard+cascade in ONE call — necessary because WithTransaction is a real transaction
+// only for LocalStorage; RemoteStorage.WithTransaction is a no-op passthrough over
+// HTTP, so the original two-call pair reopened this exact TOCTOU window across a full
+// network round trip under storage.type: remote. See the storage.Storage interface's
+// DeleteProjectIfEmpty doc comment for the full rationale.
 //
-// deleteProjectOuterSpy/deleteProjectTxSpy assert that structurally: the outer spy
-// implements only WithTransaction (every other storage.Storage method is left on a
-// nil-embedded interface, so calling one panics on a nil pointer dereference) — so if
-// DeleteProject ever again calls ListSecrets or DeleteProject directly on the
-// non-transactional outer storage instead of the tx-scoped one WithTransaction hands
-// it, this test fails loudly instead of silently passing.
+// deleteProjectSpy asserts that structurally: it implements ONLY DeleteProject and
+// DeleteProjectIfEmpty (every other storage.Storage method is left on a nil-embedded
+// interface, so calling one panics on a nil pointer dereference) — so if DeleteProject
+// ever again decomposes the guard+cascade into separate ListSecrets/DeleteProject
+// calls (reopening the #313/#528 TOCTOU under storage.type: remote), this test fails
+// loudly instead of silently passing.
 
-type deleteProjectOuterSpy struct {
-	storage.Storage // left nil: any method besides WithTransaction panics if reached
-	txCalled        bool
-	tx              *deleteProjectTxSpy
+type deleteProjectSpy struct {
+	storage.Storage     // left nil: any method besides the ones below panics if reached
+	blockingSecretCount int
+	deleteIfEmptyErr    error
+	deleteErr           error
+	callOrder           []string
 }
 
-func (s *deleteProjectOuterSpy) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
-	s.txCalled = true
-	return fn(s.tx)
-}
-
-// ListDynamicSecretConfigs is called on the OUTER (non-transactional) storage by
-// DeleteProject's #369 post-commit dynamic-secrets cascade, deliberately after
-// WithTransaction returns (see revokeProjectDynamicSecretLeases's doc comment) — so,
-// unlike ListSecrets/DeleteProject above, it must be implemented here, not on the tx
-// spy. Returns none: these tests aren't exercising the dynamic-secrets cascade itself
-// (see TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases).
-func (s *deleteProjectOuterSpy) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
-	return nil, nil
-}
-
-type deleteProjectTxSpy struct {
-	storage.Storage // left nil: any method besides the two below panics if reached
-	listSecretsTotal int64
-	listSecretsErr   error
-	deleteErr        error
-	callOrder        []string
-}
-
-func (s *deleteProjectTxSpy) ListSecrets(_ context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
-	s.callOrder = append(s.callOrder, "ListSecrets")
-	if filter.ProjectID == nil || *filter.ProjectID != 7 {
-		return nil, 0, fmt.Errorf("unexpected filter: %+v", filter)
+func (s *deleteProjectSpy) DeleteProjectIfEmpty(_ context.Context, id uint) (int, error) {
+	s.callOrder = append(s.callOrder, "DeleteProjectIfEmpty")
+	if id != 7 {
+		return 0, fmt.Errorf("unexpected project id %d", id)
 	}
-	return nil, s.listSecretsTotal, s.listSecretsErr
+	return s.blockingSecretCount, s.deleteIfEmptyErr
 }
 
-func (s *deleteProjectTxSpy) DeleteProject(_ context.Context, id uint) error {
+func (s *deleteProjectSpy) DeleteProject(_ context.Context, id uint) error {
 	s.callOrder = append(s.callOrder, "DeleteProject")
 	if id != 7 {
 		return fmt.Errorf("unexpected project id %d", id)
@@ -79,38 +63,42 @@ func (s *deleteProjectTxSpy) DeleteProject(_ context.Context, id uint) error {
 	return s.deleteErr
 }
 
-func TestDeleteProject_GuardAndCascadeRunInSameTransaction(t *testing.T) {
-	tx := &deleteProjectTxSpy{listSecretsTotal: 0}
-	outer := &deleteProjectOuterSpy{tx: tx}
-	c := core.NewKeyorixCore(outer)
-
-	require.NoError(t, c.DeleteProject(context.Background(), 7, false))
-	assert.True(t, outer.txCalled, "DeleteProject must run inside storage.WithTransaction")
-	assert.Equal(t, []string{"ListSecrets", "DeleteProject"}, tx.callOrder,
-		"the guard read must happen before the cascade delete, both on the tx-scoped storage")
+// ListDynamicSecretConfigs backs DeleteProject's #369 post-commit dynamic-secrets
+// cascade (see revokeProjectDynamicSecretLeases's doc comment), deliberately after the
+// delete itself. Returns none: these tests aren't exercising the dynamic-secrets
+// cascade itself (see TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases).
+func (s *deleteProjectSpy) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
+	return nil, nil
 }
 
-func TestDeleteProject_RejectsWithinTransactionWhenSecretsExist(t *testing.T) {
-	tx := &deleteProjectTxSpy{listSecretsTotal: 3}
-	outer := &deleteProjectOuterSpy{tx: tx}
-	c := core.NewKeyorixCore(outer)
+func TestDeleteProject_EmptyProjectDeletesAtomically(t *testing.T) {
+	spy := &deleteProjectSpy{blockingSecretCount: 0}
+	c := core.NewKeyorixCore(spy)
+
+	require.NoError(t, c.DeleteProject(context.Background(), 7, false))
+	assert.Equal(t, []string{"DeleteProjectIfEmpty"}, spy.callOrder,
+		"force=false must call the atomic guard+cascade primitive, not a separate ListSecrets+DeleteProject pair")
+}
+
+func TestDeleteProject_RejectsWhenSecretsExist(t *testing.T) {
+	spy := &deleteProjectSpy{blockingSecretCount: 3}
+	c := core.NewKeyorixCore(spy)
 
 	err := c.DeleteProject(context.Background(), 7, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "3 secret(s)")
-	assert.True(t, outer.txCalled, "the guard itself must still run inside the transaction")
-	assert.Equal(t, []string{"ListSecrets"}, tx.callOrder,
-		"a rejected guard must short-circuit before reaching the cascade delete")
+	assert.Equal(t, []string{"DeleteProjectIfEmpty"}, spy.callOrder,
+		"a rejected guard must not additionally call the unconditional cascade")
 }
 
-func TestDeleteProject_ForceSkipsGuardButStaysTransactional(t *testing.T) {
-	tx := &deleteProjectTxSpy{listSecretsTotal: 99} // would reject if the guard ran
-	outer := &deleteProjectOuterSpy{tx: tx}
-	c := core.NewKeyorixCore(outer)
+func TestDeleteProject_ForceSkipsGuardEntirely(t *testing.T) {
+	// blockingSecretCount would reject if the guard ran; deleteIfEmptyErr would fail
+	// the test if DeleteProjectIfEmpty were reached at all.
+	spy := &deleteProjectSpy{blockingSecretCount: 99, deleteIfEmptyErr: fmt.Errorf("must not be called")}
+	c := core.NewKeyorixCore(spy)
 
 	require.NoError(t, c.DeleteProject(context.Background(), 7, true))
-	assert.True(t, outer.txCalled)
-	assert.Equal(t, []string{"DeleteProject"}, tx.callOrder, "force=true must skip the guard entirely")
+	assert.Equal(t, []string{"DeleteProject"}, spy.callOrder, "force=true must skip the guard entirely")
 }
 
 // --- #313 real-storage integration (sequential, deterministic) -------------------

@@ -19,6 +19,15 @@ func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() er
 	return true, fn()
 }
 
+// TryAcquireSchedulerLock/ReleaseSchedulerLock are no-ops in tests (single
+// instance, nothing to contend with) — mirrors WithSchedulerLock above.
+func (m *MockStorage) TryAcquireSchedulerLock(_ context.Context, _ int64, _ string, _ time.Duration) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) ReleaseSchedulerLock(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 // WithAuditCheckpointLock runs fn directly in tests (single instance, no DB lock).
 func (m *MockStorage) WithAuditCheckpointLock(_ context.Context, fn func() error) error {
 	return fn()
@@ -87,6 +96,13 @@ func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
 	return nil
 }
 
+// DeleteProjectIfEmpty defaults to "empty, delete succeeded" (0 blocking secrets) —
+// the same trivial-success default DeleteProject above uses. Tests exercising the
+// #528 guard behavior use catalog_delete_project_test.go's dedicated spies instead.
+func (m *MockStorage) DeleteProjectIfEmpty(_ context.Context, _ uint) (int, error) {
+	return 0, nil
+}
+
 func (m *MockStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
 	return 0, 0, nil
 }
@@ -141,6 +157,19 @@ func (m *MockStorage) ListProjectMachineRoleAssignments(ctx context.Context, pro
 // case something reaches it.
 func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
 	return nil, nil
+}
+
+// RemoveGlobalAdminRoleGuarded (#525) is likewise unused by MockStorage-driven
+// tests — every one of them mocks the three install-admin role names
+// (super_admin/admin/system_admin) as absent via GetRoleByName, so
+// RemoveUserRole's installAdminRoleIDSet is always empty and this is never
+// reached (real-storage RemoveUserRole/last-admin coverage lives in
+// last_admin_guard_external_test.go and concurrency_last_admin_removal_test.go,
+// both against a real store.LocalStorage). If a future test DOES reach this
+// unmocked, m.Called panics loudly rather than silently allowing the removal.
+func (m *MockStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID, roleID uint, adminRoleIDs []uint) error {
+	args := m.Called(ctx, userID, roleID, adminRoleIDs)
+	return args.Error(0)
 }
 
 func (m *MockStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {

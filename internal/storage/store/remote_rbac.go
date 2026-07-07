@@ -4,7 +4,9 @@
 //
 //	AssignRole, RemoveRole, GetUserRoles, GetUserPermissions,
 //	CreatePermission, AssignPermissionToRole,
-//	Project/Environment stubs.
+//	ListPermissions, GetPermission, GetRolePermissions (#526),
+//	Project/Environment catalog CRUD (proxied over HTTP, #528 — see
+//	server/http/handlers/project_catalog_proxy.go and environment_catalog_proxy.go).
 //
 // For the local (GORM) equivalent see local_rbac.go.
 package store
@@ -12,12 +14,16 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/remote"
 )
 
 // --- Roles ---
@@ -146,24 +152,85 @@ func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
-// GetGroupRoleGrants is a confirmed genuine gap (round 119 completeness
-// audit), not the "HTTP handler reads it from local storage instead" claim
-// this comment previously made — GetGroupRoles (server/http/handlers/rbac.go)
-// calls THIS method, not a different one. Tracked in
-// docs/security/HARDENING-BACKLOG.md; see remote_unsupported_completeness_test.go.
-func (rs *RemoteStorage) GetGroupRoleGrants(_ context.Context, _ uint) ([]*storage.GroupRoleGrant, error) {
-	return nil, remoteUnsupported("GetGroupRoleGrants")
+// GetGroupRoleGrants is a thin passthrough onto GET
+// /api/v1/system/rbac/groups/{groupID}/role-grants (finding #525) —
+// GetGroupRoles (server/http/handlers/rbac.go) calls THIS method, not a
+// different one, so RemoveUserFromGroup/AddUserToGroup and the human-facing
+// "group roles" tab were completely non-functional under storage.type: remote
+// before this fix. A previous version of this doc comment claimed the HTTP
+// handler read this from local storage instead — independently confirmed
+// FALSE during the audit that found this gap (round 119 completeness sweep).
+func (rs *RemoteStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*storage.GroupRoleGrant, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/groups/%d/role-grants", groupID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group role grants: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get group role grants failed: %s", resp.Error.Error())
+	}
+	var result []*storage.GroupRoleGrant
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
 }
 
-// AssignRoleWithExpiry is server-side only (the JIT grant happens during access-
-// request approval on the server); not driven over the remote client.
-func (rs *RemoteStorage) AssignRoleWithExpiry(_ context.Context, _, _ uint, _ storage.Scope, _ time.Time) error {
-	return remoteUnsupported("AssignRoleWithExpiry")
+// AssignRoleWithExpiry proxies onto POST /api/v1/system/rbac/assign-role-with-expiry
+// (finding #525) — the JIT time-bound grant path (invitations.go's access-request
+// TTL approval, jit_access.go's direct grant, break_glass.go's emergency
+// activation) was completely non-functional under storage.type: remote before this
+// fix. This is a single storage-layer call on either backend (LocalStorage's
+// assignUserRole does its own existing-row read/expired-row-replace/create dance
+// entirely within ONE Go function, not across a WithTransaction boundary), so one
+// HTTP round trip preserves the same atomicity guarantee LocalStorage already has —
+// no NEW race is introduced by proxying it, unlike RemoveGlobalAdminRoleGuarded
+// below.
+func (rs *RemoteStorage) AssignRoleWithExpiry(ctx context.Context, userID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	payload := roleWithExpiryWire{
+		UserID: userID, RoleID: roleID,
+		ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
+		ExpiresAt: expiresAt,
+	}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/assign-role-with-expiry", payload)
+	if err != nil {
+		return fmt.Errorf("failed to assign role with expiry: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("assign role with expiry failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-// AssignRoleToGroupWithExpiry is server-side only; see AssignRoleWithExpiry.
-func (rs *RemoteStorage) AssignRoleToGroupWithExpiry(_ context.Context, _, _ uint, _ storage.Scope, _ time.Time) error {
-	return remoteUnsupported("AssignRoleToGroupWithExpiry")
+// AssignRoleToGroupWithExpiry proxies onto POST
+// /api/v1/system/rbac/assign-role-to-group-with-expiry (finding #525); see
+// AssignRoleWithExpiry for the atomicity reasoning (identical single-call shape).
+func (rs *RemoteStorage) AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	payload := roleWithExpiryWire{
+		GroupID: groupID, RoleID: roleID,
+		ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
+		ExpiresAt: expiresAt,
+	}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/assign-role-to-group-with-expiry", payload)
+	if err != nil {
+		return fmt.Errorf("failed to assign role to group with expiry: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("assign role to group with expiry failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// roleWithExpiryWire is the shared wire body for AssignRoleWithExpiry (UserID set,
+// GroupID zero) and AssignRoleToGroupWithExpiry (GroupID set, UserID zero) —
+// mirrored exactly in server/http/handlers/rbac_role_grants_proxy.go.
+type roleWithExpiryWire struct {
+	UserID        uint      `json:"user_id,omitempty"`
+	GroupID       uint      `json:"group_id,omitempty"`
+	RoleID        uint      `json:"role_id"`
+	ProjectID     uint      `json:"project_id"`
+	EnvironmentID uint      `json:"environment_id"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 
 // DeleteExpiredRoleGrants proxies onto POST
@@ -213,10 +280,22 @@ func (rs *RemoteStorage) RemoveRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
-// RemoveAllProjectRoleGrants is a server-internal RBAC primitive (project
-// membership management runs entirely against LocalStorage); unsupported here.
-func (rs *RemoteStorage) RemoveAllProjectRoleGrants(_ context.Context, _, _ uint) error {
-	return remoteUnsupported("RemoveAllProjectRoleGrants")
+// RemoveAllProjectRoleGrants proxies onto POST
+// /api/v1/system/rbac/remove-all-project-role-grants (finding #525) —
+// RemoveProjectMember's bulk-delete step (DELETE /projects/{id}/members/{userId})
+// was completely non-functional under storage.type: remote before this fix. A
+// single bulk DELETE (no read-check-write sequence), so one HTTP round trip is
+// exactly as atomic as the local call.
+func (rs *RemoteStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
+	payload := map[string]uint{"user_id": userID, "project_id": projectID}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/remove-all-project-role-grants", payload)
+	if err != nil {
+		return fmt.Errorf("failed to remove all project role grants: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("remove all project role grants failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
 // GetUserRoles retrieves all roles for a user via remote API.
@@ -273,19 +352,97 @@ func (rs *RemoteStorage) AssignPermissionToRole(_ context.Context, _, _ uint) er
 	return fmt.Errorf("not supported in remote storage")
 }
 
-// ListPermissions is not implemented in remote storage.
-func (rs *RemoteStorage) ListPermissions(_ context.Context) ([]*models.Permission, error) {
-	return nil, remoteUnsupported("ListPermissions")
+// ListPermissions lists the full permission catalog via remote API. #526: the
+// permission catalog is a near-static, seeded-not-created-dynamically read —
+// RemoteStorage has no local database to fall back on, so a spoke server's
+// catalog view (and everything that depends on it) was 100% broken. Reuses
+// the EXISTING human-facing GET /api/v1/permissions route
+// (server/http/router.go, roles.read-gated), same as the interactive UI —
+// no new route needed. The handler wraps the list in {"permissions":...,
+// "total":...} (server/http/handlers/rbac.go's ListPermissions), so this
+// unmarshals into that shape rather than a bare array.
+func (rs *RemoteStorage) ListPermissions(ctx context.Context) ([]*models.Permission, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/permissions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list permissions: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list permissions failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Permissions []*models.Permission `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Permissions, nil
 }
 
-// GetPermission is not implemented in remote storage.
-func (rs *RemoteStorage) GetPermission(_ context.Context, _ uint) (*models.Permission, error) {
-	return nil, remoteUnsupported("GetPermission")
+// GetPermission retrieves a single permission by ID via remote API. #526:
+// AssignPermissionToRole (internal/core/rbac_management.go) calls this first
+// to resolve permissionID -> name for the #169 self-permission-check before
+// assigning — with no local DB, this was an unconditional stub, so assigning
+// a permission to a role hard-failed under storage.type: remote. Unlike
+// ListPermissions/GetRolePermissions, no existing route covered a per-ID
+// permission lookup, so this adds GET /api/v1/permissions/{id}
+// (server/http/router.go, server/http/handlers/rbac.go's new GetPermission
+// handler) as a sibling of the existing GET /api/v1/permissions collection,
+// gated by the SAME roles.read — a caller who can already enumerate every
+// permission via ListPermissions gains no new capability by looking one up
+// individually. Mirrors GetRoleByName's bare-object response shape (not
+// wrapped), since the new handler was written to return the permission
+// directly.
+func (rs *RemoteStorage) GetPermission(ctx context.Context, id uint) (*models.Permission, error) {
+	path := fmt.Sprintf("/api/v1/permissions/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get permission: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get permission failed: %s", resp.Error.Error())
+	}
+	var result models.Permission
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
 }
 
-// GetRolePermissions is not implemented in remote storage.
-func (rs *RemoteStorage) GetRolePermissions(_ context.Context, _ uint) ([]*models.Permission, error) {
-	return nil, remoteUnsupported("GetRolePermissions")
+// GetRolePermissions retrieves a role's assigned permissions via remote API.
+// #526: real callers span the role-permission view (GetRoleWithPermissions),
+// requireGranterHoldsRolePermissions's grant-time admin-rank-ceiling check
+// (authz.go), and several read-only RBAC-dependent reports — access reviews
+// (access_review.go), compliance posture's dormant-admin-tier-grant scan
+// (compliance_posture.go), and SoD conflict detection (sod.go) — all broken
+// with no local DB fallback. Reuses the EXISTING human-facing
+// GET /api/v1/roles/{id}/permissions route (server/http/router.go,
+// roles.read-gated), same as the interactive UI. Confirmed read-only: every
+// caller either renders a view or feeds a report; the one authorization use
+// (requireGranterHoldsRolePermissions) reads the role's CURRENT permission
+// bundle to check the actor's own standing authority, not as one half of a
+// check-then-act mutation on the bundle itself — the same sequential-read
+// exposure already exists for LocalStorage's two plain (non-transactional)
+// DB calls, so proxying over HTTP (RemoteStorage.WithTransaction is a no-op
+// passthrough) introduces no NEW atomicity gap. The handler wraps the list in
+// {"role_id":...,"role_name":...,"permissions":...} (server/http/handlers/
+// rbac.go's GetRolePermissions), so this unmarshals into that shape rather
+// than a bare array.
+func (rs *RemoteStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
+	path := fmt.Sprintf("/api/v1/roles/%d/permissions", roleID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role permissions: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get role permissions failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Permissions []*models.Permission `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Permissions, nil
 }
 
 // RemovePermissionFromRole revokes a permission from a role via the REST API.
@@ -443,11 +600,28 @@ func (rs *RemoteStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mo
 	return result, nil
 }
 
-// ListGroupRoleAssignments is not supported in remote storage — the client reaches
-// group role state through GetGroupRoles/GetGroupRoleGrants (per-group, scope-less)
-// via their REST endpoints; there is no all-scope listing endpoint to proxy to.
-func (rs *RemoteStorage) ListGroupRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListGroupRoleAssignments")
+// ListGroupRoleAssignments proxies onto GET
+// /api/v1/system/rbac/groups/{groupID}/role-assignments (finding #525) —
+// AddUserToGroup's escalation-by-proxy ceiling check (requireAuthorityForRole,
+// looped over every role the target group holds) was completely non-functional
+// under storage.type: remote before this fix, so POST /groups/{id}/members either
+// failed closed (blocking every legitimate group join) or, worse, could not enforce
+// the ceiling at all depending on call order — this closes that gap with a genuine
+// read.
+func (rs *RemoteStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/groups/%d/role-assignments", groupID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group role assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list group role assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
 }
 
 // AssignRoleToGroup assigns a role to a group at scope via remote API.
@@ -511,7 +685,16 @@ func (rs *RemoteStorage) RoleSetHasPermission(_ context.Context, _ []uint, _ str
 	return false, fmt.Errorf("not supported in remote storage")
 }
 
-// --- Project / Environment (not supported in remote mode) ---
+// --- Project / Environment ---
+//
+// CreateProject/CreateEnvironment remain deliberately unsupported (below); every
+// OTHER project/environment catalog method is proxied over HTTP (#528) to
+// server/http/handlers/project_catalog_proxy.go and environment_catalog_proxy.go's
+// /api/v1/system/projects* and /api/v1/system/environments* routes — thin
+// passthroughs onto the SAME storage.Storage primitives internal/core/catalog.go
+// already uses against a local backend. See those handler files' package docs for
+// the reuse-vs-new-route rationale (why the human-facing /api/v1/projects routes are
+// NOT reused as the proxy target).
 
 func (rs *RemoteStorage) CreateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
 	return nil, fmt.Errorf("not supported in remote storage")
@@ -521,70 +704,471 @@ func (rs *RemoteStorage) CreateEnvironment(_ context.Context, _ *models.Environm
 	return nil, fmt.Errorf("not supported in remote storage")
 }
 
-func (rs *RemoteStorage) ListProjects(_ context.Context) ([]*models.Project, error) {
-	return nil, remoteUnsupported("ListProjects")
+// projectWire mirrors models.Project's fields exactly (snake_case) — the wire shape
+// project_catalog_proxy.go's projectProxyWire sends/expects.
+type projectWire struct {
+	ID          uint       `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	RequireMFA  bool       `json:"require_mfa"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
-func (rs *RemoteStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]storage.ProjectWithCounts, error) {
-	return nil, remoteUnsupported("ListProjectsWithCounts")
+func (w projectWire) toModel() *models.Project {
+	p := &models.Project{
+		ID:          w.ID,
+		Name:        w.Name,
+		Description: w.Description,
+		RequireMFA:  w.RequireMFA,
+		CreatedAt:   w.CreatedAt,
+		UpdatedAt:   w.UpdatedAt,
+	}
+	if w.DeletedAt != nil {
+		p.DeletedAt.Time = *w.DeletedAt
+		p.DeletedAt.Valid = true
+	}
+	return p
 }
 
-func (rs *RemoteStorage) GetProject(_ context.Context, _ uint) (*models.Project, error) {
-	return nil, remoteUnsupported("GetProject")
+func newProjectWire(p *models.Project) projectWire {
+	w := projectWire{
+		ID:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		RequireMFA:  p.RequireMFA,
+		CreatedAt:   p.CreatedAt,
+		UpdatedAt:   p.UpdatedAt,
+	}
+	if p.DeletedAt.Valid {
+		t := p.DeletedAt.Time
+		w.DeletedAt = &t
+	}
+	return w
 }
 
-func (rs *RemoteStorage) UpdateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
-	return nil, remoteUnsupported("UpdateProject")
+func decodeProjectResponse(data json.RawMessage) (*models.Project, error) {
+	var w projectWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return w.toModel(), nil
 }
 
-func (rs *RemoteStorage) DeleteProject(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteProject")
+// ListProjects lists every project via GET /api/v1/system/projects.
+func (rs *RemoteStorage) ListProjects(ctx context.Context) ([]*models.Project, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/system/projects")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list projects failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Projects []projectWire `json:"projects"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	projects := make([]*models.Project, 0, len(result.Projects))
+	for _, w := range result.Projects {
+		projects = append(projects, w.toModel())
+	}
+	return projects, nil
 }
 
-func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
-	return 0, 0, remoteUnsupported("RestoreProject")
+// ListProjectsWithCounts lists every project with secret/environment counts via GET
+// /api/v1/system/projects/with-counts?include_deleted=.
+func (rs *RemoteStorage) ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]storage.ProjectWithCounts, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/with-counts?include_deleted=%t", includeDeleted)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects with counts: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list projects with counts failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Projects []storage.ProjectWithCounts `json:"projects"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Projects, nil
 }
 
-func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
-	return nil, remoteUnsupported("ListEnvironments")
+// GetProject retrieves a project by ID via GET /api/v1/system/projects/{id}.
+func (rs *RemoteStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get project: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get project failed: %s", resp.Error.Error())
+	}
+	return decodeProjectResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*models.Environment, error) {
-	return nil, remoteUnsupported("ListEnvironmentsByProject")
+// UpdateProject updates an existing project via PUT /api/v1/system/projects/{id}.
+func (rs *RemoteStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d", project.ID)
+	resp, err := rs.client.Put(ctx, path, newProjectWire(project))
+	if err != nil {
+		return nil, fmt.Errorf("failed to update project: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("update project failed: %s", resp.Error.Error())
+	}
+	return decodeProjectResponse(resp.Data)
 }
 
-func (rs *RemoteStorage) ListEnvironmentsByProjectIncludingDeleted(_ context.Context, _ uint) ([]*models.Environment, error) {
-	return nil, remoteUnsupported("ListEnvironmentsByProjectIncludingDeleted")
+// DeleteProject cascade-deletes a project (unconditionally — no empty-project guard)
+// via DELETE /api/v1/system/projects/{id}. This backs the force=true path; the
+// force=false guard+cascade is DeleteProjectIfEmpty below.
+func (rs *RemoteStorage) DeleteProject(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/projects/%d", id)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete project: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete project failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) ListProjectMembers(_ context.Context, _ uint) ([]storage.ProjectMember, error) {
-	return nil, remoteUnsupported("ListProjectMembers")
+// DeleteProjectIfEmpty is the atomic guard+cascade form of DeleteProject(force=false)
+// (#528), proxied as ONE HTTP call to POST
+// /api/v1/system/projects/{id}/delete-if-empty — see the storage.Storage interface
+// doc comment on this method for the full TOCTOU rationale this closes relative to a
+// naive two-call (count, then delete) proxy.
+func (rs *RemoteStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/delete-if-empty", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete project if empty: %w", err)
+	}
+	if !resp.Success {
+		return 0, fmt.Errorf("delete project if empty failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		BlockingSecretCount int `json:"blocking_secret_count"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.BlockingSecretCount, nil
 }
 
-func (rs *RemoteStorage) ListProjectRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListProjectRoleAssignments")
+// RestoreProject reverses a project soft-delete (and its cascade) via POST
+// /api/v1/system/projects/{id}/restore.
+func (rs *RemoteStorage) RestoreProject(ctx context.Context, id uint) (int, int, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/restore", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to restore project: %w", err)
+	}
+	if !resp.Success {
+		return 0, 0, fmt.Errorf("restore project failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		RestoredEnvironments int `json:"restored_environments"`
+		RestoredSecrets      int `json:"restored_secrets"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return 0, 0, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.RestoredEnvironments, result.RestoredSecrets, nil
 }
 
-func (rs *RemoteStorage) ListProjectMachineRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListProjectMachineRoleAssignments")
+// environmentWire mirrors models.Environment's fields exactly (snake_case) — the
+// wire shape environment_catalog_proxy.go's environmentProxyWire sends/expects.
+type environmentWire struct {
+	ID        uint       `json:"id"`
+	ProjectID uint       `json:"project_id"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
-// ListGlobalAdminAssignmentsForUpdate is a server-internal RBAC primitive backing
-// the last-admin-removal guard's atomicity fix (#340); like
-// ListProjectRoleAssignments, RBAC admin-removal guarding runs entirely against
-// LocalStorage server-side, so this is unsupported here.
-func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListGlobalAdminAssignmentsForUpdate")
+func (w environmentWire) toModel() *models.Environment {
+	e := &models.Environment{
+		ID:        w.ID,
+		ProjectID: w.ProjectID,
+		Name:      w.Name,
+		CreatedAt: w.CreatedAt,
+		UpdatedAt: w.UpdatedAt,
+	}
+	if w.DeletedAt != nil {
+		e.DeletedAt.Time = *w.DeletedAt
+		e.DeletedAt.Valid = true
+	}
+	return e
 }
 
-func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
-	return nil, remoteUnsupported("GetEnvironment")
+func decodeEnvironmentResponse(data json.RawMessage) (*models.Environment, error) {
+	var w environmentWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return w.toModel(), nil
 }
 
-func (rs *RemoteStorage) DeleteEnvironment(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteEnvironment")
+// ListEnvironments lists every environment via GET /api/v1/system/environments.
+func (rs *RemoteStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/system/environments")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list environments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list environments failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Environments []environmentWire `json:"environments"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	environments := make([]*models.Environment, 0, len(result.Environments))
+	for _, w := range result.Environments {
+		environments = append(environments, w.toModel())
+	}
+	return environments, nil
 }
 
-func (rs *RemoteStorage) RestoreEnvironment(_ context.Context, _, _ uint) error {
-	return remoteUnsupported("RestoreEnvironment")
+// listEnvironmentsByProject is the shared implementation behind
+// ListEnvironmentsByProject/ListEnvironmentsByProjectIncludingDeleted via GET
+// /api/v1/system/projects/{id}/environments?include_deleted=.
+func (rs *RemoteStorage) listEnvironmentsByProject(ctx context.Context, projectID uint, includeDeleted bool) ([]*models.Environment, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/environments?include_deleted=%t", projectID, includeDeleted)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list environments by project: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list environments by project failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Environments []environmentWire `json:"environments"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	environments := make([]*models.Environment, 0, len(result.Environments))
+	for _, w := range result.Environments {
+		environments = append(environments, w.toModel())
+	}
+	return environments, nil
+}
+
+func (rs *RemoteStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	return rs.listEnvironmentsByProject(ctx, projectID, false)
+}
+
+// ListEnvironmentsByProjectIncludingDeleted is like ListEnvironmentsByProject but
+// also returns soft-deleted environments, for the restore UI.
+func (rs *RemoteStorage) ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	return rs.listEnvironmentsByProject(ctx, projectID, true)
+}
+
+// GetEnvironment retrieves an environment by ID via GET
+// /api/v1/system/environments/{id}.
+//
+// #499 carve-out (untouched by #528): CreateSecret's own call site
+// (internal/core/secrets.go) special-cases errors.Is(ErrUnsupportedByBackend) to skip
+// its ownership pre-check when this was unsupported. Now that it's proxied for real,
+// that pre-check simply starts running for real too — no change was needed there.
+func (rs *RemoteStorage) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
+	path := fmt.Sprintf("/api/v1/system/environments/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get environment: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get environment failed: %s", resp.Error.Error())
+	}
+	return decodeEnvironmentResponse(resp.Data)
+}
+
+// DeleteEnvironment deletes an environment (refusing if it still has active secrets)
+// via DELETE /api/v1/system/environments/{id}.
+func (rs *RemoteStorage) DeleteEnvironment(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/environments/%d", id)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete environment: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete environment failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// RestoreEnvironment reverses a soft-delete, scoped to projectID, via POST
+// /api/v1/system/projects/{projectId}/environments/{id}/restore.
+func (rs *RemoteStorage) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/environments/%d/restore", projectID, id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to restore environment: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("restore environment failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// ListProjectMembers lists a project's user members via GET
+// /api/v1/system/projects/{id}/members.
+func (rs *RemoteStorage) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
+	path := fmt.Sprintf("/api/v1/system/projects/%d/members", projectID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project members: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list project members failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Members []storage.ProjectMember `json:"members"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Members, nil
+}
+
+// ListProjectRoleAssignments proxies onto GET
+// /api/v1/system/rbac/project-role-assignments?project_id=X (finding #525) —
+// RemoveProjectMember's audit-trail capture, guardLastProjectAdmin, the access
+// review (access_review.go/access_review_revoke.go), catalog.go, compliance
+// posture, scim.go, and the global-admin group guards (authz.go, project_id=0)
+// all call this; every one of them was completely non-functional under
+// storage.type: remote before this fix. A plain read — no read-check-write
+// sequence of its own, so a single HTTP round trip introduces no new race.
+func (rs *RemoteStorage) ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/project-role-assignments?project_id=%d", projectID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project role assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list project role assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// ListProjectMachineRoleAssignments proxies onto GET
+// /api/v1/system/rbac/project-machine-role-assignments?project_id=X (finding
+// #525) — the access review's machine-identity role enumeration
+// (access_review.go) was completely non-functional under storage.type: remote
+// before this fix.
+func (rs *RemoteStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/project-machine-role-assignments?project_id=%d", projectID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project machine role assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list project machine role assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// ListGlobalAdminAssignmentsForUpdate proxies onto GET
+// /api/v1/system/rbac/global-admin-assignments (finding #525) as a PLAIN read —
+// like LockMachineIdentityForUpdate/ListSecretDependenciesForProjectForUpdate
+// before it, there is no row lock to take over HTTP, so the "ForUpdate" naming is
+// aspirational here; safety comes entirely from RemoveGlobalAdminRoleGuarded's
+// atomic conditional write below, not from this read. Direct callers of this
+// method alone (outside RemoveUserRole's guarded removal path) get the same
+// read-only visibility LocalStorage's real row lock would give them anyway on
+// SQLite (a plain read); only Postgres HA replication needed the lock, and that's
+// entirely a hub-side concern once this method's own caller no longer spans an
+// HTTP hop with a subsequent write (see RemoveGlobalAdminRoleGuarded).
+func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]storage.RoleAssignment, error) {
+	path := "/api/v1/system/rbac/global-admin-assignments?role_ids=" + joinUintsCSV(adminRoleIDs)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list global admin assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list global admin assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// removeGlobalAdminRoleGuardedRefusedCode is the machine-readable error code
+// RemoveGlobalAdminRoleGuardedProxy returns when the upstream refuses the removal
+// (storage.ErrWouldStrandLastAdmin) — mirrored exactly in
+// server/http/handlers/rbac_role_grants_proxy.go, the wire-level contract this
+// method's error-recovery switch depends on to reconstruct that sentinel on the
+// calling side, the same #511-style translation
+// CreateSecretDependencyExclusive's duplicate/cycle codes use.
+const removeGlobalAdminRoleGuardedRefusedCode = "WOULD_STRAND_LAST_ADMIN"
+
+// RemoveGlobalAdminRoleGuarded proxies onto POST
+// /api/v1/system/rbac/global-admin-role/remove-guarded (finding #525) — see the
+// Storage interface doc for why this is ONE atomic call rather than a
+// ListGlobalAdminAssignmentsForUpdate-then-RemoveRole pair: RemoteStorage.
+// WithTransaction is a no-op passthrough, so nothing would otherwise span the
+// guard read and the delete across this HTTP hop, reopening the exact
+// cross-process last-admin-lockout race #340 closed for HA Postgres replicas —
+// this time between concurrent spokes (or a spoke and the hub itself).
+func (rs *RemoteStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID, roleID uint, adminRoleIDs []uint) error {
+	payload := struct {
+		UserID       uint   `json:"user_id"`
+		RoleID       uint   `json:"role_id"`
+		AdminRoleIDs []uint `json:"admin_role_ids"`
+	}{UserID: userID, RoleID: roleID, AdminRoleIDs: adminRoleIDs}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/global-admin-role/remove-guarded", payload)
+	if err != nil {
+		var httpErr *remote.HTTPError
+		if errors.As(err, &httpErr) {
+			switch httpErr.ErrorType {
+			case removeGlobalAdminRoleGuardedRefusedCode:
+				return fmt.Errorf("%w: %s", storage.ErrWouldStrandLastAdmin, httpErr.Message)
+			case notAssignedCode:
+				return fmt.Errorf("%w: %s", storage.ErrRoleNotAssigned, httpErr.Message)
+			}
+		}
+		return fmt.Errorf("failed to remove global admin role: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("remove global admin role failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// notAssignedCode is the machine-readable error code
+// RemoveGlobalAdminRoleGuardedProxy returns when the (userID, roleID) grant does
+// not exist (storage.ErrRoleNotAssigned) — mirrored exactly in
+// server/http/handlers/rbac_role_grants_proxy.go.
+const notAssignedCode = "ROLE_NOT_ASSIGNED"
+
+// joinUintsCSV renders ids as a comma-separated query value (empty string for an
+// empty slice), the wire shape RemoveGlobalAdminRoleGuardedProxy's sibling GET
+// /api/v1/system/rbac/global-admin-assignments handler parses back with
+// strconv.ParseUint per component.
+func joinUintsCSV(ids []uint) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatUint(uint64(id), 10))
+	}
+	return strings.Join(parts, ",")
 }

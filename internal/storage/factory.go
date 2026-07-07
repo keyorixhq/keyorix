@@ -572,6 +572,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	legalHoldExists := tableExists(db, "legal_holds")
 	riskExceptionExists := tableExists(db, "risk_exceptions")
 	ssoLoginStateExists := tableExists(db, "sso_login_states")
+	schedulerLockLeaseExists := tableExists(db, "scheduler_lock_leases")
 	sodExists := tableExists(db, "sod_policies")
 	secretDepExists := tableExists(db, "secret_dependencies")
 	pwHistExists := tableExists(db, "password_histories")
@@ -837,6 +838,17 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !ssoLoginStateExists {
 		if err := db.AutoMigrate(&models.SSOLoginState{}); err != nil {
 			return fmt.Errorf("failed to migrate sso_login_states table: %w", err)
+		}
+	}
+
+	// Create the scheduler-lock-lease table if missing (#530, additive). Backs
+	// TryAcquireSchedulerLock/ReleaseSchedulerLock — the TTL-bounded distributed
+	// mutex a storage.type: remote spoke's WithSchedulerLock now proxies through,
+	// independent of (and never migrated onto) the pre-existing Postgres advisory
+	// lock local WithSchedulerLock still uses for a server's OWN scheduler ticks.
+	if !schedulerLockLeaseExists {
+		if err := db.AutoMigrate(&models.SchedulerLockLease{}); err != nil {
+			return fmt.Errorf("failed to migrate scheduler_lock_leases table: %w", err)
 		}
 	}
 

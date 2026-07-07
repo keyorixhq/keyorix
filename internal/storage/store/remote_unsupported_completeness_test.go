@@ -75,12 +75,19 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (39; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (0; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
-	// ref-grant CRUD closed by #527, the five LastUser*Activity methods/
-	// GetSecretIncludingDeleted/ListSharesByOwner/CreateUserWithRoleGrants (misc
-	// gaps closed by #531)) ---
+	// ref-grant CRUD closed by #527, self-service access-request workflow closed by
+	// #523, RBAC permission catalog (ListPermissions/GetPermission/
+	// GetRolePermissions) closed by #526, WithSchedulerLock closed by #530,
+	// project/environment catalog CRUD closed by #528, MFA enrolment/management
+	// closed by #524, RBAC role-grant primitives closed by #525, misc gaps (the
+	// five LastUser*Activity methods, GetSecretIncludingDeleted, ListSharesByOwner,
+	// CreateUserWithRoleGrants) closed by #531 — round 119's entire genuine-gap
+	// list is now closed; #97 (MEDIUM, no further code action planned) and
+	// #104/#253 (LOW, already settled) are the only backlog items left, see
+	// docs/security/HARDENING-BACKLOG.md) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -90,85 +97,67 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// (server/http/handlers/sso_state_proxy.go), no longer unconditional stubs —
 	// see internal/storage/store/remote_sso.go.
 
-	// Self-service access-requests — 100% broken (request/list/approve/reject/withdraw).
-	"CreateAccessRequest": {statusKnownGap,
-		"round 119: RequestProjectAccess, POST /projects/{id}/access-requests (self-service)"},
-	"GetAccessRequest": {statusKnownGap,
-		"round 119: ApproveAccessRequestWithExpiry/RejectAccessRequest, PUT /projects/{id}/access-requests/{requestId}"},
-	"UpdateAccessRequest": {statusKnownGap,
-		"round 119: same approve/reject paths, plus lazy-expiry in ListAccessRequests"},
-	"ListAccessRequests": {statusKnownGap,
-		"round 119: GET /projects/{id}/access-requests"},
-	"CreateAccessRequestApproval": {statusKnownGap,
-		"round 119: dual-control (N-of-M) approval recording inside ApproveAccessRequestWithExpiry"},
-	"ListAccessRequestApprovals": {statusKnownGap,
-		"round 119: progress annotation + duplicate-approver check during approve"},
+	// Self-service access-requests (request/list/approve/reject/withdraw) were
+	// fixed in #523: CreateAccessRequest/GetAccessRequest/UpdateAccessRequest/
+	// ListAccessRequests/CreateAccessRequestApproval/ListAccessRequestApprovals
+	// are now proxied via /api/v1/system/access-requests(+/{id}/approvals)
+	// (server/http/handlers/access_request_proxy.go), no longer unconditional
+	// stubs — see internal/storage/store/remote_invitations.go.
 
-	// MFA enrollment/management (not just login) — 100% broken.
-	"UpsertMFASecret": {statusKnownGap, "round 119: BeginMFAEnrollment, POST /auth/mfa/enroll"},
-	"GetMFASecret": {statusKnownGap,
-		"round 119: ActivateMFA (POST /auth/mfa/activate) and requireReauth (gates disable/regenerate-codes/WebAuthn register-delete)"},
-	"ActivateMFASecret": {statusKnownGap, "round 119: ActivateMFA, POST /auth/mfa/activate"},
-	"DeleteMFAForUser":  {statusKnownGap, "round 119: DisableMFA, POST /auth/mfa/disable"},
-	"SetUserMFAEnabled": {statusKnownGap, "round 119: ActivateMFA and DisableMFA"},
-	"CreateMFARecoveryCodes": {statusKnownGap,
-		"round 119: ActivateMFA and RegenerateMFARecoveryCodes (POST /auth/mfa/recovery-codes/regenerate)"},
-	"CountUnusedMFARecoveryCodes": {statusKnownGap,
-		"round 119: MFARecoveryCodesRemaining, GET /auth/mfa/recovery-codes"},
-	"DeleteMFARecoveryCodes": {statusKnownGap,
-		"round 119: RegenerateMFARecoveryCodes, POST /auth/mfa/recovery-codes/regenerate"},
+	// MFA enrollment/management (not just login) — closed by #524: now proxied via
+	// /api/v1/system/mfa (server/http/handlers/mfa_management_proxy.go), see
+	// internal/storage/store/remote_mfa.go.
 
-	// RBAC role-grant primitives + last-admin/escalation guards.
-	"GetGroupRoleGrants": {statusKnownGap,
-		"round 119: GetGroupRoles handler (GET /groups/{id}/roles) — the method's own doc comment claiming the HTTP handler reads local storage instead is stale/wrong"},
-	"AssignRoleWithExpiry": {statusKnownGap,
-		"round 119: JIT-assign-with-expiry (POST /user-roles with expires_at) and the access-request TTL-grant approval path"},
-	"AssignRoleToGroupWithExpiry": {statusKnownGap,
-		"round 119: JIT group role grants, POST /groups/{id}/roles with expires_at"},
-	"RemoveAllProjectRoleGrants": {statusKnownGap,
-		"round 119: RemoveProjectMember, DELETE /projects/{id}/members/{userId} — a routine member-offboarding action"},
-	"ListGroupRoleAssignments": {statusKnownGap,
-		"round 119: AddUserToGroup's escalation-by-proxy ceiling check, POST /groups/{id}/members — breaks adding a user to a group for every authenticated caller"},
-	"ListGlobalAdminAssignmentsForUpdate": {statusKnownGap,
-		"round 119: guardLastGlobalAdmin (last-install-admin lockout guard), reached via DELETE /user-roles"},
-	"ListProjectRoleAssignments": {statusKnownGap,
-		"round 119: multiple last-global-admin guards, access reviews, RestoreProject's admin-ceiling check, compliance posture, SCIM"},
-	"ListProjectMachineRoleAssignments": {statusKnownGap,
-		"round 119: machine-identity access-review coverage (#91), GET /projects/{id}/access-review"},
+	// RBAC role-grant primitives + last-admin/escalation guards were closed by
+	// #525: GetGroupRoleGrants/AssignRoleWithExpiry/AssignRoleToGroupWithExpiry/
+	// RemoveAllProjectRoleGrants/ListGroupRoleAssignments/
+	// ListGlobalAdminAssignmentsForUpdate/ListProjectRoleAssignments/
+	// ListProjectMachineRoleAssignments are now proxied via
+	// /api/v1/system/rbac/... (server/http/handlers/rbac_role_grants_proxy.go) —
+	// see internal/storage/store/remote_rbac.go. RemoveUserRole's last-global-admin
+	// guard additionally gained a new atomic primitive,
+	// RemoveGlobalAdminRoleGuarded, folding the check and the removal into ONE
+	// storage call (a naive two-call proxy would have reopened #340's
+	// cross-process TOCTOU race across an HTTP hop — RemoteStorage.WithTransaction
+	// is a no-op passthrough).
 
-	// RBAC permission catalog — no local fallback exists (RemoteStorage has no DB).
-	"ListPermissions": {statusKnownGap, "round 119: GET /permissions"},
-	"GetPermission":   {statusKnownGap, "round 119: AssignPermissionToRole, POST /roles/{id}/permissions"},
-	"GetRolePermissions": {statusKnownGap,
-		"round 119: role-permission view, access reviews, compliance posture, SoD conflict detection — GET /roles/{id}/permissions and multiple internal core callers"},
+	// RBAC permission catalog (ListPermissions/GetPermission/GetRolePermissions) was
+	// fixed in #526 — see internal/storage/store/remote_rbac.go.
 
-	// Project / environment catalog CRUD.
-	"ListProjects": {statusKnownGap,
-		"round 119: hygiene report, compliance posture, rotation planner, secret_ref/secret_render, deployment hygiene, name-conformance report, auth bootstrap"},
-	"ListProjectsWithCounts": {statusKnownGap, "round 119: GET /projects"},
-	"GetProject": {statusKnownGap,
-		"round 119: GET /projects/{id}; also invitations, membership lifecycle, notifications, users, dynamic-secrets' requireLiveProjectAndEnvironment"},
-	"UpdateProject":    {statusKnownGap, "round 119: PUT /projects/{id}"},
-	"DeleteProject":    {statusKnownGap, "round 119: DELETE /projects/{id}"},
-	"RestoreProject":   {statusKnownGap, "round 119: POST /projects/{id}/restore"},
-	"ListEnvironments": {statusKnownGap, "round 119: GET /environments; also dashboard, auth bootstrap"},
-	"ListEnvironmentsByProject": {statusKnownGap,
-		"round 119: GET /projects/{id}/environments; also drift, secret_ref, secret_render, secret_inventory"},
-	"ListEnvironmentsByProjectIncludingDeleted": {statusKnownGap,
-		"round 119: the environments-listing restore-UI branch (?include_deleted=true)"},
-	"ListProjectMembers": {statusKnownGap,
-		"round 119: GET /projects/{id}/members; also a wide swath of scheduled reminder/notification jobs (anomaly, break-glass, cert expiry, classification gate, expiry/rotation reminders, invitations, recertification)"},
-	"GetEnvironment": {statusKnownGap,
-		"round 119: secret copy (same-project and cross-environment), dynamic-secrets issue/renew-lease. NOTE: CreateSecret's own call site already has a deliberate errors.Is(ErrUnsupportedByBackend) carve-out (#499) and is NOT part of this gap — only every OTHER caller is broken"},
-	"DeleteEnvironment":  {statusKnownGap, "round 119: DELETE /environments/{id}"},
-	"RestoreEnvironment": {statusKnownGap, "round 119: POST /projects/{projectId}/environments/{id}/restore"},
+	// Project / environment catalog CRUD was fixed in #528: ListProjects/
+	// ListProjectsWithCounts/GetProject/UpdateProject/DeleteProject/RestoreProject/
+	// ListEnvironments/ListEnvironmentsByProject/
+	// ListEnvironmentsByProjectIncludingDeleted/ListProjectMembers/GetEnvironment/
+	// DeleteEnvironment/RestoreEnvironment are now proxied via
+	// /api/v1/system/projects* and /api/v1/system/environments*
+	// (server/http/handlers/project_catalog_proxy.go,
+	// environment_catalog_proxy.go), no longer unconditional stubs — see
+	// internal/storage/store/remote_rbac.go's Project/Environment section. The
+	// force=false delete guard now runs as ONE atomic storage.Storage call
+	// (DeleteProjectIfEmpty) instead of a WithTransaction-wrapped
+	// ListSecrets+DeleteProject pair, closing a TOCTOU window that pair would have
+	// reopened across the HTTP hop (see that method's interface doc comment).
+	// GetEnvironment's #499 carve-out inside core.CreateSecret is unaffected —
+	// see internal/core/secrets.go.
 
-	// Scheduler locking — reached on EVERY tick regardless of storage.type
-	// (server/main.go starts all schedulers unconditionally), and is now the
-	// sole blocker preventing already-remote-proxied maintenance (e.g. #520's
-	// retention-purge fix) from ever running via its scheduler on a spoke server.
-	"WithSchedulerLock": {statusKnownGap,
-		"round 119: server/scheduler_run.go's lockedRun wraps every background scheduler (retention purge, auto-rotation, recertification, dynamic-secret sweep, JIT-access expiry, login-attempt prune, anomaly detection, reminders, compliance digest, evidence delivery) — its own doc comment claiming this, is never reached remotely is disproven by server/main.go starting every scheduler unconditionally"},
+	// Scheduler locking was fixed in #530: TryAcquireSchedulerLock/
+	// ReleaseSchedulerLock are now proxied via /api/v1/system/scheduler-lock/*
+	// (server/http/handlers/scheduler_lock_proxy.go), no longer an unconditional
+	// stub — see internal/storage/store/remote_scheduler_lock.go. Each route
+	// resolves its entire acquire/release decision in ONE storage.Storage call,
+	// so no naive "check, then write" pair is ever exposed over the HTTP hop to
+	// reopen the exclusivity race the lock exists to prevent.
+
+	// Misc (#531): the five LastUser*Activity methods, GetSecretIncludingDeleted,
+	// and ListSharesByOwner are now proxied via /api/v1/system/access-activity/*,
+	// /api/v1/system/secrets/{id}/including-deleted, and
+	// /api/v1/system/shares/by-owner/{ownerID} (server/http/handlers/
+	// misc_remote_proxy.go). CreateUserWithRoleGrants required a new atomic
+	// primitive rather than a naive two-call proxy — LocalStorage wraps the
+	// user-create + role-grant inserts in one real DB transaction (ADR-028), and
+	// RemoteStorage.WithTransaction is a no-op passthrough, so it's proxied as
+	// ONE atomic call via POST /api/v1/system/users/with-role-grants instead —
+	// see internal/storage/store/remote_users.go.
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every
