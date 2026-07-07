@@ -38,22 +38,24 @@ jobs:
       - name: Cross-compile release binaries
         run: make release VERSION="$GITHUB_REF_NAME"
 
+      # cosign-release pinned: latest (v3.1.1) defaults sign-blob to its new
+      # bundle format and silently drops --output-signature/--output-certificate;
+      # passing --new-bundle-format=false to force the old behavior then hits a
+      # second v3.1.1-only requirement ("must provide ... with --signing-config
+      # or --use-signing-config"). v2.5.2 predates all of this and supports the
+      # split-file flags SECURITY.md's verification instructions depend on.
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.0
+        with:
+          cosign-release: 'v2.5.2'
 
       # Signs checksums.txt (not each binary individually): it already contains a
       # SHA-256 of every release binary, so one signature transitively covers all
       # of them — verify checksums.txt's signature, then verify each downloaded
       # binary against its listed checksum.
-      # --new-bundle-format=false: cosign now defaults to writing a single
-      # `.bundle` file and silently ignores --output-signature/--output-certificate
-      # otherwise (it did so here, producing an empty output path and a hard
-      # failure). SECURITY.md documents verification via the separate
-      # checksums.txt.sig/.pem files, so pin the legacy split-file behavior.
       - name: Sign checksums.txt (keyless)
         run: |
           cosign sign-blob --yes \
-            --new-bundle-format=false \
             --output-signature dist/checksums.txt.sig \
             --output-certificate dist/checksums.txt.pem \
             dist/checksums.txt
