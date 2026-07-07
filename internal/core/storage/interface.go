@@ -58,6 +58,25 @@ type Storage interface {
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
 	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	DeleteProject(ctx context.Context, id uint) error
+	// DeleteProjectIfEmpty atomically enforces DeleteProject(force=false)'s guard —
+	// reject the delete if the project still has any live secret — and, only when the
+	// project IS empty, performs the SAME cascade soft-delete DeleteProject does, all as
+	// ONE storage operation (#528). It replaces core.DeleteProject's prior
+	// WithTransaction-wrapped ListSecrets+DeleteProject pair (#313): that pair depended
+	// on WithTransaction opening a REAL transaction to keep the guard's read and the
+	// cascade's write atomic, which holds for LocalStorage but NOT for RemoteStorage —
+	// WithTransaction there is a no-op passthrough over HTTP (see its doc comment above),
+	// so a naive two-call proxy of that same pair would reopen a TOCTOU window across a
+	// full network round trip: a secret created between the count and the cascade would
+	// silently let a force=false delete cascade over it anyway, the same check-then-act-
+	// split-by-a-non-transactional-WithTransaction bug class this campaign has already
+	// hit repeatedly. Folding the guard and the cascade into one call closes that gap for
+	// both backends alike — under LocalStorage it is (and always was) one DB transaction;
+	// under RemoteStorage it is now one HTTP round trip executing the whole guard+cascade
+	// server-side. Returns the count of live secrets blocking the delete (0 means the
+	// delete happened) so the caller can format the same "project has N secret(s)..."
+	// error DeleteProject(force=false) has always returned.
+	DeleteProjectIfEmpty(ctx context.Context, id uint) (blockingSecretCount int, err error)
 	// RestoreProject reverses a project soft-delete and cascades to the environments/
 	// secrets that were removed WITH it (matched by deletion timestamp — independently
 	// retired children stay deleted, see LocalStorage.RestoreProject). It returns the
