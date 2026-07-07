@@ -75,14 +75,14 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (16; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (8; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
 	// ref-grant CRUD closed by #527, self-service access-request workflow closed by
 	// #523, RBAC permission catalog (ListPermissions/GetPermission/
 	// GetRolePermissions) closed by #526, WithSchedulerLock closed by #530,
 	// project/environment catalog CRUD closed by #528, MFA enrolment/management
-	// closed by #524) ---
+	// closed by #524, RBAC role-grant primitives closed by #525) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -103,23 +103,18 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// /api/v1/system/mfa (server/http/handlers/mfa_management_proxy.go), see
 	// internal/storage/store/remote_mfa.go.
 
-	// RBAC role-grant primitives + last-admin/escalation guards.
-	"GetGroupRoleGrants": {statusKnownGap,
-		"round 119: GetGroupRoles handler (GET /groups/{id}/roles) — the method's own doc comment claiming the HTTP handler reads local storage instead is stale/wrong"},
-	"AssignRoleWithExpiry": {statusKnownGap,
-		"round 119: JIT-assign-with-expiry (POST /user-roles with expires_at) and the access-request TTL-grant approval path"},
-	"AssignRoleToGroupWithExpiry": {statusKnownGap,
-		"round 119: JIT group role grants, POST /groups/{id}/roles with expires_at"},
-	"RemoveAllProjectRoleGrants": {statusKnownGap,
-		"round 119: RemoveProjectMember, DELETE /projects/{id}/members/{userId} — a routine member-offboarding action"},
-	"ListGroupRoleAssignments": {statusKnownGap,
-		"round 119: AddUserToGroup's escalation-by-proxy ceiling check, POST /groups/{id}/members — breaks adding a user to a group for every authenticated caller"},
-	"ListGlobalAdminAssignmentsForUpdate": {statusKnownGap,
-		"round 119: guardLastGlobalAdmin (last-install-admin lockout guard), reached via DELETE /user-roles"},
-	"ListProjectRoleAssignments": {statusKnownGap,
-		"round 119: multiple last-global-admin guards, access reviews, RestoreProject's admin-ceiling check, compliance posture, SCIM"},
-	"ListProjectMachineRoleAssignments": {statusKnownGap,
-		"round 119: machine-identity access-review coverage (#91), GET /projects/{id}/access-review"},
+	// RBAC role-grant primitives + last-admin/escalation guards were closed by
+	// #525: GetGroupRoleGrants/AssignRoleWithExpiry/AssignRoleToGroupWithExpiry/
+	// RemoveAllProjectRoleGrants/ListGroupRoleAssignments/
+	// ListGlobalAdminAssignmentsForUpdate/ListProjectRoleAssignments/
+	// ListProjectMachineRoleAssignments are now proxied via
+	// /api/v1/system/rbac/... (server/http/handlers/rbac_role_grants_proxy.go) —
+	// see internal/storage/store/remote_rbac.go. RemoveUserRole's last-global-admin
+	// guard additionally gained a new atomic primitive,
+	// RemoveGlobalAdminRoleGuarded, folding the check and the removal into ONE
+	// storage call (a naive two-call proxy would have reopened #340's
+	// cross-process TOCTOU race across an HTTP hop — RemoteStorage.WithTransaction
+	// is a no-op passthrough).
 
 	// RBAC permission catalog (ListPermissions/GetPermission/GetRolePermissions) was
 	// fixed in #526 — see internal/storage/store/remote_rbac.go.

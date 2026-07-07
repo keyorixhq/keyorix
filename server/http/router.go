@@ -1404,6 +1404,51 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
 
+			// RBAC role-grant primitive proxy (finding #525). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// GetGroupRoleGrants/AssignRoleWithExpiry/AssignRoleToGroupWithExpiry/
+			// RemoveAllProjectRoleGrants/ListGroupRoleAssignments/
+			// ListGlobalAdminAssignmentsForUpdate/ListProjectRoleAssignments/
+			// ListProjectMachineRoleAssignments to THIS server's real storage
+			// backend, instead of RemoteStorage's eight RBAC role-grant methods
+			// being unconditional stubs (adding a user to a group, removing a
+			// project member, JIT time-bound role grants, and several
+			// last-global-admin lockout guards were completely non-functional
+			// under storage.type: remote — the guards specifically failed CLOSED,
+			// blocking the underlying legitimate action too, not just leaving a
+			// gap). Exactly the same pattern as the secret-dependencies/retention
+			// proxies above: a thin passthrough onto storage.Storage (no RBAC
+			// POLICY decision — the escalation-by-proxy ceiling checks,
+			// separation-of-duties, audit-log writes — is made here; that stays
+			// entirely in the CALLING server's own internal/core.KeyorixCore,
+			// exactly as it does against a local backend), reusing the SAME
+			// system.read/system.write tier — no new privilege class.
+			//
+			// RemoveGlobalAdminRoleGuardedProxy is the ONE exception: it DOES
+			// evaluate the last-global-admin invariant server-side, because no
+			// real transaction can span this HTTP hop (RemoteStorage.
+			// WithTransaction is a no-op passthrough) — see
+			// rbac_role_grants_proxy.go's package doc and
+			// internal/core/rbac_management.go's RemoveUserRole doc for why
+			// RemoveUserRole now calls this instead of a
+			// ListGlobalAdminAssignmentsForUpdate-then-RemoveRole sequence for a
+			// global-scope admin-conferring role: two separate HTTP round trips
+			// would reopen the exact cross-process last-admin-lockout race #340
+			// closed for HA Postgres replicas, this time between concurrent
+			// spokes (or a spoke and the hub itself). Static sub-paths
+			// ("role-grants", "role-assignments" under "/groups/{groupID}",
+			// "global-admin-assignments", "global-admin-role/remove-guarded") are
+			// registered ahead of nothing that would collide at this depth.
+			r.Get("/rbac/groups/{groupID}/role-grants", rbacHandler.GetGroupRoleGrantsProxy)
+			r.Get("/rbac/groups/{groupID}/role-assignments", rbacHandler.ListGroupRoleAssignmentsProxy)
+			r.Get("/rbac/project-role-assignments", rbacHandler.ListProjectRoleAssignmentsProxy)
+			r.Get("/rbac/project-machine-role-assignments", rbacHandler.ListProjectMachineRoleAssignmentsProxy)
+			r.Get("/rbac/global-admin-assignments", rbacHandler.ListGlobalAdminAssignmentsForUpdateProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/global-admin-role/remove-guarded", rbacHandler.RemoveGlobalAdminRoleGuardedProxy)
+
 			// MFA enrolment/management storage-primitive proxy (finding #524). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// UpsertMFASecret/GetMFASecret/ActivateMFASecret/DeleteMFAForUser/

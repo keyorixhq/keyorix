@@ -374,6 +374,39 @@ func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context,
 	return out, nil
 }
 
+// RemoveGlobalAdminRoleGuarded is the atomic, single-storage-call form of
+// guardLastGlobalAdmin (#340) + RemoveRole — added for #525 so RemoteStorage can
+// proxy it as ONE HTTP round trip instead of the two separate calls
+// (ListGlobalAdminAssignmentsForUpdate then RemoveRole) RemoveUserRole previously
+// made inside a WithTransaction closure. See the Storage interface doc for the full
+// atomicity reasoning. Runs in its own transaction (mirroring WithTransaction's own
+// db.Transaction wrapping) so the row lock ListGlobalAdminAssignmentsForUpdate takes
+// on Postgres is actually held for the whole check-then-delete, exactly as it was
+// when the caller drove both calls under its own WithTransaction.
+func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID, roleID uint, adminRoleIDs []uint) error {
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txStorage := &LocalStorage{db: tx, auditChainMu: ls.auditChainMu, auditCheckpointMu: ls.auditCheckpointMu}
+		assignments, err := txStorage.ListGlobalAdminAssignmentsForUpdate(ctx, adminRoleIDs)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		survives := false
+		for _, a := range assignments {
+			// Ignore the exact assignment being removed; any OTHER global admin
+			// grant (held by another user, or by a group) means governance survives.
+			if a.PrincipalType == "user" && a.PrincipalID == userID && a.RoleID == roleID {
+				continue
+			}
+			survives = true
+			break
+		}
+		if !survives {
+			return fmt.Errorf("%w: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings", storage.ErrWouldStrandLastAdmin)
+		}
+		return txStorage.RemoveRole(ctx, userID, roleID, storage.Scope{})
+	})
+}
+
 // GetUserRoleIDsExact returns the IDs of roles directly assigned to userID at
 // exactly the given scope (no global/inherited matching). Used for full
 // replacement of a user's roles at one scope.

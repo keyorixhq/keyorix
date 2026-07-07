@@ -19,6 +19,13 @@ var ErrUserNotFound = errors.New("user not found")
 // errors.Is rather than swallowing every error identically.
 var ErrRoleNotAssigned = errors.New("role not assigned")
 
+// ErrWouldStrandLastAdmin is returned (wrapped) by RemoveGlobalAdminRoleGuarded when
+// removing the (user, role) grant at the global scope would leave the install with
+// zero super_admin/admin/system_admin holders (#340, #525) — the storage-layer
+// sentinel for guardLastGlobalAdmin's refusal, preserved across the RemoteStorage HTTP
+// hop the same way ErrDuplicateSecretDependency/ErrSecretDependencyCycle are.
+var ErrWouldStrandLastAdmin = errors.New("refusing to remove the last install administrator")
+
 // ErrBreakGlassNotActive is returned (wrapped) when a conditional break-glass state
 // transition (e.g. revoke) finds the activation is no longer in the expected prior
 // state — most often because a concurrent revoke already won the race. Distinct

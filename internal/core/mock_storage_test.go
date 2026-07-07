@@ -159,6 +159,19 @@ func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ [
 	return nil, nil
 }
 
+// RemoveGlobalAdminRoleGuarded (#525) is likewise unused by MockStorage-driven
+// tests — every one of them mocks the three install-admin role names
+// (super_admin/admin/system_admin) as absent via GetRoleByName, so
+// RemoveUserRole's installAdminRoleIDSet is always empty and this is never
+// reached (real-storage RemoveUserRole/last-admin coverage lives in
+// last_admin_guard_external_test.go and concurrency_last_admin_removal_test.go,
+// both against a real store.LocalStorage). If a future test DOES reach this
+// unmocked, m.Called panics loudly rather than silently allowing the removal.
+func (m *MockStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID, roleID uint, adminRoleIDs []uint) error {
+	args := m.Called(ctx, userID, roleID, adminRoleIDs)
+	return args.Error(0)
+}
+
 func (m *MockStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
 	args := m.Called(ctx, groupID)
 	if args.Get(0) == nil {

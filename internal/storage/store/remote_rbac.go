@@ -14,12 +14,16 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/remote"
 )
 
 // --- Roles ---
@@ -148,24 +152,85 @@ func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
-// GetGroupRoleGrants is a confirmed genuine gap (round 119 completeness
-// audit), not the "HTTP handler reads it from local storage instead" claim
-// this comment previously made — GetGroupRoles (server/http/handlers/rbac.go)
-// calls THIS method, not a different one. Tracked in
-// docs/security/HARDENING-BACKLOG.md; see remote_unsupported_completeness_test.go.
-func (rs *RemoteStorage) GetGroupRoleGrants(_ context.Context, _ uint) ([]*storage.GroupRoleGrant, error) {
-	return nil, remoteUnsupported("GetGroupRoleGrants")
+// GetGroupRoleGrants is a thin passthrough onto GET
+// /api/v1/system/rbac/groups/{groupID}/role-grants (finding #525) —
+// GetGroupRoles (server/http/handlers/rbac.go) calls THIS method, not a
+// different one, so RemoveUserFromGroup/AddUserToGroup and the human-facing
+// "group roles" tab were completely non-functional under storage.type: remote
+// before this fix. A previous version of this doc comment claimed the HTTP
+// handler read this from local storage instead — independently confirmed
+// FALSE during the audit that found this gap (round 119 completeness sweep).
+func (rs *RemoteStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*storage.GroupRoleGrant, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/groups/%d/role-grants", groupID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group role grants: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get group role grants failed: %s", resp.Error.Error())
+	}
+	var result []*storage.GroupRoleGrant
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
 }
 
-// AssignRoleWithExpiry is server-side only (the JIT grant happens during access-
-// request approval on the server); not driven over the remote client.
-func (rs *RemoteStorage) AssignRoleWithExpiry(_ context.Context, _, _ uint, _ storage.Scope, _ time.Time) error {
-	return remoteUnsupported("AssignRoleWithExpiry")
+// AssignRoleWithExpiry proxies onto POST /api/v1/system/rbac/assign-role-with-expiry
+// (finding #525) — the JIT time-bound grant path (invitations.go's access-request
+// TTL approval, jit_access.go's direct grant, break_glass.go's emergency
+// activation) was completely non-functional under storage.type: remote before this
+// fix. This is a single storage-layer call on either backend (LocalStorage's
+// assignUserRole does its own existing-row read/expired-row-replace/create dance
+// entirely within ONE Go function, not across a WithTransaction boundary), so one
+// HTTP round trip preserves the same atomicity guarantee LocalStorage already has —
+// no NEW race is introduced by proxying it, unlike RemoveGlobalAdminRoleGuarded
+// below.
+func (rs *RemoteStorage) AssignRoleWithExpiry(ctx context.Context, userID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	payload := roleWithExpiryWire{
+		UserID: userID, RoleID: roleID,
+		ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
+		ExpiresAt: expiresAt,
+	}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/assign-role-with-expiry", payload)
+	if err != nil {
+		return fmt.Errorf("failed to assign role with expiry: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("assign role with expiry failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-// AssignRoleToGroupWithExpiry is server-side only; see AssignRoleWithExpiry.
-func (rs *RemoteStorage) AssignRoleToGroupWithExpiry(_ context.Context, _, _ uint, _ storage.Scope, _ time.Time) error {
-	return remoteUnsupported("AssignRoleToGroupWithExpiry")
+// AssignRoleToGroupWithExpiry proxies onto POST
+// /api/v1/system/rbac/assign-role-to-group-with-expiry (finding #525); see
+// AssignRoleWithExpiry for the atomicity reasoning (identical single-call shape).
+func (rs *RemoteStorage) AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	payload := roleWithExpiryWire{
+		GroupID: groupID, RoleID: roleID,
+		ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
+		ExpiresAt: expiresAt,
+	}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/assign-role-to-group-with-expiry", payload)
+	if err != nil {
+		return fmt.Errorf("failed to assign role to group with expiry: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("assign role to group with expiry failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// roleWithExpiryWire is the shared wire body for AssignRoleWithExpiry (UserID set,
+// GroupID zero) and AssignRoleToGroupWithExpiry (GroupID set, UserID zero) —
+// mirrored exactly in server/http/handlers/rbac_role_grants_proxy.go.
+type roleWithExpiryWire struct {
+	UserID        uint      `json:"user_id,omitempty"`
+	GroupID       uint      `json:"group_id,omitempty"`
+	RoleID        uint      `json:"role_id"`
+	ProjectID     uint      `json:"project_id"`
+	EnvironmentID uint      `json:"environment_id"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 
 // DeleteExpiredRoleGrants proxies onto POST
@@ -215,10 +280,22 @@ func (rs *RemoteStorage) RemoveRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
-// RemoveAllProjectRoleGrants is a server-internal RBAC primitive (project
-// membership management runs entirely against LocalStorage); unsupported here.
-func (rs *RemoteStorage) RemoveAllProjectRoleGrants(_ context.Context, _, _ uint) error {
-	return remoteUnsupported("RemoveAllProjectRoleGrants")
+// RemoveAllProjectRoleGrants proxies onto POST
+// /api/v1/system/rbac/remove-all-project-role-grants (finding #525) —
+// RemoveProjectMember's bulk-delete step (DELETE /projects/{id}/members/{userId})
+// was completely non-functional under storage.type: remote before this fix. A
+// single bulk DELETE (no read-check-write sequence), so one HTTP round trip is
+// exactly as atomic as the local call.
+func (rs *RemoteStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
+	payload := map[string]uint{"user_id": userID, "project_id": projectID}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/remove-all-project-role-grants", payload)
+	if err != nil {
+		return fmt.Errorf("failed to remove all project role grants: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("remove all project role grants failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
 // GetUserRoles retrieves all roles for a user via remote API.
@@ -523,11 +600,28 @@ func (rs *RemoteStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mo
 	return result, nil
 }
 
-// ListGroupRoleAssignments is not supported in remote storage — the client reaches
-// group role state through GetGroupRoles/GetGroupRoleGrants (per-group, scope-less)
-// via their REST endpoints; there is no all-scope listing endpoint to proxy to.
-func (rs *RemoteStorage) ListGroupRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListGroupRoleAssignments")
+// ListGroupRoleAssignments proxies onto GET
+// /api/v1/system/rbac/groups/{groupID}/role-assignments (finding #525) —
+// AddUserToGroup's escalation-by-proxy ceiling check (requireAuthorityForRole,
+// looped over every role the target group holds) was completely non-functional
+// under storage.type: remote before this fix, so POST /groups/{id}/members either
+// failed closed (blocking every legitimate group join) or, worse, could not enforce
+// the ceiling at all depending on call order — this closes that gap with a genuine
+// read.
+func (rs *RemoteStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/groups/%d/role-assignments", groupID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group role assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list group role assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
 }
 
 // AssignRoleToGroup assigns a role to a group at scope via remote API.
@@ -947,18 +1041,134 @@ func (rs *RemoteStorage) ListProjectMembers(ctx context.Context, projectID uint)
 	return result.Members, nil
 }
 
-func (rs *RemoteStorage) ListProjectRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListProjectRoleAssignments")
+// ListProjectRoleAssignments proxies onto GET
+// /api/v1/system/rbac/project-role-assignments?project_id=X (finding #525) —
+// RemoveProjectMember's audit-trail capture, guardLastProjectAdmin, the access
+// review (access_review.go/access_review_revoke.go), catalog.go, compliance
+// posture, scim.go, and the global-admin group guards (authz.go, project_id=0)
+// all call this; every one of them was completely non-functional under
+// storage.type: remote before this fix. A plain read — no read-check-write
+// sequence of its own, so a single HTTP round trip introduces no new race.
+func (rs *RemoteStorage) ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/project-role-assignments?project_id=%d", projectID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project role assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list project role assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
 }
 
-func (rs *RemoteStorage) ListProjectMachineRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListProjectMachineRoleAssignments")
+// ListProjectMachineRoleAssignments proxies onto GET
+// /api/v1/system/rbac/project-machine-role-assignments?project_id=X (finding
+// #525) — the access review's machine-identity role enumeration
+// (access_review.go) was completely non-functional under storage.type: remote
+// before this fix.
+func (rs *RemoteStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	path := fmt.Sprintf("/api/v1/system/rbac/project-machine-role-assignments?project_id=%d", projectID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project machine role assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list project machine role assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
 }
 
-// ListGlobalAdminAssignmentsForUpdate is a server-internal RBAC primitive backing
-// the last-admin-removal guard's atomicity fix (#340); like
-// ListProjectRoleAssignments, RBAC admin-removal guarding runs entirely against
-// LocalStorage server-side, so this is unsupported here.
-func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
-	return nil, remoteUnsupported("ListGlobalAdminAssignmentsForUpdate")
+// ListGlobalAdminAssignmentsForUpdate proxies onto GET
+// /api/v1/system/rbac/global-admin-assignments (finding #525) as a PLAIN read —
+// like LockMachineIdentityForUpdate/ListSecretDependenciesForProjectForUpdate
+// before it, there is no row lock to take over HTTP, so the "ForUpdate" naming is
+// aspirational here; safety comes entirely from RemoveGlobalAdminRoleGuarded's
+// atomic conditional write below, not from this read. Direct callers of this
+// method alone (outside RemoveUserRole's guarded removal path) get the same
+// read-only visibility LocalStorage's real row lock would give them anyway on
+// SQLite (a plain read); only Postgres HA replication needed the lock, and that's
+// entirely a hub-side concern once this method's own caller no longer spans an
+// HTTP hop with a subsequent write (see RemoveGlobalAdminRoleGuarded).
+func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]storage.RoleAssignment, error) {
+	path := "/api/v1/system/rbac/global-admin-assignments?role_ids=" + joinUintsCSV(adminRoleIDs)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list global admin assignments: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list global admin assignments failed: %s", resp.Error.Error())
+	}
+	var result []storage.RoleAssignment
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// removeGlobalAdminRoleGuardedRefusedCode is the machine-readable error code
+// RemoveGlobalAdminRoleGuardedProxy returns when the upstream refuses the removal
+// (storage.ErrWouldStrandLastAdmin) — mirrored exactly in
+// server/http/handlers/rbac_role_grants_proxy.go, the wire-level contract this
+// method's error-recovery switch depends on to reconstruct that sentinel on the
+// calling side, the same #511-style translation
+// CreateSecretDependencyExclusive's duplicate/cycle codes use.
+const removeGlobalAdminRoleGuardedRefusedCode = "WOULD_STRAND_LAST_ADMIN"
+
+// RemoveGlobalAdminRoleGuarded proxies onto POST
+// /api/v1/system/rbac/global-admin-role/remove-guarded (finding #525) — see the
+// Storage interface doc for why this is ONE atomic call rather than a
+// ListGlobalAdminAssignmentsForUpdate-then-RemoveRole pair: RemoteStorage.
+// WithTransaction is a no-op passthrough, so nothing would otherwise span the
+// guard read and the delete across this HTTP hop, reopening the exact
+// cross-process last-admin-lockout race #340 closed for HA Postgres replicas —
+// this time between concurrent spokes (or a spoke and the hub itself).
+func (rs *RemoteStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID, roleID uint, adminRoleIDs []uint) error {
+	payload := struct {
+		UserID       uint   `json:"user_id"`
+		RoleID       uint   `json:"role_id"`
+		AdminRoleIDs []uint `json:"admin_role_ids"`
+	}{UserID: userID, RoleID: roleID, AdminRoleIDs: adminRoleIDs}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/global-admin-role/remove-guarded", payload)
+	if err != nil {
+		var httpErr *remote.HTTPError
+		if errors.As(err, &httpErr) {
+			switch httpErr.ErrorType {
+			case removeGlobalAdminRoleGuardedRefusedCode:
+				return fmt.Errorf("%w: %s", storage.ErrWouldStrandLastAdmin, httpErr.Message)
+			case notAssignedCode:
+				return fmt.Errorf("%w: %s", storage.ErrRoleNotAssigned, httpErr.Message)
+			}
+		}
+		return fmt.Errorf("failed to remove global admin role: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("remove global admin role failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// notAssignedCode is the machine-readable error code
+// RemoveGlobalAdminRoleGuardedProxy returns when the (userID, roleID) grant does
+// not exist (storage.ErrRoleNotAssigned) — mirrored exactly in
+// server/http/handlers/rbac_role_grants_proxy.go.
+const notAssignedCode = "ROLE_NOT_ASSIGNED"
+
+// joinUintsCSV renders ids as a comma-separated query value (empty string for an
+// empty slice), the wire shape RemoveGlobalAdminRoleGuardedProxy's sibling GET
+// /api/v1/system/rbac/global-admin-assignments handler parses back with
+// strconv.ParseUint per component.
+func joinUintsCSV(ids []uint) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatUint(uint64(id), 10))
+	}
+	return strings.Join(parts, ",")
 }
