@@ -409,17 +409,36 @@ func (c *KeyorixCore) watermark() int64 {
 	return c.auditMaxCertified
 }
 
-// auditHighWaterValue serializes a high-water mark: the checkpoint canonical bytes
-// (chained_events, head_id, head_hash, key_version) plus the HMAC signature, all
-// null-separated so the fields cannot be ambiguously re-split.
+// auditHighWaterSep separates fields in the persisted high-water value. It must not be
+// "\x00": this value is stored as a plain string via SetSystemMetadata, and PostgreSQL's
+// text/varchar columns reject any embedded NUL byte outright ("invalid byte sequence for
+// encoding UTF8: 0x00") — a NUL-separated encoding can never actually persist there, so
+// every write silently failed and the anti-rollback mark was never saved. \x1f (ASCII
+// unit separator) is a single valid UTF-8 byte and never appears in the fields being
+// joined (decimal integers, a hex hash, a key-version string, a hex HMAC signature).
+const auditHighWaterSep = "\x1f"
+
+// auditHighWaterValue serializes a high-water mark: the checkpoint's chained_events,
+// head_id, head_hash, and key_version, plus the HMAC signature, joined with
+// auditHighWaterSep so the fields cannot be ambiguously re-split. This intentionally
+// does not reuse checkpointCanonical's own (NUL-separated) byte layout — that layout is
+// only ever hashed as HMAC input, never persisted as a standalone string, so it doesn't
+// need to dodge the Postgres NUL restriction.
 func auditHighWaterValue(cp *models.AuditCheckpoint, sig string) string {
-	return checkpointCanonical(cp) + "\x00" + sig
+	return strings.Join([]string{
+		"v1",
+		strconv.FormatInt(cp.ChainedEvents, 10),
+		strconv.FormatUint(uint64(cp.HeadID), 10),
+		cp.HeadHash,
+		cp.KeyVersion,
+		sig,
+	}, auditHighWaterSep)
 }
 
 // parseAuditHighWater parses a stored high-water value back into a checkpoint snapshot
 // and its signature. ok is false on any malformed value (treated as "no mark").
 func parseAuditHighWater(val string) (cp *models.AuditCheckpoint, sig string, ok bool) {
-	parts := strings.Split(val, "\x00")
+	parts := strings.Split(val, auditHighWaterSep)
 	if len(parts) != 6 || parts[0] != "v1" {
 		return nil, "", false
 	}

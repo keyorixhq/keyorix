@@ -495,7 +495,7 @@ func TestAuditCheckpoint_TamperedHighWaterDetected(t *testing.T) {
 	// Lower the high-water's claimed length to mask a planned truncation; the signature
 	// no longer matches. Use a fresh core so only the persistent mark is consulted.
 	require.NoError(t, db.Exec("UPDATE system_metadata SET value = ? WHERE key = ?",
-		"v1\x002\x002\x00deadbeef\x00v1\x00bogussig", auditHighWaterKey).Error)
+		"v1\x1f2\x1f2\x1fdeadbeef\x1fv1\x1fbogussig", auditHighWaterKey).Error)
 
 	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
@@ -533,7 +533,7 @@ func TestAuditCheckpoint_ForgedKeyVersionHighWaterDetected(t *testing.T) {
 	// real current "v1", and not a genuinely-ever-used version either) and a
 	// garbage signature — this is the exact shape that was previously excused.
 	require.NoError(t, db.Exec("UPDATE system_metadata SET value = ? WHERE key = ?",
-		"v1\x001\x001\x00deadbeef\x00fabricated-v99\x00bogussig", auditHighWaterKey).Error)
+		"v1\x1f1\x1f1\x1fdeadbeef\x1ffabricated-v99\x1fbogussig", auditHighWaterKey).Error)
 	// Attacker: delete the newer checkpoint, keeping the older authentic one.
 	require.NoError(t, db.Exec("DELETE FROM audit_checkpoints WHERE chained_events = 10").Error)
 	// Attacker: truncate events below what the deleted checkpoint certified, but
