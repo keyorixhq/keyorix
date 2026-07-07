@@ -300,28 +300,130 @@ func (rs *RemoteStorage) RemovePermissionFromRole(ctx context.Context, roleID, p
 	return nil
 }
 
-// Keyorix Connect per-reference grants (ADR-045) are a server-side concern: the live
-// federated-read path and grant management both run against LocalStorage, so the
-// remote (client) storage does not proxy these primitives.
-
-// ListConnectRefGrantsByConnector is not supported in remote storage.
-func (rs *RemoteStorage) ListConnectRefGrantsByConnector(_ context.Context, _ string) ([]*models.ConnectRefGrant, error) {
-	return nil, remoteUnsupported("ListConnectRefGrantsByConnector")
+// Keyorix Connect per-reference grants (ADR-045) — backlog #527. This doc comment
+// PREVIOUSLY claimed these four primitives were a server-side-only concern because
+// "the live federated-read path and grant management both run against LocalStorage,
+// so the remote (client) storage does not proxy these primitives." That claim was
+// wrong: a downstream Keyorix server booted with storage.type: remote (ADR-049) runs
+// the SAME core.KeyorixCore as any other node, and ReadFederatedSecret (the HTTP
+// GetSecret handler and gRPC ConnectService.ReadSecret both call it unconditionally)
+// calls connectRefAllowed, which calls ListConnectRefGrantsByConnector on EVERY
+// federated read regardless of whether the connector actually has any ref-grants.
+// Before this fix, that stub's error made connectRefAllowed fail closed, so EVERY
+// Keyorix Connect read failed on EVERY connector on any storage.type: remote node
+// with Connect configured — not a hub-only feature at all. These are now thin
+// passthroughs onto four new routes under /api/v1/system/connect-grants
+// (server/http/handlers/connect_grants_proxy.go), following the EXACT #510
+// setup-token-proxy pattern: gated on the same system.read/system.write tier a
+// RemoteStorage credential already needs for every other proxied call — no new
+// privilege class — and making NO Connect POLICY decision here (role resolution,
+// prefix/glob matching, expiry) — that all stays in the CALLING server's own
+// internal/core/connect.go, exactly as it does against a local backend.
+func (rs *RemoteStorage) ListConnectRefGrantsByConnector(ctx context.Context, connector string) ([]*models.ConnectRefGrant, error) {
+	path := "/api/v1/system/connect-grants/by-connector/" + url.PathEscape(connector)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list connect ref-grants by connector: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list connect ref-grants by connector failed: %s", resp.Error.Error())
+	}
+	var wire []connectRefGrantWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return connectRefGrantsFromWire(wire), nil
 }
 
-// ListConnectRefGrants is not supported in remote storage.
-func (rs *RemoteStorage) ListConnectRefGrants(_ context.Context) ([]*models.ConnectRefGrant, error) {
-	return nil, remoteUnsupported("ListConnectRefGrants")
+// ListConnectRefGrants lists every per-reference grant via remote API — see the
+// package doc above (backlog #527) for why this is genuinely reachable under
+// storage.type: remote.
+func (rs *RemoteStorage) ListConnectRefGrants(ctx context.Context) ([]*models.ConnectRefGrant, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/system/connect-grants")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list connect ref-grants: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list connect ref-grants failed: %s", resp.Error.Error())
+	}
+	var wire []connectRefGrantWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return connectRefGrantsFromWire(wire), nil
 }
 
-// CreateConnectRefGrant is not supported in remote storage.
-func (rs *RemoteStorage) CreateConnectRefGrant(_ context.Context, _ *models.ConnectRefGrant) (*models.ConnectRefGrant, error) {
-	return nil, remoteUnsupported("CreateConnectRefGrant")
+// CreateConnectRefGrant creates a per-reference grant via remote API — see the
+// package doc above (backlog #527).
+func (rs *RemoteStorage) CreateConnectRefGrant(ctx context.Context, g *models.ConnectRefGrant) (*models.ConnectRefGrant, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/connect-grants", newConnectRefGrantWire(g))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connect ref-grant: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("create connect ref-grant failed: %s", resp.Error.Error())
+	}
+	var wire connectRefGrantWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
 }
 
-// DeleteConnectRefGrant is not supported in remote storage.
-func (rs *RemoteStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
-	return remoteUnsupported("DeleteConnectRefGrant")
+// DeleteConnectRefGrant deletes a per-reference grant by id via remote API — see the
+// package doc above (backlog #527).
+func (rs *RemoteStorage) DeleteConnectRefGrant(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/system/connect-grants/%d", id)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete connect ref-grant: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete connect ref-grant failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// connectRefGrantWire mirrors models.ConnectRefGrant's fields exactly (snake_case) —
+// the wire shape server/http/handlers/connect_grants_proxy.go sends/expects, mirroring
+// remote_auth.go's setupTokenWire pattern (#510).
+type connectRefGrantWire struct {
+	ID        uint       `json:"id"`
+	RoleID    uint       `json:"role_id"`
+	Connector string     `json:"connector"`
+	RefPrefix string     `json:"ref_prefix"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func newConnectRefGrantWire(g *models.ConnectRefGrant) connectRefGrantWire {
+	return connectRefGrantWire{
+		ID:        g.ID,
+		RoleID:    g.RoleID,
+		Connector: g.Connector,
+		RefPrefix: g.RefPrefix,
+		ExpiresAt: g.ExpiresAt,
+		CreatedAt: g.CreatedAt,
+	}
+}
+
+func (w connectRefGrantWire) toModel() *models.ConnectRefGrant {
+	return &models.ConnectRefGrant{
+		ID:        w.ID,
+		RoleID:    w.RoleID,
+		Connector: w.Connector,
+		RefPrefix: w.RefPrefix,
+		ExpiresAt: w.ExpiresAt,
+		CreatedAt: w.CreatedAt,
+	}
+}
+
+func connectRefGrantsFromWire(wire []connectRefGrantWire) []*models.ConnectRefGrant {
+	out := make([]*models.ConnectRefGrant, 0, len(wire))
+	for _, w := range wire {
+		out = append(out, w.toModel())
+	}
+	return out
 }
 
 // GetGroupRoles lists the roles assigned to a group via remote API.

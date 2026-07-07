@@ -1002,6 +1002,28 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
 
+			// Keyorix Connect per-reference-grant storage-primitive proxy (ADR-045;
+			// backlog #527). Lets a downstream Keyorix server booted with
+			// storage.type: remote (ADR-049) proxy ListConnectRefGrantsByConnector/
+			// ListConnectRefGrants/CreateConnectRefGrant/DeleteConnectRefGrant to THIS
+			// server's real storage backend, instead of RemoteStorage's four
+			// ConnectRefGrant methods having no server endpoint to call at all
+			// (connectRefAllowed, called unconditionally by every ReadFederatedSecret,
+			// was hard-failing EVERY Keyorix Connect federated read on EVERY connector
+			// whenever Connect was configured on a storage.type: remote node — not a
+			// hub-only feature at all). Exactly the same pattern as the setup-tokens
+			// proxy above: a thin passthrough onto storage.Storage (no Connect POLICY
+			// decision — role resolution, prefix/glob matching, expiry — made here;
+			// that stays entirely in the CALLING server's own core.KeyorixCore, exactly
+			// as it does against a local backend), reusing the SAME
+			// system.read/system.write tier — no new privilege class. Read is baseline
+			// system.read; create/delete require system.write, matching every other
+			// admin-level mutation in this group.
+			r.Get("/connect-grants/by-connector/{connector}", authHandler.ListConnectRefGrantsByConnectorProxy)
+			r.Get("/connect-grants", authHandler.ListConnectRefGrantsProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
+
 			// Project-membership storage-primitive proxy (#511). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateProjectMembership/GetProjectMembership/UpdateProjectMembership/
