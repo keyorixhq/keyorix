@@ -86,6 +86,8 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 			h.sendError(w, "ConflictError", "Secret with this name already exists", http.StatusConflict, nil)
 		} else if strings.Contains(err.Error(), "does not belong to project") || strings.Contains(err.Error(), "environment") && strings.Contains(err.Error(), "not found") {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
+		} else if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to create secret", http.StatusInternalServerError, nil)
 		}
@@ -476,6 +478,8 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), "permission denied") {
 			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		} else if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to update secret", http.StatusInternalServerError, nil)
 		}

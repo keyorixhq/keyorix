@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -105,6 +106,8 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 			// even though a partial attempt may have stored a new value; see the audit
 			// trail (secret.rotate_failed / secret.rotate_incomplete) for the outcome.
 			h.sendError(w, "BackendRotationFailed", err.Error(), http.StatusBadGateway, nil)
+		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
+			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to rotate secret", http.StatusInternalServerError, nil)
 		}
