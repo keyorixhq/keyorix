@@ -4,6 +4,7 @@
 //
 //	AssignRole, RemoveRole, GetUserRoles, GetUserPermissions,
 //	CreatePermission, AssignPermissionToRole,
+//	ListPermissions, GetPermission, GetRolePermissions (#526),
 //	Project/Environment stubs.
 //
 // For the local (GORM) equivalent see local_rbac.go.
@@ -273,19 +274,97 @@ func (rs *RemoteStorage) AssignPermissionToRole(_ context.Context, _, _ uint) er
 	return fmt.Errorf("not supported in remote storage")
 }
 
-// ListPermissions is not implemented in remote storage.
-func (rs *RemoteStorage) ListPermissions(_ context.Context) ([]*models.Permission, error) {
-	return nil, remoteUnsupported("ListPermissions")
+// ListPermissions lists the full permission catalog via remote API. #526: the
+// permission catalog is a near-static, seeded-not-created-dynamically read —
+// RemoteStorage has no local database to fall back on, so a spoke server's
+// catalog view (and everything that depends on it) was 100% broken. Reuses
+// the EXISTING human-facing GET /api/v1/permissions route
+// (server/http/router.go, roles.read-gated), same as the interactive UI —
+// no new route needed. The handler wraps the list in {"permissions":...,
+// "total":...} (server/http/handlers/rbac.go's ListPermissions), so this
+// unmarshals into that shape rather than a bare array.
+func (rs *RemoteStorage) ListPermissions(ctx context.Context) ([]*models.Permission, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/permissions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list permissions: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list permissions failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Permissions []*models.Permission `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Permissions, nil
 }
 
-// GetPermission is not implemented in remote storage.
-func (rs *RemoteStorage) GetPermission(_ context.Context, _ uint) (*models.Permission, error) {
-	return nil, remoteUnsupported("GetPermission")
+// GetPermission retrieves a single permission by ID via remote API. #526:
+// AssignPermissionToRole (internal/core/rbac_management.go) calls this first
+// to resolve permissionID -> name for the #169 self-permission-check before
+// assigning — with no local DB, this was an unconditional stub, so assigning
+// a permission to a role hard-failed under storage.type: remote. Unlike
+// ListPermissions/GetRolePermissions, no existing route covered a per-ID
+// permission lookup, so this adds GET /api/v1/permissions/{id}
+// (server/http/router.go, server/http/handlers/rbac.go's new GetPermission
+// handler) as a sibling of the existing GET /api/v1/permissions collection,
+// gated by the SAME roles.read — a caller who can already enumerate every
+// permission via ListPermissions gains no new capability by looking one up
+// individually. Mirrors GetRoleByName's bare-object response shape (not
+// wrapped), since the new handler was written to return the permission
+// directly.
+func (rs *RemoteStorage) GetPermission(ctx context.Context, id uint) (*models.Permission, error) {
+	path := fmt.Sprintf("/api/v1/permissions/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get permission: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get permission failed: %s", resp.Error.Error())
+	}
+	var result models.Permission
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
 }
 
-// GetRolePermissions is not implemented in remote storage.
-func (rs *RemoteStorage) GetRolePermissions(_ context.Context, _ uint) ([]*models.Permission, error) {
-	return nil, remoteUnsupported("GetRolePermissions")
+// GetRolePermissions retrieves a role's assigned permissions via remote API.
+// #526: real callers span the role-permission view (GetRoleWithPermissions),
+// requireGranterHoldsRolePermissions's grant-time admin-rank-ceiling check
+// (authz.go), and several read-only RBAC-dependent reports — access reviews
+// (access_review.go), compliance posture's dormant-admin-tier-grant scan
+// (compliance_posture.go), and SoD conflict detection (sod.go) — all broken
+// with no local DB fallback. Reuses the EXISTING human-facing
+// GET /api/v1/roles/{id}/permissions route (server/http/router.go,
+// roles.read-gated), same as the interactive UI. Confirmed read-only: every
+// caller either renders a view or feeds a report; the one authorization use
+// (requireGranterHoldsRolePermissions) reads the role's CURRENT permission
+// bundle to check the actor's own standing authority, not as one half of a
+// check-then-act mutation on the bundle itself — the same sequential-read
+// exposure already exists for LocalStorage's two plain (non-transactional)
+// DB calls, so proxying over HTTP (RemoteStorage.WithTransaction is a no-op
+// passthrough) introduces no NEW atomicity gap. The handler wraps the list in
+// {"role_id":...,"role_name":...,"permissions":...} (server/http/handlers/
+// rbac.go's GetRolePermissions), so this unmarshals into that shape rather
+// than a bare array.
+func (rs *RemoteStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
+	path := fmt.Sprintf("/api/v1/roles/%d/permissions", roleID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role permissions: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get role permissions failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Permissions []*models.Permission `json:"permissions"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Permissions, nil
 }
 
 // RemovePermissionFromRole revokes a permission from a role via the REST API.

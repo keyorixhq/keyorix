@@ -75,10 +75,11 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (47; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (44; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
-	// ref-grant CRUD closed by #527) ---
+	// ref-grant CRUD closed by #527, RBAC permission catalog (ListPermissions/
+	// GetPermission/GetRolePermissions) closed by #526) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -133,12 +134,6 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 		"round 119: multiple last-global-admin guards, access reviews, RestoreProject's admin-ceiling check, compliance posture, SCIM"},
 	"ListProjectMachineRoleAssignments": {statusKnownGap,
 		"round 119: machine-identity access-review coverage (#91), GET /projects/{id}/access-review"},
-
-	// RBAC permission catalog — no local fallback exists (RemoteStorage has no DB).
-	"ListPermissions": {statusKnownGap, "round 119: GET /permissions"},
-	"GetPermission":   {statusKnownGap, "round 119: AssignPermissionToRole, POST /roles/{id}/permissions"},
-	"GetRolePermissions": {statusKnownGap,
-		"round 119: role-permission view, access reviews, compliance posture, SoD conflict detection — GET /roles/{id}/permissions and multiple internal core callers"},
 
 	// Project / environment catalog CRUD.
 	"ListProjects": {statusKnownGap,
