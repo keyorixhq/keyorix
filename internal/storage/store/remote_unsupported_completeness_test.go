@@ -75,13 +75,14 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"ConsumeMFARecoveryCode": {statusIntentional,
 		"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
-	// --- Confirmed genuine gaps, tracked for future fix rounds (24; UpdateLoginLockoutState
+	// --- Confirmed genuine gaps, tracked for future fix rounds (16; UpdateLoginLockoutState
 	// closed by #529, SSO login state closed by #521, GetActiveMFAChallenge/
 	// ConsumeMFAChallenge (WebAuthn-as-second-factor login) closed by #522, Connect
 	// ref-grant CRUD closed by #527, self-service access-request workflow closed by
 	// #523, RBAC permission catalog (ListPermissions/GetPermission/
 	// GetRolePermissions) closed by #526, WithSchedulerLock closed by #530,
-	// project/environment catalog CRUD closed by #528) ---
+	// project/environment catalog CRUD closed by #528, MFA enrolment/management
+	// closed by #524) ---
 	// See docs/security/HARDENING-BACKLOG.md's round 119 entry for full detail,
 	// severity, and grouping. Each entry below cites the real caller/route a
 	// round-119 audit traced (not assumed).
@@ -98,19 +99,9 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// (server/http/handlers/access_request_proxy.go), no longer unconditional
 	// stubs — see internal/storage/store/remote_invitations.go.
 
-	// MFA enrollment/management (not just login) — 100% broken.
-	"UpsertMFASecret": {statusKnownGap, "round 119: BeginMFAEnrollment, POST /auth/mfa/enroll"},
-	"GetMFASecret": {statusKnownGap,
-		"round 119: ActivateMFA (POST /auth/mfa/activate) and requireReauth (gates disable/regenerate-codes/WebAuthn register-delete)"},
-	"ActivateMFASecret": {statusKnownGap, "round 119: ActivateMFA, POST /auth/mfa/activate"},
-	"DeleteMFAForUser":  {statusKnownGap, "round 119: DisableMFA, POST /auth/mfa/disable"},
-	"SetUserMFAEnabled": {statusKnownGap, "round 119: ActivateMFA and DisableMFA"},
-	"CreateMFARecoveryCodes": {statusKnownGap,
-		"round 119: ActivateMFA and RegenerateMFARecoveryCodes (POST /auth/mfa/recovery-codes/regenerate)"},
-	"CountUnusedMFARecoveryCodes": {statusKnownGap,
-		"round 119: MFARecoveryCodesRemaining, GET /auth/mfa/recovery-codes"},
-	"DeleteMFARecoveryCodes": {statusKnownGap,
-		"round 119: RegenerateMFARecoveryCodes, POST /auth/mfa/recovery-codes/regenerate"},
+	// MFA enrollment/management (not just login) — closed by #524: now proxied via
+	// /api/v1/system/mfa (server/http/handlers/mfa_management_proxy.go), see
+	// internal/storage/store/remote_mfa.go.
 
 	// RBAC role-grant primitives + last-admin/escalation guards.
 	"GetGroupRoleGrants": {statusKnownGap,

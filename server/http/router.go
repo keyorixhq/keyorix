@@ -1404,6 +1404,40 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
 
+			// MFA enrolment/management storage-primitive proxy (finding #524). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// UpsertMFASecret/GetMFASecret/ActivateMFASecret/DeleteMFAForUser/
+			// SetUserMFAEnabled/CreateMFARecoveryCodes/CountUnusedMFARecoveryCodes/
+			// DeleteMFARecoveryCodes to THIS server's real storage backend, instead of
+			// RemoteStorage's eight MFA storage methods having no server endpoint to call
+			// at all (BeginMFAEnrollment/ActivateMFA/DisableMFA/
+			// RegenerateMFARecoveryCodes/MFARecoveryCodesRemaining — every /auth/mfa/*
+			// route in internal/core/mfa.go except already-active MFA LOGIN, which #509
+			// already proxies separately via RemoteMFAVerifier — was completely
+			// non-functional under storage.type: remote). Exactly the same pattern as the
+			// webauthn/setup-tokens proxies above: a thin passthrough onto
+			// storage.Storage (no MFA POLICY decision — the re-auth gate, recovery-code
+			// generation/hashing, post-activation session invalidation — is made here;
+			// that stays entirely in the CALLING server's own internal/core.KeyorixCore,
+			// exactly as it does against a local backend), reusing the SAME
+			// system.read/system.write tier — no new privilege class. See
+			// mfa_management_proxy.go's package doc for the atomicity analysis: every
+			// route here resolves in ONE storage.Storage call server-side (including
+			// DeleteMFAForUserProxy, which inherits local_mfa.go's own internal
+			// secret+recovery-codes transaction unchanged), so proxying each as one HTTP
+			// round trip preserves whatever guarantee the local backend already had — no
+			// new atomic primitive needed, unlike AdvanceWebAuthnCredentialCounterProxy
+			// above. Static sub-paths ("secrets", "recovery-codes/count") are registered
+			// before their sibling {userId} routes.
+			r.Get("/mfa/secrets", authHandler.GetMFASecretProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/mfa/secrets", authHandler.UpsertMFASecretProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/mfa/secrets/{userId}/activate", authHandler.ActivateMFASecretProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/mfa/users/{userId}", authHandler.DeleteMFAForUserProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/mfa/users/{userId}/mfa-enabled", authHandler.SetUserMFAEnabledProxy)
+			r.Get("/mfa/recovery-codes/count", authHandler.CountUnusedMFARecoveryCodesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/mfa/recovery-codes", authHandler.CreateMFARecoveryCodesProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
+
 			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
 			// Lets a downstream Keyorix server booted with storage.type: remote
 			// (ADR-049) proxy ListProjects/ListProjectsWithCounts/GetProject/
