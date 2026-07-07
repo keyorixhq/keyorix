@@ -98,6 +98,30 @@ type Storage interface {
 	// the caller's own process-level mutex serializes same-process callers,
 	// mirroring LockUserForUpdate/LockWebAuthnCredentialForUpdate.
 	ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]RoleAssignment, error)
+	// RemoveGlobalAdminRoleGuarded atomically checks-then-removes a user's
+	// global-scope (project 0, environment 0) role grant, refusing (without
+	// removing anything) if doing so would leave the install with zero
+	// admin-tier holders among adminRoleIDs — the exact guardLastGlobalAdmin
+	// (#340) check and its RemoveRole write, folded into ONE storage call.
+	//
+	// Added for #525: RemoveUserRole previously ran this check (via
+	// ListGlobalAdminAssignmentsForUpdate) and the removal (via RemoveRole) as TWO
+	// separate calls inside a WithTransaction closure. That is correct against
+	// LocalStorage (a real DB transaction + Postgres row lock spans both), but
+	// RemoteStorage.WithTransaction is a no-op passthrough — two separate HTTP
+	// round trips give a concurrent racing removal (from another spoke, or the
+	// hub's own direct callers) a window to observe "another admin still exists"
+	// before either write lands, reopening the exact cross-process last-admin
+	// lockout race #340 closed for HA Postgres replicas. Folding the check and the
+	// write into one call means whichever server actually owns the row — the hub,
+	// for a remote spoke — is the only one that ever needs to enforce it
+	// atomically, exactly like CreateSecretDependencyExclusive (#260) and
+	// TransitionMachineIdentityState (#388/#518) did for their own TOCTOU classes.
+	//
+	// Returns ErrWouldStrandLastAdmin if the removal is refused, or
+	// ErrRoleNotAssigned (wrapped) if the (userID, roleID) grant does not exist at
+	// the global scope.
+	RemoveGlobalAdminRoleGuarded(ctx context.Context, userID, roleID uint, adminRoleIDs []uint) error
 	// LastUserSecretActivity returns, per user, the most recent secret-access time
 	// in the project (from the audit trail). Backs dormant-access detection in the
 	// access review — a grant whose principal has no recent activity is stale

@@ -337,32 +337,47 @@ func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, us
 
 // RemoveUserRole removes a role from a user at the given scope and records an
 // RBAC audit event. See AssignUserRole for actorID semantics. It refuses to remove
-// the last install administrator (see guardLastGlobalAdmin). This is the choke point
-// SetUserRoles and the HTTP/gRPC role-removal handlers funnel through.
+// the last install administrator (see RemoveGlobalAdminRoleGuarded). This is the
+// choke point SetUserRoles and the HTTP/gRPC role-removal handlers funnel through.
 //
-// The last-admin check and the removal itself run inside a single storage
-// transaction, held under globalAdminGuardMu for its whole duration (#340):
-// without this, two concurrent removals of two different admins' role
-// assignments could each observe "another admin still exists" before either
-// write commits, stranding the install with zero admins. The transaction's
-// ListGlobalAdminAssignmentsForUpdate read takes a row-level lock on every
-// candidate admin-conferring assignment on backends that support one (Postgres),
-// serializing HA replicas; globalAdminGuardMu serializes same-process callers —
-// the same two-layer pattern login_lockout.go's recordFailedLogin uses.
+// #340/#525: for a global-scope (project 0, environment 0) admin-conferring role,
+// the last-admin check and the removal itself must be ATOMIC — otherwise two
+// concurrent removals of two different admins' role assignments could each
+// observe "another admin still exists" before either write commits, stranding
+// the install with zero admins. Prior to #525 this ran as
+// ListGlobalAdminAssignmentsForUpdate + RemoveRole inside a single
+// storage.WithTransaction closure: correct against LocalStorage (a real DB
+// transaction + Postgres row lock spans both calls), but
+// RemoteStorage.WithTransaction is a no-op passthrough — under storage.type:
+// remote those were two independent HTTP round trips with nothing serializing
+// them beyond globalAdminGuardMu, which only covers same-process callers (not a
+// second spoke, or the hub's own direct callers, racing the same admin set).
+// RemoveGlobalAdminRoleGuarded folds the check and the write into ONE storage
+// call, so whichever server actually owns the row — the hub, for a remote spoke —
+// is the only one that ever needs to enforce it atomically; globalAdminGuardMu is
+// kept as a cheap same-process fast-path serializer (mirroring
+// login_lockout.go's recordFailedLogin two-layer pattern), not as the sole
+// correctness mechanism.
 func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
 	c.globalAdminGuardMu.Lock()
 	defer c.globalAdminGuardMu.Unlock()
-	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		if err := c.guardLastGlobalAdmin(ctx, tx, userID, roleID, scope); err != nil {
-			return err
+
+	if scope.ProjectID == 0 && scope.EnvironmentID == 0 {
+		adminIDs := c.installAdminRoleIDSet(ctx)
+		if adminIDs[roleID] {
+			ids := make([]uint, 0, len(adminIDs))
+			for id := range adminIDs {
+				ids = append(ids, id)
+			}
+			if err := c.storage.RemoveGlobalAdminRoleGuarded(ctx, userID, roleID, ids); err != nil {
+				return err
+			}
+			c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
+			return nil
 		}
-		if err := tx.RemoveRole(ctx, userID, roleID, scope); err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
+	}
+	if err := c.storage.RemoveRole(ctx, userID, roleID, scope); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
 	return nil
@@ -374,61 +389,15 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 var installAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
 
 // installAdminRoleIDSet resolves installAdminRoleNames to their role IDs (skipping
-// any that a given install did not seed).
+// any that a given install did not seed). Used by RemoveUserRole's global-admin
+// guard (RemoveGlobalAdminRoleGuarded, #340/#525) and by the group-level admin
+// guards in authz.go (guardLastGlobalAdminGroupRole/GroupDelete/Membership).
 func (c *KeyorixCore) installAdminRoleIDSet(ctx context.Context) map[uint]bool {
-	return c.installAdminRoleIDSetFrom(ctx, c.storage)
-}
-
-// installAdminRoleIDSetFrom is installAdminRoleIDSet against an explicit Storage
-// handle. Callers running inside a WithTransaction callback (guardLastGlobalAdmin,
-// #340) MUST pass the transaction-scoped Storage they were handed, not c.storage:
-// on the local (DB) backend, a read issued through c.storage while a transaction
-// is still open checks out a SEPARATE pooled connection — for SQLite ":memory:"
-// specifically, a distinct, empty database — silently missing the very rows the
-// transaction just wrote or is checking.
-func (c *KeyorixCore) installAdminRoleIDSetFrom(ctx context.Context, s storage.Storage) map[uint]bool {
 	set := make(map[uint]bool, len(installAdminRoleNames))
 	for _, name := range installAdminRoleNames {
-		if role, err := s.GetRoleByName(ctx, name); err == nil && role != nil {
+		if role, err := c.storage.GetRoleByName(ctx, name); err == nil && role != nil {
 			set[role.ID] = true
 		}
 	}
 	return set
-}
-
-// guardLastGlobalAdmin refuses to remove a user's global (install-wide) admin role
-// when no other global admin-role assignment would remain — preventing a
-// self-inflicted or malicious-insider lockout that strands the install with no
-// administrator (and no recovery short of DB surgery). Only the global scope is
-// guarded: a project-scoped admin can always be restored by a global admin.
-//
-// tx is the transaction-scoped Storage the caller (RemoveUserRole) is running
-// inside (#340): the read MUST go through it, not c.storage, so the row lock
-// ListGlobalAdminAssignmentsForUpdate takes is actually held for the lifetime of
-// this decision rather than released before the caller's own write runs.
-func (c *KeyorixCore) guardLastGlobalAdmin(ctx context.Context, tx storage.Storage, userID, roleID uint, scope Scope) error {
-	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
-		return nil // not the global scope — project admins are recoverable
-	}
-	adminIDs := c.installAdminRoleIDSetFrom(ctx, tx)
-	if !adminIDs[roleID] {
-		return nil // not removing an install-admin role
-	}
-	ids := make([]uint, 0, len(adminIDs))
-	for id := range adminIDs {
-		ids = append(ids, id)
-	}
-	assignments, err := tx.ListGlobalAdminAssignmentsForUpdate(ctx, ids)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	for _, a := range assignments {
-		// Ignore the exact assignment being removed; any OTHER global admin grant
-		// (held by another user, or by a group) means governance survives.
-		if a.PrincipalType == "user" && a.PrincipalID == userID && a.RoleID == roleID {
-			continue
-		}
-		return nil
-	}
-	return fmt.Errorf("refusing to remove the last install administrator: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings")
 }
