@@ -750,6 +750,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/permissions", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("roles.read"))
 			r.Get("/", rbacHandler.ListPermissions)
+			// #526: RemoteStorage's storage.type: remote proxy for
+			// AssignPermissionToRole's permissionID -> name lookup had no route
+			// to call (ListPermissions and GetRolePermissions already had
+			// routes to reuse; this was the one gap). Same roles.read gate as
+			// the collection route above — no new capability, a caller who can
+			// already list every permission can already see this one.
+			r.Get("/{id}", rbacHandler.GetPermission)
 		})
 
 		// NOTE: the legacy admin-managed "service accounts" (APIClient/APIToken)

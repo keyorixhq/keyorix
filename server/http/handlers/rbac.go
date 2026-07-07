@@ -559,6 +559,42 @@ func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, map[string]interface{}{"permissions": perms, "total": len(perms)}, "")
 }
 
+// GetPermission handles GET /api/v1/permissions/{id} — added for #526 as the
+// sibling lookup RemoteStorage.GetPermission proxies onto (server/http/router.go,
+// internal/storage/store/remote_rbac.go): ListPermissions and
+// GetRolePermissions already had human-facing routes to reuse, but no route
+// previously covered a per-ID permission lookup, which AssignPermissionToRole
+// needs to resolve permissionID -> name. Gated by the SAME roles.read as the
+// rest of the /permissions group — a caller who can already enumerate every
+// permission (including this one) via GET /permissions gains no new
+// capability from looking one up individually. Returns the bare permission
+// object (not wrapped), matching GetRoleByName's response shape.
+func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	perm, err := h.coreService.Storage().GetPermission(r.Context(), id)
+	if err != nil {
+		log.Printf("Error getting permission: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "Permission not found", http.StatusNotFound, nil)
+		} else {
+			sendError(w, "InternalError", "Failed to get permission", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	sendSuccess(w, perm, "")
+}
+
 // GetRolePermissions handles GET /api/v1/roles/{id}/permissions
 func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
