@@ -1403,6 +1403,31 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
+
+			// Scheduler-lock storage-primitive proxy (#530). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// TryAcquireSchedulerLock/ReleaseSchedulerLock to THIS server's real
+			// storage backend, instead of RemoteStorage.WithSchedulerLock having no
+			// server endpoint to call at all (every background scheduler runs
+			// unconditionally regardless of storage.type, so this was the sole
+			// blocker preventing already-remote-proxied maintenance — e.g. the
+			// retention proxy immediately above, #520 — from ever actually running
+			// on a schedule under storage.type: remote). Exactly the same pattern
+			// as the retention proxy above: a thin passthrough onto storage.Storage
+			// (no lock POLICY — which key, how long to hold it, when to renew — is
+			// made here; that stays entirely in the CALLING server's own
+			// RemoteStorage.WithSchedulerLock, exactly as LocalStorage.
+			// WithSchedulerLock decides it against a local backend), reusing the
+			// SAME system.read/system.write tier — no new privilege class. BOTH
+			// routes are mutations (acquiring or releasing a lock changes state)
+			// and require system.write; there is no read-only variant. See
+			// scheduler_lock_proxy.go's package doc for the atomicity analysis:
+			// each route performs its ENTIRE conditional decision inside ONE
+			// storage.Storage call, so no naive "check, then write" pair is ever
+			// exposed over this HTTP hop to reopen the exclusivity race the lock
+			// exists to prevent.
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/scheduler-lock/acquire", authHandler.AcquireSchedulerLockProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/scheduler-lock/release", authHandler.ReleaseSchedulerLockProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
