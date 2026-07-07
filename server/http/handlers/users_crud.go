@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -524,6 +525,121 @@ func (h *UserHandler) VerifyMFACredentials(w http.ResponseWriter, r *http.Reques
 		"username":      u.Username,
 		"used_recovery": usedRecovery,
 	}, "")
+}
+
+// mfaChallengeProxyWire mirrors models.MFAChallenge's fields exactly (snake_case),
+// matching remote_mfa.go's identical mfaChallengeWire type on the RemoteStorage
+// side of this proxy. models.MFAChallenge tags TokenHash json:"-" (kept out of
+// USER-facing responses) — irrelevant here, an internal system-to-system wire
+// format gated on users.write.
+type mfaChallengeProxyWire struct {
+	ID        uint       `json:"id"`
+	UserID    uint       `json:"user_id"`
+	TokenHash string     `json:"token_hash"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	UsedAt    *time.Time `json:"used_at"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func newMFAChallengeProxyWire(c *models.MFAChallenge) mfaChallengeProxyWire {
+	return mfaChallengeProxyWire{
+		ID:        c.ID,
+		UserID:    c.UserID,
+		TokenHash: c.TokenHash,
+		ExpiresAt: c.ExpiresAt,
+		UsedAt:    c.UsedAt,
+		CreatedAt: c.CreatedAt,
+	}
+}
+
+// mfaChallengeLookupBody is the wire body shared by GetActiveMFAChallenge and
+// ConsumeMFAChallenge below — both take the identical (token_hash, now) pair
+// storage.Storage's GetActiveMFAChallenge/ConsumeMFAChallenge already take.
+type mfaChallengeLookupBody struct {
+	TokenHash string    `json:"token_hash"`
+	Now       time.Time `json:"now"`
+}
+
+// GetActiveMFAChallenge handles POST /api/v1/users/mfa-challenge/active (#522) —
+// the upstream half of the storage.type: remote WebAuthn-as-second-factor login
+// proxy: BeginWebAuthnLogin (internal/core/webauthn.go) resolves which user's
+// passkeys to begin the assertion ceremony against from the (still-unconsumed)
+// MFAChallenge the password step minted, and a RemoteStorage-backed "spoke"
+// deployment has nowhere of its own to look that up. Calls
+// storage.Storage.GetActiveMFAChallenge directly against THIS server's own
+// storage — a plain read, not a consume (BeginWebAuthnLogin must not spend the
+// challenge's single use; FinishWebAuthnLogin's ConsumeMFAChallenge below does
+// that) — so this is an ordinary CRUD passthrough, unlike verify-mfa/
+// mfa-challenge above: the challenge row carries no secret of its own the way a
+// TOTP shared secret does, so there is no policy check that has to run
+// upstream instead of in the calling (spoke) server's own core.KeyorixCore.
+//
+// Gated by the SAME users.write permission verify-mfa/mfa-challenge above
+// already require of the RemoteStorage service credential — not a new, weaker
+// trust boundary. Every failure (no matching row, already used, expired, or a
+// genuine storage error) collapses to the same generic 404, matching
+// local_mfa.go's own GetActiveMFAChallenge, which already returns one generic
+// error for all of those cases.
+func (h *UserHandler) GetActiveMFAChallenge(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body mfaChallengeLookupBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.TokenHash == "" || body.Now.IsZero() {
+		sendError(w, "ValidationError", "token_hash and now are required", http.StatusBadRequest, nil)
+		return
+	}
+	ch, err := h.coreService.Storage().GetActiveMFAChallenge(r.Context(), body.TokenHash, body.Now)
+	if err != nil {
+		sendError(w, "NotFound", "invalid or expired challenge", http.StatusNotFound, nil)
+		return
+	}
+	sendSuccess(w, newMFAChallengeProxyWire(ch), "")
+}
+
+// ConsumeMFAChallenge handles POST /api/v1/users/mfa-challenge/consume (#522) —
+// the other half of the storage.type: remote WebAuthn-as-second-factor login
+// proxy: FinishWebAuthnLogin (internal/core/webauthn.go) spends the challenge's
+// single use BEFORE verifying the passkey assertion. Calls
+// storage.Storage.ConsumeMFAChallenge directly against THIS server's own
+// storage, which performs the ENTIRE atomic "UPDATE ... WHERE used_at IS NULL
+// AND expires_at > ?" inside one DB transaction (local_mfa.go) in this single
+// request — the single-use invariant holds across this HTTP hop too, exactly
+// like ConsumeWebAuthnSessionProxy's (#517) and ConsumeSetupTokenProxy's (#510)
+// identical one-round-trip-atomic-consume precedent, not a separate
+// GET-then-mark-used pair that would reopen the exact concurrent-consume race
+// those were built to close.
+//
+// Gated by the SAME users.write permission verify-mfa/mfa-challenge above
+// already require. Every failure collapses to the same generic 404, matching
+// GetActiveMFAChallenge above and local_mfa.go's own ConsumeMFAChallenge.
+func (h *UserHandler) ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body mfaChallengeLookupBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.TokenHash == "" || body.Now.IsZero() {
+		sendError(w, "ValidationError", "token_hash and now are required", http.StatusBadRequest, nil)
+		return
+	}
+	ch, err := h.coreService.Storage().ConsumeMFAChallenge(r.Context(), body.TokenHash, body.Now)
+	if err != nil {
+		sendError(w, "NotFound", "invalid or expired challenge", http.StatusNotFound, nil)
+		return
+	}
+	sendSuccess(w, newMFAChallengeProxyWire(ch), "")
 }
 
 // UpdateUser handles PUT /api/v1/users/{id}

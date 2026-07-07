@@ -631,6 +631,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// deployment, which has nowhere of its own to persist one. Same gate and
 			// reasoning as verify-credentials/verify-mfa above.
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/mfa-challenge", handlers.IssueMFAChallenge)
+			// GetActiveMFAChallenge/ConsumeMFAChallenge (#522) — the upstream half of
+			// the storage.type: remote WebAuthn-as-second-factor login proxy
+			// (internal/core/webauthn.go's BeginWebAuthnLogin/FinishWebAuthnLogin):
+			// unlike the TOTP path above, these are plain storage.Storage passthroughs
+			// on the SAME shared MFAChallenge model, not a verification proxy — a
+			// passkey assertion carries no server-held secret the way a TOTP shared
+			// secret does, so the ceremony itself still runs entirely in the calling
+			// (spoke) server's own core.KeyorixCore, exactly as it does locally. Same
+			// gate and reasoning as verify-mfa/mfa-challenge above. Static paths,
+			// before /{id}.
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/mfa-challenge/active", handlers.GetActiveMFAChallenge)
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/mfa-challenge/consume", handlers.ConsumeMFAChallenge)
 			// Admin force-logout: revoke all of a user's sessions (no state change).
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/revoke-sessions", handlers.RevokeSessions)
 			// Account state transitions (ADR-025).
@@ -1024,6 +1036,22 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
 
+			// SSO login-state storage-primitive proxy (#521). Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// CreateSSOLoginState/ConsumeSSOLoginState to THIS server's real storage
+			// backend, instead of RemoteStorage's two SSOLoginState methods having no
+			// server endpoint to call at all (BeginSSO/BeginSAML's very first step —
+			// persisting the CSRF-state/nonce row — was completely non-functional
+			// under storage.type: remote, breaking human SSO/SAML login end to end).
+			// Exactly the same pattern as the setup-token proxy above: a thin
+			// passthrough onto storage.Storage (no SSO policy decision made here —
+			// the calling server's own core.KeyorixCore still decides that), reusing
+			// the SAME system.read/system.write tier — no new privilege class. Both
+			// create and the single-use consume are mutations and require
+			// system.write.
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
+
 			// Project-membership storage-primitive proxy (#511). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateProjectMembership/GetProjectMembership/UpdateProjectMembership/
@@ -1121,6 +1149,30 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
+
+			// Login-lockout accounting storage-primitive proxy (backlog #529). Lets a
+			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// UpdateLoginLockoutState to THIS server's real storage backend, instead of
+			// RemoteStorage's one remaining login-lockout method having no server endpoint
+			// to call at all (per-account brute-force lockout accounting — every
+			// recordFailedLogin/checkLockAndClearLoginFailures/clearLoginFailures/
+			// UnlockUser call in internal/core/login_lockout.go — silently failed OPEN
+			// under storage.type: remote, the last piece of the #454 gap left after the
+			// login-attempts/setup-tokens/groups/webauthn proxies above each closed their
+			// own slice of it). Exactly the same pattern as the webauthn proxy above: a
+			// thin passthrough onto storage.Storage (no lockout POLICY decision — the
+			// failure threshold, the exponential cooldown, WHEN to trip or clear — is made
+			// here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore, exactly as it does against a local backend),
+			// reusing the SAME system.read/system.write tier — no new privilege class.
+			// This is a single unconditional column UPDATE, not a compare-and-swap (see
+			// login_lockout_proxy.go's package doc for the atomicity analysis): every
+			// caller already computes the final values itself under its own
+			// LockUserForUpdate + WithTransaction + per-user mutex-shard serialization, so
+			// one proxied round trip preserves LocalStorage's own semantics unchanged —
+			// unlike AdvanceWebAuthnCredentialCounterProxy just above, no new atomic
+			// primitive is needed.
+			r.With(customMiddleware.RequirePermission("system.write")).Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
 
 			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy

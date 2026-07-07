@@ -1,19 +1,29 @@
 // remote_mfa.go — MFA persistence is server-side only; the remote client never
 // manages MFA state directly (enrolment/verify go through the server's REST API).
 //
-// The two exceptions are IssueMFAChallenge and VerifyMFALoginCredentials below,
-// which implement core.RemoteMFAVerifier (#509): the upstream half of the
-// storage.type: remote second-factor login proxy, mirroring
-// remote_login_verify.go's password proxy (#506) exactly. The raw TOTP secret
-// is stored reversibly encrypted specifically so it must never leave the
-// server that can decrypt it — GetMFASecret below stays an unconditional stub
-// for that reason — so the ENTIRE TOTP/recovery-code check, not just a wire-DTO
-// passthrough of the storage primitives above, has to run upstream.
+// IssueMFAChallenge and VerifyMFALoginCredentials below implement
+// core.RemoteMFAVerifier (#509): the upstream half of the storage.type: remote
+// TOTP second-factor login proxy, mirroring remote_login_verify.go's password
+// proxy (#506) exactly. The raw TOTP secret is stored reversibly encrypted
+// specifically so it must never leave the server that can decrypt it —
+// GetMFASecret below stays an unconditional stub for that reason — so the
+// ENTIRE TOTP/recovery-code check, not just a wire-DTO passthrough of the
+// storage primitives above, has to run upstream.
 //
-// WebAuthn's storage.Storage primitives are DIFFERENT from MFA's: see
-// remote_webauthn.go — a passkey's public key and ceremony session state are not
-// secret the way a TOTP shared secret is, so WebAuthn is an ordinary CRUD/wire-DTO
-// passthrough, not a verification proxy (#517).
+// GetActiveMFAChallenge and ConsumeMFAChallenge below are DIFFERENT from that
+// pair: they are ordinary storage.Storage passthroughs (#522), not part of the
+// RemoteMFAVerifier proxy. models.MFAChallenge is a SHARED pre-auth token: the
+// SAME row backs both the TOTP path (proxied wholesale above, since it also
+// needs the encrypted secret) and WebAuthn-as-second-factor login
+// (internal/core/webauthn.go's BeginWebAuthnLogin/FinishWebAuthnLogin), which has
+// no secret of its own to protect — a spoke server that resolves the
+// challenge's user_id can run the entire passkey assertion ceremony locally
+// against its own (already-proxied, #517) WebAuthn credential rows. Before this
+// fix, BOTH were unconditional stubs, so WebAuthn login was 100% broken under
+// storage.type: remote even though the TOTP path already worked.
+//
+// WebAuthn's OWN storage.Storage primitives (registered credentials, ceremony
+// sessions) are handled separately: see remote_webauthn.go / #517.
 package store
 
 import (
@@ -69,12 +79,96 @@ func (rs *RemoteStorage) CreateMFAChallenge(_ context.Context, _ *models.MFAChal
 	return remoteUnsupported("CreateMFAChallenge")
 }
 
-func (rs *RemoteStorage) ConsumeMFAChallenge(_ context.Context, _ string, _ time.Time) (*models.MFAChallenge, error) {
-	return nil, remoteUnsupported("ConsumeMFAChallenge")
+// mfaChallengeWire mirrors models.MFAChallenge's fields exactly (snake_case).
+// models.MFAChallenge tags TokenHash json:"-" to keep it out of USER-facing
+// responses — irrelevant here, since this is an internal system-to-system wire
+// format gated on users.write, matching webAuthnSessionWire's identical
+// TokenHash precedent (remote_webauthn.go).
+type mfaChallengeWire struct {
+	ID        uint       `json:"id"`
+	UserID    uint       `json:"user_id"`
+	TokenHash string     `json:"token_hash"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	UsedAt    *time.Time `json:"used_at"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
-func (rs *RemoteStorage) GetActiveMFAChallenge(_ context.Context, _ string, _ time.Time) (*models.MFAChallenge, error) {
-	return nil, remoteUnsupported("GetActiveMFAChallenge")
+func (w mfaChallengeWire) toModel() *models.MFAChallenge {
+	return &models.MFAChallenge{
+		ID:        w.ID,
+		UserID:    w.UserID,
+		TokenHash: w.TokenHash,
+		ExpiresAt: w.ExpiresAt,
+		UsedAt:    w.UsedAt,
+		CreatedAt: w.CreatedAt,
+	}
+}
+
+func decodeMFAChallengeResponse(data []byte) (*models.MFAChallenge, error) {
+	var wire mfaChallengeWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return wire.toModel(), nil
+}
+
+// mfaChallengeLookupWire is the wire body shared by GetActiveMFAChallenge and
+// ConsumeMFAChallenge below — both take the identical (tokenHash, now) pair
+// internal/core/webauthn.go already passes to storage.Storage's local
+// implementation (local_mfa.go).
+type mfaChallengeLookupWire struct {
+	TokenHash string    `json:"token_hash"`
+	Now       time.Time `json:"now"`
+}
+
+// ConsumeMFAChallenge atomically marks a valid (unused, unexpired) challenge used
+// and returns it, via POST /api/v1/users/mfa-challenge/consume (#522) — the
+// single-use gate FinishWebAuthnLogin spends before verifying the assertion. The
+// atomicity guarantee is unchanged from LocalStorage's own implementation (an
+// UPDATE ... WHERE used_at IS NULL AND expires_at > ? inside one DB transaction,
+// local_mfa.go): the proxy handler calls storage.Storage.ConsumeMFAChallenge
+// directly against the upstream's real storage in this single request, so the
+// single-use invariant holds across this HTTP hop too — mirroring
+// ConsumeWebAuthnSession's (#517) and MarkSetupTokenConsumed's (#510) identical
+// one-round-trip-atomic-consume precedent, not a separate GET-then-mark-used
+// pair that would reopen the exact concurrent-consume race those were built to
+// close. This is an ordinary storage passthrough, NOT part of the
+// RemoteMFAVerifier proxy above — see the package doc for why that split is
+// correct here (the challenge row carries no secret of its own).
+func (rs *RemoteStorage) ConsumeMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/users/mfa-challenge/consume", mfaChallengeLookupWire{
+		TokenHash: tokenHash,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired challenge")
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("invalid or expired challenge")
+	}
+	return decodeMFAChallengeResponse(resp.Data)
+}
+
+// GetActiveMFAChallenge resolves the (still-unconsumed) challenge
+// BeginWebAuthnLogin needs to identify which user's passkeys to begin the
+// assertion ceremony against, via POST /api/v1/users/mfa-challenge/active
+// (#522). A read, not a consume: WebAuthn's two-step login (Begin then Finish)
+// must look up the user WITHOUT spending the challenge's single use yet —
+// ConsumeMFAChallenge above (called from FinishWebAuthnLogin) is what actually
+// spends it, matching local_mfa.go's own GetActiveMFAChallenge/
+// ConsumeMFAChallenge split exactly.
+func (rs *RemoteStorage) GetActiveMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/users/mfa-challenge/active", mfaChallengeLookupWire{
+		TokenHash: tokenHash,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired challenge")
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("invalid or expired challenge")
+	}
+	return decodeMFAChallengeResponse(resp.Data)
 }
 
 // issueMFAChallengeWireResponse carries only the opaque challenge token: the
