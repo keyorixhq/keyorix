@@ -154,6 +154,27 @@ type SSOLoginState struct {
 	CreatedAt time.Time
 }
 
+// SchedulerLockLease is a TTL-bounded distributed-mutex row backing
+// TryAcquireSchedulerLock/ReleaseSchedulerLock (#530). Unlike LocalStorage's
+// own WithSchedulerLock (a Postgres session advisory lock held for the exact
+// duration of one in-process call), this primitive exists so a
+// storage.type: remote (ADR-049) spoke can acquire the SAME single-replica
+// guarantee over two separate HTTP round trips (acquire, then release once its
+// locally-run scheduler job finishes) without ever pinning a live DB
+// connection across requests: Holder proves ownership so a stale/expired
+// holder can never release (or be mistaken for holding) a lease a newer
+// holder has since won, and ExpiresAt bounds how long a crashed or
+// network-partitioned holder can wedge the key — a fresh acquire attempt past
+// ExpiresAt reclaims the row unconditionally. One row per lock Key — Key is
+// the primary key, so the DB itself rejects a second concurrent row for the
+// same lock (the belt-and-suspenders case TryAcquireSchedulerLock's own
+// isUniqueViolation check handles).
+type SchedulerLockLease struct {
+	Key       int64     `gorm:"primaryKey;autoIncrement:false"`
+	Holder    string    `gorm:"not null"` // opaque per-acquisition token, not a stable identity
+	ExpiresAt time.Time `gorm:"index"`
+}
+
 // RiskException records a governed acceptance of a known control gap or policy
 // exception (ISO 27001 A.5.8 risk treatment / A.5.36 compliance-with-policies): a
 // named risk, accepted by an owner with a written justification, for a bounded time.

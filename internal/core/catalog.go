@@ -137,30 +137,29 @@ func (c *KeyorixCore) ProjectRequiresMFA(ctx context.Context, projectID uint) (b
 // itself (the lease stays revoke_failed/retryable, same as any other RevokeLeasesForConfig
 // use, and is reachable again via the sweep or a manual retry once the target recovers).
 func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) error {
-	// #313: the guard count and the cascade delete used to be two separate top-level
-	// storage calls, with core-layer control flow in between — a secret created in that
-	// window silently got swept into the cascade despite the caller expecting the delete
-	// to be rejected. Run the guard and the delete inside one transaction (a nested
-	// savepoint over LocalStorage.DeleteProject's own transaction) so the count that
-	// gates the reject is the same one the cascade acts on, not a stale read.
-	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		if !force {
-			projectID := id
-			_, total, err := tx.ListSecrets(ctx, &storage.SecretFilter{
-				ProjectID: &projectID,
-				Page:      1,
-				PageSize:  1,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to check project secrets: %w", err)
-			}
-			if total > 0 {
-				return fmt.Errorf("project has %d secret(s) — delete them first or use --force to cascade", total)
-			}
+	// #313 / #528: the guard count and the cascade delete must not run as two separate
+	// top-level storage calls with core-layer control flow in between — a secret created
+	// in that window would silently get swept into the cascade despite the caller
+	// expecting the delete to be rejected. #313 originally closed this by running both
+	// inside one storage.WithTransaction call; #528 replaced that with
+	// DeleteProjectIfEmpty, a single atomic storage primitive doing the same guard+
+	// cascade in ONE call — WithTransaction is a real transaction only for LocalStorage
+	// (RemoteStorage.WithTransaction is a no-op passthrough over HTTP, so the original
+	// two-call pair reopened this exact TOCTOU window across a full network round trip
+	// under storage.type: remote). force=true intentionally skips the guard entirely and
+	// keeps calling the plain unconditional cascade.
+	if force {
+		if err := c.storage.DeleteProject(ctx, id); err != nil {
+			return err
 		}
-		return tx.DeleteProject(ctx, id)
-	}); err != nil {
-		return err
+	} else {
+		blocking, err := c.storage.DeleteProjectIfEmpty(ctx, id)
+		if err != nil {
+			return err
+		}
+		if blocking > 0 {
+			return fmt.Errorf("project has %d secret(s) — delete them first or use --force to cascade", blocking)
+		}
 	}
 	c.revokeProjectDynamicSecretLeases(ctx, id)
 	return nil

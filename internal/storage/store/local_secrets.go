@@ -154,7 +154,14 @@ func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Proje
 	return project, nil
 }
 
-func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
+// deleteProjectCascade performs DeleteProject's soft-delete cascade (secrets, their
+// shares, environments, dynamic-secret configs, then the project itself) against tx —
+// the transaction-scoped *gorm.DB the caller (DeleteProject or DeleteProjectIfEmpty,
+// #528) is already running inside. Factored out of DeleteProject so
+// DeleteProjectIfEmpty can run the exact SAME cascade, inside its own transaction,
+// immediately after its own empty-project check, without duplicating this logic or
+// splitting the check and the cascade across two top-level storage calls.
+func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	// Stamp the project and the rows the cascade soft-deletes with ONE uniform
 	// deleted_at, so RestoreProject can bring back exactly this cascade's rows and not
 	// resurrect secrets/environments that were retired independently earlier (which
@@ -162,71 +169,102 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 	// model to deleted_at IS NULL, so already-deleted children are left untouched and
 	// keep their original timestamp.
 	deletedAt := time.Now()
+	// Soft-delete all currently-live secrets in the project.
+	if err := tx.Model(&models.SecretNode{}).
+		Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
+		return fmt.Errorf("failed to soft-delete project secrets: %w", err)
+	}
+	// Revoke every still-active share for every secret in this project (#119
+	// residual): the bulk update above is a raw UPDATE on secret_nodes, unlike
+	// DeleteSecret's per-secret path, which also revokes that secret's ShareRecord
+	// rows (#370) — so a project-cascade delete used to skip that step entirely,
+	// leaving shares for the project's secrets live. Left alone, a share would
+	// silently reactivate (via CheckSharePermission) the instant the project (and
+	// its secrets) is later restored, with zero re-authorization — exactly the
+	// hazard #370 closed for a single secret delete. The subquery is raw SQL,
+	// deliberately bypassing GORM's default deleted_at IS NULL scope on
+	// SecretNode, so it also reaches the secrets just soft-deleted above. Mirrors
+	// #370: like RestoreSecret, RestoreProject does NOT bring these shares back —
+	// "delete means gone" for sharing, whether the secret was deleted directly or
+	// via a project cascade.
+	if err := tx.Where("secret_id IN (SELECT id FROM secret_nodes WHERE project_id = ?) AND deleted_at IS NULL", id).
+		Delete(&models.ShareRecord{}).Error; err != nil {
+		return fmt.Errorf("failed to revoke project secret shares: %w", err)
+	}
+	// UserRole/GroupRole grants scoped to this project are deliberately left
+	// untouched here, unlike ShareRecord above. Both are plain composite-primary-key
+	// join rows (UserID/GroupID, RoleID, ProjectID, EnvironmentID) with no DeletedAt
+	// column of their own — soft-deleting them isn't possible without a schema
+	// migration that also reworks their primary key (a soft-deleted grant would
+	// collide with a later re-grant of the identical scope under today's PK), and
+	// RestoreProject's design (see requireAuthorityToReinstateProjectRoles / #161)
+	// depends on these rows surviving the soft-delete window unchanged so a restore
+	// fully reinstates the project's prior grants, gated by the actor's own
+	// authority. PurgeDeletedProjectsBefore already hard-deletes them once the
+	// project passes its retention window and can no longer be restored — the same
+	// cascade, just necessarily deferred until undo is off the table.
+	//
+	// Soft-delete all currently-live environments in the project.
+	if err := tx.Model(&models.Environment{}).
+		Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
+		return fmt.Errorf("failed to soft-delete project environments: %w", err)
+	}
+	// Disable every dynamic-secret config scoped to the project (#369): a
+	// disabled project must not go on minting live database credentials.
+	// IssueLease/RenewLease refuse against a Disabled config; the caller
+	// (core.DeleteProject) revokes the configs' outstanding active leases
+	// against their real targets AFTER this transaction commits — that's
+	// network I/O to arbitrary external systems and must not hold this DB
+	// transaction open. Unlike secrets/environments, Disabled is a plain
+	// boolean with no cascade timestamp: RestoreProject deliberately does
+	// NOT clear it (see the Disabled field doc on DynamicSecretConfig).
+	if err := tx.Model(&models.DynamicSecretConfig{}).
+		Where("project_id = ? AND disabled = ?", id, false).Update("disabled", true).Error; err != nil {
+		return fmt.Errorf("failed to disable project dynamic-secret configs: %w", err)
+	}
+	// Soft-delete the project itself with the same timestamp.
+	result := tx.Model(&models.Project{}).
+		Where("id = ?", id).Update("deleted_at", deletedAt)
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete project: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("project not found")
+	}
+	return nil
+}
+
+func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Soft-delete all currently-live secrets in the project.
-		if err := tx.Model(&models.SecretNode{}).
-			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
-			return fmt.Errorf("failed to soft-delete project secrets: %w", err)
-		}
-		// Revoke every still-active share for every secret in this project (#119
-		// residual): the bulk update above is a raw UPDATE on secret_nodes, unlike
-		// DeleteSecret's per-secret path, which also revokes that secret's ShareRecord
-		// rows (#370) — so a project-cascade delete used to skip that step entirely,
-		// leaving shares for the project's secrets live. Left alone, a share would
-		// silently reactivate (via CheckSharePermission) the instant the project (and
-		// its secrets) is later restored, with zero re-authorization — exactly the
-		// hazard #370 closed for a single secret delete. The subquery is raw SQL,
-		// deliberately bypassing GORM's default deleted_at IS NULL scope on
-		// SecretNode, so it also reaches the secrets just soft-deleted above. Mirrors
-		// #370: like RestoreSecret, RestoreProject does NOT bring these shares back —
-		// "delete means gone" for sharing, whether the secret was deleted directly or
-		// via a project cascade.
-		if err := tx.Where("secret_id IN (SELECT id FROM secret_nodes WHERE project_id = ?) AND deleted_at IS NULL", id).
-			Delete(&models.ShareRecord{}).Error; err != nil {
-			return fmt.Errorf("failed to revoke project secret shares: %w", err)
-		}
-		// UserRole/GroupRole grants scoped to this project are deliberately left
-		// untouched here, unlike ShareRecord above. Both are plain composite-primary-key
-		// join rows (UserID/GroupID, RoleID, ProjectID, EnvironmentID) with no DeletedAt
-		// column of their own — soft-deleting them isn't possible without a schema
-		// migration that also reworks their primary key (a soft-deleted grant would
-		// collide with a later re-grant of the identical scope under today's PK), and
-		// RestoreProject's design (see requireAuthorityToReinstateProjectRoles / #161)
-		// depends on these rows surviving the soft-delete window unchanged so a restore
-		// fully reinstates the project's prior grants, gated by the actor's own
-		// authority. PurgeDeletedProjectsBefore already hard-deletes them once the
-		// project passes its retention window and can no longer be restored — the same
-		// cascade, just necessarily deferred until undo is off the table.
-		//
-		// Soft-delete all currently-live environments in the project.
-		if err := tx.Model(&models.Environment{}).
-			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
-			return fmt.Errorf("failed to soft-delete project environments: %w", err)
-		}
-		// Disable every dynamic-secret config scoped to the project (#369): a
-		// disabled project must not go on minting live database credentials.
-		// IssueLease/RenewLease refuse against a Disabled config; the caller
-		// (core.DeleteProject) revokes the configs' outstanding active leases
-		// against their real targets AFTER this transaction commits — that's
-		// network I/O to arbitrary external systems and must not hold this DB
-		// transaction open. Unlike secrets/environments, Disabled is a plain
-		// boolean with no cascade timestamp: RestoreProject deliberately does
-		// NOT clear it (see the Disabled field doc on DynamicSecretConfig).
-		if err := tx.Model(&models.DynamicSecretConfig{}).
-			Where("project_id = ? AND disabled = ?", id, false).Update("disabled", true).Error; err != nil {
-			return fmt.Errorf("failed to disable project dynamic-secret configs: %w", err)
-		}
-		// Soft-delete the project itself with the same timestamp.
-		result := tx.Model(&models.Project{}).
-			Where("id = ?", id).Update("deleted_at", deletedAt)
-		if result.Error != nil {
-			return fmt.Errorf("failed to delete project: %w", result.Error)
-		}
-		if result.RowsAffected == 0 {
-			return fmt.Errorf("project not found")
-		}
-		return nil
+		return deleteProjectCascade(tx, id)
 	})
+}
+
+// DeleteProjectIfEmpty is the atomic form of DeleteProject(force=false)'s guard+cascade
+// pair (#528 — see the storage.Storage interface doc comment on this method for why).
+// Counts the project's live secrets and, only if zero, runs the exact same cascade
+// DeleteProject does — all inside ONE transaction, so the count the guard rejects on
+// is read from, and committed alongside, the same transaction as the delete (mirrors
+// #313's original guarantee, just via a single storage-layer call instead of a
+// core-layer WithTransaction wrapper).
+func (ls *LocalStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int, error) {
+	var blockingSecretCount int
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var secretCount int64
+		if err := tx.Model(&models.SecretNode{}).
+			Where("project_id = ?", id).Count(&secretCount).Error; err != nil {
+			return fmt.Errorf("failed to count project secrets: %w", err)
+		}
+		if secretCount > 0 {
+			blockingSecretCount = int(secretCount)
+			return nil
+		}
+		return deleteProjectCascade(tx, id)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return blockingSecretCount, nil
 }
 
 // RestoreProject reverses a project soft-delete: it clears deleted_at on the project
