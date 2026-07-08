@@ -3,6 +3,443 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.87.4 — 2026-07-07
+
+CI-only patch release: pins the release workflow's cosign binary so signed release
+artifacts publish again.
+
+### Internal
+- **cosign pinned to v2.5.2 for legacy `sign-blob` flags** — v0.87.3's fix traded one
+  cosign v3.1.1 breakage for another: `sign-blob` started demanding
+  `--signing-config`/`--use-signing-config` alongside `--new-bundle-format=false`, so the
+  v0.87.3 release run failed at the same signing step and shipped without a GitHub
+  Release (Docker images and the Helm chart still published fine both times). Rather than
+  keep chasing v3.1.1's shifting flag requirements, `cosign-installer`'s `cosign-release`
+  input is now pinned to `v2.5.2` — the last version that supported
+  `--output-signature`/`--output-certificate` natively. ([#873])
+
+[#873]: https://github.com/keyorixhq/keyorix/pull/873
+
+## v0.87.3 — 2026-07-07
+
+CI-only patch release: pins cosign's signing format so release artifacts publish again.
+
+### Internal
+- **cosign `sign-blob` pinned to the legacy bundle format** — the v0.87.2 release run
+  failed at "Sign checksums.txt (keyless)": cosign now defaults to
+  `--new-bundle-format=true` and silently drops `--output-signature`/`--output-certificate`,
+  so no GitHub Release was created for that tag (Docker images and the Helm chart still
+  published). `SECURITY.md` documents verification via the separate
+  `checksums.txt.sig`/`.pem` files, so the workflow now pins
+  `--new-bundle-format=false` to keep that verification flow working. (Superseded by
+  [#873] once cosign v3.1.1 introduced a further flag requirement.) ([#872])
+
+[#872]: https://github.com/keyorixhq/keyorix/pull/872
+[#873]: https://github.com/keyorixhq/keyorix/pull/873
+
+## v0.87.2 — 2026-07-07
+
+A round-119 completeness audit closes 55 confirmed gaps where `storage.type: remote`
+silently no-op'd or fully broke login/SSO/2FA/RBAC/compliance/dynamic-secrets flows,
+plus a broad hardening bundle across degrade-on-error, TOCTOU, and access-control
+paths, and new CodeQL/fuzzing/license-compliance CI gates.
+
+### Fixed
+- **Remote-storage completeness campaign: ~50 previously-stubbed `RemoteStorage` methods
+  now proxy correctly under `storage.type: remote`** — a round-119 census traced every
+  `RemoteStorage` method's real callers and found 55 confirmed, currently-reachable gaps
+  that had silently accumulated across ~10 rounds of piecemeal fixing: SSO login
+  (OIDC+SAML) was 100% broken, WebAuthn-as-2FA login was 100% broken, self-service
+  access-requests were 100% broken, and most of RBAC/permission-catalog/Connect
+  federated reads/project&environment management/dynamic-secrets/MFA
+  enrollment/scheduler-lock/login-lockout accounting either failed open or errored out
+  entirely when running against a remote storage backend. Each is now individually
+  proxied and covered by a regression test. ([#793], [#802], [#810], [#811], [#812],
+  [#823], [#827], [#828], [#830], [#831], [#835], [#836], [#837], [#838], [#839],
+  [#840], [#841], [#842], [#846], [#847], [#848], [#849], [#850], [#851], [#852],
+  [#853], [#854], [#860], [#861], [#862], [#863], [#864], [#865], [#866], [#867],
+  [#868], [#869], [#870], [#871])
+- **A completeness guard now pins every `RemoteStorage` stub to a reasoned
+  classification** — `TestRemoteUnsupportedStubsAreAllowlisted` exact-matches every
+  `remoteUnsupported(...)` call site against a fully-reasoned allowlist, classifying each
+  as verified-permanent (with a citation) or a confirmed, backlog-tracked gap. A PR that
+  adds a new unclassified stub, or fixes a listed gap without removing its entry, now
+  fails CI immediately — closing the blind spot that let this round's 55 gaps
+  accumulate unnoticed in the first place. ([#856])
+- **`storage.type: remote` was fully broken for every proxied write** — the shared
+  remote-storage response helper was missing the `"success"` key `sendSuccess` writes,
+  so every successful proxied call was misread as a failure by the caller. ([#794])
+- **Systemic fail-open across `GetCompliancePosture` closed** — a transient sub-query
+  failure (legal hold, risk exceptions, SoD violations, dormant grants, and others)
+  previously left the field at its "all clear" zero value instead of surfacing as
+  degraded; every control now defers to an explicit unknown/degraded status instead of a
+  false pass when its underlying query errors. ([#712], [#728], [#737], [#755], [#756],
+  [#757], [#758], [#763], [#764], [#770], [#775], [#779], [#784], [#785], [#801], [#809])
+- **Several long-running TOCTOU and race-condition fixes**: Shamir-reconstructed KEK
+  verified against a real HMAC commitment ([#722]); rotation no-op detection stops
+  spurious `LastRotatedAt` bumps ([#727]); pre-existing duplicate rows deduped before
+  adding new unique indexes, closing an upgrade-time migration failure ([#761], [#766]);
+  admin bootstrap password no longer leaks via `wget` argv ([#720]); evidence-pack
+  generation is now one atomic snapshot ([#748]); reminder/notification dedup races
+  closed ([#751], [#760]).
+- **Validation and error-handling correctness**: CSV-formula-injection in audit export
+  ([#749]); control-character/ANSI-escape injection in imported secret keys/values
+  ([#742]); internal errors sanitized before reaching classify/rotate/restore/copy
+  handlers ([#745]); user-creation and other handler validation errors now correctly
+  return 400 instead of a generic 500 ([#858], [#859]); the audit high-water mark no
+  longer embeds NUL bytes that corrupted persistence ([#857]).
+- **`docker-compose` requires `KEYORIX_BOOTSTRAP_TOKEN` for auto-bootstrap**, closing an
+  unauthenticated first-admin-seizure window in the bundled compose deployment path.
+  ([#844])
+
+### Security
+- **RBAC / access-control hardening bundle**: `RequireRole` now unconditionally rejects
+  machine/OIDC principals from human-only role checks ([#817]); a grant-time
+  separation-of-duties preventive gate on role assignment ([#804]); `roles.read` now
+  required to view a group's role grants ([#743]); dormant-role-grant detection counts
+  write-tier activity and narrows masking between distinct admin-tier grants ([#732],
+  [#770], [#801], [#809]); dead, scope-blind `CheckPermission` code path removed
+  ([#741]).
+- **Crypto / key-handling hardening**: evidence-signing key and audit-checkpoint key now
+  derive from the KEK rather than the DEK ([#800], [#808]); local CLI key operations
+  join the exclusive-DEK-lock coordination ([#783]); `rotate --dry-run` plus full
+  sweep-result reporting ([#787]).
+- **Supply-chain and CI hardening**: CodeQL analysis added for both Go modules
+  ([#796]); native Go fuzz targets for Shamir, JWT, and rotation-ref parsing plus
+  self-hosted continuous fuzzing ([#795], [#805]); `CONTRIBUTING.md` with enforced DCO
+  sign-off ([#813]); a `checkov` IaC security-policy scan for the three Helm charts
+  ([#814]); a `go-licenses` dependency license-compliance gate ([#822]); gitleaks scope
+  narrowed to the checked-out branch ([#806]).
+- **gRPC hardening**: outbound response size capped to match the inbound cap ([#788]);
+  `ConnectService.ReadSecret` rejects an empty ref ([#776]); the unary interceptor chain
+  reordered so metrics wraps auth correctly ([#778]); server-side keepalive reclaims
+  idle connections ([#768]).
+- **`TLSConfig.AllowedCiphers` now actually wired into HTTP + gRPC cipher suites** —
+  the configured allowlist was previously validated but not enforced. ([#782])
+
+### Internal
+- Routine dependency bumps (AWS/Azure SDKs, `k8s.io/api`/`client-go`, `cobra`,
+  `go-chi/chi`, and several GitHub Actions).
+- Documentation refresh for `SECURITY.md`/`CONTRIBUTING.md`/`SECURITY-VERIFICATION.md`
+  and several stale in-code comments closed out following this hardening pass ([#843],
+  [#736], [#820], [#821], [#826]).
+
+[#712]: https://github.com/keyorixhq/keyorix/pull/712
+[#720]: https://github.com/keyorixhq/keyorix/pull/720
+[#722]: https://github.com/keyorixhq/keyorix/pull/722
+[#727]: https://github.com/keyorixhq/keyorix/pull/727
+[#728]: https://github.com/keyorixhq/keyorix/pull/728
+[#732]: https://github.com/keyorixhq/keyorix/pull/732
+[#736]: https://github.com/keyorixhq/keyorix/pull/736
+[#737]: https://github.com/keyorixhq/keyorix/pull/737
+[#741]: https://github.com/keyorixhq/keyorix/pull/741
+[#742]: https://github.com/keyorixhq/keyorix/pull/742
+[#743]: https://github.com/keyorixhq/keyorix/pull/743
+[#745]: https://github.com/keyorixhq/keyorix/pull/745
+[#748]: https://github.com/keyorixhq/keyorix/pull/748
+[#749]: https://github.com/keyorixhq/keyorix/pull/749
+[#751]: https://github.com/keyorixhq/keyorix/pull/751
+[#755]: https://github.com/keyorixhq/keyorix/pull/755
+[#756]: https://github.com/keyorixhq/keyorix/pull/756
+[#757]: https://github.com/keyorixhq/keyorix/pull/757
+[#758]: https://github.com/keyorixhq/keyorix/pull/758
+[#760]: https://github.com/keyorixhq/keyorix/pull/760
+[#761]: https://github.com/keyorixhq/keyorix/pull/761
+[#763]: https://github.com/keyorixhq/keyorix/pull/763
+[#764]: https://github.com/keyorixhq/keyorix/pull/764
+[#766]: https://github.com/keyorixhq/keyorix/pull/766
+[#768]: https://github.com/keyorixhq/keyorix/pull/768
+[#770]: https://github.com/keyorixhq/keyorix/pull/770
+[#775]: https://github.com/keyorixhq/keyorix/pull/775
+[#776]: https://github.com/keyorixhq/keyorix/pull/776
+[#778]: https://github.com/keyorixhq/keyorix/pull/778
+[#779]: https://github.com/keyorixhq/keyorix/pull/779
+[#782]: https://github.com/keyorixhq/keyorix/pull/782
+[#783]: https://github.com/keyorixhq/keyorix/pull/783
+[#784]: https://github.com/keyorixhq/keyorix/pull/784
+[#785]: https://github.com/keyorixhq/keyorix/pull/785
+[#787]: https://github.com/keyorixhq/keyorix/pull/787
+[#788]: https://github.com/keyorixhq/keyorix/pull/788
+[#793]: https://github.com/keyorixhq/keyorix/pull/793
+[#794]: https://github.com/keyorixhq/keyorix/pull/794
+[#795]: https://github.com/keyorixhq/keyorix/pull/795
+[#796]: https://github.com/keyorixhq/keyorix/pull/796
+[#800]: https://github.com/keyorixhq/keyorix/pull/800
+[#801]: https://github.com/keyorixhq/keyorix/pull/801
+[#802]: https://github.com/keyorixhq/keyorix/pull/802
+[#804]: https://github.com/keyorixhq/keyorix/pull/804
+[#805]: https://github.com/keyorixhq/keyorix/pull/805
+[#806]: https://github.com/keyorixhq/keyorix/pull/806
+[#808]: https://github.com/keyorixhq/keyorix/pull/808
+[#809]: https://github.com/keyorixhq/keyorix/pull/809
+[#810]: https://github.com/keyorixhq/keyorix/pull/810
+[#811]: https://github.com/keyorixhq/keyorix/pull/811
+[#812]: https://github.com/keyorixhq/keyorix/pull/812
+[#813]: https://github.com/keyorixhq/keyorix/pull/813
+[#814]: https://github.com/keyorixhq/keyorix/pull/814
+[#817]: https://github.com/keyorixhq/keyorix/pull/817
+[#820]: https://github.com/keyorixhq/keyorix/pull/820
+[#821]: https://github.com/keyorixhq/keyorix/pull/821
+[#822]: https://github.com/keyorixhq/keyorix/pull/822
+[#823]: https://github.com/keyorixhq/keyorix/pull/823
+[#826]: https://github.com/keyorixhq/keyorix/pull/826
+[#827]: https://github.com/keyorixhq/keyorix/pull/827
+[#828]: https://github.com/keyorixhq/keyorix/pull/828
+[#830]: https://github.com/keyorixhq/keyorix/pull/830
+[#831]: https://github.com/keyorixhq/keyorix/pull/831
+[#835]: https://github.com/keyorixhq/keyorix/pull/835
+[#836]: https://github.com/keyorixhq/keyorix/pull/836
+[#837]: https://github.com/keyorixhq/keyorix/pull/837
+[#838]: https://github.com/keyorixhq/keyorix/pull/838
+[#839]: https://github.com/keyorixhq/keyorix/pull/839
+[#840]: https://github.com/keyorixhq/keyorix/pull/840
+[#841]: https://github.com/keyorixhq/keyorix/pull/841
+[#842]: https://github.com/keyorixhq/keyorix/pull/842
+[#843]: https://github.com/keyorixhq/keyorix/pull/843
+[#844]: https://github.com/keyorixhq/keyorix/pull/844
+[#846]: https://github.com/keyorixhq/keyorix/pull/846
+[#847]: https://github.com/keyorixhq/keyorix/pull/847
+[#848]: https://github.com/keyorixhq/keyorix/pull/848
+[#849]: https://github.com/keyorixhq/keyorix/pull/849
+[#850]: https://github.com/keyorixhq/keyorix/pull/850
+[#851]: https://github.com/keyorixhq/keyorix/pull/851
+[#852]: https://github.com/keyorixhq/keyorix/pull/852
+[#853]: https://github.com/keyorixhq/keyorix/pull/853
+[#854]: https://github.com/keyorixhq/keyorix/pull/854
+[#856]: https://github.com/keyorixhq/keyorix/pull/856
+[#857]: https://github.com/keyorixhq/keyorix/pull/857
+[#858]: https://github.com/keyorixhq/keyorix/pull/858
+[#859]: https://github.com/keyorixhq/keyorix/pull/859
+[#860]: https://github.com/keyorixhq/keyorix/pull/860
+[#861]: https://github.com/keyorixhq/keyorix/pull/861
+[#862]: https://github.com/keyorixhq/keyorix/pull/862
+[#863]: https://github.com/keyorixhq/keyorix/pull/863
+[#864]: https://github.com/keyorixhq/keyorix/pull/864
+[#865]: https://github.com/keyorixhq/keyorix/pull/865
+[#866]: https://github.com/keyorixhq/keyorix/pull/866
+[#867]: https://github.com/keyorixhq/keyorix/pull/867
+[#868]: https://github.com/keyorixhq/keyorix/pull/868
+[#869]: https://github.com/keyorixhq/keyorix/pull/869
+[#870]: https://github.com/keyorixhq/keyorix/pull/870
+[#871]: https://github.com/keyorixhq/keyorix/pull/871
+[#872]: https://github.com/keyorixhq/keyorix/pull/872
+
+## v0.87.1 — 2026-07-04
+
+CI-only patch release: fixes broken chart-signing authentication in the release
+workflow.
+
+### Internal
+- **`release.yml` now authenticates to GHCR before cosign chart signing** — `publish-chart`
+  failed on v0.87.0: all three Helm chart pushes succeeded, but the first cosign sign
+  call failed with `UNAUTHORIZED` because `helm registry login` only populates Helm's
+  own credential store, not the Docker config cosign reads registry auth from. A
+  `docker/login-action` step now runs before the push+sign block, mirroring the
+  already-working pattern `docker-publish.yml` uses for image signing. (v0.87.0's three
+  charts remain live but unsigned in GHCR — not retroactively fixable without mutating
+  an already-published tag.) ([#698])
+
+[#698]: https://github.com/keyorixhq/keyorix/pull/698
+
+## v0.87.0 — 2026-07-04
+
+A large security-hardening campaign closes several CRITICAL/HIGH authorization and
+account-takeover gaps (SSO JIT-provisioning takeover, repeated admin-rank-ceiling
+bypasses, systemic compliance-posture fail-open), migrates session auth to httpOnly
+cookies with CSRF protection, and fixes dozens of TOCTOU races and validation gaps
+across RBAC, SCIM, SSO, dynamic secrets, and the operator.
+
+### Added
+- **Session auth migrates to an httpOnly cookie (`kx_session`) with double-submit
+  CSRF** — session tokens no longer need to live in client-held storage, closing the
+  XSS blast-radius on session theft; a `csrf_token` cookie plus `X-CSRF-Token` header
+  protects state-changing requests now that auth is ambient. Admin impersonation was
+  redesigned to swap sessions purely via cookies (`kx_admin_session`) without the
+  server ever needing to recall a plaintext token from storage. Bearer-token auth
+  keeps working alongside cookies during a bake-in period; removing the fallback is a
+  deliberately deferred follow-up. ([#679])
+
+### Security
+- **SSO JIT-provisioning account takeover (CRITICAL)** — the existing-account lookup
+  in SSO login had been hardened to require a verified email match, but the
+  just-in-time provisioning branch reused an unguarded lookup and returned an existing
+  account regardless of verification. With `auto_provision` enabled and an IdP that
+  omits `email_verified` (e.g. Entra), an attacker asserting a victim's email with a
+  fresh subject could be logged in as the victim, including admins, across identity
+  providers. Provisioning now routes through the same verified-email guard as the
+  existing-account path. ([#657])
+- **Three more admin-rank-ceiling gaps closed (all HIGH)**: group restore reinstated
+  role grants — including admin-tier roles — with no check on the restoring actor's
+  own authority ([#568], part of #147); project/environment restore had the same gap,
+  plus a query that never joined against the project's/environment's own
+  soft-delete state, so a directly-bound role kept authorizing after the scope was
+  deleted (#161); admin impersonation only checked a target's literal global-admin
+  flag, missing a project-scoped or group-inherited admin (#165). All three now
+  enforce a scope-aware authority ceiling before the elevated action proceeds.
+  ([#588], [#616])
+- **Systemic compliance-posture fail-open closed (HIGH)** — `GetCompliancePosture`'s
+  `if err == nil { set }` pattern silently left a sub-query failure (legal hold, risk
+  exceptions, SoD violations, and others) at its "all clear" zero value instead of
+  surfacing as degraded; empirically proven to flip a real adverse state back to
+  false on a dropped table mid-query. Every control now surfaces an explicit
+  unknown/degraded status instead of a false pass. ([#610])
+- **Startup/schema validation now actually runs on boot (HIGH)** — `ValidateStartup`
+  and `Config.Validate()` were documented as running automatically but were never
+  wired into `server/main.go`; an operator relying on
+  `enable_file_permission_check: true` to catch a world-readable DEK/salt file got no
+  warning at all. Also fixes a hardcoded config path (spurious failures under
+  `KEYORIX_CONFIG_PATH`) and a startup check that unconditionally required a SQLite
+  path even for postgres/remote deployments. ([#612])
+- **DB-level email uniqueness closes a concurrent account-collision race (HIGH)** — a
+  missing unique index on `users.email` meant concurrent signup/invite-accept calls
+  with the same email could all succeed, leaving lookups to resolve to an arbitrary
+  row; SCIM's email-uniqueness and last-admin-deactivation guards are also switched
+  from fail-open to fail-closed on a transient lookup error. ([#614])
+- **RBAC bundling and role-grant CRITICAL/HIGH fixes**: the actor must already hold a
+  permission before bundling it into a role they grant ([#557]); every
+  privilege-grant path now routes through one audited RBAC choke point ([#588]);
+  `GetMachineRoleIDsAt` closed a soft-deleted-role gap ([#589]); SCIM Update/
+  Deprovision/List restricted to SCIM-managed accounts ([#523]).
+- **CI/supply-chain hardening across workflows, images, and the release pipeline**
+  ([#543]), plus pinned/checksum-verified GitHub Action installs ([#668]).
+- **`golang.org/x/net` bumped to v0.55.0 in the operator module**, closing 5
+  published HIGH-severity CVEs (CVE-2026-25681, CVE-2026-27136, CVE-2026-33814,
+  CVE-2026-39821, CVE-2026-42502) caught by the new Trivy image-scan CI gate.
+  ([#696], [#697])
+
+### Fixed
+- Broad TOCTOU-race closures across invitation/access-request accept-vs-revoke
+  ([#677]), project/user purge-vs-restore ([#678], [#680]), legal hold placement
+  ([#593]), access-review decisions and campaign close ([#595], [#622]), break-glass
+  revoke ([#596]), audit-checkpoint writes ([#601]), invite/delete-project races
+  ([#599]), WebAuthn sign-counter updates ([#600]), and DEK rotation coordination
+  with a live server ([#526], [#651]).
+- SSO/SAML hardening: SAML/OIDC type-confusion panic and login-state TOCTOU fixed
+  ([#606]); SSO identity scoped to its asserting provider, closing cross-provider
+  takeover ([#517]); SAML email-fallback linking gated behind a per-provider opt-in
+  ([#659]).
+- Dynamic-secrets hardening: install-wide max-TTL ceiling with honest lease expiry
+  ([#541]); admin authority required to bind a backend ([#524], [#551]); configs
+  disabled and leases revoked on project deletion ([#646]).
+- Session-refresh reuse-detection and WebAuthn clone-detection ([#656]); MFA/WebAuthn
+  credential changes now require re-authentication ([#664]).
+- httpOnly-cookie migration's Go toolchain bump (1.26.4 minimum) and Dependabot gomod
+  coverage. ([#683], [#684])
+
+### Internal
+- CI supply-chain and container hardening: Trivy vulnerability scanning for
+  published images ([#694]), a buildx-driver fix for broken image publishing
+  ([#695]).
+
+[#517]: https://github.com/keyorixhq/keyorix/pull/517
+[#523]: https://github.com/keyorixhq/keyorix/pull/523
+[#524]: https://github.com/keyorixhq/keyorix/pull/524
+[#526]: https://github.com/keyorixhq/keyorix/pull/526
+[#541]: https://github.com/keyorixhq/keyorix/pull/541
+[#543]: https://github.com/keyorixhq/keyorix/pull/543
+[#551]: https://github.com/keyorixhq/keyorix/pull/551
+[#557]: https://github.com/keyorixhq/keyorix/pull/557
+[#568]: https://github.com/keyorixhq/keyorix/pull/568
+[#588]: https://github.com/keyorixhq/keyorix/pull/588
+[#589]: https://github.com/keyorixhq/keyorix/pull/589
+[#593]: https://github.com/keyorixhq/keyorix/pull/593
+[#595]: https://github.com/keyorixhq/keyorix/pull/595
+[#596]: https://github.com/keyorixhq/keyorix/pull/596
+[#599]: https://github.com/keyorixhq/keyorix/pull/599
+[#600]: https://github.com/keyorixhq/keyorix/pull/600
+[#601]: https://github.com/keyorixhq/keyorix/pull/601
+[#606]: https://github.com/keyorixhq/keyorix/pull/606
+[#610]: https://github.com/keyorixhq/keyorix/pull/610
+[#612]: https://github.com/keyorixhq/keyorix/pull/612
+[#614]: https://github.com/keyorixhq/keyorix/pull/614
+[#616]: https://github.com/keyorixhq/keyorix/pull/616
+[#622]: https://github.com/keyorixhq/keyorix/pull/622
+[#646]: https://github.com/keyorixhq/keyorix/pull/646
+[#651]: https://github.com/keyorixhq/keyorix/pull/651
+[#656]: https://github.com/keyorixhq/keyorix/pull/656
+[#657]: https://github.com/keyorixhq/keyorix/pull/657
+[#659]: https://github.com/keyorixhq/keyorix/pull/659
+[#664]: https://github.com/keyorixhq/keyorix/pull/664
+[#668]: https://github.com/keyorixhq/keyorix/pull/668
+[#677]: https://github.com/keyorixhq/keyorix/pull/677
+[#678]: https://github.com/keyorixhq/keyorix/pull/678
+[#679]: https://github.com/keyorixhq/keyorix/pull/679
+[#680]: https://github.com/keyorixhq/keyorix/pull/680
+[#683]: https://github.com/keyorixhq/keyorix/pull/683
+[#684]: https://github.com/keyorixhq/keyorix/pull/684
+[#694]: https://github.com/keyorixhq/keyorix/pull/694
+[#695]: https://github.com/keyorixhq/keyorix/pull/695
+[#696]: https://github.com/keyorixhq/keyorix/pull/696
+[#697]: https://github.com/keyorixhq/keyorix/pull/697
+
+## v0.86.0 — 2026-06-27
+
+Deployment-wide rotation planning lands (ADR-053), personal access tokens gain a
+network allowlist (ADR-066), and a consolidated hardening batch closes an
+unauthenticated-bootstrap seizure gap plus several transport-parity and
+secrets-at-rest issues.
+
+### Added
+- **Deployment-wide rotation planning (ADR-053)** — `keyorix rotation plan
+  --all-projects` rolls up the rotation plan across every project in one view;
+  auto-rotation is now ordered by the secret dependency graph so dependents rotate
+  after what they depend on, and secret soft-delete/restore/purge cascades through
+  that same dependency graph. ([#503], [#505], [#507], [#508])
+- **Network (IP/CIDR) allowlist for personal access tokens (ADR-066)** — a PAT can now
+  be scoped to a set of source IPs/CIDRs; enforcement is closed over both HTTP and
+  gRPC so a restricted PAT can't bypass the allowlist through the transport that
+  doesn't check it. ([#502], [#504])
+- **Cached certificate expiry refreshes on rotation (ADR-056)** — a rotated
+  certificate's cached expiry no longer lags the real one. ([#509])
+- **Configurable timezone and off-hours band for anomaly detection** — the
+  `off_hours` anomaly rule now accounts for install timezone instead of assuming
+  UTC, and the live detection window is excluded from its own statistical/ML
+  baseline so a burst of activity can't suppress its own detection. ([#510], [#511])
+- **Supply-chain-integrity control in the compliance posture/matrix (ADR-062 §7)**.
+  ([#500])
+
+### Security
+- **Unauthenticated bootstrap seizure closed (HIGH)** — `POST /system/init` was
+  gated only by a "no users yet" check, so any network-reachable fresh instance
+  could be seized by whoever called it first. It now requires a bootstrap token
+  (constant-time compare; auto-generated and logged on first boot, or set via
+  `KEYORIX_BOOTSTRAP_TOKEN`), and enforces the password policy on the seeded admin.
+  ([#518])
+- **gRPC transport-parity gaps closed**: `ShareService.ListUserShares`/
+  `ListSharedSecrets` ignored a PAT's scope restriction over gRPC (enforced on the
+  equivalent HTTP routes); a PAT's IP allowlist is now enforced over gRPC as well,
+  closing a transport bypass. ([#504], [#506])
+- **KMS encryption-context binding for the wrapped KEK (AWS `EncryptionContext` /
+  GCP AAD)**, opt-in and default-equivalent, so installs sharing one CMK can't
+  unwrap each other's KEK (Azure unsupported — RSA-OAEP has no AAD). ([#516])
+- **Session tokens and service-account credentials now hashed at rest** instead of
+  stored in plaintext, alongside gating MFA/WebAuthn second-factor login on account
+  state and revoking impersonation sessions when the impersonating admin is
+  blocked. ([#516])
+- **Durable, opt-in on-disk SIEM spool with replay** — a sustained SIEM outage no
+  longer silently drops the off-box audit copy; `emitAudit` no longer swallows a
+  persist error, and forwarded SIEM payloads carry `entry_hash`/`prev_hash` for
+  downstream gap/forgery detection. ([#516])
+- **Break-glass grants are always bounded, even when `MaxTTL` is unconfigured**, and
+  the granted role is now locked under multi-party (M-of-K) approval so a second
+  approver can't race a change to what's being approved. ([#513], [#512])
+
+[#500]: https://github.com/keyorixhq/keyorix/pull/500
+[#502]: https://github.com/keyorixhq/keyorix/pull/502
+[#503]: https://github.com/keyorixhq/keyorix/pull/503
+[#504]: https://github.com/keyorixhq/keyorix/pull/504
+[#505]: https://github.com/keyorixhq/keyorix/pull/505
+[#506]: https://github.com/keyorixhq/keyorix/pull/506
+[#507]: https://github.com/keyorixhq/keyorix/pull/507
+[#508]: https://github.com/keyorixhq/keyorix/pull/508
+[#509]: https://github.com/keyorixhq/keyorix/pull/509
+[#510]: https://github.com/keyorixhq/keyorix/pull/510
+[#511]: https://github.com/keyorixhq/keyorix/pull/511
+[#512]: https://github.com/keyorixhq/keyorix/pull/512
+[#513]: https://github.com/keyorixhq/keyorix/pull/513
+[#516]: https://github.com/keyorixhq/keyorix/pull/516
+[#518]: https://github.com/keyorixhq/keyorix/pull/518
+
 ## v0.85.0 — 2026-06-24
 
 A proactive license-expiry reminder, plus break-glass and federated-auth boundary tests.
