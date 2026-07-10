@@ -18,15 +18,16 @@ var listCmd = &cobra.Command{
 func runList(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	if rc, ok := common.NewRemoteClient(); ok {
+		// rc.Get already strips the {"data":…} envelope, so decode the inner payload
+		// directly (a nested Data wrapper here would double-strip and always yield an
+		// empty list — the remote-mode bug this shape previously had).
 		var resp struct {
-			Data struct {
-				Projects []*models.Project `json:"projects"`
-			} `json:"data"`
+			Projects []*models.Project `json:"projects"`
 		}
 		if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
 			return fmt.Errorf("failed to list projects: %w", err)
 		}
-		printProjects(resp.Data.Projects)
+		printProjects(resp.Projects)
 		return nil
 	}
 

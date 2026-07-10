@@ -26,16 +26,15 @@ func runEnvironments(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	if rc, ok := common.NewRemoteClient(); ok {
+		// rc.Get already strips the {"data":…} envelope — decode the inner payload directly.
 		var resp struct {
-			Data struct {
-				Environments []*models.Environment `json:"environments"`
-			} `json:"data"`
+			Environments []*models.Environment `json:"environments"`
 		}
 		path := fmt.Sprintf("/api/v1/projects/%d/environments", projectID)
 		if err := rc.Get(ctx, path, &resp); err != nil {
 			return fmt.Errorf("failed to list environments: %w", err)
 		}
-		printEnvironments(resp.Data.Environments, projectID)
+		printEnvironments(resp.Environments, projectID)
 		return nil
 	}
 
