@@ -1,0 +1,126 @@
+package auth
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestRunLogin_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Set the API key via env so no interactive prompt is triggered.
+	t.Setenv("KEYORIX_API_KEY", "kx_env_secret")
+
+	require.NoError(t, loginCmd.Flags().Set("server", "https://keyorix.example.com"))
+	t.Cleanup(func() {
+		_ = loginCmd.Flags().Set("server", "")
+		loginCmd.Flags().Lookup("server").Changed = false
+	})
+
+	require.NoError(t, runLogin(loginCmd, nil))
+
+	// A keyorix.yaml should have been written.
+	_, err := os.Stat(filepath.Join(dir, "keyorix.yaml"))
+	assert.NoError(t, err, "keyorix.yaml should be created by runLogin")
+}
+
+func TestRunLogin_NoAPIKeyNoServer(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("KEYORIX_API_KEY", "")
+
+	err := runLogin(loginCmd, nil)
+	// Should fail: either "API key is required" or "server URL is required" depending
+	// on whether a config with remote settings exists.
+	require.Error(t, err)
+}
+
+func TestRunLogin_ServerFromExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Pre-write a keyorix.yaml with a remote section so runLogin can pick up the server.
+	yaml := "storage:\n  type: remote\n  remote:\n    base_url: https://keyorix.example.com\n    tls_verify: true\n    timeout_seconds: 30\n"
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
+
+	t.Setenv("KEYORIX_API_KEY", "kx_env_key")
+	require.NoError(t, runLogin(loginCmd, nil))
+}
+
+func TestRunLogout_WritesLocalConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Start with a remote config.
+	yaml := "storage:\n  type: remote\n  remote:\n    base_url: https://keyorix.example.com\n"
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
+
+	require.NoError(t, runLogout(logoutCmd, nil))
+
+	// Should have written a local-mode config.
+	data, err := os.ReadFile("keyorix.yaml")
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "local")
+}
+
+func TestRunLogout_NoExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// No keyorix.yaml — runLogout should fail because config.Load returns an error
+	// when no file is present.
+	err := runLogout(logoutCmd, nil)
+	require.Error(t, err)
+}
+
+func TestRunStatus_LocalStorage(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	yaml := "storage:\n  type: local\n  database:\n    path: ./secrets.db\n"
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
+
+	require.NoError(t, runStatus(statusCmd, nil))
+}
+
+func TestRunStatus_RemoteStorage(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	yaml := "storage:\n  type: remote\n  remote:\n    base_url: https://keyorix.example.com\n    api_key: kx_tok\n"
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
+
+	require.NoError(t, runStatus(statusCmd, nil))
+}
+
+func TestRunStatus_RemoteStorage_NoAPIKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	yaml := "storage:\n  type: remote\n  remote:\n    base_url: https://keyorix.example.com\n"
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
+
+	require.NoError(t, runStatus(statusCmd, nil))
+}
+
+func TestRunStatus_RemoteStorage_NilRemote(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// type=remote but no remote section — exercises the nil-remote branch.
+	yaml := "storage:\n  type: remote\n"
+	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
+
+	require.NoError(t, runStatus(statusCmd, nil))
+}
+
+func TestRunStatus_MissingConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// No config file — runStatus prints "No configuration found" and returns nil.
+	require.NoError(t, runStatus(statusCmd, nil))
+}
