@@ -19,10 +19,15 @@ type CLIConfig struct {
 	Connections   []ConnectionConfig `yaml:"connections"`    // Saved connections
 }
 
-// EmbeddedConfig holds configuration for embedded mode (local database)
+// EmbeddedConfig holds configuration for embedded mode (local database).
+//
+// Encryption in embedded mode is NOT configured here — it is driven by the main
+// config's storage.encryption block (config.Config.Storage.Encryption), wired for the
+// CLI in common.InitializeCoreService (wireSecretEncryption), exactly as the server
+// configures it. A separate CLI-only encryption knob here would be a second, divergent
+// source of truth that never actually took effect.
 type EmbeddedConfig struct {
-	DatabasePath string           `yaml:"database_path"`
-	Encryption   EncryptionConfig `yaml:"encryption"`
+	DatabasePath string `yaml:"database_path"`
 }
 
 // ClientConfig holds configuration for client mode (remote server)
@@ -46,12 +51,6 @@ func (a *AuthConfig) GetAPIKey() string {
 	return a.APIKey
 }
 
-// EncryptionConfig holds encryption settings for embedded mode
-type EncryptionConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	KeyPath string `yaml:"key_path"`
-}
-
 // ConnectionConfig represents a saved connection
 type ConnectionConfig struct {
 	Name     string     `yaml:"name"`
@@ -66,10 +65,6 @@ func DefaultCLIConfig() *CLIConfig {
 		Mode: "embedded",
 		Embedded: EmbeddedConfig{
 			DatabasePath: "./secrets.db",
-			Encryption: EncryptionConfig{
-				Enabled: true,
-				KeyPath: "./encryption.key",
-			},
 		},
 		Client: ClientConfig{
 			Timeout: "30s",
