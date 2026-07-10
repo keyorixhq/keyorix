@@ -8,8 +8,6 @@ package group
 
 import (
 	"context"
-	"io"
-	"os"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -23,45 +21,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
-
-// newGroupTestEnv spins up an in-memory SQLite store, seeds the schema, and
-// returns a configured *core.KeyorixCore.  The DB path written to a temp dir
-// is set as KEYORIX_CONFIG_PATH so common.InitializeCoreService picks it up.
-func newGroupTestEnv(t *testing.T) *core.KeyorixCore {
-	t.Helper()
-	require.NoError(t, i18n.Initialize(&config.Config{
-		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
-	}))
-
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Discard,
-	})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
-		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}, &models.SystemMetadata{},
-		&models.MachineIdentity{}, &models.MachineIdentityRole{},
-		&models.PersonalAccessToken{}, &models.Session{}, &models.AuditEvent{},
-	))
-	st := store.NewLocalStorage(db)
-	return core.NewKeyorixCore(st)
-}
-
-// captureOutput swaps os.Stdout to a pipe and returns whatever is printed
-// during fn's execution.
-func captureOutput(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	old := os.Stdout
-	os.Stdout = w
-	defer func() { os.Stdout = old }()
-	fn()
-	_ = w.Close()
-	out, _ := io.ReadAll(r)
-	return string(out)
-}
 
 // TestRunCreate_Success creates a group via runCreate using a pre-seeded core
 // that the command reaches through common.InitializeCoreService.
