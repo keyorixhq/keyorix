@@ -35,8 +35,14 @@ import (
 //   - dashboard.go     — Dashboard stats and activity feed
 //   - catalog.go       — Project / environment passthrough
 type KeyorixCore struct {
-	storage    storage.Storage
-	encryption *encryption.SecretEncryption
+	storage storage.Storage
+	// secretValueEncryptor encrypts secret VALUES at rest (ADR-004 envelope
+	// AES-256-GCM, AAD-bound per #94). nil = encryption disabled (plaintext at
+	// rest, dev/test only — the loud startup banner covers it). Wired from the
+	// initialised encryption.Service at server startup via SetSecretValueEncryptor.
+	// See secret_value_crypto.go for the fail-closed encrypt/decrypt helpers this
+	// backs. Replaces the former, never-wired encryption.SecretEncryption path.
+	secretValueEncryptor *encryption.Service
 	// authEncryptor reversibly encrypts auth secrets that cannot be hashed (the
 	// TOTP MFA shared secret). nil or disabled = passthrough (store plaintext),
 	// consistent with the rest of the product when encryption is off. Wired from
@@ -144,7 +150,7 @@ type KeyorixCore struct {
 	// once per process, not once per login attempt. Zero value is ready to use. See
 	// login_lockout.go.
 	loginLockoutUnsupportedWarnOnce sync.Once
-	auditForwarder               AuditForwarder
+	auditForwarder                  AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).
@@ -431,22 +437,12 @@ func (c *KeyorixCore) SetRecipientNotificationSink(s NotificationSink) {
 	c.recipientNotificationSink = s
 }
 
-// NewKeyorixCore creates a new instance of the core business logic.
+// NewKeyorixCore creates a new instance of the core business logic. Secret-value
+// encryption is off until SetSecretValueEncryptor wires an initialised service (the
+// server does this at startup when storage.encryption.enabled).
 func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 	return &KeyorixCore{
 		storage:        storage,
-		encryption:     nil,
-		now:            time.Now,
-		passwordPolicy: DefaultPasswordPolicy(),
-		auditStream:    newAuditBroker(),
-	}
-}
-
-// NewKeyorixCoreWithEncryption creates a new instance with encryption support.
-func NewKeyorixCoreWithEncryption(storage storage.Storage, enc *encryption.SecretEncryption) *KeyorixCore {
-	return &KeyorixCore{
-		storage:        storage,
-		encryption:     enc,
 		now:            time.Now,
 		passwordPolicy: DefaultPasswordPolicy(),
 		auditStream:    newAuditBroker(),
@@ -458,6 +454,22 @@ func NewKeyorixCoreWithEncryption(storage storage.Storage, enc *encryption.Secre
 // when encryption is enabled. nil/disabled = passthrough.
 func (c *KeyorixCore) SetAuthEncryptor(s *encryption.Service) {
 	c.authEncryptor = s
+}
+
+// SetSecretValueEncryptor wires the encryption service used to encrypt secret VALUES
+// at rest (ADR-004 envelope encryption). The server calls this at startup when
+// storage.encryption.enabled. Once wired, every new secret version is stored as
+// AAD-bound ciphertext and reads fail closed on an unavailable key (see
+// secret_value_crypto.go). nil = encryption disabled (plaintext at rest — dev/test).
+func (c *KeyorixCore) SetSecretValueEncryptor(s *encryption.Service) {
+	c.secretValueEncryptor = s
+}
+
+// SecretValueEncryptionActive reports whether secret values are being encrypted at
+// rest — i.e. an initialised, enabled encryptor is wired. The server uses this to
+// fail closed at startup when encryption is configured but did not actually engage.
+func (c *KeyorixCore) SecretValueEncryptionActive() bool {
+	return c.secretValueEncryptor != nil && c.secretValueEncryptor.IsEnabled() && c.secretValueEncryptor.IsInitialized()
 }
 
 // encryptAuthSecret reversibly encrypts plain, bound to aad (#94: MFASecretAAD /
@@ -474,9 +486,9 @@ func (c *KeyorixCore) encryptAuthSecret(plain string, aad []byte) (ct, meta []by
 // decryptAuthSecret reverses encryptAuthSecret. aad must be reconstructed from the
 // row's own identity, identically to how it was encrypted. Falls back to a legacy
 // nil-AAD decrypt for rows encrypted before #94 (Service.DecryptSecretWithAAD's own
-// AADVersion branch — see SecretEncryption for the same pattern on secret values);
-// the sweep upgrades those rows to AAD-bound in place. Passthrough when encryption is
-// off.
+// AADVersion branch — the same AAD-bound pattern secret_value_crypto.go applies to
+// secret values); the sweep upgrades those rows to AAD-bound in place. Passthrough
+// when encryption is off.
 func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte, aad []byte) (string, error) {
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return string(ct), nil

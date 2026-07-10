@@ -203,14 +203,15 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 	if err == nil && latest != nil && latest.VersionNumber == targetVersion {
 		return nil, fmt.Errorf("version %d is already the current version", targetVersion)
 	}
-	var val []byte
-	if c.encryption != nil {
-		val, err = c.encryption.RetrieveSecret(version.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read version %d: %w", targetVersion, err)
-		}
-	} else {
-		val = version.EncryptedValue
+	// Decrypt the historical version's value to re-instate it. The parent node is
+	// needed to reconstruct the at-rest AAD (secretID:projectID:versionNumber).
+	node, err := c.storage.GetSecret(ctx, secretID)
+	if err != nil {
+		return nil, fmt.Errorf("secret not found: %w", err)
+	}
+	val, err := c.decryptVersionValue(node, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read version %d: %w", targetVersion, err)
 	}
 	secret, err := c.RotateSecret(ctx, secretID, val, actorName)
 	if err != nil {
@@ -257,8 +258,5 @@ func (c *KeyorixCore) readVersionValue(ctx context.Context, secret *models.Secre
 		// authorized read.
 		_, _ = c.storage.TryIncrementSecretReadCount(ctx, version.ID, *secret.MaxReads)
 	}
-	if c.encryption != nil {
-		return c.encryption.RetrieveSecret(version.ID)
-	}
-	return version.EncryptedValue, nil
+	return c.decryptVersionValue(secret, version)
 }

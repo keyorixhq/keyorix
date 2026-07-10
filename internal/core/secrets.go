@@ -338,13 +338,7 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	// auth_bootstrap.go, encryption/auth_encryption.go).
 	valueUnchanged := false
 	if latestVersion, verr := c.storage.GetLatestSecretVersion(ctx, id); verr == nil && latestVersion != nil {
-		var currentValue []byte
-		var rerr error
-		if c.encryption != nil {
-			currentValue, rerr = c.encryption.RetrieveSecret(latestVersion.ID)
-		} else {
-			currentValue = latestVersion.EncryptedValue
-		}
+		currentValue, rerr := c.decryptVersionValue(secret, latestVersion)
 		if rerr == nil && subtle.ConstantTimeCompare(currentValue, newValue) == 1 {
 			valueUnchanged = true
 		}

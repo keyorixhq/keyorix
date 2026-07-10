@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
@@ -88,6 +90,15 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 	// error we leave delivery unset — core then falls back to out-of-band (returns
 	// the link), which is exactly what a CLI admin wants anyway.
 	svc := core.NewKeyorixCore(storageImpl)
+
+	// Wire at-rest secret-value encryption for direct-storage (embedded) mode, so a
+	// CLI `secret create/rotate` encrypts exactly like the server does instead of
+	// writing plaintext into the same database. Fail-closed: an encryption misconfig
+	// aborts the command rather than silently degrading to plaintext.
+	if err := wireSecretEncryption(svc, cfg); err != nil {
+		return nil, err
+	}
+
 	svc.SetSetupTokenTTL(cfg.CredentialDelivery.GetSetupTokenTTL())
 	cd := cfg.CredentialDelivery
 	if deliverer, derr := delivery.New(cd.DeliveryConfig()); derr == nil {
@@ -96,6 +107,56 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 		svc.SetCredentialDelivery(nil, cd.BaseURL)
 	}
 	return svc, nil
+}
+
+// wireSecretEncryption initializes at-rest secret-value encryption for a CLI command
+// that has DIRECT storage access (local/postgres embedded mode) and wires it into the
+// core service. No-op when encryption is disabled or when storage.type is remote —
+// there the upstream server owns encryption and the CLI merely proxies, so encrypting
+// here would double-encrypt.
+//
+// It takes the SHARED key lock (#196): any number of short-lived CLI commands can run
+// concurrently, but every one is refused while a live server (holding the exclusive
+// lifetime lock) or an in-progress rotation holds the key directory — so an embedded
+// CLI write can never race a DEK that's being replaced. The lock and the in-memory DEK
+// are released when the short-lived CLI process exits.
+//
+// Fail-closed for a security product: if encryption is enabled but the key can't be
+// derived, locked, or the encryptor doesn't actually engage, the command errors rather
+// than writing (or reading) secret values in plaintext.
+func wireSecretEncryption(svc *core.KeyorixCore, cfg *config.Config) error {
+	if !cfg.Storage.Encryption.Enabled {
+		return nil
+	}
+	if cfg.Storage.Type == "remote" {
+		return nil // upstream server encrypts; the CLI proxies to it
+	}
+
+	providerType := cfg.Storage.Encryption.KeyProvider.Type
+	passphrase := strings.TrimSpace(os.Getenv("KEYORIX_MASTER_PASSWORD"))
+	if (providerType == "" || providerType == "password") && passphrase == "" {
+		return fmt.Errorf("storage.encryption is enabled but KEYORIX_MASTER_PASSWORD is not set; set it (or configure storage.encryption.key_provider) so the CLI can encrypt/decrypt secret values")
+	}
+
+	baseDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to resolve working directory for encryption key files: %w", err)
+	}
+	encSvc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+	if err := encSvc.Initialize(passphrase); err != nil {
+		return fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
+	}
+	if err := encSvc.AcquireSharedKeyLock(); err != nil {
+		encSvc.Shutdown()
+		return fmt.Errorf("%w — a live server or an in-progress rotation is using this key directory; use client mode, or stop it and retry", err)
+	}
+
+	svc.SetSecretValueEncryptor(encSvc)
+	svc.SetAuthEncryptor(encSvc)
+	if !svc.SecretValueEncryptionActive() {
+		return fmt.Errorf("storage.encryption is enabled but secret-value encryption did not engage; refusing to run to avoid storing secrets in plaintext")
+	}
+	return nil
 }
 
 // InitializeStorage builds a storage.Storage from the resolved configuration via

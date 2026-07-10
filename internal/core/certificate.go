@@ -68,12 +68,9 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 	// Decrypt WITHOUT touching the max-reads counter — inspecting public certificate
 	// metadata is not a value read. (readVersionValue is the counting path; this is
 	// deliberately the non-counting sibling.)
-	value := version.EncryptedValue
-	if c.encryption != nil {
-		value, err = c.encryption.RetrieveSecret(version.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read secret value: %w", err)
-		}
+	value, err := c.decryptVersionValue(secret, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read secret value: %w", err)
 	}
 
 	cert, err := parseLeafCertificate(value)
