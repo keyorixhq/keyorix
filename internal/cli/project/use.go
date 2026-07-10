@@ -26,18 +26,17 @@ func runUse(cmd *cobra.Command, args []string) error {
 
 	// Validate the project exists (remote or local).
 	if rc, ok := common.NewRemoteClient(); ok {
+		// rc.Get already strips the {"data":…} envelope — decode the inner payload directly.
 		var resp struct {
-			Data struct {
-				Projects []struct {
-					Name string `json:"name"`
-				} `json:"projects"`
-			} `json:"data"`
+			Projects []struct {
+				Name string `json:"name"`
+			} `json:"projects"`
 		}
 		if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
 			return fmt.Errorf("failed to list projects: %w", err)
 		}
 		found := false
-		for _, p := range resp.Data.Projects {
+		for _, p := range resp.Projects {
 			if p.Name == name {
 				found = true
 				break

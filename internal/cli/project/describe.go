@@ -42,22 +42,21 @@ func runDescribe(cmd *cobra.Command, args []string) error {
 }
 
 func describeViaRemote(ctx context.Context, rc *common.RemoteClient, name string) error {
-	// List projects to find the ID.
+	// List projects to find the ID. rc.Get already strips the {"data":…} envelope —
+	// decode the inner payload directly (a nested Data wrapper would double-strip).
 	var listResp struct {
-		Data struct {
-			Projects []struct {
-				ID          uint   `json:"id"`
-				Name        string `json:"name"`
-				Description string `json:"description"`
-			} `json:"projects"`
-		} `json:"data"`
+		Projects []struct {
+			ID          uint   `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"projects"`
 	}
 	if err := rc.Get(ctx, "/api/v1/projects", &listResp); err != nil {
 		return fmt.Errorf("failed to list projects: %w", err)
 	}
 	var projectID uint
 	var description string
-	for _, p := range listResp.Data.Projects {
+	for _, p := range listResp.Projects {
 		if p.Name == name {
 			projectID = p.ID
 			description = p.Description
@@ -70,16 +69,14 @@ func describeViaRemote(ctx context.Context, rc *common.RemoteClient, name string
 
 	// Environments.
 	var envResp struct {
-		Data struct {
-			Environments []*models.Environment `json:"environments"`
-		} `json:"data"`
+		Environments []*models.Environment `json:"environments"`
 	}
 	envPath := "/api/v1/projects/" + strconv.Itoa(int(projectID)) + "/environments"
 	if err := rc.Get(ctx, envPath, &envResp); err != nil {
 		return fmt.Errorf("failed to list environments: %w", err)
 	}
 
-	printProjectDetails(name, description, projectID, envResp.Data.Environments)
+	printProjectDetails(name, description, projectID, envResp.Environments)
 	return nil
 }
 

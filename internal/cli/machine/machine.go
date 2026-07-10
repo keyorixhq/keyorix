@@ -48,18 +48,17 @@ func resolveProjectContext(flagValue string) (string, uint, error) {
 	}
 	ctx := context.Background()
 	if rc, ok := common.NewRemoteClient(); ok {
+		// rc.Get already strips the {"data":…} envelope — decode the inner payload directly.
 		var resp struct {
-			Data struct {
-				Projects []struct {
-					ID   uint   `json:"id"`
-					Name string `json:"name"`
-				} `json:"projects"`
-			} `json:"data"`
+			Projects []struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"projects"`
 		}
 		if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
 			return "", 0, fmt.Errorf("failed to list projects: %w", err)
 		}
-		for _, p := range resp.Data.Projects {
+		for _, p := range resp.Projects {
 			if p.Name == name {
 				return name, p.ID, nil
 			}
@@ -85,16 +84,15 @@ func resolveProjectContext(flagValue string) (string, uint, error) {
 // fetchMachineIdentities lists a project's machine identities (remote or local).
 func fetchMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error) {
 	if rc, ok := common.NewRemoteClient(); ok {
+		// rc.Get already strips the {"data":…} envelope — decode the inner payload directly.
 		var resp struct {
-			Data struct {
-				MachineIdentities []*models.MachineIdentity `json:"machine_identities"`
-			} `json:"data"`
+			MachineIdentities []*models.MachineIdentity `json:"machine_identities"`
 		}
 		path := fmt.Sprintf("/api/v1/projects/%d/machine-identities", projectID)
 		if err := rc.Get(ctx, path, &resp); err != nil {
 			return nil, err
 		}
-		return resp.Data.MachineIdentities, nil
+		return resp.MachineIdentities, nil
 	}
 	svc, err := common.InitializeCoreService()
 	if err != nil {

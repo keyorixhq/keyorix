@@ -36,16 +36,15 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	if rc, ok := common.NewRemoteClient(); ok {
+		// rc.Get already strips the {"data":…} envelope — decode the inner payload directly.
 		var resp struct {
-			Data struct {
-				Environments []*models.Environment `json:"environments"`
-			} `json:"data"`
+			Environments []*models.Environment `json:"environments"`
 		}
 		path := fmt.Sprintf("/api/v1/projects/%d/environments", projectID)
 		if err := rc.Get(ctx, path, &resp); err != nil {
 			return fmt.Errorf("failed to list environments: %w", err)
 		}
-		printEnvironmentTable(resp.Data.Environments, name)
+		printEnvironmentTable(resp.Environments, name)
 		return nil
 	}
 
@@ -156,18 +155,17 @@ func resolveProjectContext(flagValue string) (string, uint, error) {
 	}
 	ctx := context.Background()
 	if rc, ok := common.NewRemoteClient(); ok {
+		// rc.Get already strips the {"data":…} envelope — decode the inner payload directly.
 		var resp struct {
-			Data struct {
-				Projects []struct {
-					ID   uint   `json:"id"`
-					Name string `json:"name"`
-				} `json:"projects"`
-			} `json:"data"`
+			Projects []struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"projects"`
 		}
 		if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
 			return "", 0, fmt.Errorf("failed to list projects: %w", err)
 		}
-		for _, p := range resp.Data.Projects {
+		for _, p := range resp.Projects {
 			if p.Name == name {
 				return name, p.ID, nil
 			}

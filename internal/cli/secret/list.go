@@ -68,19 +68,19 @@ func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	// ResolveProject ignores the error when nothing is set (project scope is optional for list).
 	projectName, _ := common.ResolveProject(listProjectName)
 	if projectName != "" {
+		// rc.Get already strips the {"data":…} envelope — decode the inner payload
+		// directly (a nested Data wrapper would double-strip and never match a project).
 		var resp struct {
-			Data struct {
-				Projects []struct {
-					ID   uint   `json:"id"`
-					Name string `json:"name"`
-				} `json:"projects"`
-			} `json:"data"`
+			Projects []struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"projects"`
 		}
 		if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
 			return fmt.Errorf("failed to list projects: %w", err)
 		}
 		var projectID uint
-		for _, p := range resp.Data.Projects {
+		for _, p := range resp.Projects {
 			if strings.EqualFold(p.Name, projectName) {
 				projectID = p.ID
 				break
