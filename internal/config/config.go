@@ -1707,7 +1707,11 @@ func validateAllowedOrigins(origins []string) error {
 	return nil
 }
 
-// Save saves the configuration to a YAML file.
+// Save saves the configuration to a YAML file. Mirrors Load's path handling:
+// an absolute path is rooted at its OWN directory (so the traversal guard
+// still applies, just against the right base) rather than being joined
+// against appRootDir ("."), which would silently write under the current
+// directory instead of the intended absolute location.
 func Save(path string, cfg *Config) error {
 	if path == "" {
 		path = filepath.Join(appRootDir, "keyorix.yaml")
@@ -1718,7 +1722,12 @@ func Save(path string, cfg *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := securefiles.SecureWriteFileSync(appRootDir, path, data, 0600); err != nil {
+	baseDir, writePath := appRootDir, path
+	if filepath.IsAbs(path) {
+		baseDir, writePath = filepath.Dir(path), filepath.Base(path)
+	}
+
+	if err := securefiles.SecureWriteFileSync(baseDir, writePath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file %q: %w", path, err)
 	}
 
