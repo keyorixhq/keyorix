@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/delivery"
@@ -72,11 +73,24 @@ func TestConcurrency_RequestPasswordReset_BurstIsThrottled(t *testing.T) {
 	close(start)
 	wg.Wait()
 
+	// RequestPasswordReset returns as soon as the throttle-check-and-deliver work is
+	// handed off to a detached background goroutine (#117: the caller must not block
+	// on delivery, or its latency becomes an account-enumeration side-channel). So
+	// wg.Wait() above only proves all 50 calls RETURNED, not that their background
+	// deliveries have run yet — poll instead of asserting immediately, or this test
+	// flakes under CPU pressure (the background goroutines simply haven't been
+	// scheduled yet when the assertion below would otherwise fire).
+	require.Eventually(t, func() bool { return fake.sent.Load() >= 1 }, 5*time.Second, 10*time.Millisecond,
+		"expected one reset email to be delivered once the throttle-serialized burst finishes")
+
 	// The 60s min-interval means at most one reset email can go out per burst that
 	// completes well inside that window — a burst of 50 concurrent requests must
-	// not fan out into 50 emails to the victim's inbox.
-	assert.Equal(t, int32(1), fake.sent.Load(),
+	// not fan out into 50 emails to the victim's inbox. Give the other 49
+	// (throttled, mutex-serialized) background goroutines a generous window to
+	// finish before asserting the count is stable, rather than racing them.
+	assert.Never(t, func() bool { return fake.sent.Load() > 1 }, 500*time.Millisecond, 10*time.Millisecond,
 		"a concurrent burst against one email must be throttled to a single delivery, not one per request")
+	assert.Equal(t, int32(1), fake.sent.Load())
 
 	// Defense in depth: exactly one active setup token exists for this subject —
 	// the DB state agrees with what was actually delivered.
