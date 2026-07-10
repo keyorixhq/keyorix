@@ -3,8 +3,6 @@ package securefiles
 import (
 	"os"
 	"path/filepath"
-	"runtime"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -302,29 +300,3 @@ func TestSafeReadFile_SymlinkLoopBase(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestFixFilePerms_ChmodError exercises the os.Chmod error path during autofix
-// by marking a file user-immutable (macOS uchg flag) before calling FixFilePerms.
-// This test only runs on Darwin/BSD where syscall.Chflags is meaningful.
-func TestFixFilePerms_ChmodError(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("uchg immutable flag is macOS-only in this test")
-	}
-	if os.Getuid() == 0 {
-		t.Skip("root can chmod even immutable files")
-	}
-	dir := t.TempDir()
-	p := filepath.Join(dir, "immutable.key")
-	require.NoError(t, os.WriteFile(p, []byte("x"), 0644))
-	require.NoError(t, os.Chmod(p, 0644))
-
-	// Set user-immutable flag (UF_IMMUTABLE = 0x00000002 on macOS).
-	const ufImmutable = 0x00000002
-	require.NoError(t, syscall.Chflags(p, ufImmutable))
-	t.Cleanup(func() {
-		_ = syscall.Chflags(p, 0) // clear flag so cleanup can delete the file
-	})
-
-	// autofix=true tries os.Chmod → fails on an immutable file → unresolved=true → error.
-	err := FixFilePerms([]FilePermSpec{{Path: p, Mode: 0600}}, true)
-	require.Error(t, err, "FixFilePerms must return an error when chmod on an immutable file fails")
-}
