@@ -29,7 +29,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.22.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
-	github.com/mattn/go-sqlite3 v1.14.22
+	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.23.2
