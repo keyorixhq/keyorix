@@ -1,6 +1,35 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestNewTestRunner(t *testing.T) {
+	tr := NewTestRunner(true, 5*time.Minute)
+	if !tr.verbose {
+		t.Error("expected verbose to be true")
+	}
+	if tr.timeout != 5*time.Minute {
+		t.Errorf("timeout = %v, want %v", tr.timeout, 5*time.Minute)
+	}
+}
+
+// TestRunTestSuite_RejectsInvalidPathBeforeExec proves runTestSuite's own
+// validateTestPath gate (#129 notes this call site had none originally) short
+// -circuits BEFORE reaching exec.Command — an invalid path must error out
+// immediately rather than ever being handed to `go test` as an argument.
+func TestRunTestSuite_RejectsInvalidPathBeforeExec(t *testing.T) {
+	tr := NewTestRunner(false, time.Second)
+	err := tr.runTestSuite("/etc/passwd", "malicious suite")
+	if err == nil {
+		t.Fatal("expected an error for a path outside the allowlist, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid test path") {
+		t.Errorf("error = %v, want it to identify the path as invalid (not a test-execution failure)", err)
+	}
+}
 
 // #129: validateTestPath used to check the "./" prefix on the ALREADY-CLEANED path
 // (filepath.Clean strips a leading "./"), so it rejected every legitimate input

@@ -11,7 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/breakglass"
 	bundlecli "github.com/keyorixhq/keyorix/internal/cli/bundle"
 	"github.com/keyorixhq/keyorix/internal/cli/compliance"
-	"github.com/keyorixhq/keyorix/internal/cli/config"
+	cliconfigcmd "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
 	"github.com/keyorixhq/keyorix/internal/cli/dynamic"
 	"github.com/keyorixhq/keyorix/internal/cli/encryption"
@@ -36,6 +36,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/system"
 	trustcli "github.com/keyorixhq/keyorix/internal/cli/trust"
 	"github.com/keyorixhq/keyorix/internal/cli/user"
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/spf13/cobra"
 )
@@ -64,7 +65,7 @@ func init() {
 	rootCmd.AddCommand(request.RequestCmd)
 	rootCmd.AddCommand(share.ShareCmd)
 	rootCmd.AddCommand(auth.AuthCmd)
-	rootCmd.AddCommand(config.ConfigCmd)
+	rootCmd.AddCommand(cliconfigcmd.ConfigCmd)
 	rootCmd.AddCommand(connect.ConnectCmd)
 	rootCmd.AddCommand(encryption.EncryptionCmd)
 	rootCmd.AddCommand(rbac.RbacCmd)
@@ -85,10 +86,29 @@ func init() {
 	rootCmd.AddCommand(licensecli.LicenseCmd)
 }
 
+// bootstrapI18n initializes i18n with the user's actual configured locale
+// (keyorix.yaml's locale.language), not a hardcoded English default.
+// i18n.Initialize is guarded by a process-wide sync.Once, so whichever call
+// reaches it FIRST wins for the life of the process — this bootstrap call
+// must therefore carry the real config up front, or every subcommand's
+// later, correctly-configured call (common.InitializeCoreService ->
+// i18n.Initialize(cfg)) becomes a silent no-op and the CLI can never honor a
+// non-English locale setting. Falls back to English only when no config file
+// can be loaded (e.g. first run, or a command that never touches storage),
+// mirroring common.InitializeCoreService's own no-config fallback.
+func bootstrapI18n() error {
+	cfg, err := config.Load("")
+	if err != nil {
+		cfg = &config.Config{
+			Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+		}
+	}
+	return i18n.Initialize(cfg)
+}
+
 // Execute runs the root command
 func Execute() {
-	// Initialize i18n system for CLI
-	if err := i18n.InitializeForTesting(); err != nil {
+	if err := bootstrapI18n(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize i18n: %v\n", err)
 		// Continue anyway - don't fail completely
 	}
