@@ -15,23 +15,30 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// storeSecretVersion writes a new version row for the given secret.
-// Routes through the encryption service if wired; otherwise stores raw bytes.
-// Used by CreateSecret, UpdateSecret, and RotateSecret.
+// storeSecretVersion writes a new version row for the given secret. The value is
+// encrypted at rest (AAD-bound AES-256-GCM) when a secret-value encryptor is wired,
+// otherwise stored as plaintext (encryption disabled — dev/test). Either way the row
+// is persisted through the storage backend, so this works uniformly for local,
+// Postgres, and remote (ADR-049) storage. Fail-closed: an encryption error aborts the
+// write; the value is never silently downgraded to plaintext. Used by CreateSecret,
+// UpdateSecret, and RotateSecret.
 func (c *KeyorixCore) storeSecretVersion(ctx context.Context, secret *models.SecretNode, value []byte, versionNumber int) error {
-	if c.encryption != nil {
-		_, err := c.encryption.StoreSecret(secret, value)
+	storedValue, metadata, err := c.encryptVersionValue(secret, value, versionNumber)
+	if err != nil {
 		return err
+	}
+	if metadata == nil {
+		metadata = []byte("{}") // plaintext row marker (encryption disabled)
 	}
 	version := &models.SecretVersion{
 		SecretNodeID:       secret.ID,
 		VersionNumber:      versionNumber,
-		EncryptedValue:     value,
-		EncryptionMetadata: []byte("{}"),
+		EncryptedValue:     storedValue,
+		EncryptionMetadata: metadata,
 		ReadCount:          0,
 		CreatedAt:          time.Now(),
 	}
-	_, err := c.storage.CreateSecretVersion(ctx, version)
+	_, err = c.storage.CreateSecretVersion(ctx, version)
 	return err
 }
 
@@ -42,11 +49,9 @@ func (c *KeyorixCore) storeSecretVersion(ctx context.Context, secret *models.Sec
 const maxRotateVersionAttempts = 20
 
 // isVersionConflict reports whether err is the sentinel storage.ErrDuplicateSecretVersion
-// (the non-encrypted storeSecretVersion path, which wraps it explicitly) or looks like a
-// raw unique-constraint violation from either backing DB driver (the encrypted path's
-// SecretEncryption.StoreSecret writes its version row directly inside its own
-// transaction, bypassing the storage-layer wrapper that attaches the sentinel — so the
-// underlying driver error text is matched directly here too, mirroring
+// (which storeSecretVersion's storage write wraps explicitly) or looks like a raw
+// unique-constraint violation from either backing DB driver (matched directly too, as
+// defense-in-depth against a backend that surfaces the raw driver error, mirroring
 // store.isUniqueViolation).
 func isVersionConflict(err error) bool {
 	if err == nil {

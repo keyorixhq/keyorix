@@ -297,8 +297,18 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	if encSvc != nil {
-		// Wire the initialised encryption service for reversibly-encrypted auth
-		// secrets (the TOTP MFA secret, which cannot be hashed).
+		// Wire the initialised encryption service for secret VALUES at rest (ADR-004
+		// envelope encryption). Without this, storage.encryption.enabled would derive a
+		// KEK but never actually encrypt any secret value — every secret would persist as
+		// plaintext. Fail closed immediately after wiring: if encryption was configured
+		// but did not actually engage, refuse to start rather than silently store
+		// plaintext in a secrets manager.
+		coreService.SetSecretValueEncryptor(encSvc)
+		if !coreService.SecretValueEncryptionActive() {
+			return nil, nil, fmt.Errorf("storage.encryption is enabled but secret-value encryption did not engage (encryptor not initialised) — refusing to start to avoid storing secrets in plaintext")
+		}
+		// Wire the same initialised service for reversibly-encrypted auth secrets (the
+		// TOTP MFA secret, which cannot be hashed).
 		coreService.SetAuthEncryptor(encSvc)
 		// Derive the audit-checkpoint signing key from the DEK (ADR-029) so signed
 		// checkpoints — and on-box truncation detection — are available. Unavailable

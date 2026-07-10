@@ -102,12 +102,9 @@ func (c *KeyorixCore) certNotAfter(ctx context.Context, secret *models.SecretNod
 	if err != nil {
 		return time.Time{}, false
 	}
-	value := version.EncryptedValue
-	if c.encryption != nil {
-		value, err = c.encryption.RetrieveSecret(version.ID)
-		if err != nil {
-			return time.Time{}, false
-		}
+	value, err := c.decryptVersionValue(secret, version)
+	if err != nil {
+		return time.Time{}, false
 	}
 	cert, err := parseLeafCertificate(value)
 	if err != nil {
