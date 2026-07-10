@@ -19,8 +19,7 @@ import (
 func TestWebhook_RefuseRedirect_CrossHost(t *testing.T) {
 	// Because refuseRedirect is unexported but accessible within the package,
 	// we test it via the http.Client's CheckRedirect path.
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			// Redirect to a different host (use the test server's own URL but with a
 			// tweaked hostname to look like a cross-host redirect — we can't actually
