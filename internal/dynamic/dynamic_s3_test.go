@@ -69,7 +69,7 @@ func TestRealK8sMinter_MintToken_Success(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/serviceaccounts/my-app/token")
 		assert.Equal(t, "Bearer test-bearer", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":{"token":"k8s-tok","expirationTimestamp":%q}}`, expStr)
+		_, _ = fmt.Fprintf(w, `{"status":{"token":"k8s-tok","expirationTimestamp":%q}}`, expStr)
 	})
 	m, srv := buildK8sMinter(t, handler)
 	defer srv.Close()
@@ -86,7 +86,7 @@ func TestRealK8sMinter_MintToken_WithBound(t *testing.T) {
 	var gotBody map[string]any
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		fmt.Fprintf(w, `{"status":{"token":"tok2","expirationTimestamp":"2031-01-01T00:00:00Z"}}`)
+		_, _ = fmt.Fprintf(w, `{"status":{"token":"tok2","expirationTimestamp":"2031-01-01T00:00:00Z"}}`)
 	})
 	m, srv := buildK8sMinter(t, handler)
 	defer srv.Close()
@@ -141,7 +141,7 @@ func TestRealK8sMinter_MintToken_ServerError(t *testing.T) {
 
 func TestRealK8sMinter_MintToken_EmptyToken(t *testing.T) {
 	m, srv := buildK8sMinter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"status":{"token":""}}`)
+		_, _ = fmt.Fprint(w, `{"status":{"token":""}}`)
 	}))
 	defer srv.Close()
 	_, _, err := m.mintToken(context.Background(), "ns", "sa", nil, time.Minute, nil)
@@ -151,7 +151,7 @@ func TestRealK8sMinter_MintToken_EmptyToken(t *testing.T) {
 
 func TestRealK8sMinter_MintToken_BadJSON(t *testing.T) {
 	m, srv := buildK8sMinter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `not-json`)
+		_, _ = fmt.Fprint(w, `not-json`)
 	}))
 	defer srv.Close()
 	_, _, err := m.mintToken(context.Background(), "ns", "sa", nil, time.Minute, nil)
@@ -176,7 +176,7 @@ func TestRealK8sMinter_CreateBoundSecret_Success(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Contains(t, r.URL.Path, "/secrets")
-		fmt.Fprint(w, `{"metadata":{"uid":"uid-abc-123"}}`)
+		_, _ = fmt.Fprint(w, `{"metadata":{"uid":"uid-abc-123"}}`)
 	})
 	m, srv := buildK8sMinter(t, handler)
 	defer srv.Close()
@@ -208,7 +208,7 @@ func TestRealK8sMinter_CreateBoundSecret_ServerError(t *testing.T) {
 
 func TestRealK8sMinter_CreateBoundSecret_EmptyUID(t *testing.T) {
 	m, srv := buildK8sMinter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"metadata":{"uid":""}}`)
+		_, _ = fmt.Fprint(w, `{"metadata":{"uid":""}}`)
 	}))
 	defer srv.Close()
 	_, err := m.createBoundSecret(context.Background(), "ns", "name")
@@ -218,7 +218,7 @@ func TestRealK8sMinter_CreateBoundSecret_EmptyUID(t *testing.T) {
 
 func TestRealK8sMinter_CreateBoundSecret_BadJSON(t *testing.T) {
 	m, srv := buildK8sMinter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{bad`)
+		_, _ = fmt.Fprint(w, `{bad`)
 	}))
 	defer srv.Close()
 	_, err := m.createBoundSecret(context.Background(), "ns", "name")
@@ -580,7 +580,7 @@ func handleRESP(conn net.Conn) {
 		}
 		// Parse the array count.
 		n := 0
-		fmt.Sscanf(line[1:], "%d", &n)
+		_, _ = fmt.Sscanf(line[1:], "%d", &n)
 		args := make([]string, 0, n)
 		for i := 0; i < n; i++ {
 			// Bulk string: $<len>\r\n<data>\r\n
@@ -589,7 +589,7 @@ func handleRESP(conn net.Conn) {
 				return
 			}
 			var l int
-			fmt.Sscanf(strings.TrimSpace(hdr)[1:], "%d", &l)
+			_, _ = fmt.Sscanf(strings.TrimSpace(hdr)[1:], "%d", &l)
 			data := make([]byte, l+2) // +2 for \r\n
 			_, err = io.ReadFull(r, data)
 			if err != nil {
@@ -689,7 +689,7 @@ func handleRESPWithACLError(conn net.Conn) {
 			continue
 		}
 		n := 0
-		fmt.Sscanf(line[1:], "%d", &n)
+		_, _ = fmt.Sscanf(line[1:], "%d", &n)
 		args := make([]string, 0, n)
 		for i := 0; i < n; i++ {
 			hdr, err := r.ReadString('\n')
@@ -697,7 +697,7 @@ func handleRESPWithACLError(conn net.Conn) {
 				return
 			}
 			var l int
-			fmt.Sscanf(strings.TrimSpace(hdr)[1:], "%d", &l)
+			_, _ = fmt.Sscanf(strings.TrimSpace(hdr)[1:], "%d", &l)
 			data := make([]byte, l+2)
 			_, err = io.ReadFull(r, data)
 			if err != nil {
@@ -1039,7 +1039,7 @@ func TestRealGCPMinter_MintAccessToken_Error(t *testing.T) {
 	// The server returns a 403 so Do() returns an error.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(w, `{"error":{"code":403,"message":"permission denied"}}`)
+		_, _ = fmt.Fprint(w, `{"error":{"code":403,"message":"permission denied"}}`)
 	}))
 	defer srv.Close()
 
@@ -1059,7 +1059,7 @@ func TestRealGCPMinter_MintAccessToken_Success(t *testing.T) {
 	expStr := "2030-06-01T00:00:00Z"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"accessToken":"gcp-tok","expireTime":%q}`, expStr)
+		_, _ = fmt.Fprintf(w, `{"accessToken":"gcp-tok","expireTime":%q}`, expStr)
 	}))
 	defer srv.Close()
 
