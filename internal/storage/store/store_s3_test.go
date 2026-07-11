@@ -1309,6 +1309,7 @@ func TestGetAuditLogs_AllFilters(t *testing.T) {
 	events, total, err = ls.GetAuditLogs(ctx, &storage.AuditFilter{ProjectID: &ptrP})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
+	assert.Len(t, events, 2)
 
 	// Filter by SecretID.
 	events, _, err = ls.GetAuditLogs(ctx, &storage.AuditFilter{SecretID: &ptrS})
