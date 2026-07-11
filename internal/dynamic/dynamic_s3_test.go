@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	iamcredentials "google.golang.org/api/iamcredentials/v1"
+	"google.golang.org/api/option"
 )
 
 // ──────────────────────────── realK8sMinter via httptest ──────────────────────
@@ -1042,7 +1043,7 @@ func TestRealGCPMinter_MintAccessToken_Error(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	svc, err := iamcredentials.New(srv.Client())
+	svc, err := iamcredentials.NewService(context.Background(), option.WithHTTPClient(srv.Client()))
 	require.NoError(t, err)
 	svc.BasePath = srv.URL + "/"
 
@@ -1062,7 +1063,7 @@ func TestRealGCPMinter_MintAccessToken_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	svc, err := iamcredentials.New(srv.Client())
+	svc, err := iamcredentials.NewService(context.Background(), option.WithHTTPClient(srv.Client()))
 	require.NoError(t, err)
 	svc.BasePath = srv.URL + "/"
 

@@ -329,10 +329,10 @@ func TestDoImport_SkipExistingS3(t *testing.T) {
 
 func TestRunRender_ToFileS3(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/secrets":
+		switch r.URL.Path {
+		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":1,"Name":"db-pass"}]}}`))
-		case r.URL.Path == "/api/v1/secrets/1":
+		case "/api/v1/secrets/1":
 			_, _ = w.Write([]byte(`{"data":{"value":"s3cr3t"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -361,10 +361,10 @@ func TestRunRender_ToFileS3(t *testing.T) {
 
 func TestRunRender_ToStdout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/secrets":
+		switch r.URL.Path {
+		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":1,"Name":"db-pass"}]}}`))
-		case r.URL.Path == "/api/v1/secrets/1":
+		case "/api/v1/secrets/1":
 			_, _ = w.Write([]byte(`{"data":{"value":"s3cr3t"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
