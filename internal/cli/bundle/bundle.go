@@ -45,6 +45,13 @@ var (
 	importLicense   string
 )
 
+// defaultRegistryFn is the function used to load the trusted key registry for
+// verify and import commands. It defaults to trust.DefaultRegistry, which reads
+// the keys embedded at build time via -ldflags. Tests may override it to inject
+// a registry with known keys so the full command path can be exercised without
+// a release build.
+var defaultRegistryFn = trust.DefaultRegistry
+
 var buildCmd = &cobra.Command{
 	Use:          "build",
 	Short:        "Assemble and sign an update bundle from a directory of release artifacts",
@@ -103,7 +110,7 @@ var verifyCmd = &cobra.Command{
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE: func(_ *cobra.Command, args []string) error {
-		reg, err := trust.DefaultRegistry()
+		reg, err := defaultRegistryFn()
 		if err != nil {
 			return fmt.Errorf("load trusted keys: %w", err)
 		}
@@ -146,7 +153,7 @@ var importCmd = &cobra.Command{
 		if importDest == "" {
 			return fmt.Errorf("--dest is required")
 		}
-		reg, err := trust.DefaultRegistry()
+		reg, err := defaultRegistryFn()
 		if err != nil {
 			return fmt.Errorf("load trusted keys: %w", err)
 		}
