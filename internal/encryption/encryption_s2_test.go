@@ -196,23 +196,107 @@ func TestAuthEncryption_RetrieveAPIToken_NotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAuthEncryption_Enabled_StoreAndRetrieveAPIToken(t *testing.T) {
+// TestAuthEncryption_Enabled_Suite shares one setupS2AuthEncEnabled call across subtests
+// to avoid repeated expensive PBKDF2 derivations.
+func TestAuthEncryption_Enabled_Suite(t *testing.T) {
 	db := setupS2DB(t)
 	ae := setupS2AuthEncEnabled(t, db)
 
-	apiToken := &models.APIToken{
-		ClientID:  2,
-		Scope:     "write",
-		CreatedAt: time.Now(),
-	}
-	plain := "api-token-enabled-value"
+	t.Run("StoreAndRetrieveAPIToken", func(t *testing.T) {
+		apiToken := &models.APIToken{
+			ClientID:  2,
+			Scope:     "write",
+			CreatedAt: time.Now(),
+		}
+		plain := "api-token-enabled-value"
+		require.NoError(t, ae.StoreEncryptedAPIToken(apiToken, plain))
+		assert.NotZero(t, apiToken.ID)
+		retrieved, err := ae.RetrieveAPIToken(apiToken.ID)
+		require.NoError(t, err)
+		assert.Equal(t, plain, retrieved)
+	})
 
-	require.NoError(t, ae.StoreEncryptedAPIToken(apiToken, plain))
-	assert.NotZero(t, apiToken.ID)
+	t.Run("SessionTokenRoundTrip", func(t *testing.T) {
+		plain := "session-token-enabled-path"
+		enc, meta, err := ae.EncryptSessionToken(plain)
+		require.NoError(t, err)
+		assert.NotEqual(t, plain, string(enc), "token must be encrypted")
+		assert.NotNil(t, meta)
+		dec, err := ae.DecryptSessionToken(enc, meta)
+		require.NoError(t, err)
+		assert.Equal(t, plain, dec)
+	})
 
-	retrieved, err := ae.RetrieveAPIToken(apiToken.ID)
-	require.NoError(t, err)
-	assert.Equal(t, plain, retrieved)
+	t.Run("APITokenRoundTrip", func(t *testing.T) {
+		plain := "api-token-enabled-path"
+		enc, meta, err := ae.EncryptAPIToken(plain)
+		require.NoError(t, err)
+		assert.NotEqual(t, plain, string(enc))
+		dec, err := ae.DecryptAPIToken(enc, meta)
+		require.NoError(t, err)
+		assert.Equal(t, plain, dec)
+	})
+
+	t.Run("PasswordResetTokenRoundTrip", func(t *testing.T) {
+		plain := "reset-token-enabled-path"
+		enc, meta, err := ae.EncryptPasswordResetToken(plain)
+		require.NoError(t, err)
+		dec, err := ae.DecryptPasswordResetToken(enc, meta)
+		require.NoError(t, err)
+		assert.Equal(t, plain, dec)
+	})
+
+	t.Run("GetAuthEncryptionStatus", func(t *testing.T) {
+		status := ae.GetAuthEncryptionStatus()
+		assert.Equal(t, true, status["enabled"])
+		assert.Equal(t, true, status["initialized"])
+		assert.NotEmpty(t, status["key_version"])
+	})
+
+	t.Run("ValidateEncryptedToken", func(t *testing.T) {
+		plain := "valid-session-token"
+		enc, meta, err := ae.EncryptSessionToken(plain)
+		require.NoError(t, err)
+		ok, err := ae.ValidateEncryptedToken(enc, meta, plain)
+		require.NoError(t, err)
+		assert.True(t, ok)
+		ok, err = ae.ValidateEncryptedToken(enc, meta, "wrong-token")
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("ValidateEncryptedToken_DecryptError", func(t *testing.T) {
+		_, err := ae.ValidateEncryptedToken([]byte("not-valid-ciphertext"), nil, "token")
+		require.Error(t, err)
+	})
+
+	t.Run("StoreAndRetrieveSession", func(t *testing.T) {
+		expiresAt := time.Now().Add(time.Hour)
+		sess := &models.Session{
+			UserID:    42,
+			CreatedAt: time.Now(),
+			ExpiresAt: &expiresAt,
+		}
+		plain := "session-token-for-enabled"
+		require.NoError(t, ae.StoreEncryptedSession(sess, plain))
+		retrieved, err := ae.RetrieveSessionToken(sess.ID)
+		require.NoError(t, err)
+		assert.Equal(t, plain, retrieved)
+	})
+
+	t.Run("StoreAndRetrieveAPIClient", func(t *testing.T) {
+		client := &models.APIClient{
+			Name:      "enabled-client",
+			ClientID:  "client-enabled-1",
+			IsActive:  true,
+			CreatedAt: time.Now(),
+		}
+		plain := "enabled-client-secret"
+		require.NoError(t, ae.StoreEncryptedAPIClient(client, plain))
+		retrieved, err := ae.RetrieveAPIClientSecret("client-enabled-1")
+		require.NoError(t, err)
+		assert.Equal(t, plain, retrieved)
+	})
 }
 
 // --- AuthEncryption: GetAuthEncryptionStatus ---
@@ -242,11 +326,25 @@ func newInitializedKeyManager(t *testing.T) *KeyManager {
 	return svc.keyManager
 }
 
-func TestKeyManager_ValidateKeyFiles_AfterInit(t *testing.T) {
+// TestKeyManager_Initialized_Suite shares one newInitializedKeyManager call across
+// subtests to avoid redundant PBKDF2 derivations.
+func TestKeyManager_Initialized_Suite(t *testing.T) {
 	km := newInitializedKeyManager(t)
-	// After successful init the files exist with 0600; validate must succeed.
-	err := km.ValidateKeyFiles()
-	require.NoError(t, err)
+
+	t.Run("ValidateKeyFiles", func(t *testing.T) {
+		// After successful init the files exist with 0600; validate must succeed.
+		require.NoError(t, km.ValidateKeyFiles())
+	})
+
+	t.Run("FixKeyFilePermissions", func(t *testing.T) {
+		// Loosen permissions so FixKeyFilePermissions has something to fix.
+		require.NoError(t, os.Chmod(filepath.Join(km.baseDir, km.dekPath), 0644))
+		require.NoError(t, os.Chmod(filepath.Join(km.baseDir, km.saltPath), 0644))
+		require.NoError(t, km.FixKeyFilePermissions())
+		info, err := os.Stat(filepath.Join(km.baseDir, km.dekPath))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	})
 }
 
 func TestKeyManager_ValidateKeyFiles_MissingFiles(t *testing.T) {
@@ -258,20 +356,6 @@ func TestKeyManager_ValidateKeyFiles_MissingFiles(t *testing.T) {
 	}
 	err := km.ValidateKeyFiles()
 	require.Error(t, err)
-}
-
-func TestKeyManager_FixKeyFilePermissions_AfterInit(t *testing.T) {
-	km := newInitializedKeyManager(t)
-
-	// Loosen permissions so FixKeyFilePermissions has something to fix.
-	require.NoError(t, os.Chmod(filepath.Join(km.baseDir, km.dekPath), 0644))
-	require.NoError(t, os.Chmod(filepath.Join(km.baseDir, km.saltPath), 0644))
-
-	require.NoError(t, km.FixKeyFilePermissions())
-
-	info, err := os.Stat(filepath.Join(km.baseDir, km.dekPath))
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
 }
 
 // --- NewKeyProviderFromConfig branches ---
@@ -382,128 +466,12 @@ func TestNewKeyProviderFromConfig_AzureKMS_WithEncryptionContext_Rejected(t *tes
 	assert.Contains(t, err.Error(), "azure-kms")
 }
 
-// --- AuthEncryption with encryption ENABLED ---
-
-func TestAuthEncryption_Enabled_SessionTokenRoundTrip(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	plain := "session-token-enabled-path"
-	enc, meta, err := ae.EncryptSessionToken(plain)
-	require.NoError(t, err)
-	assert.NotEqual(t, plain, string(enc), "token must be encrypted")
-	assert.NotNil(t, meta)
-
-	dec, err := ae.DecryptSessionToken(enc, meta)
-	require.NoError(t, err)
-	assert.Equal(t, plain, dec)
-}
-
-func TestAuthEncryption_Enabled_APITokenRoundTrip(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	plain := "api-token-enabled-path"
-	enc, meta, err := ae.EncryptAPIToken(plain)
-	require.NoError(t, err)
-	assert.NotEqual(t, plain, string(enc))
-
-	dec, err := ae.DecryptAPIToken(enc, meta)
-	require.NoError(t, err)
-	assert.Equal(t, plain, dec)
-}
-
-func TestAuthEncryption_Enabled_PasswordResetTokenRoundTrip(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	plain := "reset-token-enabled-path"
-	enc, meta, err := ae.EncryptPasswordResetToken(plain)
-	require.NoError(t, err)
-
-	dec, err := ae.DecryptPasswordResetToken(enc, meta)
-	require.NoError(t, err)
-	assert.Equal(t, plain, dec)
-}
-
-func TestAuthEncryption_Enabled_GetAuthEncryptionStatus(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	status := ae.GetAuthEncryptionStatus()
-	assert.Equal(t, true, status["enabled"])
-	assert.Equal(t, true, status["initialized"])
-	assert.NotEmpty(t, status["key_version"])
-}
-
-func TestAuthEncryption_Enabled_ValidateEncryptedToken(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	plain := "valid-session-token"
-	enc, meta, err := ae.EncryptSessionToken(plain)
-	require.NoError(t, err)
-
-	ok, err := ae.ValidateEncryptedToken(enc, meta, plain)
-	require.NoError(t, err)
-	assert.True(t, ok)
-
-	ok, err = ae.ValidateEncryptedToken(enc, meta, "wrong-token")
-	require.NoError(t, err)
-	assert.False(t, ok)
-}
-
-func TestAuthEncryption_ValidateEncryptedToken_DecryptError(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	// Pass garbage ciphertext — decrypt must fail.
-	_, err := ae.ValidateEncryptedToken([]byte("not-valid-ciphertext"), nil, "token")
-	require.Error(t, err)
-}
-
-func TestAuthEncryption_Enabled_StoreAndRetrieveSession(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	expiresAt := time.Now().Add(time.Hour)
-	sess := &models.Session{
-		UserID:    42,
-		CreatedAt: time.Now(),
-		ExpiresAt: &expiresAt,
-	}
-	plain := "session-token-for-enabled"
-	require.NoError(t, ae.StoreEncryptedSession(sess, plain))
-
-	retrieved, err := ae.RetrieveSessionToken(sess.ID)
-	require.NoError(t, err)
-	assert.Equal(t, plain, retrieved)
-}
-
 func TestAuthEncryption_RotateAuthEncryption_Disabled(t *testing.T) {
 	db := setupS2DB(t)
 	ae := setupS2AuthEnc(t, db) // disabled
 	err := ae.RotateAuthEncryption("passphrase")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disabled")
-}
-
-func TestAuthEncryption_Enabled_StoreAndRetrieveAPIClient(t *testing.T) {
-	db := setupS2DB(t)
-	ae := setupS2AuthEncEnabled(t, db)
-
-	client := &models.APIClient{
-		Name:      "enabled-client",
-		ClientID:  "client-enabled-1",
-		IsActive:  true,
-		CreatedAt: time.Now(),
-	}
-	plain := "enabled-client-secret"
-	require.NoError(t, ae.StoreEncryptedAPIClient(client, plain))
-
-	retrieved, err := ae.RetrieveAPIClientSecret("client-enabled-1")
-	require.NoError(t, err)
-	assert.Equal(t, plain, retrieved)
 }
 
 func TestAuthEncryption_RetrieveAPIClientSecret_NotFound(t *testing.T) {
@@ -537,20 +505,74 @@ func newInitializedService(t *testing.T) *Service {
 	return svc
 }
 
-func TestService_ValidateKeyFiles(t *testing.T) {
+// TestService_Suite shares one newInitializedService call across read-only and
+// stateless subtests to avoid repeated expensive PBKDF2 derivations.
+func TestService_Suite(t *testing.T) {
 	svc := newInitializedService(t)
-	require.NoError(t, svc.ValidateKeyFiles())
-}
 
-func TestService_FixKeyFilePermissions(t *testing.T) {
-	svc := newInitializedService(t)
-	require.NoError(t, svc.FixKeyFilePermissions())
-}
+	t.Run("ValidateKeyFiles", func(t *testing.T) {
+		require.NoError(t, svc.ValidateKeyFiles())
+	})
 
-func TestService_GetKeyVersion(t *testing.T) {
-	svc := newInitializedService(t)
-	v := svc.GetKeyVersion()
-	assert.NotEmpty(t, v)
+	t.Run("FixKeyFilePermissions", func(t *testing.T) {
+		require.NoError(t, svc.FixKeyFilePermissions())
+	})
+
+	t.Run("GetKeyVersion", func(t *testing.T) {
+		assert.NotEmpty(t, svc.GetKeyVersion())
+	})
+
+	t.Run("AuditCheckpointKey_Initialized", func(t *testing.T) {
+		key, version, ok := svc.AuditCheckpointKey()
+		assert.True(t, ok)
+		assert.NotNil(t, key)
+		assert.NotEmpty(t, version)
+	})
+
+	t.Run("EncryptLargeSecret", func(t *testing.T) {
+		large := make([]byte, 300*1024)
+		for i := range large {
+			large[i] = byte(i % 251)
+		}
+		encChunks, metaChunks, err := svc.EncryptLargeSecret(large, 64)
+		require.NoError(t, err)
+		assert.NotEmpty(t, encChunks)
+		assert.Len(t, metaChunks, len(encChunks))
+		dec, err := svc.DecryptLargeSecret(encChunks)
+		require.NoError(t, err)
+		assert.Equal(t, large, dec)
+	})
+
+	t.Run("DecryptSecret_BadInput", func(t *testing.T) {
+		_, err := svc.DecryptSecret([]byte("not-json"))
+		require.Error(t, err)
+	})
+
+	t.Run("DecryptSecretWithAAD_BadInput", func(t *testing.T) {
+		_, err := svc.DecryptSecretWithAAD([]byte("not-json"), []byte("aad"))
+		require.Error(t, err)
+	})
+
+	t.Run("EncryptSecretWithAAD_RoundTrip", func(t *testing.T) {
+		aad := []byte("test-aad-binding")
+		plaintext := []byte("secret-with-aad")
+		encBytes, _, err := svc.EncryptSecretWithAAD(plaintext, aad)
+		require.NoError(t, err)
+		dec, err := svc.DecryptSecretWithAAD(encBytes, aad)
+		require.NoError(t, err)
+		assert.Equal(t, plaintext, dec)
+	})
+
+	t.Run("DecryptSecretWithAAD_LegacyFallback", func(t *testing.T) {
+		encBytes, _, err := svc.EncryptSecret([]byte("legacy-plain"))
+		require.NoError(t, err)
+		enc, err := DeserializeEncryptedData(encBytes)
+		require.NoError(t, err)
+		assert.Empty(t, enc.Metadata.AADVersion, "EncryptSecret must produce legacy (no-AAD) blobs")
+		dec, err := svc.DecryptSecretWithAAD(encBytes, []byte("any-aad-is-ignored-on-legacy"))
+		require.NoError(t, err)
+		assert.Equal(t, []byte("legacy-plain"), dec)
+	})
 }
 
 func TestService_GetKeyVersion_NotInitialized(t *testing.T) {
@@ -561,28 +583,7 @@ func TestService_GetKeyVersion_NotInitialized(t *testing.T) {
 		SaltPath: "salt.key",
 	}
 	svc := NewService(cfg, dir)
-	// Not initialized
-	v := svc.GetKeyVersion()
-	assert.Equal(t, "unknown", v)
-}
-
-func TestService_EncryptLargeSecret(t *testing.T) {
-	svc := newInitializedService(t)
-
-	large := make([]byte, 300*1024) // 300KB — will produce multiple chunks with 64KB chunk size
-	for i := range large {
-		large[i] = byte(i % 251)
-	}
-
-	encChunks, metaChunks, err := svc.EncryptLargeSecret(large, 64)
-	require.NoError(t, err)
-	assert.NotEmpty(t, encChunks)
-	assert.Len(t, metaChunks, len(encChunks))
-
-	// Decrypt and verify round-trip.
-	dec, err := svc.DecryptLargeSecret(encChunks)
-	require.NoError(t, err)
-	assert.Equal(t, large, dec)
+	assert.Equal(t, "unknown", svc.GetKeyVersion())
 }
 
 func TestService_Initialize_Disabled(t *testing.T) {
@@ -592,14 +593,6 @@ func TestService_Initialize_Disabled(t *testing.T) {
 	err := svc.Initialize("passphrase")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disabled")
-}
-
-func TestService_AuditCheckpointKey_Initialized(t *testing.T) {
-	svc := newInitializedService(t)
-	key, version, ok := svc.AuditCheckpointKey()
-	assert.True(t, ok)
-	assert.NotNil(t, key)
-	assert.NotEmpty(t, version)
 }
 
 func TestService_AuditCheckpointKey_Disabled(t *testing.T) {
@@ -634,51 +627,6 @@ func TestService_DecryptSecretWithAAD_NotInitialized(t *testing.T) {
 	_, err := svc.DecryptSecretWithAAD([]byte("data"), []byte("aad"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not initialized")
-}
-
-func TestService_DecryptSecret_BadInput(t *testing.T) {
-	svc := newInitializedService(t)
-	_, err := svc.DecryptSecret([]byte("not-json"))
-	require.Error(t, err)
-}
-
-func TestService_DecryptSecretWithAAD_BadInput(t *testing.T) {
-	svc := newInitializedService(t)
-	_, err := svc.DecryptSecretWithAAD([]byte("not-json"), []byte("aad"))
-	require.Error(t, err)
-}
-
-// TestService_EncryptSecretWithAAD_RoundTrip exercises EncryptSecretWithAAD and DecryptSecretWithAAD
-// together, ensuring the legacy (no-AADVersion) fallback path is NOT triggered.
-func TestService_EncryptSecretWithAAD_RoundTrip(t *testing.T) {
-	svc := newInitializedService(t)
-	aad := []byte("test-aad-binding")
-	plaintext := []byte("secret-with-aad")
-
-	encBytes, _, err := svc.EncryptSecretWithAAD(plaintext, aad)
-	require.NoError(t, err)
-
-	dec, err := svc.DecryptSecretWithAAD(encBytes, aad)
-	require.NoError(t, err)
-	assert.Equal(t, plaintext, dec)
-}
-
-// TestService_DecryptSecretWithAAD_LegacyFallback exercises the legacy (no-AADVersion) decryption path.
-func TestService_DecryptSecretWithAAD_LegacyFallback(t *testing.T) {
-	svc := newInitializedService(t)
-	// Encrypt without AAD (legacy path: uses Encrypt not EncryptWithAAD).
-	encBytes, _, err := svc.EncryptSecret([]byte("legacy-plain"))
-	require.NoError(t, err)
-
-	// Deserialize to verify the metadata has no AADVersion (legacy).
-	enc, err := DeserializeEncryptedData(encBytes)
-	require.NoError(t, err)
-	assert.Empty(t, enc.Metadata.AADVersion, "EncryptSecret must produce legacy (no-AAD) blobs")
-
-	// DecryptSecretWithAAD falls back to the legacy no-AAD path for these blobs.
-	dec, err := svc.DecryptSecretWithAAD(encBytes, []byte("any-aad-is-ignored-on-legacy"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("legacy-plain"), dec)
 }
 
 // TestAuthEncryption_RotateAuthEncryption_Enabled exercises the enabled rotation path.
