@@ -31,6 +31,7 @@ type Localizer struct {
 // Global instance of the localizer
 var globalLocalizer *Localizer
 var once sync.Once
+var globMu sync.RWMutex
 
 // InitializeForTesting sets up the i18n system with default config for testing
 func InitializeForTesting() error {
@@ -47,37 +48,41 @@ func InitializeForTesting() error {
 func Initialize(cfg *config.Config) error {
 	var initErr error
 	once.Do(func() {
-		globalLocalizer = &Localizer{
+		l := &Localizer{
 			bundle:       i18n.NewBundle(language.English),
 			currentLang:  cfg.Locale.Language,
 			fallbackLang: cfg.Locale.FallbackLanguage,
 		}
 
 		// If no language is specified, use English
-		if globalLocalizer.currentLang == "" {
-			globalLocalizer.currentLang = "en"
+		if l.currentLang == "" {
+			l.currentLang = "en"
 		}
 
 		// If no fallback language is specified, use English
-		if globalLocalizer.fallbackLang == "" {
-			globalLocalizer.fallbackLang = "en"
+		if l.fallbackLang == "" {
+			l.fallbackLang = "en"
 		}
 
 		// Configure the bundle
-		globalLocalizer.bundle.RegisterUnmarshalFunc("json", json.Unmarshal)
+		l.bundle.RegisterUnmarshalFunc("json", json.Unmarshal)
 
 		// Load all translation files
-		if err := loadTranslationFiles(globalLocalizer.bundle); err != nil {
+		if err := loadTranslationFiles(l.bundle); err != nil {
 			initErr = fmt.Errorf("error loading translation files: %w", err)
 			return
 		}
 
 		// Create the localizer with the current language and fallback
-		globalLocalizer.localizer = i18n.NewLocalizer(
-			globalLocalizer.bundle,
-			globalLocalizer.currentLang,
-			globalLocalizer.fallbackLang,
+		l.localizer = i18n.NewLocalizer(
+			l.bundle,
+			l.currentLang,
+			l.fallbackLang,
 		)
+
+		globMu.Lock()
+		globalLocalizer = l
+		globMu.Unlock()
 	})
 
 	return initErr
@@ -111,10 +116,13 @@ func loadTranslationFiles(bundle *i18n.Bundle) error {
 
 // GetLocalizer returns the global localizer instance
 func GetLocalizer() *Localizer {
-	if globalLocalizer == nil {
+	globMu.RLock()
+	l := globalLocalizer
+	globMu.RUnlock()
+	if l == nil {
 		panic("i18n not initialized, call Initialize() first")
 	}
-	return globalLocalizer
+	return l
 }
 
 // SetLanguage changes the current language
@@ -173,6 +181,8 @@ func MustT(messageID string, templateData map[string]interface{}) string {
 
 // ResetForTesting resets the global i18n state for testing purposes
 func ResetForTesting() {
+	globMu.Lock()
 	globalLocalizer = nil
 	once = sync.Once{}
+	globMu.Unlock()
 }
