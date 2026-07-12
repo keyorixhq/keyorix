@@ -265,35 +265,38 @@ func (tr *TestRunner) RunCoverageReport() error {
 	return nil
 }
 
-func main() {
-	if len(os.Args) < 2 {
+// run executes the requested command and returns the process exit code.
+// It is separated from main so that tests can call it directly without
+// triggering os.Exit, keeping main() as a thin wrapper.
+func run(args []string) int {
+	if len(args) < 2 {
 		fmt.Println("Usage: go run test_runner.go [command]")
 		fmt.Println("Commands:")
 		fmt.Println("  all        - Run all tests")
 		fmt.Println("  bench      - Run benchmarks")
 		fmt.Println("  coverage   - Generate coverage report")
 		fmt.Println("  help       - Show this help")
-		os.Exit(1)
+		return 1
 	}
 
-	command := os.Args[1]
+	command := args[1]
 	runner := NewTestRunner(true, 5*time.Minute)
 
 	switch command {
 	case "all":
 		if err := runner.RunAllTests(); err != nil {
 			fmt.Printf("❌ Tests failed: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "bench":
 		if err := runner.RunBenchmarks(); err != nil {
 			fmt.Printf("❌ Benchmarks failed: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "coverage":
 		if err := runner.RunCoverageReport(); err != nil {
 			fmt.Printf("❌ Coverage report failed: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "help":
 		fmt.Println("HTTP/gRPC Server Test Runner")
@@ -319,6 +322,11 @@ func main() {
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		fmt.Println("Use 'go run test_runner.go help' for available commands")
-		os.Exit(1)
+		return 1
 	}
+	return 0
+}
+
+func main() {
+	os.Exit(run(os.Args))
 }
