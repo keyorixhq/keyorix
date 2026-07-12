@@ -768,11 +768,11 @@ func TestInteractiveUpdateS5_UpdateValueAndClearExpiration(t *testing.T) {
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	os.Stdin = r
-	defer func() { os.Stdin = old; r.Close() }()
+	defer func() { os.Stdin = old; _ = r.Close() }()
 
 	go func() {
 		_, _ = bytes.NewReader([]byte("n\n\n\ny\ny\n")).WriteTo(w)
-		w.Close()
+		_ = w.Close()
 	}()
 	_ = input
 
@@ -804,12 +804,12 @@ func TestInteractiveUpdateS5_SetExpirationPath(t *testing.T) {
 	require.NoError(t, err)
 	old := os.Stdin
 	os.Stdin = r
-	defer func() { os.Stdin = old; r.Close() }()
+	defer func() { os.Stdin = old; _ = r.Close() }()
 
 	input := "n\n\n\ny\nn\n" + future + "\n"
 	go func() {
 		_, _ = w.WriteString(input)
-		w.Close()
+		_ = w.Close()
 	}()
 
 	origID := updateID
@@ -828,12 +828,12 @@ func TestInteractiveUpdateS5_InvalidExpirationWarning(t *testing.T) {
 	require.NoError(t, err)
 	old := os.Stdin
 	os.Stdin = r
-	defer func() { os.Stdin = old; r.Close() }()
+	defer func() { os.Stdin = old; _ = r.Close() }()
 
 	input := "n\n\n\ny\nn\nnot-a-date\n"
 	go func() {
 		_, _ = w.WriteString(input)
-		w.Close()
+		_ = w.Close()
 	}()
 
 	origID := updateID
@@ -859,11 +859,11 @@ func TestInteractiveCreateS5_WithInvalidExpiration(t *testing.T) {
 	require.NoError(t, err)
 	old := os.Stdin
 	os.Stdin = r
-	defer func() { os.Stdin = old; r.Close() }()
+	defer func() { os.Stdin = old; _ = r.Close() }()
 
 	go func() {
 		_, _ = w.WriteString("my-secret\ngeneric\n1\n1\n")
-		w.Close()
+		_ = w.Close()
 	}()
 
 	_, err = interactiveCreate()
