@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -798,41 +799,60 @@ func TestDashboardHandler_GetActivity_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// newHandlerCoreS4 opens a fresh in-memory DB with ALL models that the s4 tests
-// need (superset of handlers_s3_test.go's openHandlerTestDB).
+// sharedS4Core is initialised exactly once for the entire test binary. All
+// s4 tests are structural/error-path tests (bad JSON, missing auth, bad IDs)
+// that never assert on specific row counts or pre-seeded DB state, so sharing
+// a single migrated core across the run is safe and eliminates the ~1400×
+// AutoMigrate calls that caused the 2-minute CI timeout under -race.
+var (
+	sharedS4CoreOnce sync.Once
+	sharedS4Core     *core.KeyorixCore
+)
+
+// newHandlerCoreS4 returns a shared *core.KeyorixCore backed by a single
+// in-memory SQLite DB whose schema is migrated exactly once per test binary.
+// All s4 tests are early-return path tests (4xx status checks) that do not
+// rely on an empty DB, so the shared instance is safe.
 func newHandlerCoreS4(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
-		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{}, &models.SecretNode{},
-		&models.AuditEvent{}, &models.AnomalyAlert{},
-		&models.RotationPolicy{}, &models.Notification{},
-		&models.ProjectMembership{}, &models.SoDPolicy{},
-		&models.BreakGlassActivation{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{},
-		&models.LoginAttempt{},
-		// s4 additions:
-		&models.AccessRequest{}, &models.AccessRequestApproval{},
-		&models.WebAuthnCredential{}, &models.WebAuthnSession{},
-		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
-		&models.ConnectRefGrant{}, &models.Session{}, &models.SetupToken{},
-		&models.MFAChallenge{}, &models.SSOLoginState{},
-		// s4 round2 additions:
-		&models.MachineIdentity{}, &models.MachineIdentityCredential{},
-		&models.MachineIdentityRole{}, &models.MachineIdentityOIDCBinding{},
-		&models.SecretDependency{}, &models.RiskException{},
-		&models.MFASecret{}, &models.MFARecoveryCode{},
-		&models.IdentityProvider{}, &models.ExternalIdentity{},
-		&models.LegalHold{}, &models.ShareRecord{},
-		&models.PersonalAccessToken{},
-		// s4 batch3 additions:
-		&models.ProjectInvitation{}, &models.SchedulerLockLease{},
-		&models.SecretAccessLog{},
-	))
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	sharedS4CoreOnce.Do(func() {
+		db, err := gorm.Open(sqlite.Open("file:kxhandlers_s4?mode=memory&cache=shared&_timeout=30000"), &gorm.Config{})
+		if err != nil {
+			panic("newHandlerCoreS4: open DB: " + err.Error())
+		}
+		if err := db.AutoMigrate(
+			&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
+			&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+			&models.Project{}, &models.Environment{}, &models.SecretNode{},
+			&models.AuditEvent{}, &models.AnomalyAlert{},
+			&models.RotationPolicy{}, &models.Notification{},
+			&models.ProjectMembership{}, &models.SoDPolicy{},
+			&models.BreakGlassActivation{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{},
+			&models.LoginAttempt{},
+			// s4 additions:
+			&models.AccessRequest{}, &models.AccessRequestApproval{},
+			&models.WebAuthnCredential{}, &models.WebAuthnSession{},
+			&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
+			&models.ConnectRefGrant{}, &models.Session{}, &models.SetupToken{},
+			&models.MFAChallenge{}, &models.SSOLoginState{},
+			// s4 round2 additions:
+			&models.MachineIdentity{}, &models.MachineIdentityCredential{},
+			&models.MachineIdentityRole{}, &models.MachineIdentityOIDCBinding{},
+			&models.SecretDependency{}, &models.RiskException{},
+			&models.MFASecret{}, &models.MFARecoveryCode{},
+			&models.IdentityProvider{}, &models.ExternalIdentity{},
+			&models.LegalHold{}, &models.ShareRecord{},
+			&models.PersonalAccessToken{},
+			// s4 batch3 additions:
+			&models.ProjectInvitation{}, &models.SchedulerLockLease{},
+			&models.SecretAccessLog{},
+		); err != nil {
+			panic("newHandlerCoreS4: AutoMigrate: " + err.Error())
+		}
+		sharedS4Core = core.NewKeyorixCore(store.NewLocalStorage(db))
+	})
+	return sharedS4Core
 }
 
 // newAuthHandlerWithWebAuthn creates an AuthHandler backed by a DB that also
@@ -14095,7 +14115,16 @@ func TestShareHandler_RevokeShare_BadID_S4(t *testing.T) {
 // ── catalog.go: RestoreProject, RestoreEnvironment, CreateProjectEnvironment ──
 
 func TestCatalogHandler_RestoreProject_NotFound_S4(t *testing.T) {
-	h := newCatalogHandlerS4(t)
+	// Use a fresh isolated DB: the shared s4 core accumulates rows across tests
+	// (notably, UpdateProject uses GORM Save which UPSERTs, so a prior test that
+	// calls UpdateProjectProxy with id=9999 creates a phantom project row that a
+	// later DeleteProjectProxy call soft-deletes, leaving a deleted_at-stamped row
+	// that RestoreProject(9999) would then successfully restore instead of 404-ing).
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{},
+		&models.ShareRecord{}, &models.DynamicSecretConfig{}, &models.Role{}, &models.UserRole{}, &models.GroupRole{}))
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "9999")
 	w := httptest.NewRecorder()
 	h.RestoreProject(w, req)
