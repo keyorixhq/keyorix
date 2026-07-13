@@ -168,7 +168,7 @@ func (h *ConnectHandler) DeleteRefGrant(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "invalid grant id", http.StatusBadRequest, nil)
 		return

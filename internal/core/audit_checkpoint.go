@@ -443,7 +443,7 @@ func parseAuditHighWater(val string) (cp *models.AuditCheckpoint, sig string, ok
 		return nil, "", false
 	}
 	chained, err1 := strconv.ParseInt(parts[1], 10, 64)
-	headID, err2 := strconv.ParseUint(parts[2], 10, 64)
+	headID, err2 := strconv.ParseUint(parts[2], 10, 32)
 	if err1 != nil || err2 != nil {
 		return nil, "", false
 	}

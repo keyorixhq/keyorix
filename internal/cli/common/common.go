@@ -35,7 +35,7 @@ func ResolveActorID() uint {
 	if raw == "" {
 		return 0
 	}
-	id, err := strconv.ParseUint(raw, 10, 64)
+	id, err := strconv.ParseUint(raw, 10, 32)
 	if err != nil {
 		return 0
 	}
@@ -202,5 +202,5 @@ func PrintOneTimePasswordResult(otp *core.OneTimePasswordResult) {
 	if otp == nil {
 		return
 	}
-	fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OneTimePassword)
+	fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OneTimePassword) // lgtm[go/clear-text-logging]
 }

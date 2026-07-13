@@ -17,7 +17,7 @@ import (
 // mysqlConn is the slice of a MySQL connection the executor uses — an interface seam so
 // the driver stays contained here and tests inject a fake.
 type mysqlConn interface {
-	Exec(ctx context.Context, query string) error
+	Exec(ctx context.Context, query string, args ...interface{}) error
 	Close() error
 }
 
@@ -83,14 +83,14 @@ func (e *MySQLExecutor) Rotate(ctx context.Context, ref, newValue string) error 
 		host = "%"
 	}
 	// ALTER USER 'user'@'host' IDENTIFIED BY 'pw' — every component a quoted literal
-	// with internal quotes/backslashes doubled, so none can escape the statement.
-	q := fmt.Sprintf("ALTER USER %s@%s IDENTIFIED BY %s",
-		quoteMySQLString(user), quoteMySQLString(host), quoteMySQLString(newValue))
-	if err := c.Exec(ctx, q); err != nil {
-		// The new password is a quoted literal in q; a driver error can echo the
-		// failing statement verbatim. Redact before wrapping so the live credential
-		// never egresses via the rotation-failure SIEM audit / notification
-		// broadcast (#132).
+	// Account names are quoted literals (MySQL DDL cannot parameterise identifiers);
+	// the new password is passed as a ? placeholder so it never appears in the
+	// statement string and cannot break out via string interpolation.
+	q := fmt.Sprintf("ALTER USER %s@%s IDENTIFIED BY ?",
+		quoteMySQLString(user), quoteMySQLString(host))
+	if err := c.Exec(ctx, q, newValue); err != nil {
+		// Redact before wrapping so the live credential never egresses via the
+		// rotation-failure SIEM audit / notification broadcast (#132).
 		return redactSQLError("mysql", ref, err)
 	}
 	return nil
@@ -114,8 +114,8 @@ func quoteMySQLString(s string) string {
 // mysqlDBConn adapts *sql.DB to the mysqlConn seam.
 type mysqlDBConn struct{ db *sql.DB }
 
-func (m *mysqlDBConn) Exec(ctx context.Context, query string) error {
-	_, err := m.db.ExecContext(ctx, query)
+func (m *mysqlDBConn) Exec(ctx context.Context, query string, args ...interface{}) error {
+	_, err := m.db.ExecContext(ctx, query, args...)
 	return err
 }
 func (m *mysqlDBConn) Close() error { return m.db.Close() }

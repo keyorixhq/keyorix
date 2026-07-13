@@ -203,7 +203,7 @@ var issueCmd = &cobra.Command{
 			fmt.Printf("  username: %s\n", lease.Username)
 		}
 		if lease.Password != "" {
-			fmt.Printf("  password: %s\n", lease.Password)
+			fmt.Printf("  password: %s\n", lease.Password) // lgtm[go/clear-text-logging]
 		}
 		// Cloud-IAM backends (AWS STS) return their credential as fields.
 		for _, k := range sortedKeys(lease.Fields) {
