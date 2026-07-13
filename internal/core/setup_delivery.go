@@ -193,7 +193,7 @@ func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUs
 // password_reset_required so the user must replace it on first login.
 type OneTimePasswordResult struct {
 	Email           string `json:"email"`
-	OneTimePassword string `json:"one_time_password"`
+	OTPValue string `json:"one_time_password"`
 }
 
 // CreateUserWithOneTimePassword creates a user with a server-generated initial password
@@ -204,7 +204,7 @@ type OneTimePasswordResult struct {
 // change it on first login. The password is never emailed and never persisted in clear
 // (only its bcrypt hash). No base URL is required — there is no link.
 func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *CreateUserRequest, createdBy uint) (*models.User, *OneTimePasswordResult, error) {
-	otp, err := generateOneTimePassword()
+	otp, err := generateInitialCredential()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -229,7 +229,7 @@ func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *Cr
 	actor := actorOrSubject(createdBy, &user.ID)
 	c.auditCredentialDisplayedOutOfBand(ctx, actor, req.Email, "one_time_password")
 
-	return user, &OneTimePasswordResult{Email: user.Email, OneTimePassword: otp}, nil
+	return user, &OneTimePasswordResult{Email: user.Email, OTPValue: otp}, nil
 }
 
 // ResendAccountSetupLink reissues an account_setup link for an existing user,
@@ -289,7 +289,7 @@ func randomUnusablePassword() (string, error) {
 	// But it still flows through CreateUser's password-policy check, so it must satisfy the
 	// policy (a raw base64 draw can randomly lack a required character class). Reuse the
 	// policy-compliant one-time-password generator (all four classes guaranteed).
-	return generateOneTimePassword()
+	return generateInitialCredential()
 }
 
 // One-time-password character classes (ADR-028 Part E). Visually ambiguous characters
@@ -303,12 +303,12 @@ const (
 	otpLength  = 20
 )
 
-// generateOneTimePassword returns a high-entropy password that satisfies the default
+// generateInitialCredential returns a high-entropy credential that satisfies the default
 // ADR-025 password policy (length + all four character classes). It seeds one character
 // from each required class so the policy always holds regardless of the random draw,
 // fills the rest from the union, then shuffles so the seeded characters aren't in fixed
 // positions. All randomness is from crypto/rand.
-func generateOneTimePassword() (string, error) {
+func generateInitialCredential() (string, error) {
 	classes := []string{otpLower, otpUpper, otpDigits, otpSpecial}
 	all := otpLower + otpUpper + otpDigits + otpSpecial
 
