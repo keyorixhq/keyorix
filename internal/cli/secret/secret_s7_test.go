@@ -1396,7 +1396,7 @@ func TestDisplaySecretsTable_Pagination_S7(t *testing.T) {
 
 	// More than pageSize to trigger pagination footer
 	var secrets []*models.SecretNode
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		secrets = append(secrets, s)
 	}
 	filter := &coreStorage.SecretFilter{Page: 1, PageSize: 3}
@@ -1842,7 +1842,7 @@ func TestDisplaySecretsJSON_Empty_S7(t *testing.T) {
 // ─── runCreateRemote — max_reads and expiration body ──────────────────────────
 
 func TestRunCreateRemote_WithMaxReadsAndExpiration_S7(t *testing.T) {
-	var bodyReceived map[string]interface{}
+	var bodyReceived map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = bodyReceived
 		_, _ = w.Write([]byte(`{"data":{"ID":10,"Name":"s7-remote","Type":"generic","Status":"active","ProjectID":1,"EnvironmentID":1,"CreatedBy":"cli","CreatedAt":"2025-01-01T00:00:00Z","UpdatedAt":"2025-01-01T00:00:00Z"}}`))
