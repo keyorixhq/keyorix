@@ -131,6 +131,7 @@ func newRotationPolicyHandlerS11(t *testing.T) *RotationPolicyHandler {
 
 // TestRotationPolicyList_NoUserCtx_S11 — no user context → 401.
 func TestRotationPolicyList_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies", nil)
 	w := httptest.NewRecorder()
@@ -140,6 +141,7 @@ func TestRotationPolicyList_NoUserCtx_S11(t *testing.T) {
 
 // TestRotationPolicyList_BadProjectID_S11 — invalid project_id query param → 400.
 func TestRotationPolicyList_BadProjectID_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies?project_id=notnum", nil)
 	r = withUserCtx(r)
@@ -150,6 +152,7 @@ func TestRotationPolicyList_BadProjectID_S11(t *testing.T) {
 
 // TestRotationPolicyList_BadEnvironmentID_S11 — invalid environment_id → 400.
 func TestRotationPolicyList_BadEnvironmentID_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies?environment_id=notnum", nil)
 	r = withUserCtx(r)
@@ -160,6 +163,7 @@ func TestRotationPolicyList_BadEnvironmentID_S11(t *testing.T) {
 
 // TestRotationPolicyList_HappyPath_S11 — valid request → 200.
 func TestRotationPolicyList_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies", nil)
 	r = withUserCtx(r)
@@ -170,6 +174,7 @@ func TestRotationPolicyList_HappyPath_S11(t *testing.T) {
 
 // TestRotationPolicyList_WithProjectID_S11 — valid project_id query → 200.
 func TestRotationPolicyList_WithProjectID_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies?project_id=1", nil)
 	r = withUserCtx(r)
@@ -180,6 +185,7 @@ func TestRotationPolicyList_WithProjectID_S11(t *testing.T) {
 
 // TestRotationPolicyCreate_NoUserCtx_S11 — no user context → 401.
 func TestRotationPolicyCreate_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	body := `{"name":"p","scope":"project","interval_days":30}`
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/rotation-policies", strings.NewReader(body))
@@ -190,6 +196,7 @@ func TestRotationPolicyCreate_NoUserCtx_S11(t *testing.T) {
 
 // TestRotationPolicyCreate_BadJSON_S11 — malformed JSON → 400.
 func TestRotationPolicyCreate_BadJSON_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/rotation-policies", strings.NewReader("{bad")))
 	w := httptest.NewRecorder()
@@ -199,6 +206,7 @@ func TestRotationPolicyCreate_BadJSON_S11(t *testing.T) {
 
 // TestRotationPolicyCreate_ValidationError_S11 — missing required fields → 400.
 func TestRotationPolicyCreate_ValidationError_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	body := `{"name":"","scope":"","interval_days":0}`
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/rotation-policies", strings.NewReader(body)))
@@ -209,6 +217,7 @@ func TestRotationPolicyCreate_ValidationError_S11(t *testing.T) {
 
 // TestRotationPolicyCreate_Forbidden_S11 — user exists but no permission → 403.
 func TestRotationPolicyCreate_Forbidden_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	// global scope (project_id=0) — AuthorizePrincipal will fail for bare user
 	body := `{"name":"test-pol","scope":"project","interval_days":30}`
@@ -221,6 +230,7 @@ func TestRotationPolicyCreate_Forbidden_S11(t *testing.T) {
 
 // TestRotationPolicyCreate_HappyPath_S11 — bootstrapped admin can create → 201.
 func TestRotationPolicyCreate_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewRotationPolicyHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "rotcreate")
@@ -247,6 +257,7 @@ func TestRotationPolicyCreate_HappyPath_S11(t *testing.T) {
 
 // TestRotationPolicyEvaluate_NoUserCtx_S11 — no user context → 401.
 func TestRotationPolicyEvaluate_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/evaluate", nil)
 	w := httptest.NewRecorder()
@@ -256,6 +267,7 @@ func TestRotationPolicyEvaluate_NoUserCtx_S11(t *testing.T) {
 
 // TestRotationPolicyEvaluate_BadProjectID_S11 — invalid project_id → 400.
 func TestRotationPolicyEvaluate_BadProjectID_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/evaluate?project_id=bad", nil))
 	w := httptest.NewRecorder()
@@ -265,6 +277,7 @@ func TestRotationPolicyEvaluate_BadProjectID_S11(t *testing.T) {
 
 // TestRotationPolicyEvaluate_BadEnvironmentID_S11 — invalid environment_id → 400.
 func TestRotationPolicyEvaluate_BadEnvironmentID_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/evaluate?environment_id=bad", nil))
 	w := httptest.NewRecorder()
@@ -274,6 +287,7 @@ func TestRotationPolicyEvaluate_BadEnvironmentID_S11(t *testing.T) {
 
 // TestRotationPolicyEvaluate_HappyPath_S11 — valid request → 200.
 func TestRotationPolicyEvaluate_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/evaluate", nil))
 	w := httptest.NewRecorder()
@@ -283,6 +297,7 @@ func TestRotationPolicyEvaluate_HappyPath_S11(t *testing.T) {
 
 // TestRotationPolicyStatus_NoUserCtx_S11 — no user context → 401.
 func TestRotationPolicyStatus_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/status", nil)
 	w := httptest.NewRecorder()
@@ -292,6 +307,7 @@ func TestRotationPolicyStatus_NoUserCtx_S11(t *testing.T) {
 
 // TestRotationPolicyStatus_BadProjectID_S11 — invalid project_id → 400.
 func TestRotationPolicyStatus_BadProjectID_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/status?project_id=bad", nil))
 	w := httptest.NewRecorder()
@@ -301,6 +317,7 @@ func TestRotationPolicyStatus_BadProjectID_S11(t *testing.T) {
 
 // TestRotationPolicyStatus_BadEnvironmentID_S11 — invalid environment_id → 400.
 func TestRotationPolicyStatus_BadEnvironmentID_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/status?environment_id=bad", nil))
 	w := httptest.NewRecorder()
@@ -310,6 +327,7 @@ func TestRotationPolicyStatus_BadEnvironmentID_S11(t *testing.T) {
 
 // TestRotationPolicyStatus_HappyPath_S11 — valid request → 200.
 func TestRotationPolicyStatus_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/rotation-policies/status", nil))
 	w := httptest.NewRecorder()
@@ -320,6 +338,7 @@ func TestRotationPolicyStatus_HappyPath_S11(t *testing.T) {
 // TestRotationPolicySendSuccess_S11 exercises the sendSuccess helper on the
 // rotation handler (distinct from the package-level sendSuccess).
 func TestRotationPolicySendSuccess_S11(t *testing.T) {
+	t.Parallel()
 	h := newRotationPolicyHandlerS11(t)
 	w := httptest.NewRecorder()
 	h.sendSuccess(w, map[string]string{"key": "val"}, "all good")
@@ -336,6 +355,7 @@ func TestRotationPolicySendSuccess_S11(t *testing.T) {
 // token + an admin-session cookie. The admin cookie has an active session so
 // admin_session_restored should be true.
 func TestImpersonationEnd_HappyPath_RestoredAdminSession_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewImpersonationHandler(cs, false)
 
@@ -375,6 +395,7 @@ func TestImpersonationEnd_HappyPath_RestoredAdminSession_S11(t *testing.T) {
 // TestImpersonationEnd_HappyPath_NoAdminCookie_S11 — impersonation ends but
 // there is no admin cookie stashed → admin_session_restored = false.
 func TestImpersonationEnd_HappyPath_NoAdminCookie_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewImpersonationHandler(cs, false)
 
@@ -411,6 +432,7 @@ func TestImpersonationEnd_HappyPath_NoAdminCookie_S11(t *testing.T) {
 
 // TestListProjects_IncludeDeleted_S11 — ?include_deleted=true → 200.
 func TestListProjects_IncludeDeleted_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?include_deleted=true", nil)
 	w := httptest.NewRecorder()
@@ -420,6 +442,7 @@ func TestListProjects_IncludeDeleted_S11(t *testing.T) {
 
 // TestListEnvironments_WithProjects_S11 — ListEnvironments returns all envs → 200.
 func TestListEnvironments_WithProjects_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	// Create a project so at least some envs exist.
@@ -467,6 +490,7 @@ func issueSetupTokenForUserS11(t *testing.T, cs *core.KeyorixCore, adminID uint,
 // TestConsumeSetup_InvalidSetupPassword_S11 exercises the ErrInvalidSetupPassword
 // branch: a real setup token is created but an invalid password is supplied.
 func TestConsumeSetup_InvalidSetupPassword_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewAuthHandler(cs, false)
 	adminToken := bootstrapS11(t, cs, "setupbadpw")
@@ -488,6 +512,7 @@ func TestConsumeSetup_InvalidSetupPassword_S11(t *testing.T) {
 
 // TestConsumeSetup_HappyPath_S11 — a valid token + good password completes setup.
 func TestConsumeSetup_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewAuthHandler(cs, false)
 	bootstrapS11(t, cs, "setupok")
@@ -509,6 +534,7 @@ func TestConsumeSetup_HappyPath_S11(t *testing.T) {
 
 // TestAddGroupMember_NotFound_S11 — group ID does not exist → 404.
 func TestAddGroupMember_NotFound_S11(t *testing.T) {
+	t.Parallel()
 	h := newGroupHandlerS8(t)
 	body := `{"user_id":1}`
 	req := withUserCtxS8(withChiParamS8(
@@ -522,6 +548,7 @@ func TestAddGroupMember_NotFound_S11(t *testing.T) {
 
 // TestAddGroupMember_HappyPath_S11 — admin adds a user to a group → 200.
 func TestAddGroupMember_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
@@ -562,6 +589,7 @@ func contextWithUser(ctx context.Context, uc *middleware.UserContext) context.Co
 
 // TestCreateGroup_HappyPath_WithAdmin_S11 — admin creates a group → 201.
 func TestCreateGroup_HappyPath_WithAdmin_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
@@ -587,6 +615,7 @@ func TestCreateGroup_HappyPath_WithAdmin_S11(t *testing.T) {
 // TestDynamicSecrets_IssueLease_HappyPath_S11 — IssueLease success via an
 // admin session that has secrets.write on the config's project/env.
 func TestDynamicSecrets_IssueLease_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewDynamicSecretHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "issuelease")
@@ -617,6 +646,7 @@ func TestDynamicSecrets_IssueLease_HappyPath_S11(t *testing.T) {
 
 // TestDynamicSecrets_ListLeases_HappyPath_S11 — ListLeases success via admin.
 func TestDynamicSecrets_ListLeases_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewDynamicSecretHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "listleases")
@@ -648,6 +678,7 @@ func TestDynamicSecrets_ListLeases_HappyPath_S11(t *testing.T) {
 // TestDynamicSecrets_RevokeAllLeases_HappyPath_S11 — RevokeAllLeases with no
 // active leases → 200 with revoked=0.
 func TestDynamicSecrets_RevokeAllLeases_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewDynamicSecretHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "revokeall")
@@ -678,6 +709,7 @@ func TestDynamicSecrets_RevokeAllLeases_HappyPath_S11(t *testing.T) {
 
 // TestDynamicSecrets_ClassifyConfig_HappyPath_S11 — ClassifyConfig success.
 func TestDynamicSecrets_ClassifyConfig_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewDynamicSecretHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "classify11")
@@ -711,6 +743,7 @@ func TestDynamicSecrets_ClassifyConfig_HappyPath_S11(t *testing.T) {
 // We seed a lease in the DB directly so that GetDynamicSecretLease succeeds but
 // RevokeLease returns a safe "lease is not active" error.
 func TestDynamicSecrets_RevokeLease_AuthorizedLeaseNotActive_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewDynamicSecretHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "revokelease11")
@@ -755,6 +788,7 @@ func TestDynamicSecrets_RevokeLease_AuthorizedLeaseNotActive_S11(t *testing.T) {
 // TestDynamicSecrets_RenewLease_AuthorizedLeaseNotActive_S11 — RenewLease
 // exercises the post-GetDynamicSecretLease / authorize / RenewLease branches.
 func TestDynamicSecrets_RenewLease_AuthorizedLeaseNotActive_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewDynamicSecretHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "renewlease11")
@@ -796,6 +830,7 @@ func TestDynamicSecrets_RenewLease_AuthorizedLeaseNotActive_S11(t *testing.T) {
 
 // TestExtendExpiringSecrets_NoUserCtx_S11 — no user context → 401.
 func TestExtendExpiringSecrets_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}"))
 	r = withChiParam(r, "id", "1")
@@ -806,6 +841,7 @@ func TestExtendExpiringSecrets_NoUserCtx_S11(t *testing.T) {
 
 // TestExtendExpiringSecrets_BadID_S11 — non-numeric project ID → 400.
 func TestExtendExpiringSecrets_BadID_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")))
 	r = withChiParam(r, "id", "notnum")
@@ -816,6 +852,7 @@ func TestExtendExpiringSecrets_BadID_S11(t *testing.T) {
 
 // TestExtendExpiringSecrets_HappyPath_S11 — valid request with an empty body → 200.
 func TestExtendExpiringSecrets_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
 	r = withChiParam(r, "id", "1")
@@ -826,6 +863,7 @@ func TestExtendExpiringSecrets_HappyPath_S11(t *testing.T) {
 
 // TestExtendExpiringSecrets_BadJSON_S11 — malformed JSON → 400.
 func TestExtendExpiringSecrets_BadJSON_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
 	// Set Content-Length so the handler reads the body.
@@ -840,6 +878,7 @@ func TestExtendExpiringSecrets_BadJSON_S11(t *testing.T) {
 
 // TestSecretNameConformance_NoUserCtx_S11 — no user context → 401.
 func TestSecretNameConformance_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withChiParam(r, "id", "1")
@@ -850,6 +889,7 @@ func TestSecretNameConformance_NoUserCtx_S11(t *testing.T) {
 
 // TestSecretNameConformance_BadID_S11 — non-numeric project ID → 400.
 func TestSecretNameConformance_BadID_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	r = withChiParam(r, "id", "notnum")
@@ -860,6 +900,7 @@ func TestSecretNameConformance_BadID_S11(t *testing.T) {
 
 // TestSecretNameConformance_HappyPath_S11 — valid project ID → 200.
 func TestSecretNameConformance_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	r = withChiParam(r, "id", "1")
@@ -872,6 +913,7 @@ func TestSecretNameConformance_HappyPath_S11(t *testing.T) {
 
 // TestGetStats_NoUserCtx_S11 — no user context → 401.
 func TestGetStats_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newDashboardHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/stats", nil)
 	w := httptest.NewRecorder()
@@ -881,6 +923,7 @@ func TestGetStats_NoUserCtx_S11(t *testing.T) {
 
 // TestGetStats_HappyPath_S11 — user context present → 200.
 func TestGetStats_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewDashboardHandler(cs)
 	bootstrapS11(t, cs, "getstats11")
@@ -901,6 +944,7 @@ func TestGetStats_HappyPath_S11(t *testing.T) {
 // TestImpersonationStart_HappyPath_S11 — admin successfully starts an
 // impersonation session → 200 with the response body.
 func TestImpersonationStart_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewImpersonationHandler(cs, false)
 	bootstrapS11(t, cs, "impstart11")
@@ -930,6 +974,7 @@ func TestImpersonationStart_HappyPath_S11(t *testing.T) {
 
 // TestGetGroup_HappyPath_S11 — admin retrieves an existing group → 200.
 func TestGetGroup_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
@@ -951,6 +996,7 @@ func TestGetGroup_HappyPath_S11(t *testing.T) {
 
 // TestUpdateGroup_HappyPath_S11 — admin updates a group name → 200.
 func TestUpdateGroup_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
@@ -975,6 +1021,7 @@ func TestUpdateGroup_HappyPath_S11(t *testing.T) {
 
 // TestListProjectEnvironments_HappyPath_S11 — valid project → 200 with envs.
 func TestListProjectEnvironments_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listprojenv", "")
@@ -989,6 +1036,7 @@ func TestListProjectEnvironments_HappyPath_S11(t *testing.T) {
 
 // TestListProjectEnvironments_IncludeDeleted_S11 — ?include_deleted=true → 200.
 func TestListProjectEnvironments_IncludeDeleted_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listprojenvdel", "")
@@ -1005,6 +1053,7 @@ func TestListProjectEnvironments_IncludeDeleted_S11(t *testing.T) {
 
 // TestDeleteEnvironment_HappyPath_S11 — delete an existing empty env → 200.
 func TestDeleteEnvironment_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11delenv", "")
@@ -1024,6 +1073,7 @@ func TestDeleteEnvironment_HappyPath_S11(t *testing.T) {
 
 // TestRotationPolicyCreate_EnvScope_S11 — create an env-scoped policy → 201.
 func TestRotationPolicyCreate_EnvScope_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewRotationPolicyHandler(cs)
 	sessionToken := bootstrapS11(t, cs, "rotenvscope")
@@ -1058,6 +1108,7 @@ func TestRotationPolicyCreate_EnvScope_S11(t *testing.T) {
 
 // TestRemoveGroupMember_NoUserCtx_S11 — no user context → 401.
 func TestRemoveGroupMember_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newGroupHandlerS8(t)
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	r = withChiParamsS8(r, map[string]string{"id": "1", "userId": "2"})
@@ -1068,6 +1119,7 @@ func TestRemoveGroupMember_NoUserCtx_S11(t *testing.T) {
 
 // TestRemoveGroupMember_BadGroupID_S11 — non-numeric group ID → 400.
 func TestRemoveGroupMember_BadGroupID_S11(t *testing.T) {
+	t.Parallel()
 	h := newGroupHandlerS8(t)
 	r := withUserCtxS8(httptest.NewRequest(http.MethodDelete, "/", nil))
 	r = withChiParamsS8(r, map[string]string{"id": "bad", "userId": "2"})
@@ -1078,6 +1130,7 @@ func TestRemoveGroupMember_BadGroupID_S11(t *testing.T) {
 
 // TestRemoveGroupMember_BadUserID_S11 — non-numeric user ID → 400.
 func TestRemoveGroupMember_BadUserID_S11(t *testing.T) {
+	t.Parallel()
 	h := newGroupHandlerS8(t)
 	r := withUserCtxS8(httptest.NewRequest(http.MethodDelete, "/", nil))
 	r = withChiParamsS8(r, map[string]string{"id": "1", "userId": "bad"})
@@ -1090,6 +1143,7 @@ func TestRemoveGroupMember_BadUserID_S11(t *testing.T) {
 
 // TestGetProject_NotFound_S11 — project does not exist → 404.
 func TestGetProject_NotFound_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withChiParamS8(r, "id", "99999")
@@ -1100,6 +1154,7 @@ func TestGetProject_NotFound_S11(t *testing.T) {
 
 // TestGetProject_HappyPath_S11 — existing project → 200.
 func TestGetProject_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11getproj", "")
@@ -1116,6 +1171,7 @@ func TestGetProject_HappyPath_S11(t *testing.T) {
 
 // TestDeleteEnvironmentProxy_HappyPath_S11 — delete an env with no secrets → 200.
 func TestDeleteEnvironmentProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11delenvproxy", "")
@@ -1132,6 +1188,7 @@ func TestDeleteEnvironmentProxy_HappyPath_S11(t *testing.T) {
 
 // TestListEnvironmentsProxy_WithEnvs_S11 — proxy list with some environments → 200.
 func TestListEnvironmentsProxy_WithEnvs_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	_, err := cs.CreateProject(context.Background(), "s11listenvproxy", "")
@@ -1145,6 +1202,7 @@ func TestListEnvironmentsProxy_WithEnvs_S11(t *testing.T) {
 
 // TestListEnvironmentsByProjectProxy_IncludeDeleted_S11 — ?include_deleted=true path.
 func TestListEnvironmentsByProjectProxy_IncludeDeleted_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listenvprojproxydel", "")
@@ -1159,6 +1217,7 @@ func TestListEnvironmentsByProjectProxy_IncludeDeleted_S11(t *testing.T) {
 
 // TestGetEnvironmentProxy_HappyPath_S11 — proxy get on an existing env → 200.
 func TestGetEnvironmentProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11getenvproxy", "")
@@ -1178,6 +1237,7 @@ func TestGetEnvironmentProxy_HappyPath_S11(t *testing.T) {
 
 // TestListAccessReviewCampaigns_HappyPath_S11 — valid project → 200.
 func TestListAccessReviewCampaigns_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listarc", "")
@@ -1194,6 +1254,7 @@ func TestListAccessReviewCampaigns_HappyPath_S11(t *testing.T) {
 
 // TestCreateMembershipProxy_HappyPath_S11 — valid body with real user+project → 200.
 func TestCreateMembershipProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11creatembr", "")
@@ -1213,6 +1274,7 @@ func TestCreateMembershipProxy_HappyPath_S11(t *testing.T) {
 
 // TestListMembershipsProxy_HappyPath_S11 — project with members → 200.
 func TestListMembershipsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listmbr", "")
@@ -1226,6 +1288,7 @@ func TestListMembershipsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListMembershipsProxy_MissingProjectID_S11 — no project_id → 400.
 func TestListMembershipsProxy_MissingProjectID_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1235,6 +1298,7 @@ func TestListMembershipsProxy_MissingProjectID_S11(t *testing.T) {
 
 // TestListMembershipsProxy_BadProjectID_S11 — invalid project_id → 400.
 func TestListMembershipsProxy_BadProjectID_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/?project_id=bad", nil)
 	w := httptest.NewRecorder()
@@ -1244,6 +1308,7 @@ func TestListMembershipsProxy_BadProjectID_S11(t *testing.T) {
 
 // TestListUserMembershipsProxy_HappyPath_S11 — valid user ID → 200.
 func TestListUserMembershipsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	bootstrapS11(t, cs, "listusrmbr11")
@@ -1260,6 +1325,7 @@ func TestListUserMembershipsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListStaleInvitedMembershipsProxy_HappyPath_S11 — valid before timestamp → 200.
 func TestListStaleInvitedMembershipsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/?before=2030-01-01T00:00:00Z", nil)
 	w := httptest.NewRecorder()
@@ -1269,6 +1335,7 @@ func TestListStaleInvitedMembershipsProxy_HappyPath_S11(t *testing.T) {
 
 // TestGetMembershipProxy_NotFound_S11 — non-existent ID → 404.
 func TestGetMembershipProxy_NotFound_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withChiParamS8(r, "id", "99999")
@@ -1281,6 +1348,7 @@ func TestGetMembershipProxy_NotFound_S11(t *testing.T) {
 
 // TestListProjectRoleAssignmentsProxy_HappyPath_S11 — valid project_id → 200.
 func TestListProjectRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewRBACHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listroles", "")
@@ -1294,6 +1362,7 @@ func TestListProjectRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListGroupRoleAssignmentsProxy_HappyPath_S11 — valid groupID chi param → 200.
 func TestListGroupRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withChiParamS8(r, "groupID", "1")
@@ -1304,6 +1373,7 @@ func TestListGroupRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListProjectMachineRoleAssignmentsProxy_HappyPath_S11 — valid project_id → 200.
 func TestListProjectMachineRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewRBACHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listmachroles", "")
@@ -1317,6 +1387,7 @@ func TestListProjectMachineRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath_S11 — no params needed → 200.
 func TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := NewRBACHandler(newHandlerCoreS4(t))
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1328,6 +1399,7 @@ func TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath_S11(t *testing.T) {
 
 // TestListAllMachineIdentitiesProxy_HappyPath_S11 — no params needed → 200.
 func TestListAllMachineIdentitiesProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1337,6 +1409,7 @@ func TestListAllMachineIdentitiesProxy_HappyPath_S11(t *testing.T) {
 
 // TestCountMachineIdentitiesByClassificationProxy_HappyPath_S11 — no params needed → 200.
 func TestCountMachineIdentitiesByClassificationProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1346,6 +1419,7 @@ func TestCountMachineIdentitiesByClassificationProxy_HappyPath_S11(t *testing.T)
 
 // TestCountMachineIdentityCredentialsByClassificationProxy_HappyPath_S11 — no params → 200.
 func TestCountMachineIdentityCredentialsByClassificationProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1355,6 +1429,7 @@ func TestCountMachineIdentityCredentialsByClassificationProxy_HappyPath_S11(t *t
 
 // TestListActiveMachineIdentityCredentialsProxy_HappyPath_S11 — no params → 200.
 func TestListActiveMachineIdentityCredentialsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1366,6 +1441,7 @@ func TestListActiveMachineIdentityCredentialsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListAccessRequestApprovalsProxy_HappyPath_S11 — valid chi id → 200.
 func TestListAccessRequestApprovalsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withChiParamS8(r, "id", "99999")
@@ -1376,6 +1452,7 @@ func TestListAccessRequestApprovalsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListAccessRequestApprovalsProxy_BadID_S11 — non-numeric chi id → 400.
 func TestListAccessRequestApprovalsProxy_BadID_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withChiParamS8(r, "id", "bad")
@@ -1388,6 +1465,7 @@ func TestListAccessRequestApprovalsProxy_BadID_S11(t *testing.T) {
 
 // TestListSoDPolicies_HappyPath_S11 — no params needed → 200.
 func TestListSoDPolicies_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1397,6 +1475,7 @@ func TestListSoDPolicies_HappyPath_S11(t *testing.T) {
 
 // TestListSoDViolations_HappyPath_S11 — no params needed → 200.
 func TestListSoDViolations_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1408,6 +1487,7 @@ func TestListSoDViolations_HappyPath_S11(t *testing.T) {
 
 // TestListSoDPoliciesProxy_HappyPath_S11 — no params needed → 200.
 func TestListSoDPoliciesProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1417,6 +1497,7 @@ func TestListSoDPoliciesProxy_HappyPath_S11(t *testing.T) {
 
 // TestDeleteSoDPolicyProxy_NotFound_S11 — nonexistent policy → 404.
 func TestDeleteSoDPolicyProxy_NotFound_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	r = withChiParamS8(r, "id", "99999")
@@ -1428,6 +1509,7 @@ func TestDeleteSoDPolicyProxy_NotFound_S11(t *testing.T) {
 
 // TestDeleteSoDPolicyProxy_BadID_S11 — non-numeric id → 400.
 func TestDeleteSoDPolicyProxy_BadID_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	r = withChiParamS8(r, "id", "bad")
@@ -1445,6 +1527,7 @@ func newAdminJobsHandlerS11(t *testing.T) *AdminJobsHandler {
 
 // TestRunAnomalyAlerts_HappyPath_S11 — with user ctx → 200.
 func TestRunAnomalyAlerts_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newAdminJobsHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
 	w := httptest.NewRecorder()
@@ -1454,6 +1537,7 @@ func TestRunAnomalyAlerts_HappyPath_S11(t *testing.T) {
 
 // TestRunAnomalyAlerts_NoUserCtx_S11 — without user ctx → 401.
 func TestRunAnomalyAlerts_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newAdminJobsHandlerS11(t)
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
@@ -1463,6 +1547,7 @@ func TestRunAnomalyAlerts_NoUserCtx_S11(t *testing.T) {
 
 // TestRunRotationReminders_HappyPath_S11 — with user ctx → 200.
 func TestRunRotationReminders_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newAdminJobsHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
 	w := httptest.NewRecorder()
@@ -1472,6 +1557,7 @@ func TestRunRotationReminders_HappyPath_S11(t *testing.T) {
 
 // TestRunRotationReminders_NoUserCtx_S11 — without user ctx → 401.
 func TestRunRotationReminders_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newAdminJobsHandlerS11(t)
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
@@ -1481,6 +1567,7 @@ func TestRunRotationReminders_NoUserCtx_S11(t *testing.T) {
 
 // TestRunComplianceDigest_HappyPath_S11 — with user ctx → 200.
 func TestRunComplianceDigest_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newAdminJobsHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
 	w := httptest.NewRecorder()
@@ -1490,6 +1577,7 @@ func TestRunComplianceDigest_HappyPath_S11(t *testing.T) {
 
 // TestRunComplianceDigest_NoUserCtx_S11 — without user ctx → 401.
 func TestRunComplianceDigest_NoUserCtx_S11(t *testing.T) {
+	t.Parallel()
 	h := newAdminJobsHandlerS11(t)
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
@@ -1499,6 +1587,7 @@ func TestRunComplianceDigest_NoUserCtx_S11(t *testing.T) {
 
 // TestRunExpiryReminders_HappyPath_S11 — with user ctx and lead_days param → 200.
 func TestRunExpiryReminders_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := newAdminJobsHandlerS11(t)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/?lead_days=30", nil))
 	w := httptest.NewRecorder()
@@ -1510,6 +1599,7 @@ func TestRunExpiryReminders_HappyPath_S11(t *testing.T) {
 
 // TestCreateBreakGlassActivationProxy_HappyPath_S11 — valid body with project+user → 200.
 func TestCreateBreakGlassActivationProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11bgproxy", "")
@@ -1529,6 +1619,7 @@ func TestCreateBreakGlassActivationProxy_HappyPath_S11(t *testing.T) {
 
 // TestCreateBreakGlassActivationProxy_MissingFields_S11 — missing required fields → 400.
 func TestCreateBreakGlassActivationProxy_MissingFields_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	body := `{"project_id":1}`
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -1539,6 +1630,7 @@ func TestCreateBreakGlassActivationProxy_MissingFields_S11(t *testing.T) {
 
 // TestCreateBreakGlassActivationProxy_BadJSON_S11 — malformed JSON → 400.
 func TestCreateBreakGlassActivationProxy_BadJSON_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad}"))
 	w := httptest.NewRecorder()
@@ -1550,6 +1642,7 @@ func TestCreateBreakGlassActivationProxy_BadJSON_S11(t *testing.T) {
 
 // TestListWebAuthnCredentialsProxy_HappyPath_S11 — valid user_id → 200.
 func TestListWebAuthnCredentialsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := NewAuthHandler(freshCoreS11(t), false)
 	r := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
 	w := httptest.NewRecorder()
@@ -1559,6 +1652,7 @@ func TestListWebAuthnCredentialsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListWebAuthnCredentialsProxy_MissingUserID_S11 — missing user_id → 400.
 func TestListWebAuthnCredentialsProxy_MissingUserID_S11(t *testing.T) {
+	t.Parallel()
 	h := newAuthHandlerForTest(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1568,6 +1662,7 @@ func TestListWebAuthnCredentialsProxy_MissingUserID_S11(t *testing.T) {
 
 // TestCountWebAuthnCredentialsProxy_HappyPath_S11 — valid user_id → 200.
 func TestCountWebAuthnCredentialsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h := NewAuthHandler(freshCoreS11(t), false)
 	r := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
 	w := httptest.NewRecorder()
@@ -1577,6 +1672,7 @@ func TestCountWebAuthnCredentialsProxy_HappyPath_S11(t *testing.T) {
 
 // TestCountWebAuthnCredentialsProxy_MissingUserID_S11 — missing user_id → 400.
 func TestCountWebAuthnCredentialsProxy_MissingUserID_S11(t *testing.T) {
+	t.Parallel()
 	h := newAuthHandlerForTest(t)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -1597,6 +1693,7 @@ func freshGroupHandlerS11(t *testing.T) (*GroupHandler, *core.KeyorixCore) {
 
 // TestAddGroupMemberProxy_HappyPath_S11 — add a real user to a real group → 200.
 func TestAddGroupMemberProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 
@@ -1617,6 +1714,7 @@ func TestAddGroupMemberProxy_HappyPath_S11(t *testing.T) {
 
 // TestRemoveGroupMemberProxy_HappyPath_S11 — remove an existing member → 200.
 func TestRemoveGroupMemberProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 
@@ -1638,6 +1736,7 @@ func TestRemoveGroupMemberProxy_HappyPath_S11(t *testing.T) {
 
 // TestListGroupMembersProxy_WithMembers_S11 — list members when group has at least one → 200 with members.
 func TestListGroupMembersProxy_WithMembers_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 
@@ -1658,6 +1757,7 @@ func TestListGroupMembersProxy_WithMembers_S11(t *testing.T) {
 
 // TestListGroupsProxy_WithGroups_S11 — list proxy when groups exist → loop body covered.
 func TestListGroupsProxy_WithGroups_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 
@@ -1674,6 +1774,7 @@ func TestListGroupsProxy_WithGroups_S11(t *testing.T) {
 
 // TestGetGroupProxy_HappyPath_S11 — get an existing group → 200.
 func TestGetGroupProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 
@@ -1689,6 +1790,7 @@ func TestGetGroupProxy_HappyPath_S11(t *testing.T) {
 
 // TestUpdateGroupProxy_HappyPath_S11 — update an existing group → 200.
 func TestUpdateGroupProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 
@@ -1705,6 +1807,7 @@ func TestUpdateGroupProxy_HappyPath_S11(t *testing.T) {
 
 // TestCreateGroupProxy_HappyPath_S11 — create a new group → 200.
 func TestCreateGroupProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, _ := freshGroupHandlerS11(t)
 	body := `{"name":"s11newgroup","description":"s11 test group"}`
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -1715,6 +1818,7 @@ func TestCreateGroupProxy_HappyPath_S11(t *testing.T) {
 
 // TestListGroupMembersByIDsProxy_HappyPath_S11 — valid ids, with a member → loop body covered.
 func TestListGroupMembersByIDsProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11listmemberbyids"})
@@ -1733,6 +1837,7 @@ func TestListGroupMembersByIDsProxy_HappyPath_S11(t *testing.T) {
 
 // TestListGroupsPageProxy_WithGroups_S11 — list page when groups exist → loop body covered.
 func TestListGroupsPageProxy_WithGroups_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 	_, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11pagegrp-a"})
@@ -1748,6 +1853,7 @@ func TestListGroupsPageProxy_WithGroups_S11(t *testing.T) {
 
 // TestGetUserGroupsProxy_WithGroups_S11 — user is in groups → loop body covered.
 func TestGetUserGroupsProxy_WithGroups_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "s11usrgrp"})
@@ -1769,6 +1875,7 @@ func TestGetUserGroupsProxy_WithGroups_S11(t *testing.T) {
 
 // TestGetProjectProxy_HappyPath_S11 — get an existing project → 200.
 func TestGetProjectProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11getprojproxy", "")
@@ -1783,6 +1890,7 @@ func TestGetProjectProxy_HappyPath_S11(t *testing.T) {
 
 // TestListProjectsProxy_WithProjects_S11 — list proxy when projects exist → loop body covered.
 func TestListProjectsProxy_WithProjects_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -1799,6 +1907,7 @@ func TestListProjectsProxy_WithProjects_S11(t *testing.T) {
 
 // TestUpdateProjectProxy_HappyPath_S11 — update an existing project → 200.
 func TestUpdateProjectProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11updateprojproxy", "old desc")
@@ -1814,6 +1923,7 @@ func TestUpdateProjectProxy_HappyPath_S11(t *testing.T) {
 
 // TestDeleteProjectProxy_HappyPath_S11 — delete an existing project → 200.
 func TestDeleteProjectProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11delprojproxy", "")
@@ -1828,6 +1938,7 @@ func TestDeleteProjectProxy_HappyPath_S11(t *testing.T) {
 
 // TestListProjectMembersProxy_HappyPath_S11 — list members of a project → 200.
 func TestListProjectMembersProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	proj, err := cs.CreateProject(context.Background(), "s11listprojmemproxy", "")
@@ -1851,6 +1962,7 @@ func freshDynamicSecretHandlerS11(t *testing.T) (*DynamicSecretHandler, *core.Ke
 
 // TestListDynamicSecretConfigsProxy_WithConfigs_S11 — loop body covered when configs exist.
 func TestListDynamicSecretConfigsProxy_WithConfigs_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshDynamicSecretHandlerS11(t)
 	ctx := context.Background()
 	proj, err := cs.CreateProject(ctx, "s11dynsecproxy", "")
@@ -1876,6 +1988,7 @@ func TestListDynamicSecretConfigsProxy_WithConfigs_S11(t *testing.T) {
 
 // TestGetDynamicSecretLeaseProxy_HappyPath_S11 — get an existing lease → 200.
 func TestGetDynamicSecretLeaseProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshDynamicSecretHandlerS11(t)
 	ctx := context.Background()
 
@@ -1900,6 +2013,7 @@ func TestGetDynamicSecretLeaseProxy_HappyPath_S11(t *testing.T) {
 
 // TestListDynamicSecretLeasesProxy_WithLeases_S11 — loop body covered when leases exist.
 func TestListDynamicSecretLeasesProxy_WithLeases_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshDynamicSecretHandlerS11(t)
 	ctx := context.Background()
 
@@ -1931,6 +2045,7 @@ func TestListDynamicSecretLeasesProxy_WithLeases_S11(t *testing.T) {
 
 // TestGetAccessReviewCampaignProxy_HappyPath_S11 — get an existing campaign → 200.
 func TestGetAccessReviewCampaignProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -1952,6 +2067,7 @@ func TestGetAccessReviewCampaignProxy_HappyPath_S11(t *testing.T) {
 
 // TestListAccessReviewItemsProxy_WithItems_S11 — loop body covered when items exist.
 func TestListAccessReviewItemsProxy_WithItems_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -1989,6 +2105,7 @@ func TestListAccessReviewItemsProxy_WithItems_S11(t *testing.T) {
 
 // TestGetAccessReviewItemProxy_HappyPath_S11 — get an existing item → 200.
 func TestGetAccessReviewItemProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2041,6 +2158,7 @@ func TestGetAccessReviewItemProxy_HappyPath_S11(t *testing.T) {
 
 // TestVerifyCredentials_HappyPath_S11 — valid creds → success response (covers lines 411-439).
 func TestVerifyCredentials_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "verifycreds")
 	h, err := NewUserHandler(cs)
@@ -2058,6 +2176,7 @@ func TestVerifyCredentials_HappyPath_S11(t *testing.T) {
 
 // TestRBACGetRole_HappyPath_S11 — get a real role by ID → 200 (covers sendSuccess at line 239).
 func TestRBACGetRole_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "getrole")
 	h := NewRBACHandler(cs)
@@ -2076,6 +2195,7 @@ func TestRBACGetRole_HappyPath_S11(t *testing.T) {
 
 // TestGetUserRolesForUser_WithRoles_S11 — user with actual roles → loop body covered.
 func TestGetUserRolesForUser_WithRoles_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "userroles")
 	h := NewUsersRolesHandler(cs)
@@ -2090,6 +2210,7 @@ func TestGetUserRolesForUser_WithRoles_S11(t *testing.T) {
 
 // TestGetUserPermissionsForUser_WithPerms_S11 — user with permissions → loop body covered.
 func TestGetUserPermissionsForUser_WithPerms_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "userperms")
 	h := NewUsersRolesHandler(cs)
@@ -2103,6 +2224,7 @@ func TestGetUserPermissionsForUser_WithPerms_S11(t *testing.T) {
 
 // TestRotationPolicyGet_HappyPath_S11 — get an existing policy → 200 (covers sendSuccess at line 203).
 func TestRotationPolicyGet_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewRotationPolicyHandler(cs)
 	ctx := context.Background()
@@ -2130,6 +2252,7 @@ func TestRotationPolicyGet_HappyPath_S11(t *testing.T) {
 
 // TestRestoreEnvironmentProxy_HappyPath_S11 — delete an environment then restore → 200.
 func TestRestoreEnvironmentProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2162,6 +2285,7 @@ func TestRestoreEnvironmentProxy_HappyPath_S11(t *testing.T) {
 // TestGetAccessReviewCampaignHandler_HappyPath_S11 covers the sendSuccess at line 106
 // in access_review_campaigns.go (the non-proxy handler).
 func TestGetAccessReviewCampaignHandler_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2195,6 +2319,7 @@ func TestGetAccessReviewCampaignHandler_HappyPath_S11(t *testing.T) {
 
 // TestGetMembershipProxy_HappyPath_S11 covers the writeRemoteAPISuccess at line 142.
 func TestGetMembershipProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2218,6 +2343,7 @@ func TestGetMembershipProxy_HappyPath_S11(t *testing.T) {
 
 // TestGetActiveMembershipProxy_HappyPath_S11 covers the writeRemoteAPISuccess at line 227.
 func TestGetActiveMembershipProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2240,6 +2366,7 @@ func TestGetActiveMembershipProxy_HappyPath_S11(t *testing.T) {
 
 // TestListUsersInStateBeforeProxy_WithUsers_S11 — loop body covered when matching users exist.
 func TestListUsersInStateBeforeProxy_WithUsers_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h, err := NewUserHandler(cs)
 	require.NoError(t, err)
@@ -2267,6 +2394,7 @@ func TestListUsersInStateBeforeProxy_WithUsers_S11(t *testing.T) {
 
 // TestListWebAuthnCredentialsProxy_WithCredential_S11 — loop body covered when credentials exist.
 func TestListWebAuthnCredentialsProxy_WithCredential_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewAuthHandler(cs, false)
 	ctx := context.Background()
@@ -2288,6 +2416,7 @@ func TestListWebAuthnCredentialsProxy_WithCredential_S11(t *testing.T) {
 
 // TestDeleteWebAuthnCredentialProxy_HappyPath_S11 — delete a real credential → 200.
 func TestDeleteWebAuthnCredentialProxy_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewAuthHandler(cs, false)
 	ctx := context.Background()
@@ -2323,6 +2452,7 @@ func TestDeleteWebAuthnCredentialProxy_HappyPath_S11(t *testing.T) {
 
 // TestGetUser_HappyPath_S11 — covers the 3-statement success block in GetUser (lines 225-227).
 func TestGetUser_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "getusr")
 	h, err := NewUserHandler(cs)
@@ -2338,6 +2468,7 @@ func TestGetUser_HappyPath_S11(t *testing.T) {
 
 // TestGetUserByEmail_HappyPath_S11 — covers the 3-statement success block in GetUserByEmail (lines 263-265).
 func TestGetUserByEmail_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "getusremail")
 	h, err := NewUserHandler(cs)
@@ -2352,6 +2483,7 @@ func TestGetUserByEmail_HappyPath_S11(t *testing.T) {
 
 // TestGetUserByUsername_HappyPath_S11 — covers the 3-statement success block in GetUserByUsername (lines 294-296).
 func TestGetUserByUsername_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "getusrname")
 	h, err := NewUserHandler(cs)
@@ -2368,6 +2500,7 @@ func TestGetUserByUsername_HappyPath_S11(t *testing.T) {
 
 // TestRestoreProject_HappyPath_S11 — covers sendSuccess at line 71 in catalog.go.
 func TestRestoreProject_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2388,6 +2521,7 @@ func TestRestoreProject_HappyPath_S11(t *testing.T) {
 
 // TestUpdateProject_HappyPath_S11 — covers sendSuccess at line 232 in catalog.go.
 func TestUpdateProject_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2408,6 +2542,7 @@ func TestUpdateProject_HappyPath_S11(t *testing.T) {
 
 // TestDeleteProject_HappyPath_S11 — covers sendSuccess at line 257 in catalog.go.
 func TestDeleteProject_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2426,6 +2561,7 @@ func TestDeleteProject_HappyPath_S11(t *testing.T) {
 
 // TestRestoreEnvironment_HappyPath_S11 — covers sendSuccess at line 376 in catalog.go.
 func TestRestoreEnvironment_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
@@ -2456,6 +2592,7 @@ func TestRestoreEnvironment_HappyPath_S11(t *testing.T) {
 // TestUpdateProfile_HappyPath_S11 — update display name only (no email change,
 // no password needed); covers the 1-statement sendSuccess at line 464 in auth.go.
 func TestUpdateProfile_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "updprofile")
 	h := NewAuthHandler(cs, false)
@@ -2472,6 +2609,7 @@ func TestUpdateProfile_HappyPath_S11(t *testing.T) {
 // TestRevokeOwnSession_HappyPath_S11 — log in, look up the session, then
 // revoke it; covers the 1-statement w.WriteHeader(204) at line 569 in auth.go.
 func TestRevokeOwnSession_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	sessionToken := bootstrapS11(t, cs, "revokesession")
 	h := NewAuthHandler(cs, false)
@@ -2492,6 +2630,7 @@ func TestRevokeOwnSession_HappyPath_S11(t *testing.T) {
 // TestChangePassword_HappyPath_S11 — change password with the correct current
 // password; covers the 2-statement success block at lines 498-499 in auth.go.
 func TestChangePassword_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "changepw")
 	h := NewAuthHandler(cs, false)
@@ -2510,6 +2649,7 @@ func TestChangePassword_HappyPath_S11(t *testing.T) {
 // TestGetSetupToken_HappyPath_S11 — issue a setup token directly and then call
 // GetSetupToken; covers the 1-statement sendSuccess at line 220 in auth.go.
 func TestGetSetupToken_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "getsetuptoken")
 	h := NewAuthHandler(cs, false)
@@ -2534,6 +2674,7 @@ func TestGetSetupToken_HappyPath_S11(t *testing.T) {
 // TestGetSessionByToken_HappyPath_S11 — log in and look up the session token;
 // covers the 1-statement sendSuccess at line 52 in sessions_remote.go.
 func TestGetSessionByToken_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	sessionToken := bootstrapS11(t, cs, "getsesstoken")
 	h, err := NewUserHandler(cs)
@@ -2552,6 +2693,7 @@ func TestGetSessionByToken_HappyPath_S11(t *testing.T) {
 // TestDeleteGroup_HappyPath_S11 — create and then delete a group; covers the
 // 1-statement w.WriteHeader(204) at line 204 in groups_handler.go.
 func TestDeleteGroup_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	h, cs := freshGroupHandlerS11(t)
 	ctx := context.Background()
 
@@ -2573,6 +2715,7 @@ func TestDeleteGroup_HappyPath_S11(t *testing.T) {
 // TestLiftLegalHold_HappyPath_S11 — place then lift a legal hold; covers the
 // 1-statement sendSuccess at line 97 in legal_hold.go.
 func TestLiftLegalHold_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "lifthold")
 	h := NewDashboardHandler(cs)
@@ -2597,6 +2740,7 @@ func TestLiftLegalHold_HappyPath_S11(t *testing.T) {
 // TestRotationPolicyUpdate_HappyPath_S11 — create then update a rotation policy;
 // covers the 1-statement sendSuccess at line 262 in rotation_policies_handler.go.
 func TestRotationPolicyUpdate_HappyPath_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewRotationPolicyHandler(cs)
 	ctx := context.Background()
@@ -2629,6 +2773,7 @@ func TestRotationPolicyUpdate_HappyPath_S11(t *testing.T) {
 // non-nil ProjectID and list it; covers the 1-statement branch at line 40
 // in notifications_handler.go (notificationToAPI's project_id branch).
 func TestNotificationList_WithProjectID_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "notiflist")
 	h := NewNotificationHandler(cs)
@@ -2657,6 +2802,7 @@ func TestNotificationList_WithProjectID_S11(t *testing.T) {
 // users_roles.go by calling UpdateUserRoles with a valid role ID, so the result
 // set is non-empty and the for loop body executes.
 func TestUpdateUserRoles_WithRole_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	bootstrapS11(t, cs, "updusrrolesloop")
 	h := NewUsersRolesHandler(cs)
@@ -2688,6 +2834,7 @@ func cancelledCtxReq(method, target string) *http.Request {
 }
 
 func TestListEnvironments_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewCatalogHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/environments")
 	w := httptest.NewRecorder()
@@ -2696,6 +2843,7 @@ func TestListEnvironments_CtxError_S11(t *testing.T) {
 }
 
 func TestListProjects_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := newCatalogHandlerS8(t)
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/projects")
 	w := httptest.NewRecorder()
@@ -2704,6 +2852,7 @@ func TestListProjects_CtxError_S11(t *testing.T) {
 }
 
 func TestGetCompliancePosture_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewDashboardHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/compliance/posture")
 	w := httptest.NewRecorder()
@@ -2712,6 +2861,7 @@ func TestGetCompliancePosture_CtxError_S11(t *testing.T) {
 }
 
 func TestGetComplianceDigest_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewDashboardHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/compliance/digest")
 	w := httptest.NewRecorder()
@@ -2720,6 +2870,7 @@ func TestGetComplianceDigest_CtxError_S11(t *testing.T) {
 }
 
 func TestGetComplianceControls_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewDashboardHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/compliance/controls")
 	w := httptest.NewRecorder()
@@ -2728,6 +2879,7 @@ func TestGetComplianceControls_CtxError_S11(t *testing.T) {
 }
 
 func TestGetComplianceEvidence_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewDashboardHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/compliance/evidence")
 	w := httptest.NewRecorder()
@@ -2736,6 +2888,7 @@ func TestGetComplianceEvidence_CtxError_S11(t *testing.T) {
 }
 
 func TestRunAnomalyAlerts_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewAdminJobsHandler(freshCoreS11(t))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -2746,6 +2899,7 @@ func TestRunAnomalyAlerts_CtxError_S11(t *testing.T) {
 }
 
 func TestRunRotationReminders_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewAdminJobsHandler(freshCoreS11(t))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -2756,6 +2910,7 @@ func TestRunRotationReminders_CtxError_S11(t *testing.T) {
 }
 
 func TestListRefGrants_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewConnectHandler(cs)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2767,6 +2922,7 @@ func TestListRefGrants_CtxError_S11(t *testing.T) {
 }
 
 func TestListConnectRefGrantsProxy_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h := NewAuthHandler(cs, false)
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/connect-grants")
@@ -2776,6 +2932,7 @@ func TestListConnectRefGrantsProxy_CtxError_S11(t *testing.T) {
 }
 
 func TestDeploymentHygiene_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := newSecretHandlerS4(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -2786,6 +2943,7 @@ func TestDeploymentHygiene_CtxError_S11(t *testing.T) {
 }
 
 func TestGetLegalHold_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewDashboardHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/legal-hold")
 	w := httptest.NewRecorder()
@@ -2794,6 +2952,7 @@ func TestGetLegalHold_CtxError_S11(t *testing.T) {
 }
 
 func TestListEnvironmentsProxy_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewCatalogHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/environments")
 	w := httptest.NewRecorder()
@@ -2802,6 +2961,7 @@ func TestListEnvironmentsProxy_CtxError_S11(t *testing.T) {
 }
 
 func TestListGroupsProxy_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	cs := freshCoreS11(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
@@ -2812,6 +2972,7 @@ func TestListGroupsProxy_CtxError_S11(t *testing.T) {
 }
 
 func TestCountDynamicSecretConfigsByClassificationProxy_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewDynamicSecretHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/dynamic-secrets/configs/classification-counts")
 	w := httptest.NewRecorder()
@@ -2820,6 +2981,7 @@ func TestCountDynamicSecretConfigsByClassificationProxy_CtxError_S11(t *testing.
 }
 
 func TestGetActiveLegalHoldProxy_CtxError_S11(t *testing.T) {
+	t.Parallel()
 	h := NewDashboardHandler(freshCoreS11(t))
 	r := cancelledCtxReq(http.MethodGet, "/api/v1/system/legal-hold/active")
 	w := httptest.NewRecorder()
