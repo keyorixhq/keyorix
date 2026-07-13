@@ -676,7 +676,7 @@ func TestRunGetEmbedded_ByName_NotFound_Paged_S8(t *testing.T) {
 }
 
 // newS8ExportCmd creates a cobra.Command with a Background context for runExport tests.
-func newS8ExportCmdS8(t *testing.T) *cobra.Command {
+func newS8ExportCmd(t *testing.T) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
@@ -689,13 +689,13 @@ func TestRunExport_NoRemoteClient_S8(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	err := runExport(newS8ExportCmdS8(t), nil)
+	err := runExport(newS8ExportCmd(t), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no remote server configured")
 }
 
 // newS8ImportCmd creates a cobra.Command with a Background context for runImport tests.
-func newS8ImportCmdS8(t *testing.T) *cobra.Command {
+func newS8ImportCmd(t *testing.T) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
@@ -732,7 +732,7 @@ func TestRunImport_DryRun_S8(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	err := runImport(newS8ImportCmdS8(t), nil)
+	err := runImport(newS8ImportCmd(t), nil)
 	require.NoError(t, err)
 }
 
@@ -797,7 +797,7 @@ func TestRunImport_DryRunEmpty_S8(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", "")
 	t.Setenv("KEYORIX_TOKEN", "")
 
-	err := runImport(newS8ImportCmdS8(t), nil)
+	err := runImport(newS8ImportCmd(t), nil)
 	require.NoError(t, err)
 }
 
@@ -1714,7 +1714,7 @@ func TestRunExport_ProjectNotFound_S8(t *testing.T) {
 	t.Cleanup(func() { exportProject = origProject })
 	exportProject = "missing-project-s8"
 
-	err := runExport(newS8ExportCmdS8(t), nil)
+	err := runExport(newS8ExportCmd(t), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -1742,7 +1742,7 @@ func TestRunExport_EnvNotFound_S8(t *testing.T) {
 	exportProject = "default"
 	exportEnv = "missing-env-s8"
 
-	err := runExport(newS8ExportCmdS8(t), nil)
+	err := runExport(newS8ExportCmd(t), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -1772,7 +1772,7 @@ func TestRunExport_NoSecrets_S8(t *testing.T) {
 	exportEnv = "development"
 	exportFormat = "dotenv"
 
-	err := runExport(newS8ExportCmdS8(t), nil)
+	err := runExport(newS8ExportCmd(t), nil)
 	require.NoError(t, err)
 }
 
@@ -1803,7 +1803,7 @@ func TestRunExport_UnknownFormat_S8(t *testing.T) {
 	exportFormat = "badformat"
 	exportOutput = ""
 
-	err := runExport(newS8ExportCmdS8(t), nil)
+	err := runExport(newS8ExportCmd(t), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown format")
 }
@@ -1868,7 +1868,7 @@ func TestRunImport_SkipExisting_S8(t *testing.T) {
 	importSkipExisting = true
 	importSource = ""
 
-	err := runImport(newS8ImportCmdS8(t), nil)
+	err := runImport(newS8ImportCmd(t), nil)
 	// With skip-existing and a 409 response → no error.
 	require.NoError(t, err)
 }

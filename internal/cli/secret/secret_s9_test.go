@@ -415,14 +415,24 @@ func TestRunExport_BadOutputPath_S9(t *testing.T) {
 	exportOutput = "/no/such/dir-s9/export.json"
 
 	err := runExport(exportCmd, nil)
-	_ = err
+	assert.Error(t, err)
 }
 
 // ── explodeValue: compound value ─────────────────────────────────────────────
 
 func TestExplodeValue_Compound_S9(t *testing.T) {
+	orig := importNoExplode
+	importNoExplode = false
+	t.Cleanup(func() { importNoExplode = orig })
+
 	results := explodeValue("db", `{"host":"localhost","port":"5432"}`)
-	_ = results
+	assert.NotEmpty(t, results)
+	byName := make(map[string]string, len(results))
+	for _, e := range results {
+		byName[e.Name] = e.Value
+	}
+	assert.Equal(t, "localhost", byName["db-host"])
+	assert.Equal(t, "5432", byName["db-port"])
 }
 
 func TestExplodeValue_Simple_S9(t *testing.T) {

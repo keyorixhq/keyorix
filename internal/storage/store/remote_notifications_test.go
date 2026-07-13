@@ -88,7 +88,7 @@ func TestRemoteStorage_CountUnreadNotifications(t *testing.T) {
 	assert.Equal(t, int64(7), count)
 }
 
-func TestRemoteStorage_MarkNotificationRead_S11(t *testing.T) {
+func TestRemoteStorage_MarkNotificationRead_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/notifications/42/read", r.URL.Path)
@@ -103,7 +103,7 @@ func TestRemoteStorage_MarkNotificationRead_S11(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestRemoteStorage_MarkAllNotificationsRead_S11(t *testing.T) {
+func TestRemoteStorage_MarkAllNotificationsRead_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/notifications/read-all", r.URL.Path)
