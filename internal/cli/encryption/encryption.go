@@ -329,9 +329,9 @@ func dryRunRotation(cfg *config.Config) error {
 // dynamic_secret_configs, and dynamic_secret_leases, the exact three tables
 // #422's sweep-gap fix added.
 func printSweepResult(result *encryption.SweepResult) {
-	fmt.Printf("📋 secret_versions: %d, sessions: %d, api_tokens: %d, api_clients: %d, password_resets: %d, mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d (legacy AAD upgraded: %d)\n", // lgtm[go/clear-text-logging]
+	fmt.Printf("📋 secret_versions: %d, sessions: %d, api_tokens: %d, api_clients: %d, password_resets: %d, mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d (legacy AAD upgraded: %d)\n",
 		result.SecretVersionsSwept, result.SessionsSwept, result.APITokensSwept, result.APIClientsSwept,
-		result.PasswordResetsSwept, result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept,
+		result.AccountResetsSwept, result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept,
 		result.LegacyAADUpgraded)
 }
 

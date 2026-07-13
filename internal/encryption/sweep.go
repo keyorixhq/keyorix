@@ -30,7 +30,7 @@ type SweepResult struct {
 	SessionsSwept             int
 	APITokensSwept            int
 	APIClientsSwept           int
-	PasswordResetsSwept       int
+	AccountResetsSwept       int
 	MFASecretsSwept           int
 	DynamicSecretConfigsSwept int
 	DynamicSecretLeasesSwept  int
@@ -78,7 +78,7 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	if err != nil {
 		return nil, fmt.Errorf("password_resets sweep failed: %w", err)
 	}
-	result.PasswordResetsSwept = sweptResets
+	result.AccountResetsSwept = sweptResets
 
 	// These three tables are also DEK-encrypted but were previously omitted from the
 	// sweep entirely — so a DEK rotation orphaned their ciphertext under the wiped old
