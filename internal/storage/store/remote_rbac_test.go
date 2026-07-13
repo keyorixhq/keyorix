@@ -367,7 +367,7 @@ func TestRemoteStorage_GetRolePermissions(t *testing.T) {
 	assert.Equal(t, "secrets.read", perms[0].Name)
 }
 
-func TestRemoteStorage_RemovePermissionFromRole_S11(t *testing.T) {
+func TestRemoteStorage_RemovePermissionFromRole_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
 		assert.Equal(t, "/api/v1/roles/2/permissions/5", r.URL.Path)

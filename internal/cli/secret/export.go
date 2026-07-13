@@ -68,7 +68,7 @@ type exportedSecret struct {
 	Value string
 }
 
-func runExport(cmd *cobra.Command, args []string) error {
+func runExport(cmd *cobra.Command, args []string) (retErr error) {
 	rc, ok := common.NewRemoteClient()
 	if !ok {
 		return fmt.Errorf("no remote server configured; set KEYORIX_SERVER and KEYORIX_TOKEN or run 'keyorix auth login'")
@@ -107,7 +107,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", exportOutput, err)
 		}
-		defer f.Close() //nolint:errcheck
+		defer func() {
+			if cerr := f.Close(); cerr != nil && retErr == nil {
+				retErr = fmt.Errorf("failed to close output file: %w", cerr)
+			}
+		}()
 		out = f
 	}
 
