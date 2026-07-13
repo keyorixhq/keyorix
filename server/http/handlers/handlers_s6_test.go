@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,10 +57,13 @@ func withBearerToken(r *http.Request, token string) *http.Request {
 	return r
 }
 
-// withCookieToken sets the session cookie (mirrors middleware.SessionCookieName).
-func withCookieToken(r *http.Request, token string) *http.Request {
-	r.AddCookie(&http.Cookie{Name: middleware.SessionCookieName, Value: token})
-	return r
+// withChiParamsS6 sets multiple chi URL params on the request at once.
+func withChiParamsS6(r *http.Request, params map[string]string) *http.Request {
+	rctx := chi.NewRouteContext()
+	for k, v := range params {
+		rctx.URLParams.Add(k, v)
+	}
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
 // ── ImpersonationHandler.Start — remaining branches ──────────────────────────
@@ -274,8 +278,8 @@ func TestAuthHandler_Login_RateLimit_S6(t *testing.T) {
 	h := newAuthHandlerS6(t)
 	// Flood enough failed attempts from 127.0.0.1 to trip the rate limit.
 	const ip = "127.5.6.7"
-	for i := 0; i < 11; i++ {
-		h.coreService.RecordFailedLogin(nil, ip) //nolint:staticcheck
+	for range 11 {
+		h.coreService.RecordFailedLogin(context.Background(), ip)
 	}
 	body := `{"username":"x","password":"y"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -777,9 +781,9 @@ func TestSoDHandler_ListSoDViolations_S6(t *testing.T) {
 	h.ListSoDViolations(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	_, hasDegraded := resp["data"].(map[string]interface{})["degraded"]
+	_, hasDegraded := resp["data"].(map[string]any)["degraded"]
 	_ = hasDegraded
 }
 
@@ -819,7 +823,7 @@ func TestListAccessReviewCampaigns_HappyPath_S6(t *testing.T) {
 
 func TestGetAccessReviewCampaign_BadProjectID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "notanumber", "campaignId": "1"})
+	req := withChiParamsS6(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "notanumber", "campaignId": "1"})
 	w := httptest.NewRecorder()
 	h.GetAccessReviewCampaign(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -827,7 +831,7 @@ func TestGetAccessReviewCampaign_BadProjectID_S6(t *testing.T) {
 
 func TestGetAccessReviewCampaign_BadCampaignID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "notanumber"})
+	req := withChiParamsS6(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "notanumber"})
 	w := httptest.NewRecorder()
 	h.GetAccessReviewCampaign(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -835,7 +839,7 @@ func TestGetAccessReviewCampaign_BadCampaignID_S6(t *testing.T) {
 
 func TestGetAccessReviewCampaign_NotFound_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "9999"})
+	req := withChiParamsS6(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "9999"})
 	w := httptest.NewRecorder()
 	h.GetAccessReviewCampaign(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -843,7 +847,7 @@ func TestGetAccessReviewCampaign_NotFound_S6(t *testing.T) {
 
 func TestDecideAccessReviewCampaignItem_BadProjectID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
+	req := withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
 		map[string]string{"id": "notanumber", "campaignId": "1", "itemId": "1"})
 	w := httptest.NewRecorder()
 	h.DecideAccessReviewCampaignItem(w, req)
@@ -852,7 +856,7 @@ func TestDecideAccessReviewCampaignItem_BadProjectID_S6(t *testing.T) {
 
 func TestDecideAccessReviewCampaignItem_BadCampaignID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
+	req := withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
 		map[string]string{"id": "1", "campaignId": "notanumber", "itemId": "1"})
 	w := httptest.NewRecorder()
 	h.DecideAccessReviewCampaignItem(w, req)
@@ -861,7 +865,7 @@ func TestDecideAccessReviewCampaignItem_BadCampaignID_S6(t *testing.T) {
 
 func TestDecideAccessReviewCampaignItem_BadItemID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
+	req := withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
 		map[string]string{"id": "1", "campaignId": "1", "itemId": "notanumber"})
 	w := httptest.NewRecorder()
 	h.DecideAccessReviewCampaignItem(w, req)
@@ -870,7 +874,7 @@ func TestDecideAccessReviewCampaignItem_BadItemID_S6(t *testing.T) {
 
 func TestDecideAccessReviewCampaignItem_Unauthorized_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
+	req := withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":"attest"}`)),
 		map[string]string{"id": "1", "campaignId": "1", "itemId": "1"})
 	w := httptest.NewRecorder()
 	h.DecideAccessReviewCampaignItem(w, req)
@@ -879,7 +883,7 @@ func TestDecideAccessReviewCampaignItem_Unauthorized_S6(t *testing.T) {
 
 func TestDecideAccessReviewCampaignItem_BadJSON_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")),
+	req := withUserCtx(withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")),
 		map[string]string{"id": "1", "campaignId": "1", "itemId": "1"}))
 	w := httptest.NewRecorder()
 	h.DecideAccessReviewCampaignItem(w, req)
@@ -888,7 +892,7 @@ func TestDecideAccessReviewCampaignItem_BadJSON_S6(t *testing.T) {
 
 func TestDecideAccessReviewCampaignItem_MissingAction_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":""}`)),
+	req := withUserCtx(withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"action":""}`)),
 		map[string]string{"id": "1", "campaignId": "1", "itemId": "1"}))
 	w := httptest.NewRecorder()
 	h.DecideAccessReviewCampaignItem(w, req)
@@ -897,7 +901,7 @@ func TestDecideAccessReviewCampaignItem_MissingAction_S6(t *testing.T) {
 
 func TestCloseAccessReviewCampaign_BadProjectID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"id": "notanumber", "campaignId": "1"})
+	req := withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"id": "notanumber", "campaignId": "1"})
 	w := httptest.NewRecorder()
 	h.CloseAccessReviewCampaign(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -905,7 +909,7 @@ func TestCloseAccessReviewCampaign_BadProjectID_S6(t *testing.T) {
 
 func TestCloseAccessReviewCampaign_BadCampaignID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"id": "1", "campaignId": "notanumber"})
+	req := withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"id": "1", "campaignId": "notanumber"})
 	w := httptest.NewRecorder()
 	h.CloseAccessReviewCampaign(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -915,7 +919,7 @@ func TestCloseAccessReviewCampaign_Unauthorized_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
 	// Note: handler parses projectID first; only after that checks auth.
 	// Provide valid chi params so we reach the auth check.
-	req := withChiParams(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"id": "1", "campaignId": "1"})
+	req := withChiParamsS6(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"id": "1", "campaignId": "1"})
 	w := httptest.NewRecorder()
 	h.CloseAccessReviewCampaign(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -937,7 +941,7 @@ func TestCampaignStatusForError_S6(t *testing.T) {
 
 func TestExportAccessReviewCampaignCSV_Unauthorized_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "1"})
+	req := withChiParamsS6(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "1"})
 	w := httptest.NewRecorder()
 	h.ExportAccessReviewCampaignCSV(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -945,7 +949,7 @@ func TestExportAccessReviewCampaignCSV_Unauthorized_S6(t *testing.T) {
 
 func TestExportAccessReviewCampaignCSV_BadProjectID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "notanumber", "campaignId": "1"}))
+	req := withUserCtx(withChiParamsS6(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "notanumber", "campaignId": "1"}))
 	w := httptest.NewRecorder()
 	h.ExportAccessReviewCampaignCSV(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -953,7 +957,7 @@ func TestExportAccessReviewCampaignCSV_BadProjectID_S6(t *testing.T) {
 
 func TestExportAccessReviewCampaignCSV_BadCampaignID_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "notanumber"}))
+	req := withUserCtx(withChiParamsS6(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "notanumber"}))
 	w := httptest.NewRecorder()
 	h.ExportAccessReviewCampaignCSV(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -961,7 +965,7 @@ func TestExportAccessReviewCampaignCSV_BadCampaignID_S6(t *testing.T) {
 
 func TestExportAccessReviewCampaignCSV_NotFound_S6(t *testing.T) {
 	h := newCatalogHandlerS6(t)
-	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "9999"}))
+	req := withUserCtx(withChiParamsS6(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "campaignId": "9999"}))
 	w := httptest.NewRecorder()
 	h.ExportAccessReviewCampaignCSV(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
