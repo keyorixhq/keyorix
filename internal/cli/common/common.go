@@ -202,5 +202,5 @@ func PrintOneTimePasswordResult(otp *core.OneTimePasswordResult) {
 	if otp == nil {
 		return
 	}
-	fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OneTimePassword) // lgtm[go/clear-text-logging]
+	fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OneTimePassword) // codeql[go/clear-text-logging]
 }
