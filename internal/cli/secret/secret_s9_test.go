@@ -421,6 +421,10 @@ func TestRunExport_BadOutputPath_S9(t *testing.T) {
 // ── explodeValue: compound value ─────────────────────────────────────────────
 
 func TestExplodeValue_Compound_S9(t *testing.T) {
+	orig := importNoExplode
+	importNoExplode = false
+	t.Cleanup(func() { importNoExplode = orig })
+
 	results := explodeValue("db", `{"host":"localhost","port":"5432"}`)
 	assert.NotEmpty(t, results)
 	byName := make(map[string]string, len(results))
