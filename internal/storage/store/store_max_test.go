@@ -87,7 +87,7 @@ func TestEnforceSessionLimit_NeedsToPrune(t *testing.T) {
 	ctx := context.Background()
 
 	// Create 3 sessions.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, err := ls.CreateSession(ctx, &models.Session{
 			UserID:       1,
 			SessionToken: fmt.Sprintf("tok%d", i),
@@ -331,7 +331,7 @@ func TestPasswordHistory_AddAndPrune(t *testing.T) {
 	ls := newMaxStore(t, "pwhist", &models.User{}, &models.PasswordHistory{})
 	ctx := context.Background()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.NoError(t, ls.AddPasswordHistory(ctx, 1, fmt.Sprintf("hash%d", i), time.Now()))
 	}
 
