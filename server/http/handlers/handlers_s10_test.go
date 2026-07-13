@@ -12,9 +12,12 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // withMachineCtxS10 wraps a request with a machine-identity UserContext.
@@ -27,11 +30,60 @@ func withMachineCtxS10(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), customMiddleware.GetUserContextKey(), userCtx))
 }
 
-// seedS10Secret creates a project, lists its first environment, and creates a secret.
-// Returns (core, projectName, envName, secretID, secretName) or skips on any failure.
-func seedS10Secret(t *testing.T, projName, secretName string) (*core.KeyorixCore, string, string, uint) {
+// newIsolatedCoreS10 creates a fresh in-memory SQLite DB with the full schema
+// including SecretVersion (not present in the shared s4 DB). Used only for tests
+// that actually create secrets, to avoid interference with the shared s4 DB.
+// Uses ":memory:" (no cache=shared) for a truly isolated DB per invocation.
+func newIsolatedCoreS10(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	svc := newHandlerCoreS4(t)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err, "open isolated s10 DB")
+	err = db.AutoMigrate(
+		// exact same list as newHandlerCoreS4, plus SecretVersion
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
+		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.SecretNode{},
+		&models.AuditEvent{}, &models.AnomalyAlert{},
+		&models.RotationPolicy{}, &models.Notification{},
+		&models.ProjectMembership{}, &models.SoDPolicy{},
+		&models.BreakGlassActivation{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{},
+		&models.LoginAttempt{},
+		&models.AccessRequest{}, &models.AccessRequestApproval{},
+		&models.WebAuthnCredential{}, &models.WebAuthnSession{},
+		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
+		&models.ConnectRefGrant{}, &models.Session{}, &models.SetupToken{},
+		&models.MFAChallenge{}, &models.SSOLoginState{},
+		&models.MachineIdentity{}, &models.MachineIdentityCredential{},
+		&models.MachineIdentityRole{}, &models.MachineIdentityOIDCBinding{},
+		&models.SecretDependency{}, &models.RiskException{},
+		&models.MFASecret{}, &models.MFARecoveryCode{},
+		&models.IdentityProvider{}, &models.ExternalIdentity{},
+		&models.LegalHold{}, &models.ShareRecord{},
+		&models.PersonalAccessToken{},
+		&models.ProjectInvitation{}, &models.SchedulerLockLease{},
+		&models.SecretAccessLog{},
+		// s10 addition — required for CreateSecret / GetSecret / value reads
+		&models.SecretVersion{},
+	)
+	require.NoError(t, err, "AutoMigrate isolated s10 DB")
+	return core.NewKeyorixCore(store.NewLocalStorage(db))
+}
+
+// newIsolatedSecretHandlerS10 creates a SecretHandler backed by an isolated DB
+// that includes SecretVersion in its schema.
+func newIsolatedSecretHandlerS10(t *testing.T) (*SecretHandler, *core.KeyorixCore) {
+	t.Helper()
+	svc := newIsolatedCoreS10(t)
+	h, err := NewSecretHandler(svc)
+	require.NoError(t, err)
+	return h, svc
+}
+
+// seedS10Secret seeds a project, environment, and secret in the isolated DB.
+// Returns (handler, projectName, envName, secretID).
+func seedS10Secret(t *testing.T, projName, secretName string) (*SecretHandler, string, string, uint) {
+	t.Helper()
+	h, svc := newIsolatedSecretHandlerS10(t)
 	ctx := context.Background()
 	proj, err := svc.CreateProject(ctx, projName, "sprint-10 coverage seed")
 	require.NoError(t, err, "CreateProject")
@@ -49,9 +101,9 @@ func seedS10Secret(t *testing.T, projName, secretName string) (*core.KeyorixCore
 	}
 	secret, err := svc.CreateSecret(ctx, req)
 	if err != nil {
-		t.Skip("CreateSecret failed (may already exist in shared DB):", err)
+		t.Skip("CreateSecret failed:", err)
 	}
-	return svc, projName, envName, secret.ID
+	return h, projName, envName, secret.ID
 }
 
 // ── toPATResponse: ExpiresAt and LastUsedAt branches ─────────────────────────
@@ -119,16 +171,14 @@ func TestGetSecret_MachineIdentity_NotFound_S10(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.GetSecret(w, r)
-	// Secret 99999 doesn't exist → 404 via machine path (GetSecret not GetSecretWithPermissionCheck)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── GetSecret: include_value=true path ───────────────────────────────────────
+// ── GetSecret: include_value=true path (isolated DB) ─────────────────────────
 
 func TestGetSecret_IncludeValue_MachineIdentity_S10(t *testing.T) {
-	_, _, _, secretID := seedS10Secret(t, "s10-proj-inclval", "s10-inclval-secret")
+	h, _, _, secretID := seedS10Secret(t, "s10-proj-inclval", "s10-inclval-secret")
 
-	h := newSecretHandlerS4(t)
 	url := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", secretID)
 	r := httptest.NewRequest(http.MethodGet, url, nil)
 	r = withMachineCtxS10(r)
@@ -136,7 +186,6 @@ func TestGetSecret_IncludeValue_MachineIdentity_S10(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.GetSecret(w, r)
-	// Should be 200 with {"secret":...,"value":"..."} since machine bypass permission check
 	assert.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
@@ -145,25 +194,60 @@ func TestGetSecret_IncludeValue_MachineIdentity_S10(t *testing.T) {
 	assert.NotNil(t, data["value"], "expected value key in response")
 }
 
-// ── GetSecretValueByRef: success path ────────────────────────────────────────
+func TestGetSecret_MachineIdentity_Found_S10(t *testing.T) {
+	h, _, _, secretID := seedS10Secret(t, "s10-proj-machine-found", "s10-machine-found-secret")
+
+	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d", secretID), nil)
+	r = withMachineCtxS10(r)
+	r = withChiParam(r, "id", fmt.Sprintf("%d", secretID))
+	w := httptest.NewRecorder()
+
+	h.GetSecret(w, r)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGetSecret_IncludeValue_UserPath_S10(t *testing.T) {
+	h, _, _, secretID := seedS10Secret(t, "s10-proj-inclval-user", "s10-inclval-user-secret")
+
+	url := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", secretID)
+	r := httptest.NewRequest(http.MethodGet, url, nil)
+	r = withUserCtx(r)
+	r = withChiParam(r, "id", fmt.Sprintf("%d", secretID))
+	w := httptest.NewRecorder()
+
+	h.GetSecret(w, r)
+	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+}
+
+// ── GetSecretValueByRef: success path (isolated DB) ──────────────────────────
 
 func TestGetSecretValueByRef_Success_MachineIdentity_S10(t *testing.T) {
-	_, projName, envName, _ := seedS10Secret(t, "s10-proj-ref", "s10-ref-secret")
+	h, projName, envName, _ := seedS10Secret(t, "s10-proj-ref", "s10-ref-secret")
 
-	h := newSecretHandlerS4(t)
 	ref := fmt.Sprintf("%s/%s/%s", projName, envName, "s10-ref-secret")
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/by-ref?ref="+ref, nil)
 	r = withMachineCtxS10(r)
 	w := httptest.NewRecorder()
 
 	h.GetSecretValueByRef(w, r)
-	// Machine identity → no permission check on value read
 	assert.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 	data, _ := body["data"].(map[string]any)
 	assert.NotNil(t, data["secret"], "expected secret in ref response")
 	assert.NotNil(t, data["value"], "expected value in ref response")
+}
+
+func TestGetSecretValueByRef_UserPath_S10(t *testing.T) {
+	h, projName, envName, _ := seedS10Secret(t, "s10-proj-userref", "s10-userref-secret")
+
+	ref := fmt.Sprintf("%s/%s/%s", projName, envName, "s10-userref-secret")
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/by-ref?ref="+ref, nil)
+	r = withUserCtx(r)
+	w := httptest.NewRecorder()
+
+	h.GetSecretValueByRef(w, r)
+	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 }
 
 // ── SuspendProjectSecrets / ResumeProjectSecrets: BadID ──────────────────────
@@ -190,7 +274,34 @@ func TestResumeProjectSecrets_BadID_S10(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── CopyEnvironmentSecrets: zero target_environment_id ───────────────────────
+// ── SuspendProjectSecrets / ResumeProjectSecrets: happy path ─────────────────
+
+func TestSuspendProjectSecrets_HappyPath_S10(t *testing.T) {
+	h := newSecretHandlerS4(t)
+	body := `{"reason":"s10 test"}`
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/9999/secrets/suspend-all",
+		strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r = withUserCtx(r)
+	r = withChiParam(r, "id", "9999")
+	w := httptest.NewRecorder()
+
+	h.SuspendProjectSecrets(w, r)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestResumeProjectSecrets_HappyPath_S10(t *testing.T) {
+	h := newSecretHandlerS4(t)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/9999/secrets/resume-all", nil)
+	r = withUserCtx(r)
+	r = withChiParam(r, "id", "9999")
+	w := httptest.NewRecorder()
+
+	h.ResumeProjectSecrets(w, r)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ── CopyEnvironmentSecrets: validation branches ───────────────────────────────
 
 func TestCopyEnvironmentSecrets_ZeroTargetEnvID_S10(t *testing.T) {
 	h := newSecretHandlerS4(t)
@@ -232,80 +343,4 @@ func TestCopyEnvironmentSecrets_BadEnvID_S10(t *testing.T) {
 
 	h.CopyEnvironmentSecrets(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// ── GetSecretValueByRef: isMachine=false success path ────────────────────────
-
-func TestGetSecretValueByRef_UserPath_S10(t *testing.T) {
-	_, projName, envName, _ := seedS10Secret(t, "s10-proj-userref", "s10-userref-secret")
-
-	h := newSecretHandlerS4(t)
-	ref := fmt.Sprintf("%s/%s/%s", projName, envName, "s10-userref-secret")
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/by-ref?ref="+ref, nil)
-	r = withUserCtx(r)
-	w := httptest.NewRecorder()
-
-	h.GetSecretValueByRef(w, r)
-	// User path: GetSecretValueWithPermissionCheck — may 200 or 403 depending on sharing config
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-// ── SuspendProjectSecrets / ResumeProjectSecrets: happy path ─────────────────
-
-func TestSuspendProjectSecrets_HappyPath_S10(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	body := `{"reason":"s10 test"}`
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/9999/secrets/suspend-all",
-		strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	r = withUserCtx(r)
-	r = withChiParam(r, "id", "9999")
-	w := httptest.NewRecorder()
-
-	h.SuspendProjectSecrets(w, r)
-	// 9999 doesn't exist → succeeds with suspended:0
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestResumeProjectSecrets_HappyPath_S10(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/9999/secrets/resume-all", nil)
-	r = withUserCtx(r)
-	r = withChiParam(r, "id", "9999")
-	w := httptest.NewRecorder()
-
-	h.ResumeProjectSecrets(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// ── GetSecret: user path include_value=true (not found on existing secret) ───
-
-func TestGetSecret_IncludeValue_UserPath_S10(t *testing.T) {
-	_, _, _, secretID := seedS10Secret(t, "s10-proj-inclval-user", "s10-inclval-user-secret")
-
-	h := newSecretHandlerS4(t)
-	url := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", secretID)
-	r := httptest.NewRequest(http.MethodGet, url, nil)
-	r = withUserCtx(r)
-	r = withChiParam(r, "id", fmt.Sprintf("%d", secretID))
-	w := httptest.NewRecorder()
-
-	h.GetSecret(w, r)
-	// May be 200 (user 1 created it and has access) or 403 (permission denied)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-// ── GetSecret: happy path via machine identity ────────────────────────────────
-
-func TestGetSecret_MachineIdentity_Found_S10(t *testing.T) {
-	_, _, _, secretID := seedS10Secret(t, "s10-proj-machine-found", "s10-machine-found-secret")
-
-	h := newSecretHandlerS4(t)
-	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d", secretID), nil)
-	r = withMachineCtxS10(r)
-	r = withChiParam(r, "id", fmt.Sprintf("%d", secretID))
-	w := httptest.NewRecorder()
-
-	h.GetSecret(w, r)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
