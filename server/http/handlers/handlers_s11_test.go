@@ -533,14 +533,18 @@ func TestConsumeSetup_HappyPath_S11(t *testing.T) {
 // ── groups_members.go: AddGroupMember ────────────────────────────────────────
 
 // TestAddGroupMember_NotFound_S11 — group ID does not exist → 404.
+// Uses a fresh DB to avoid SQLite contention on the shared s4 connection pool.
 func TestAddGroupMember_NotFound_S11(t *testing.T) {
 	t.Parallel()
-	h := newGroupHandlerS8(t)
+	cs := freshCoreS11(t)
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+	// No bootstrap: user 1 doesn't exist, so AddUserToGroup returns "not found" → 404.
+	uc := &middleware.UserContext{UserID: 1, Username: "nouser"}
 	body := `{"user_id":1}`
-	req := withUserCtxS8(withChiParamS8(
-		httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)),
-		"id", "99999",
-	))
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
+	req = withChiParamS8(req, "id", "99999")
 	w := httptest.NewRecorder()
 	h.AddGroupMember(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -1363,7 +1367,7 @@ func TestListProjectRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
 // TestListGroupRoleAssignmentsProxy_HappyPath_S11 — valid groupID chi param → 200.
 func TestListGroupRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
 	t.Parallel()
-	h := NewRBACHandler(newHandlerCoreS4(t))
+	h := NewRBACHandler(freshCoreS11(t))
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withChiParamS8(r, "groupID", "1")
 	w := httptest.NewRecorder()
@@ -1388,7 +1392,7 @@ func TestListProjectMachineRoleAssignmentsProxy_HappyPath_S11(t *testing.T) {
 // TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath_S11 — no params needed → 200.
 func TestListGlobalAdminAssignmentsForUpdateProxy_HappyPath_S11(t *testing.T) {
 	t.Parallel()
-	h := NewRBACHandler(newHandlerCoreS4(t))
+	h := NewRBACHandler(freshCoreS11(t))
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListGlobalAdminAssignmentsForUpdateProxy(w, r)
