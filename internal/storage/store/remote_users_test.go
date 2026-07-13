@@ -397,7 +397,7 @@ func TestRemoteStorage_PurgeDeletedUsersBefore(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/retention/users/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"count": float64(5)}))
+		_, _ = w.Write(apiOK(map[string]interface{}{"purged": float64(5)}))
 	}))
 	defer srv.Close()
 
@@ -413,7 +413,7 @@ func TestRemoteStorage_PurgeDeletedProjectsBefore(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/retention/projects/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"count": float64(2)}))
+		_, _ = w.Write(apiOK(map[string]interface{}{"purged": float64(2)}))
 	}))
 	defer srv.Close()
 
@@ -429,7 +429,7 @@ func TestRemoteStorage_PurgeDeletedEnvironmentsBefore(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/retention/environments/purge", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"count": float64(0)}))
+		_, _ = w.Write(apiOK(map[string]interface{}{"purged": float64(0)}))
 	}))
 	defer srv.Close()
 
@@ -496,10 +496,10 @@ func TestRemoteStorage_ListUsers_WithFilter(t *testing.T) {
 
 func TestRemoteStorage_ListUsers_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   map[string]string{"code": "INTERNAL", "message": "server error"},
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "server error"},
 		})
 	}))
 	defer srv.Close()
@@ -764,10 +764,10 @@ func TestRemoteStorage_ListGroups(t *testing.T) {
 
 func TestRemoteStorage_ListGroups_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   map[string]string{"code": "INTERNAL", "message": "server error"},
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "server error"},
 		})
 	}))
 	defer srv.Close()

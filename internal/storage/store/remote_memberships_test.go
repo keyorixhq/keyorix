@@ -179,10 +179,10 @@ func TestRemoteStorage_CountProjectMembershipsByUsers_Empty(t *testing.T) {
 
 func TestRemoteStorage_CreateProjectMembership_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": false,
-			"error":   map[string]string{"code": "ERROR", "message": "failed"},
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "failed"},
 		})
 	}))
 	defer srv.Close()

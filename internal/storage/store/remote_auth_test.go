@@ -103,10 +103,10 @@ func TestRemoteStorage_DeleteSession(t *testing.T) {
 
 func TestRemoteStorage_DeleteSession_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   map[string]string{"code": "INTERNAL", "message": "server error"},
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "server error"},
 		})
 	}))
 	defer srv.Close()
@@ -319,10 +319,10 @@ func TestRemoteStorage_SupersedeActiveSetupTokens(t *testing.T) {
 
 func TestRemoteStorage_SupersedeActiveSetupTokens_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   map[string]string{"code": "INTERNAL", "message": "server error"},
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "server error"},
 		})
 	}))
 	defer srv.Close()
@@ -439,10 +439,10 @@ func TestRemoteStorage_CountSetupTokensSince(t *testing.T) {
 
 func TestRemoteStorage_CountSetupTokensSince_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   map[string]string{"code": "INTERNAL", "message": "server error"},
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "server error"},
 		})
 	}))
 	defer srv.Close()

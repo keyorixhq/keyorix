@@ -152,10 +152,10 @@ func TestRemoteStorage_UpdateNotification_Unsupported(t *testing.T) {
 
 func TestRemoteStorage_ListNotifications_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": false,
-			"error":   map[string]string{"code": "ERROR", "message": "server error"},
+			"error":   map[string]string{"code": "BAD_REQUEST", "message": "server error"},
 		})
 	}))
 	defer srv.Close()
