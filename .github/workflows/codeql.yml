@@ -65,3 +65,21 @@ jobs:
         uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
         with:
           category: '/language:go-${{ matrix.name }}'
+
+  # Fan-in job that satisfies the "CodeQL" required status check in branch
+  # protection. The matrix jobs above are each required too (Analyze (server)
+  # and Analyze (operator)), but branch protection also requires a "CodeQL"
+  # context which this single-name job provides.
+  summary:
+    name: CodeQL
+    needs: [analyze]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check analysis results
+        run: |
+          if [ "${{ needs.analyze.result }}" != "success" ]; then
+            echo "CodeQL analysis failed or was cancelled"
+            exit 1
+          fi
+          echo "All CodeQL analyses passed"
