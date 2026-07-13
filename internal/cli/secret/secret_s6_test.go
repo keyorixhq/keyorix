@@ -447,7 +447,7 @@ func TestConfirmDeletionS6_NameMismatch(t *testing.T) {
 	defer func() { os.Stdin = old }()
 
 	_, _ = w.WriteString("wrong-name\nyes\n")
-	w.Close()
+	_ = w.Close()
 
 	result := confirmDeletion("my-secret")
 	assert.False(t, result)
@@ -461,7 +461,7 @@ func TestConfirmDeletionS6_CorrectNameYes(t *testing.T) {
 	defer func() { os.Stdin = old }()
 
 	_, _ = w.WriteString("my-secret\nyes\n")
-	w.Close()
+	_ = w.Close()
 
 	result := confirmDeletion("my-secret")
 	assert.True(t, result)
@@ -475,7 +475,7 @@ func TestConfirmDeletionS6_CorrectNameNo(t *testing.T) {
 	defer func() { os.Stdin = old }()
 
 	_, _ = w.WriteString("my-secret\nno\n")
-	w.Close()
+	_ = w.Close()
 
 	result := confirmDeletion("my-secret")
 	assert.False(t, result)
