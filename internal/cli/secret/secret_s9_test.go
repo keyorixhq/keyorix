@@ -427,8 +427,8 @@ func TestExplodeValue_Compound_S9(t *testing.T) {
 	for _, e := range results {
 		byName[e.Name] = e.Value
 	}
-	assert.Equal(t, "localhost", byName["db.host"])
-	assert.Equal(t, "5432", byName["db.port"])
+	assert.Equal(t, "localhost", byName["db-host"])
+	assert.Equal(t, "5432", byName["db-port"])
 }
 
 func TestExplodeValue_Simple_S9(t *testing.T) {
