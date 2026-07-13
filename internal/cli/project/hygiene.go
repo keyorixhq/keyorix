@@ -52,7 +52,7 @@ identities. Requires secrets.read at the project scope.`,
 // fetchHygiene GETs the project hygiene summary (split out for httptest tests).
 func fetchHygiene(ctx context.Context, c *common.RemoteClient, projectID uint) (*hygieneSummary, error) {
 	var out hygieneSummary
-	if err := c.Get(ctx, "/api/v1/projects/"+strconv.Itoa(int(projectID))+"/hygiene", &out); err != nil {
+	if err := c.Get(ctx, "/api/v1/projects/"+strconv.FormatUint(uint64(projectID), 10)+"/hygiene", &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

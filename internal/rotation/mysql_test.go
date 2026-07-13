@@ -11,13 +11,15 @@ import (
 
 type fakeMySQL struct {
 	query  string
+	args   []interface{}
 	called bool
 	err    error
 }
 
-func (f *fakeMySQL) Exec(_ context.Context, q string) error {
+func (f *fakeMySQL) Exec(_ context.Context, q string, args ...interface{}) error {
 	f.called = true
 	f.query = q
+	f.args = args
 	return f.err
 }
 func (f *fakeMySQL) Close() error { return nil }
@@ -39,20 +41,25 @@ func TestMySQL_RotateBuildsAlterUser(t *testing.T) {
 	// bare user → default host '%'
 	require.NoError(t, myWith(fake, "app_").Rotate(context.Background(), "app_svc", "n3wp4ss"))
 	assert.True(t, fake.called)
-	assert.Equal(t, `ALTER USER 'app_svc'@'%' IDENTIFIED BY 'n3wp4ss'`, fake.query)
+	assert.Equal(t, `ALTER USER 'app_svc'@'%' IDENTIFIED BY ?`, fake.query)
+	assert.Equal(t, []interface{}{"n3wp4ss"}, fake.args)
 }
 
 func TestMySQL_RotateWithExplicitHost(t *testing.T) {
 	fake := &fakeMySQL{}
 	require.NoError(t, myWith(fake, "app_").Rotate(context.Background(), "app_svc@10.0.0.5", "pw"))
-	assert.Equal(t, `ALTER USER 'app_svc'@'10.0.0.5' IDENTIFIED BY 'pw'`, fake.query)
+	assert.Equal(t, `ALTER USER 'app_svc'@'10.0.0.5' IDENTIFIED BY ?`, fake.query)
+	assert.Equal(t, []interface{}{"pw"}, fake.args)
 }
 
 // A crafted account/password cannot break out: internal quotes and backslashes doubled.
 func TestMySQL_RotateEscapesInjection(t *testing.T) {
 	fake := &fakeMySQL{}
 	require.NoError(t, myWith(fake, "ro").Rotate(context.Background(), `ro'le`, `pa\'ss`))
-	assert.Equal(t, `ALTER USER 'ro''le'@'%' IDENTIFIED BY 'pa\\''ss'`, fake.query)
+	// Account names are still quoted (DDL identifiers can't be parameterised);
+	// the password is a ? placeholder so no escaping is needed there.
+	assert.Equal(t, `ALTER USER 'ro''le'@'%' IDENTIFIED BY ?`, fake.query)
+	assert.Equal(t, []interface{}{`pa\'ss`}, fake.args)
 }
 
 func TestMySQL_RotateFailsClosedWithoutAllowedRefs(t *testing.T) {

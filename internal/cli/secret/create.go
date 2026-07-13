@@ -203,8 +203,8 @@ func interactiveCreate() (*core.CreateSecretRequest, error) {
 	askUint := func(prompt string, defaultVal uint) uint {
 		for {
 			input := ask(prompt, fmt.Sprint(defaultVal))
-			val, err := strconv.ParseUint(input, 10, 64)
-			if err != nil || val > uint64(^uint(0)) {
+			val, err := strconv.ParseUint(input, 10, 32)
+			if err != nil {
 				fmt.Println("Invalid number, please enter a valid positive integer.")
 				continue
 			}

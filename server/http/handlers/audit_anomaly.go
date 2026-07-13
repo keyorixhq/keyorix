@@ -50,7 +50,7 @@ func AcknowledgeAnomalyAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 64)
+	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		sendError(w, "BadRequest", "Invalid alert ID", http.StatusBadRequest, nil)
 		return
