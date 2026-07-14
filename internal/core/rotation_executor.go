@@ -16,6 +16,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -182,54 +183,72 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("auto-rotation: list policies: %w", err)
 	}
-	now := c.now()
+	due, dueOrder := c.collectDueRotations(ctx, policies, c.now())
+	if len(due) == 0 {
+		return 0, nil
+	}
+	byProject, projectOrder := groupDueByProject(due, dueOrder)
+	rotated, totalFailed := 0, 0
+	for _, pid := range projectOrder {
+		r, f := c.rotateProject(ctx, pid, byProject[pid], due)
+		rotated += r
+		totalFailed += f
+	}
+	if totalFailed > 0 {
+		sysCtx := WithActorType(ctx, ActorTypeSystem)
+		c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
+			fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", totalFailed))
+	}
+	return rotated, nil
+}
 
-	// Phase 1 — gather the secrets due for auto-rotation, deduped per secret. A secret
-	// covered by several policies is rotated at most once, under the first active policy
-	// it is due under (preserves the prior first-policy-wins behaviour). dueOrder keeps
-	// discovery order so project grouping below is deterministic.
+// collectDueRotations gathers all auto-rotate-enabled secrets overdue under any active
+// policy this run. A secret covered by several policies is rotated at most once, under
+// the first active policy it is due under (first-policy-wins). dueOrder preserves
+// discovery order so project grouping in the caller is deterministic.
+func (c *KeyorixCore) collectDueRotations(ctx context.Context, policies []*models.RotationPolicy, now time.Time) (map[uint]*dueRotation, []uint) {
 	due := map[uint]*dueRotation{}
-	dueOrder := []uint{}
+	var dueOrder []uint
 	for _, policy := range policies {
 		if !policy.IsActive {
 			continue
 		}
-		secrets, err := c.scopedPolicySecrets(ctx, policy, nil)
-		if err != nil {
-			// #364: unlike the dependency-list error below (which degrades gracefully
-			// and logs), this was previously a silent skip — auto-rotate-enabled,
-			// possibly critically-overdue secrets under this policy's scope would not
-			// even be considered for rotation this run, with no trace anywhere that it
-			// happened. Log so an operator can see it, matching the sibling handling.
-			log.Printf("auto-rotation: list scoped secrets for policy %d (%q): %v — skipping this policy's secrets this run", policy.ID, policy.Name, err)
+		c.collectPolicySecrets(ctx, policy, now, due, &dueOrder)
+	}
+	return due, dueOrder
+}
+
+// collectPolicySecrets appends to due/dueOrder the secrets that are overdue under
+// policy. Skips secrets already seen under an earlier policy (dedup by secret ID).
+// #364: a list error logs and skips the policy rather than silently losing coverage.
+func (c *KeyorixCore) collectPolicySecrets(ctx context.Context, policy *models.RotationPolicy, now time.Time, due map[uint]*dueRotation, dueOrder *[]uint) {
+	secrets, err := c.scopedPolicySecrets(ctx, policy, nil)
+	if err != nil {
+		log.Printf("auto-rotation: list scoped secrets for policy %d (%q): %v — skipping this policy's secrets this run", policy.ID, policy.Name, err)
+		return
+	}
+	for _, secret := range secrets {
+		if !secret.AutoRotate || due[secret.ID] != nil {
 			continue
 		}
-		for _, secret := range secrets {
-			if !secret.AutoRotate {
-				continue
-			}
-			if _, seen := due[secret.ID]; seen {
-				continue // already due under an earlier policy
-			}
-			lastRotated := secret.CreatedAt
-			if secret.LastRotatedAt != nil {
-				lastRotated = *secret.LastRotatedAt
-			}
-			if int(now.Sub(lastRotated).Hours()/24) < policy.IntervalDays {
-				continue // not yet due under this policy
-			}
-			due[secret.ID] = &dueRotation{secret: secret, policy: policy}
-			dueOrder = append(dueOrder, secret.ID)
+		lastRotated := secret.CreatedAt
+		if secret.LastRotatedAt != nil {
+			lastRotated = *secret.LastRotatedAt
 		}
+		if int(now.Sub(lastRotated).Hours()/24) < policy.IntervalDays {
+			continue
+		}
+		due[secret.ID] = &dueRotation{secret: secret, policy: policy}
+		*dueOrder = append(*dueOrder, secret.ID)
 	}
-	if len(due) == 0 {
-		return 0, nil
-	}
+}
 
-	// Phase 2 — group the due secrets by project. Rotation dependencies are per-project
-	// (ADR-052 edges never cross a project boundary), so ordering is computed per project.
+// groupDueByProject partitions the due-rotation map into per-project slices, preserving
+// discovery order. Rotation dependencies are per-project (ADR-052 edges never cross
+// a project boundary), so ordering is computed per project in the caller.
+func groupDueByProject(due map[uint]*dueRotation, dueOrder []uint) (map[uint][]uint, []uint) {
 	byProject := map[uint][]uint{}
-	projectOrder := []uint{}
+	var projectOrder []uint
 	for _, id := range dueOrder {
 		pid := due[id].secret.ProjectID
 		if _, ok := byProject[pid]; !ok {
@@ -237,89 +256,76 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 		}
 		byProject[pid] = append(byProject[pid], id)
 	}
+	return byProject, projectOrder
+}
 
-	// Phase 3 — rotate each project's due secrets in dependency-safe wave order.
-	rotated := 0
-	// totalFailed accumulates every project's failures for the run-level audit summary
-	// only (a bare count, no secret names/reasons — safe to bundle). The per-project
-	// broadcast notification below uses a fresh, project-scoped map instead, so a
-	// Slack/Teams/webhook message never bundles unrelated projects' secret names or
-	// failure reasons together (#391).
-	totalFailed := 0
-	for _, pid := range projectOrder {
-		ids := byProject[pid]
-		candidateSet := make(map[uint]bool, len(ids))
-		for _, id := range ids {
-			candidateSet[id] = true
+// rotateProject rotates all due secrets for one project in dependency-safe wave order
+// (ADR-052/ADR-053). Returns (rotated count, failure count).
+func (c *KeyorixCore) rotateProject(ctx context.Context, pid uint, ids []uint, due map[uint]*dueRotation) (rotated, failures int) {
+	candidateSet := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		candidateSet[id] = true
+	}
+	edges, eerr := c.storage.ListSecretDependenciesForProject(ctx, pid)
+	if eerr != nil {
+		// Can't determine dependency order; degrade to a flat best-effort pass (no deferral).
+		log.Printf("auto-rotation: list dependencies for project %d: %v — rotating without dependency ordering", pid, eerr)
+		edges = nil
+	}
+	waves, ok := rotationWaves(edges, candidateSet)
+	if !ok {
+		// A cycle should not occur (graph kept acyclic at add, ADR-052). Fall back to a
+		// single flat wave with deferral disabled so a malformed graph never blocks rotation.
+		log.Printf("auto-rotation: dependency graph for project %d has a cycle — rotating without dependency ordering", pid)
+		flat := append([]uint(nil), ids...)
+		sort.Slice(flat, func(i, j int) bool { return flat[i] < flat[j] })
+		waves = [][]uint{flat}
+		edges = nil
+	}
+	// In-run dependencies per secret (edges between due secrets in this project only).
+	dependsOnInRun := map[uint][]uint{}
+	for _, e := range edges {
+		if candidateSet[e.DependentSecretID] && candidateSet[e.DependsOnSecretID] {
+			dependsOnInRun[e.DependentSecretID] = append(dependsOnInRun[e.DependentSecretID], e.DependsOnSecretID)
 		}
+	}
+	// failed records why each non-rotated secret in THIS project did not rotate (genuine
+	// failure or dependency-driven deferral). Scoped to this project only (#391) and
+	// broadcast right after this project finishes, before moving on to the next.
+	failed, n := c.rotateProjectWaves(ctx, waves, due, dependsOnInRun)
+	c.notifyRotationFailures(ctx, pid, failed)
+	return n, len(failed)
+}
 
-		edges, eerr := c.storage.ListSecretDependenciesForProject(ctx, pid)
-		if eerr != nil {
-			// Can't determine the dependency order; degrade to a flat best-effort pass for
-			// this project (no deferral) rather than skip its rotations entirely.
-			log.Printf("auto-rotation: list dependencies for project %d: %v — rotating without dependency ordering", pid, eerr)
-			edges = nil
-		}
-		waves, ok := rotationWaves(edges, candidateSet)
-		if !ok {
-			// A cycle should not occur (the graph is kept acyclic at add, ADR-052). Fall
-			// back to a single flat wave with deferral disabled so a malformed graph never
-			// blocks rotation.
-			log.Printf("auto-rotation: dependency graph for project %d has a cycle — rotating without dependency ordering", pid)
-			flat := append([]uint(nil), ids...)
-			sort.Slice(flat, func(i, j int) bool { return flat[i] < flat[j] })
-			waves = [][]uint{flat}
-			edges = nil
-		}
-
-		// In-run dependencies per secret (edges to other due secrets in this project).
-		dependsOnInRun := map[uint][]uint{}
-		for _, e := range edges {
-			if candidateSet[e.DependentSecretID] && candidateSet[e.DependsOnSecretID] {
-				dependsOnInRun[e.DependentSecretID] = append(dependsOnInRun[e.DependentSecretID], e.DependsOnSecretID)
+// rotateProjectWaves rotates secrets in dependency-ordered waves. A secret whose
+// dependency did not rotate this run is DEFERRED rather than rotated against a stale
+// dependency. Returns (failures, rotated count).
+func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, due map[uint]*dueRotation, dependsOnInRun map[uint][]uint) (failed map[uint]string, rotated int) {
+	failed = map[uint]string{}
+	blocked := map[uint]bool{}
+	for _, wave := range waves {
+		for _, id := range wave {
+			dr := due[id]
+			if depID, isBlocked := lowestBlockedDep(dependsOnInRun[id], blocked); isBlocked {
+				blocked[id] = true
+				depName := ""
+				if d, ok := due[depID]; ok {
+					depName = d.secret.Name
+				}
+				sid := id
+				c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+					fmt.Sprintf("auto-rotation DEFERRED for secret %q: it depends on %q which did not rotate this run", dr.secret.Name, depName))
+				failed[id] = fmt.Sprintf("%q: deferred — depends on %q which did not rotate this run", dr.secret.Name, depName)
+				continue
+			}
+			if c.rotateOneSecret(ctx, dr.secret, dr.policy, failed) {
+				rotated++
+			} else {
+				blocked[id] = true
 			}
 		}
-
-		// failed records why each non-rotated secret in THIS project did not rotate (a
-		// genuine failure or a dependency-driven deferral). Scoped to this project only
-		// (see totalFailed above / #391) and broadcast right after this project finishes,
-		// before moving on to the next project's map.
-		failed := map[uint]string{}
-		blocked := map[uint]bool{} // due secrets that did not rotate this run (failed or deferred)
-		for _, wave := range waves {
-			for _, id := range wave {
-				dr := due[id]
-				// A dependency processed earlier (dependency-safe order guarantees it) did
-				// not rotate — defer rather than rotate against a stale dependency.
-				if depID, isBlocked := lowestBlockedDep(dependsOnInRun[id], blocked); isBlocked {
-					blocked[id] = true
-					depName := ""
-					if d, ok := due[depID]; ok {
-						depName = d.secret.Name
-					}
-					sid := id
-					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
-						fmt.Sprintf("auto-rotation DEFERRED for secret %q: it depends on %q which did not rotate this run", dr.secret.Name, depName))
-					failed[id] = fmt.Sprintf("%q: deferred — depends on %q which did not rotate this run", dr.secret.Name, depName)
-					continue
-				}
-				if c.rotateOneSecret(ctx, dr.secret, dr.policy, failed) {
-					rotated++
-				} else {
-					blocked[id] = true
-				}
-			}
-		}
-		totalFailed += len(failed)
-		c.notifyRotationFailures(ctx, pid, failed)
 	}
-
-	if totalFailed > 0 {
-		sysCtx := WithActorType(ctx, ActorTypeSystem)
-		c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
-			fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", totalFailed))
-	}
-	return rotated, nil
+	return
 }
 
 // lowestBlockedDep returns the lowest-id dependency that is in blocked (and true), or

@@ -25,11 +25,46 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	limit := 1000
-	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= csvExportMaxRows {
-		limit = l
+	events, _, err := h.coreService.Storage().GetAuditLogs(r.Context(), parseAuditCSVFilter(r))
+	if err != nil {
+		sendError(w, "InternalServerError", "Failed to export audit logs", http.StatusInternalServerError, nil)
+		return
 	}
-	filter := &storage.AuditFilter{PageSize: limit}
+	actorNames := h.coreService.ResolveUsernames(r.Context(), events)
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", `attachment; filename="audit-export.csv"`)
+
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+	_ = cw.Write([]string{
+		"id", "event_time", "event_type", "actor", "actor_type",
+		"user_id", "project_id", "secret_id", "ip_address", "success", "description",
+	})
+	for _, e := range events {
+		success := "true"
+		if e.Success != nil && !*e.Success {
+			success = "false"
+		}
+		_ = cw.Write([]string{
+			strconv.FormatUint(uint64(e.ID), 10),
+			e.EventTime.UTC().Format(time.RFC3339),
+			csvSafe(e.EventType),
+			csvSafe(auditCSVActorName(actorNames, e.UserID)),
+			actorTypeOrDefault(e.ActorType),
+			auditCSVUintStr(e.UserID),
+			auditCSVUintStr(e.ProjectID),
+			auditCSVUintStr(e.SecretNodeID),
+			csvSafe(e.IPAddress),
+			success,
+			csvSafe(e.Description),
+		})
+	}
+}
+
+func parseAuditCSVFilter(r *http.Request) *storage.AuditFilter {
+	filter := &storage.AuditFilter{PageSize: parseAuditCSVLimit(r)}
 	if v := r.URL.Query().Get("project_id"); v != "" {
 		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
 			p := uint(n)
@@ -52,53 +87,26 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 			filter.EndTime = &t
 		}
 	}
+	return filter
+}
 
-	events, _, err := h.coreService.Storage().GetAuditLogs(r.Context(), filter)
-	if err != nil {
-		sendError(w, "InternalServerError", "Failed to export audit logs", http.StatusInternalServerError, nil)
-		return
+func parseAuditCSVLimit(r *http.Request) int {
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= csvExportMaxRows {
+		return l
 	}
-	actorNames := h.coreService.ResolveUsernames(r.Context(), events)
-	name := func(id *uint) string {
-		if id == nil {
-			return ""
-		}
-		return actorNames[*id]
-	}
-	uintStr := func(id *uint) string {
-		if id == nil {
-			return ""
-		}
-		return strconv.FormatUint(uint64(*id), 10)
-	}
+	return 1000
+}
 
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Disposition", `attachment; filename="audit-export.csv"`)
-
-	cw := csv.NewWriter(w)
-	defer cw.Flush()
-	_ = cw.Write([]string{
-		"id", "event_time", "event_type", "actor", "actor_type",
-		"user_id", "project_id", "secret_id", "ip_address", "success", "description",
-	})
-	for _, e := range events {
-		success := "true"
-		if e.Success != nil && !*e.Success {
-			success = "false"
-		}
-		_ = cw.Write([]string{
-			strconv.FormatUint(uint64(e.ID), 10),
-			e.EventTime.UTC().Format(time.RFC3339),
-			csvSafe(e.EventType),
-			csvSafe(name(e.UserID)),
-			actorTypeOrDefault(e.ActorType),
-			uintStr(e.UserID),
-			uintStr(e.ProjectID),
-			uintStr(e.SecretNodeID),
-			csvSafe(e.IPAddress),
-			success,
-			csvSafe(e.Description),
-		})
+func auditCSVActorName(actorNames map[uint]string, id *uint) string {
+	if id == nil {
+		return ""
 	}
+	return actorNames[*id]
+}
+
+func auditCSVUintStr(id *uint) string {
+	if id == nil {
+		return ""
+	}
+	return strconv.FormatUint(uint64(*id), 10)
 }

@@ -387,21 +387,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	p := &CompliancePosture{GeneratedAt: c.now()}
 
 	// Audit-trail integrity.
-	if v, err := snap.auditChain, snap.auditChainErr; err == nil && v != nil {
-		p.AuditIntegrity = AuditIntegrityPosture{
-			ChainVerified: v.Valid,
-			ChainedEvents: v.ChainedEvents,
-			Checkpointed:  v.Checkpointed,
-		}
-		if !v.Valid {
-			p.AuditIntegrity.Reason = v.Reason
-		} else if v.CheckpointReason != "" {
-			p.AuditIntegrity.Reason = v.CheckpointReason
-		}
-	} else if err != nil {
-		p.AuditIntegrity.Reason = err.Error()
-		p.degrade("audit_integrity", err)
-	}
+	applyAuditIntegrityPosture(p, snap)
 
 	// Second-factor coverage across active users.
 	if id, err := c.identityPosture(ctx); err == nil {
@@ -411,19 +397,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	}
 
 	// Rotation hygiene (deployment-wide).
-	if statuses, err := snap.rotationStatuses, snap.rotationErr; err == nil {
-		p.Rotation.CoveredSecrets = len(statuses)
-		for _, s := range statuses {
-			switch s.Status {
-			case RotationStatusOverdue:
-				p.Rotation.Overdue++
-			case RotationStatusDueSoon:
-				p.Rotation.DueSoon++
-			}
-		}
-	} else {
-		p.degrade("rotation", err)
-	}
+	applyRotationPosture(p, snap)
 
 	// Access governance + emergency access — per project.
 	c.accessGovernancePostureFromSnapshot(ctx, p, snap)
@@ -447,17 +421,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	p.Classification = c.classificationPosture(ctx, p)
 
 	// Open access anomalies (NIS2 detection).
-	unack := false
-	if alerts, err := c.storage.ListAnomalyAlerts(ctx, &unack); err == nil {
-		p.Anomalies.Unacknowledged = len(alerts)
-		for _, a := range alerts {
-			if a.Severity == "high" {
-				p.Anomalies.HighSeverityOpen++
-			}
-		}
-	} else {
-		p.degrade("anomalies", err)
-	}
+	c.applyAnomalyPosture(ctx, p)
 
 	// Legal hold (A.5.34).
 	if hold, err := c.storage.GetActiveLegalHold(ctx); err == nil {
@@ -476,19 +440,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	// means the risk it accepted is unmitigated again, so it must stay visible to the
 	// control matrix rather than silently reading as "no exceptions" the moment
 	// expiry passes.
-	if snap.riskExceptionsErr == nil {
-		active, soon := 0, 0
-		cutoff := c.now().Add(riskExpiringSoonWindow)
-		for _, e := range snap.riskExceptionsActive {
-			active++
-			if e.ExpiresAt.Before(cutoff) {
-				soon++
-			}
-		}
-		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon, Expired: snap.riskExceptionsExpired}
-	} else {
-		p.degrade("risk", snap.riskExceptionsErr)
-	}
+	c.applyRiskExceptionPosture(p, snap)
 
 	// Certificate hygiene from the cached cert expiry (ADR-056).
 	p.Certificates = c.certificatePosture(ctx, p)
@@ -524,6 +476,76 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	p.SupplyChain = sc
 
 	return p
+}
+
+func applyAuditIntegrityPosture(p *CompliancePosture, snap *complianceSnapshot) {
+	v, err := snap.auditChain, snap.auditChainErr
+	if err != nil {
+		p.AuditIntegrity.Reason = err.Error()
+		p.degrade("audit_integrity", err)
+		return
+	}
+	if v == nil {
+		return
+	}
+	p.AuditIntegrity = AuditIntegrityPosture{
+		ChainVerified: v.Valid,
+		ChainedEvents: v.ChainedEvents,
+		Checkpointed:  v.Checkpointed,
+	}
+	if !v.Valid {
+		p.AuditIntegrity.Reason = v.Reason
+	} else if v.CheckpointReason != "" {
+		p.AuditIntegrity.Reason = v.CheckpointReason
+	}
+}
+
+func applyRotationPosture(p *CompliancePosture, snap *complianceSnapshot) {
+	statuses, err := snap.rotationStatuses, snap.rotationErr
+	if err != nil {
+		p.degrade("rotation", err)
+		return
+	}
+	p.Rotation.CoveredSecrets = len(statuses)
+	for _, s := range statuses {
+		switch s.Status {
+		case RotationStatusOverdue:
+			p.Rotation.Overdue++
+		case RotationStatusDueSoon:
+			p.Rotation.DueSoon++
+		}
+	}
+}
+
+func (c *KeyorixCore) applyAnomalyPosture(ctx context.Context, p *CompliancePosture) {
+	unack := false
+	alerts, err := c.storage.ListAnomalyAlerts(ctx, &unack)
+	if err != nil {
+		p.degrade("anomalies", err)
+		return
+	}
+	p.Anomalies.Unacknowledged = len(alerts)
+	for _, a := range alerts {
+		if a.Severity == "high" {
+			p.Anomalies.HighSeverityOpen++
+		}
+	}
+}
+
+func (c *KeyorixCore) applyRiskExceptionPosture(p *CompliancePosture, snap *complianceSnapshot) {
+	if snap.riskExceptionsErr != nil {
+		p.degrade("risk", snap.riskExceptionsErr)
+		return
+	}
+	active, soon := 0, 0
+	cutoff := c.now().Add(riskExpiringSoonWindow)
+	for _, e := range snap.riskExceptionsActive {
+		active++
+		if e.ExpiresAt.Before(cutoff) {
+			soon++
+		}
+	}
+	p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon, Expired: snap.riskExceptionsExpired}
 }
 
 // suppressExceptedSoDViolations drops any violation covered by an active, APPROVED
@@ -640,63 +662,71 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 	recertCutoff := c.now().AddDate(0, 0, -c.recertCadence())
 	for _, proj := range snap.projects {
 		pid := proj.ID
-
-		campaigns, err := snap.campaignsByProject[pid], snap.campaignsErrByProject[pid]
-		if err == nil {
-			if len(campaigns) == 0 {
-				p.AccessGovernance.ProjectsNeverReviewed++
-			}
-			open, lastClosed := splitCampaigns(campaigns)
-			if open != nil {
-				p.AccessGovernance.ProjectsWithOpenCampaign++
-				p.AccessGovernance.OpenCampaigns++
-				p.AccessGovernance.PendingItems += open.Progress.Pending
-			} else {
-				// No review in progress — overdue if never reviewed, or the last
-				// campaign closed longer ago than the recertification cadence (A.5.18).
-				overdue := lastClosed == nil
-				if lastClosed != nil && lastClosed.Campaign.ClosedAt != nil {
-					overdue = lastClosed.Campaign.ClosedAt.Before(recertCutoff)
-				}
-				if overdue {
-					p.AccessGovernance.ProjectsOverdue++
-				}
-			}
-		} else {
-			p.degrade(fmt.Sprintf("access_governance:campaigns:project=%d", pid), err)
-		}
-
+		accumulateCampaignPosture(p, pid, recertCutoff, snap)
 		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid, p)
+		accumulateBreakGlassPosture(p, pid, snap)
+		accumulateAccessRequestPosture(p, pid, snap)
+	}
+}
 
-		if acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]; err == nil {
-			p.EmergencyAccess.TotalActivations += len(acts)
-			for _, a := range acts {
-				if a.State == BreakGlassActive {
-					p.EmergencyAccess.ActiveActivations++
-				}
-			}
-		} else {
-			p.degrade(fmt.Sprintf("emergency_access:project=%d", pid), err)
+func accumulateCampaignPosture(p *CompliancePosture, pid uint, recertCutoff time.Time, snap *complianceSnapshot) {
+	campaigns, err := snap.campaignsByProject[pid], snap.campaignsErrByProject[pid]
+	if err != nil {
+		p.degrade(fmt.Sprintf("access_governance:campaigns:project=%d", pid), err)
+		return
+	}
+	if len(campaigns) == 0 {
+		p.AccessGovernance.ProjectsNeverReviewed++
+	}
+	open, lastClosed := splitCampaigns(campaigns)
+	if open != nil {
+		p.AccessGovernance.ProjectsWithOpenCampaign++
+		p.AccessGovernance.OpenCampaigns++
+		p.AccessGovernance.PendingItems += open.Progress.Pending
+		return
+	}
+	overdue := lastClosed == nil
+	if lastClosed != nil && lastClosed.Campaign.ClosedAt != nil {
+		overdue = lastClosed.Campaign.ClosedAt.Before(recertCutoff)
+	}
+	if overdue {
+		p.AccessGovernance.ProjectsOverdue++
+	}
+}
+
+func accumulateBreakGlassPosture(p *CompliancePosture, pid uint, snap *complianceSnapshot) {
+	acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]
+	if err != nil {
+		p.degrade(fmt.Sprintf("emergency_access:project=%d", pid), err)
+		return
+	}
+	p.EmergencyAccess.TotalActivations += len(acts)
+	for _, a := range acts {
+		if a.State == BreakGlassActive {
+			p.EmergencyAccess.ActiveActivations++
 		}
+	}
+}
 
-		if reqs, err := snap.accessRequestsByProject[pid], snap.accessRequestsErrByProject[pid]; err == nil {
-			p.AccessRequests.TotalRequests += len(reqs)
-			for _, r := range reqs {
-				switch r.State {
-				case AccessRequestPending:
-					p.AccessRequests.Pending++
-				case AccessRequestApproved:
-					p.AccessRequests.Approved++
-				case AccessRequestRejected:
-					p.AccessRequests.Rejected++
-				case AccessRequestWithdrawn:
-					p.AccessRequests.Withdrawn++
-				case AccessRequestExpired:
-					p.AccessRequests.Expired++
-				}
-			}
-		} else {
-			p.degrade(fmt.Sprintf("access_requests:project=%d", pid), err)
+func accumulateAccessRequestPosture(p *CompliancePosture, pid uint, snap *complianceSnapshot) {
+	reqs, err := snap.accessRequestsByProject[pid], snap.accessRequestsErrByProject[pid]
+	if err != nil {
+		p.degrade(fmt.Sprintf("access_requests:project=%d", pid), err)
+		return
+	}
+	p.AccessRequests.TotalRequests += len(reqs)
+	for _, r := range reqs {
+		switch r.State {
+		case AccessRequestPending:
+			p.AccessRequests.Pending++
+		case AccessRequestApproved:
+			p.AccessRequests.Approved++
+		case AccessRequestRejected:
+			p.AccessRequests.Rejected++
+		case AccessRequestWithdrawn:
+			p.AccessRequests.Withdrawn++
+		case AccessRequestExpired:
+			p.AccessRequests.Expired++
 		}
 	}
 }
@@ -815,15 +845,6 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 		permsByRole[roleID] = perms
 		return perms
 	}
-	hasPermission := func(perms []*models.Permission, name string) bool {
-		for _, p := range perms {
-			if p.Name == name {
-				return true
-			}
-		}
-		return false
-	}
-
 	seen := map[[2]uint]bool{} // dedup identical (principal, role) grant rows
 	dormant := 0
 	for _, a := range assignments {
@@ -835,49 +856,59 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 			continue
 		}
 		seen[key] = true
-
 		perms := rolePerms(a.RoleID)
-		if !roleIsAdminTier(perms) {
-			// Plain tier: credit only the activity bucket(s) this SPECIFIC grant's own
-			// permission bundle actually confers (#487 round 112) — a read-tier-only
-			// grant and a separate write-tier-only grant no longer mask each other. A
-			// role bundling neither secrets.read nor secrets.write confers no secret
-			// access to begin with, so it is correctly never credited as "used" here.
-			used := false
-			if hasPermission(perms, "secrets.read") {
-				if last, ok := readActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
-					used = true
-				}
-			}
-			if !used && hasPermission(perms, "secrets.write") {
-				if last, ok := writeActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
-					used = true
-				}
-			}
-			if !used {
+		if roleIsAdminTier(perms) {
+			if !grantUsedAdmin(perms, a.PrincipalID, cutoff, roleMgmtActivity, secretsDeletionActivity) {
 				dormant++
 			}
-			continue
-		}
-
-		// Admin-tier: credit only the activity bucket(s) this SPECIFIC grant's own
-		// permission bundle actually confers (#487) — narrower than "any elevated
-		// action anywhere", so a role-management-only grant and a
-		// secrets-deletion-only grant no longer mask each other.
-		used := false
-		if hasPermission(perms, "roles.assign") {
-			if last, ok := roleMgmtActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
-				used = true
+		} else {
+			if !grantUsedPlain(perms, a.PrincipalID, cutoff, readActivity, writeActivity) {
+				dormant++
 			}
-		}
-		if !used && (hasPermission(perms, "secrets.delete") || hasPermission(perms, "secrets.admin")) {
-			if last, ok := secretsDeletionActivity[a.PrincipalID]; ok && !last.Before(cutoff) {
-				used = true
-			}
-		}
-		if !used {
-			dormant++
 		}
 	}
 	return dormant
+}
+
+// roleHasPermission reports whether any entry in perms has the given name.
+func roleHasPermission(perms []*models.Permission, name string) bool {
+	for _, p := range perms {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// grantUsedPlain reports whether a plain-tier (non-admin) grant has been exercised
+// within the dormancy window, checking only the specific permission buckets the role
+// actually confers.
+func grantUsedPlain(perms []*models.Permission, uid uint, cutoff time.Time, readActivity, writeActivity map[uint]time.Time) bool {
+	if roleHasPermission(perms, "secrets.read") {
+		if last, ok := readActivity[uid]; ok && !last.Before(cutoff) {
+			return true
+		}
+	}
+	if roleHasPermission(perms, "secrets.write") {
+		if last, ok := writeActivity[uid]; ok && !last.Before(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
+// grantUsedAdmin reports whether an admin-tier grant has been exercised within the
+// dormancy window, checking only the specific elevated permission buckets it confers.
+func grantUsedAdmin(perms []*models.Permission, uid uint, cutoff time.Time, roleMgmtActivity, secretsDeletionActivity map[uint]time.Time) bool {
+	if roleHasPermission(perms, "roles.assign") {
+		if last, ok := roleMgmtActivity[uid]; ok && !last.Before(cutoff) {
+			return true
+		}
+	}
+	if roleHasPermission(perms, "secrets.delete") || roleHasPermission(perms, "secrets.admin") {
+		if last, ok := secretsDeletionActivity[uid]; ok && !last.Before(cutoff) {
+			return true
+		}
+	}
+	return false
 }

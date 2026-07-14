@@ -55,9 +55,9 @@ fi
 
 # Build server Docker image
 log_info "Building server Docker image..."
-if [ -f "server/Dockerfile" ]; then
+if [[ -f "server/Dockerfile" ]]; then
     FULL_IMAGE_NAME="$IMAGE_NAME-server:$IMAGE_TAG"
-    if [ -n "$REGISTRY" ]; then
+    if [[ -n "$REGISTRY" ]]; then
         FULL_IMAGE_NAME="$REGISTRY/$FULL_IMAGE_NAME"
     fi
     
@@ -75,10 +75,10 @@ else
 fi
 
 # Build web Docker image if web directory exists
-if [ -d "web" ] && [ -f "web/Dockerfile" ]; then
+if [[ -d "web" ]] && [[ -f "web/Dockerfile" ]]; then
     log_info "Building web Docker image..."
     FULL_WEB_IMAGE_NAME="$IMAGE_NAME-web:$IMAGE_TAG"
-    if [ -n "$REGISTRY" ]; then
+    if [[ -n "$REGISTRY" ]]; then
         FULL_WEB_IMAGE_NAME="$REGISTRY/$FULL_WEB_IMAGE_NAME"
     fi
     
@@ -90,7 +90,7 @@ if [ -d "web" ] && [ -f "web/Dockerfile" ]; then
         web/
     
     log_success "Web image built: $FULL_WEB_IMAGE_NAME"
-elif [ -d "web" ]; then
+elif [[ -d "web" ]]; then
     log_info "Creating web Dockerfile..."
     cat > web/Dockerfile << 'EOF'
 # Multi-stage build for web assets
@@ -122,10 +122,10 @@ CMD ["nginx", "-g", "daemon off;"]
 EOF
     
     FULL_WEB_IMAGE_NAME="$IMAGE_NAME-web:$IMAGE_TAG"
-    if [ -n "$REGISTRY" ]; then
+    if [[ -n "$REGISTRY" ]]; then
         FULL_WEB_IMAGE_NAME="$REGISTRY/$FULL_WEB_IMAGE_NAME"
     fi
-    
+
     docker build \
         --build-arg VERSION="$VERSION" \
         --build-arg BUILD_TIME="$BUILD_TIME" \
@@ -163,7 +163,7 @@ CMD ["--help"]
 EOF
 
 FULL_CLI_IMAGE_NAME="$IMAGE_NAME-cli:$IMAGE_TAG"
-if [ -n "$REGISTRY" ]; then
+if [[ -n "$REGISTRY" ]]; then
     FULL_CLI_IMAGE_NAME="$REGISTRY/$FULL_CLI_IMAGE_NAME"
 fi
 
@@ -208,7 +208,7 @@ echo "  docker-compose up  # Uses built images"
 echo ""
 
 # Push to registry if specified
-if [ -n "$REGISTRY" ] && [ "${PUSH_IMAGES:-false}" = "true" ]; then
+if [[ -n "$REGISTRY" ]] && [[ "${PUSH_IMAGES:-false}" = "true" ]]; then
     log_info "Pushing images to registry..."
     
     if docker push "$FULL_IMAGE_NAME"; then
@@ -217,7 +217,7 @@ if [ -n "$REGISTRY" ] && [ "${PUSH_IMAGES:-false}" = "true" ]; then
         log_warning "Failed to push server image"
     fi
     
-    if [ -n "$FULL_WEB_IMAGE_NAME" ]; then
+    if [[ -n "$FULL_WEB_IMAGE_NAME" ]]; then
         if docker push "$FULL_WEB_IMAGE_NAME"; then
             log_success "Pushed web image to registry"
         else

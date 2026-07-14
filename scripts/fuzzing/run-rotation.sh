@@ -30,7 +30,7 @@ cd "$KEYORIX_REPO"
 
 while true; do
   while IFS='|' read -r pkg func duration; do
-    [ -z "$pkg" ] && continue
+    [[ -z "$pkg" ]] && continue
     case "$pkg" in \#*) continue ;; esac
 
     echo "=== $(date -u +%FT%TZ) pulling latest main ==="
@@ -49,7 +49,7 @@ while true; do
 
     "$SCRIPT_DIR/sync-corpus.sh" "$func" "$status"
 
-    if [ "$status" -ne 0 ]; then
+    if [[ "$status" -ne 0 ]]; then
       echo "=== $(date -u +%FT%TZ) $func FAILED (exit $status) ==="
       "$SCRIPT_DIR/notify-on-crash.sh" "$func" "$pkg" "$logfile"
     fi

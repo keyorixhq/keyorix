@@ -78,7 +78,7 @@ chmod +x "$stub_bin/wget"
 # '$KEYORIX_ADMIN_PASSWORD' as it appears in entrypoint.sh; it must not expand.
 # shellcheck disable=SC2016
 block="$(sed -n '/^if \[ -n "\$KEYORIX_ADMIN_PASSWORD" \]; then$/,/^fi$/p' "$entrypoint")"
-if [ -z "$block" ]; then
+if [[ -z "$block" ]]; then
     echo "FAIL - could not locate the KEYORIX_ADMIN_PASSWORD bootstrap block in $entrypoint"
     exit 1
 fi
@@ -105,7 +105,7 @@ else
 fi
 
 # --- ...but it must still reach the request body, via the --post-file. ---
-if [ ! -s "$payload_snapshot" ]; then
+if [[ ! -s "$payload_snapshot" ]]; then
     bad "wget was never invoked with --post-file; bootstrap payload was not captured"
 elif grep -qF -- "$password" "$payload_snapshot"; then
     note "admin password present in the POST body sent via --post-file"
@@ -121,9 +121,9 @@ else
 fi
 
 # --- The payload file must have been private (owner-only) while it existed. ---
-if [ -f "$payload_mode_file" ]; then
+if [[ -f "$payload_mode_file" ]]; then
     mode="$(cat "$payload_mode_file")"
-    if [ "$mode" = "600" ]; then
+    if [[ "$mode" = "600" ]]; then
         note "payload temp file was created with mode 0600"
     else
         bad "payload temp file mode was '$mode', expected 600"
@@ -131,22 +131,22 @@ if [ -f "$payload_mode_file" ]; then
 fi
 
 # --- The temp file (and its containing dir) must be cleaned up afterwards. ---
-if [ -f "$payload_path_file" ]; then
+if [[ -f "$payload_path_file" ]]; then
     payload_path="$(cat "$payload_path_file")"
     payload_dir="$(dirname "$payload_path")"
-    if [ -e "$payload_path" ]; then
+    if [[ -e "$payload_path" ]]; then
         bad "bootstrap payload file was not removed after use: $payload_path"
     else
         note "bootstrap payload file was removed after use"
     fi
-    if [ -e "$payload_dir" ]; then
+    if [[ -e "$payload_dir" ]]; then
         bad "bootstrap temp directory was not removed after use: $payload_dir"
     else
         note "bootstrap temp directory was removed after use"
     fi
 fi
 
-if [ "$fail" -ne 0 ]; then
+if [[ "$fail" -ne 0 ]]; then
     echo
     echo "entrypoint_test.sh: FAILED"
     exit 1

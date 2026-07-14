@@ -159,34 +159,12 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditCha
 		if len(batch) == 0 {
 			break
 		}
-
-		for _, e := range batch {
-			lastID = e.ID
-
-			if !started {
-				if e.EntryHash == "" {
-					result.UnchainedEvents++
-					continue
-				}
-				started = true
-			}
-
-			// Once chained, an empty hash means chain data was stripped.
-			if e.EntryHash == "" {
-				return brokenChain(result, e.ID, "missing entry hash on a chained event (chain data removed)"), nil
-			}
-			if e.PrevHash != prevHash {
-				return brokenChain(result, e.ID, "prev_hash does not link to the preceding event (row inserted, deleted, or reordered)"), nil
-			}
-			if computeAuditEntryHash(e, e.PrevHash) != e.EntryHash {
-				return brokenChain(result, e.ID, "entry_hash does not match the event contents (event modified)"), nil
-			}
-
-			prevHash = e.EntryHash
-			headID = e.ID
-			result.ChainedEvents++
+		newPrev, newHead, newStarted, broke := verifyBatchEvents(batch, prevHash, started, result)
+		if broke {
+			return result, nil
 		}
-
+		prevHash, headID, started = newPrev, newHead, newStarted
+		lastID = batch[len(batch)-1].ID
 		if len(batch) < auditChainVerifyBatch {
 			break
 		}
@@ -198,6 +176,37 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditCha
 	result.HeadHash = prevHash
 	result.HeadID = headID
 	return result, nil
+}
+
+// verifyBatchEvents processes one page of audit events against the running hash chain.
+// Returns the new prevHash, the last verified headID, the updated started flag, and
+// whether a chain break was detected (in which case result is already marked broken).
+func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool, result *storage.AuditChainVerification) (newPrev string, headID uint, newStarted bool, broke bool) {
+	for _, e := range batch {
+		if !started {
+			if e.EntryHash == "" {
+				result.UnchainedEvents++
+				continue
+			}
+			started = true
+		}
+		if e.EntryHash == "" {
+			brokenChain(result, e.ID, "missing entry hash on a chained event (chain data removed)")
+			return prevHash, headID, started, true
+		}
+		if e.PrevHash != prevHash {
+			brokenChain(result, e.ID, "prev_hash does not link to the preceding event (row inserted, deleted, or reordered)")
+			return prevHash, headID, started, true
+		}
+		if computeAuditEntryHash(e, e.PrevHash) != e.EntryHash {
+			brokenChain(result, e.ID, "entry_hash does not match the event contents (event modified)")
+			return prevHash, headID, started, true
+		}
+		prevHash = e.EntryHash
+		headID = e.ID
+		result.ChainedEvents++
+	}
+	return prevHash, headID, started, false
 }
 
 // brokenChain marks a verification result as failed at the given event.

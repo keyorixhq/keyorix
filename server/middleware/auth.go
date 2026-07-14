@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -219,71 +220,81 @@ func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.
 func authenticationWithValidator(validator sessionValidator, coreService *core.KeyorixCore) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token, err := extractRequestToken(r)
-			if err != nil {
-				unauthorizedResponse(w, err.Error())
-				return
-			}
-
-			key := tokenKey(token)
-
-			// Fast path: cache hit.
-			if entry, ok := cacheGet(key); ok {
-				if entry.userCtx == nil {
-					// Negative cache — known bad token, skip DB entirely.
-					unauthorizedResponse(w, "Invalid or expired token")
-					return
-				}
-				// The network allowlist is per-request (the same token may arrive from a
-				// different IP), so enforce it even on a cache hit. For a PAT specifically,
-				// the ALLOWLIST ITSELF (not just the request's IP) can change between cache
-				// writes (#146: an admin narrowing a compromised PAT's allowlist mid-incident
-				// must take effect immediately, not up to validTokenTTL later) — re-fetch it
-				// fresh rather than trusting entry.userCtx's cached snapshot. A refresh
-				// failure falls back to the cached restriction (degraded, not fail-open).
-				effective := entry.userCtx
-				if coreService != nil && strings.HasPrefix(token, patTokenPrefix) {
-					if fresh, err := coreService.CurrentPATRestriction(r.Context(), token); err == nil {
-						effective = cloneUserContextWithRestriction(entry.userCtx, fresh)
-					}
-				}
-				if !tokenNetworkAllowed(r, effective) {
-					forbiddenResponse(w, "token not permitted from this network")
-					return
-				}
-				next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), effective, coreService)))
-				return
-			}
-
-			// Slow path: DB lookup. Capture the start time BEFORE the DB read so a
-			// concurrent revoke landing during validation is recognized as "after" us and
-			// can't be resurrected by our positive cache write (see cacheSetValidated).
-			validatedAt := time.Now()
-			userCtx, err := validateToken(r.Context(), validator, token)
-			if err != nil {
-				// Cache the negative result so subsequent retries skip the DB.
-				cacheSet(key, tokenCacheEntry{userCtx: nil, expiresAt: time.Now().Add(invalidTokenTTL)})
-				unauthorizedResponse(w, "Invalid or expired token")
-				return
-			}
-
-			// Resolve impersonation once, on the slow path, so it is cached with
-			// the identity. PATs and machine tokens are never impersonation
-			// sessions (prefix check).
-			if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) && !looksLikeJWT(token) {
-				userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
-			}
-
-			// Cache the positive result (race-safe: dropped if revoked mid-validation).
-			cacheSetValidated(key, userCtx, validatedAt, time.Now().Add(validTokenTTL))
-
-			if !tokenNetworkAllowed(r, userCtx) {
-				forbiddenResponse(w, "token not permitted from this network")
-				return
-			}
-			next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
+			handleAuthRequest(next, w, r, validator, coreService)
 		})
 	}
+}
+
+func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request, validator sessionValidator, coreService *core.KeyorixCore) {
+	token, err := extractRequestToken(r)
+	if err != nil {
+		unauthorizedResponse(w, err.Error())
+		return
+	}
+
+	key := tokenKey(token)
+
+	// Fast path: cache hit.
+	if entry, ok := cacheGet(key); ok {
+		serveAuthCacheHit(next, w, r, token, entry, coreService)
+		return
+	}
+
+	// Slow path: DB lookup. Capture the start time BEFORE the DB read so a
+	// concurrent revoke landing during validation is recognized as "after" us and
+	// can't be resurrected by our positive cache write (see cacheSetValidated).
+	validatedAt := time.Now()
+	userCtx, err := validateToken(r.Context(), validator, token)
+	if err != nil {
+		// Cache the negative result so subsequent retries skip the DB.
+		cacheSet(key, tokenCacheEntry{userCtx: nil, expiresAt: time.Now().Add(invalidTokenTTL)})
+		unauthorizedResponse(w, "Invalid or expired token")
+		return
+	}
+
+	// Resolve impersonation once, on the slow path, so it is cached with
+	// the identity. PATs and machine tokens are never impersonation
+	// sessions (prefix check).
+	if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) && !looksLikeJWT(token) {
+		userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
+	}
+
+	// Cache the positive result (race-safe: dropped if revoked mid-validation).
+	cacheSetValidated(key, userCtx, validatedAt, time.Now().Add(validTokenTTL))
+
+	if !tokenNetworkAllowed(r, userCtx) {
+		forbiddenResponse(w, "token not permitted from this network")
+		return
+	}
+	next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
+}
+
+// serveAuthCacheHit handles the fast-path cache hit: re-fetches the PAT network restriction
+// on every request (#146) then enforces the allowlist and serves next or returns an error.
+func serveAuthCacheHit(next http.Handler, w http.ResponseWriter, r *http.Request, token string, entry tokenCacheEntry, coreService *core.KeyorixCore) {
+	if entry.userCtx == nil {
+		// Negative cache — known bad token, skip DB entirely.
+		unauthorizedResponse(w, "Invalid or expired token")
+		return
+	}
+	// The network allowlist is per-request (the same token may arrive from a
+	// different IP), so enforce it even on a cache hit. For a PAT specifically,
+	// the ALLOWLIST ITSELF (not just the request's IP) can change between cache
+	// writes (#146: an admin narrowing a compromised PAT's allowlist mid-incident
+	// must take effect immediately, not up to validTokenTTL later) — re-fetch it
+	// fresh rather than trusting entry.userCtx's cached snapshot. A refresh
+	// failure falls back to the cached restriction (degraded, not fail-open).
+	effective := entry.userCtx
+	if coreService != nil && strings.HasPrefix(token, patTokenPrefix) {
+		if fresh, err := coreService.CurrentPATRestriction(r.Context(), token); err == nil {
+			effective = cloneUserContextWithRestriction(entry.userCtx, fresh)
+		}
+	}
+	if !tokenNetworkAllowed(r, effective) {
+		forbiddenResponse(w, "token not permitted from this network")
+		return
+	}
+	next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), effective, coreService)))
 }
 
 // extractRequestToken returns the token to validate for this request, preferring
@@ -333,46 +344,50 @@ type ScopeResolver func(r *http.Request, cs *core.KeyorixCore) (core.Scope, erro
 func RequireScopedPermission(permission string, resolve ScopeResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userCtx := GetUserFromContext(r.Context())
-			if userCtx == nil {
-				unauthorizedResponse(w, "User context not found")
-				return
-			}
-			cs := GetCoreServiceFromContext(r.Context())
-			if cs == nil {
-				forbiddenResponse(w, "Authorization unavailable")
-				return
-			}
-			scope, err := resolve(r, cs)
-			if err != nil {
-				if errors.Is(err, errTargetNotFound) {
-					// Reveal "not found" only to callers who hold the permission
-					// globally; otherwise deny without confirming the resource
-					// exists (avoids existence enumeration by unprivileged users).
-					if ok, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{}); aerr == nil && ok {
-						notFoundResponse(w, "Resource not found")
-					} else {
-						forbiddenResponse(w, "Insufficient permissions")
-					}
-					return
-				}
-				badRequestResponse(w, "Invalid target")
-				return
-			}
-			allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, scope)
-			if err != nil || !allowed {
-				forbiddenResponse(w, "Insufficient permissions")
-				return
-			}
-			// Per-project MFA policy (ADR-037): deny an interactive session without a
-			// second factor access to a project that requires MFA.
-			if ProjectMFABlocked(r, cs, scope.ProjectID) {
-				projectMFARequiredResponse(w)
-				return
-			}
-			next.ServeHTTP(w, r)
+			handleScopedPermissionRequest(next, w, r, permission, resolve)
 		})
 	}
+}
+
+func handleScopedPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, permission string, resolve ScopeResolver) {
+	userCtx := GetUserFromContext(r.Context())
+	if userCtx == nil {
+		unauthorizedResponse(w, "User context not found")
+		return
+	}
+	cs := GetCoreServiceFromContext(r.Context())
+	if cs == nil {
+		forbiddenResponse(w, "Authorization unavailable")
+		return
+	}
+	scope, err := resolve(r, cs)
+	if err != nil {
+		if errors.Is(err, errTargetNotFound) {
+			// Reveal "not found" only to callers who hold the permission
+			// globally; otherwise deny without confirming the resource
+			// exists (avoids existence enumeration by unprivileged users).
+			if ok, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{}); aerr == nil && ok {
+				notFoundResponse(w, "Resource not found")
+			} else {
+				forbiddenResponse(w, "Insufficient permissions")
+			}
+			return
+		}
+		badRequestResponse(w, "Invalid target")
+		return
+	}
+	allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, scope)
+	if err != nil || !allowed {
+		forbiddenResponse(w, "Insufficient permissions")
+		return
+	}
+	// Per-project MFA policy (ADR-037): deny an interactive session without a
+	// second factor access to a project that requires MFA.
+	if ProjectMFABlocked(r, cs, scope.ProjectID) {
+		projectMFARequiredResponse(w)
+		return
+	}
+	next.ServeHTTP(w, r)
 }
 
 // RequirePermission enforces a permission at global scope. Use it for
@@ -437,26 +452,30 @@ var mfaEnrollAllowedSuffixes = []string{
 func EnforceMFAEnrollment(requireMFA bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userCtx := GetUserFromContext(r.Context())
-			if !requireMFA || userCtx == nil || !userCtx.SessionAuth || userCtx.MFAEnabled {
-				next.ServeHTTP(w, r)
-				return
-			}
-			for _, suffix := range mfaEnrollAllowedSuffixes {
-				if strings.HasSuffix(r.URL.Path, suffix) {
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":   "MFAEnrollmentRequired",
-				"message": "This deployment requires multi-factor authentication. Enrol MFA to continue.",
-				"code":    http.StatusForbidden,
-			})
+			handleMFAEnrollmentCheck(next, w, r, requireMFA)
 		})
 	}
+}
+
+func handleMFAEnrollmentCheck(next http.Handler, w http.ResponseWriter, r *http.Request, requireMFA bool) {
+	userCtx := GetUserFromContext(r.Context())
+	if !requireMFA || userCtx == nil || !userCtx.SessionAuth || userCtx.MFAEnabled {
+		next.ServeHTTP(w, r)
+		return
+	}
+	for _, suffix := range mfaEnrollAllowedSuffixes {
+		if strings.HasSuffix(r.URL.Path, suffix) {
+			next.ServeHTTP(w, r)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":   "MFAEnrollmentRequired",
+		"message": "This deployment requires multi-factor authentication. Enrol MFA to continue.",
+		"code":    http.StatusForbidden,
+	})
 }
 
 // ScopeGlobal always resolves to the global scope.
@@ -694,13 +713,11 @@ func RequireRole(role string) func(next http.Handler) http.Handler {
 				forbiddenResponse(w, "A machine identity cannot satisfy an unscoped role requirement")
 				return
 			}
-			for _, userRole := range userCtx.Roles {
-				if userRole == role {
-					next.ServeHTTP(w, r)
-					return
-				}
+			if !slices.Contains(userCtx.Roles, role) {
+				forbiddenResponse(w, "Insufficient role")
+				return
 			}
-			forbiddenResponse(w, "Insufficient role")
+			next.ServeHTTP(w, r)
 		})
 	}
 }

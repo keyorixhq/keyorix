@@ -696,10 +696,7 @@ func TestRunExport_NoRemoteClient_S8(t *testing.T) {
 
 // newS8ImportCmd creates a cobra.Command with a Background context for runImport tests.
 func newS8ImportCmd(t *testing.T) *cobra.Command {
-	t.Helper()
-	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
-	return cmd
+	return newS8ExportCmd(t)
 }
 
 // ─── runImport: dry-run branch ────────────────────────────────────────────────

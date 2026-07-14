@@ -60,6 +60,31 @@ func runList(cmd *cobra.Command, args []string) error {
 
 // ── Remote mode ───────────────────────────────────────────────────────────────
 
+// resolveProjectIDParam resolves a project name to its ID via the API and
+// returns the query parameter string to append (e.g. "&project_id=42"), or ""
+// when projectName is empty.
+func resolveProjectIDParam(ctx context.Context, rc *common.RemoteClient, projectName string) (string, error) {
+	if projectName == "" {
+		return "", nil
+	}
+	// rc.Get strips the {"data":…} envelope — decode the inner payload directly.
+	var resp struct {
+		Projects []struct {
+			ID   uint   `json:"id"`
+			Name string `json:"name"`
+		} `json:"projects"`
+	}
+	if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
+		return "", fmt.Errorf("failed to list projects: %w", err)
+	}
+	for _, p := range resp.Projects {
+		if strings.EqualFold(p.Name, projectName) {
+			return fmt.Sprintf("&project_id=%d", p.ID), nil
+		}
+	}
+	return "", fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", projectName)
+}
+
 func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	page := (listOffset / listLimit) + 1
 	path := fmt.Sprintf("/api/v1/secrets?page=%d&page_size=%d", page, listLimit)
@@ -67,30 +92,11 @@ func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	// Resolve project name → ID if a project scope is requested.
 	// ResolveProject ignores the error when nothing is set (project scope is optional for list).
 	projectName, _ := common.ResolveProject(listProjectName)
-	if projectName != "" {
-		// rc.Get already strips the {"data":…} envelope — decode the inner payload
-		// directly (a nested Data wrapper would double-strip and never match a project).
-		var resp struct {
-			Projects []struct {
-				ID   uint   `json:"id"`
-				Name string `json:"name"`
-			} `json:"projects"`
-		}
-		if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
-			return fmt.Errorf("failed to list projects: %w", err)
-		}
-		var projectID uint
-		for _, p := range resp.Projects {
-			if strings.EqualFold(p.Name, projectName) {
-				projectID = p.ID
-				break
-			}
-		}
-		if projectID == 0 {
-			return fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", projectName)
-		}
-		path += fmt.Sprintf("&project_id=%d", projectID)
+	projectParam, err := resolveProjectIDParam(ctx, rc, projectName)
+	if err != nil {
+		return err
 	}
+	path += projectParam
 
 	if listEnv != 0 {
 		path += fmt.Sprintf("&environment_id=%d", listEnv)

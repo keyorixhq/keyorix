@@ -49,12 +49,12 @@ for _ in $(seq 1 60); do
   TOKEN="$(curl -s -X POST "${KEYORIX_URL}/auth/login" -H 'Content-Type: application/json' \
     -d "{\"username\":\"${KEYORIX_ADMIN_USERNAME}\",\"password\":\"${KEYORIX_ADMIN_PASSWORD}\"}" \
     2>/dev/null | jq -r '.data.token // empty')"
-  [ -n "$TOKEN" ] && break
+  [[ -n "$TOKEN" ]] && break
   printf '.'; sleep 2
 done
 set -e
 echo
-[ -n "$TOKEN" ] || { echo "Keyorix did not come up in time"; $COMPOSE logs backend | tail -20; exit 1; }
+[[ -n "$TOKEN" ]] || { echo "Keyorix did not come up in time"; $COMPOSE logs backend | tail -20; exit 1; }
 ok "Keyorix is up — logged in as ${KEYORIX_ADMIN_USERNAME}"
 
 c "2/5  Starting a throwaway HashiCorp Vault and seeding it"

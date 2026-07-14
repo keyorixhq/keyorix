@@ -15,9 +15,9 @@ echo "🚀 Running RBAC migrations on database: $DB_FILE"
 MIGRATE_CMD="migrate"
 if ! command -v migrate &> /dev/null; then
     # Try to find migrate in common Go bin locations
-    if [ -f "$HOME/go/bin/migrate" ]; then
+    if [[ -f "$HOME/go/bin/migrate" ]]; then
         MIGRATE_CMD="$HOME/go/bin/migrate"
-    elif [ -f "$(go env GOPATH)/bin/migrate" ]; then
+    elif [[ -f "$(go env GOPATH)/bin/migrate" ]]; then
         MIGRATE_CMD="$(go env GOPATH)/bin/migrate"
     else
         echo "❌ golang-migrate tool not found!"
@@ -27,7 +27,7 @@ if ! command -v migrate &> /dev/null; then
 fi
 
 # Check if migrations directory exists
-if [ ! -d "$MIGRATIONS_DIR" ]; then
+if [[ ! -d "$MIGRATIONS_DIR" ]]; then
     echo "❌ Migrations directory $MIGRATIONS_DIR not found!"
     exit 1
 fi

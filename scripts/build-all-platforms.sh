@@ -68,7 +68,7 @@ for platform in "${PLATFORMS[@]}"; do
     
     # Determine binary extension
     EXT=""
-    if [ "$os" = "windows" ]; then
+    if [[ "$os" = "windows" ]]; then
         EXT=".exe"
     fi
     
@@ -136,7 +136,7 @@ EOF
     cd "$DIST_DIR"
     ARCHIVE_NAME="keyorix-$VERSION-$os-$arch"
     
-    if [ "$os" = "windows" ]; then
+    if [[ "$os" = "windows" ]]; then
         # Create ZIP for Windows
         if command -v zip &> /dev/null; then
             zip -r "$ARCHIVE_NAME.zip" "$ARCHIVE_NAME/"

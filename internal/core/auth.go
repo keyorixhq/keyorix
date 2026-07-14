@@ -364,15 +364,9 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	if old.AbsoluteExpiresAt != nil && expiresAt.After(*old.AbsoluteExpiresAt) {
 		expiresAt = *old.AbsoluteExpiresAt
 	}
-	familyID := old.FamilyID
-	if familyID == "" {
-		// Legacy row minted before FamilyID existed — start a fresh lineage from here
-		// rather than leaving it empty (an empty FamilyID would otherwise group every
-		// legacy session together under family-wide revocation).
-		familyID, err = generateSecureToken()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate token: %w", err)
-		}
+	familyID, err := ensureFamilyID(old.FamilyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 	session := &models.Session{
 		UserID:            old.UserID,
@@ -395,6 +389,16 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		return nil, fmt.Errorf("session not found or expired")
 	}
 	return created, nil
+}
+
+// ensureFamilyID returns existing if non-empty, otherwise generates a new secure token.
+// Legacy sessions pre-dating FamilyID have an empty field; we start a fresh lineage
+// rather than leaving it empty to avoid grouping all legacy sessions under one family.
+func ensureFamilyID(existing string) (string, error) {
+	if existing != "" {
+		return existing, nil
+	}
+	return generateSecureToken()
 }
 
 // handleSessionReuse responds to a refresh attempt that targeted an already-rotated

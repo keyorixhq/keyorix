@@ -68,11 +68,11 @@ fi
 
 # 2. Web Frontend Tests
 log_info "=== Running Web Frontend Tests ==="
-if [ -d "web" ] && [ -f "web/package.json" ]; then
+if [[ -d "web" ]] && [[ -f "web/package.json" ]]; then
     cd web
     
     # Check if node_modules exists
-    if [ ! -d "node_modules" ]; then
+    if [[ ! -d "node_modules" ]]; then
         log_info "Installing web dependencies..."
         if command -v npm &> /dev/null; then
             npm install > /dev/null 2>&1
@@ -98,7 +98,7 @@ fi
 
 # 3. Integration Tests
 log_info "=== Running Integration Tests ==="
-if [ -f "scripts/run_integration_tests.sh" ]; then
+if [[ -f "scripts/run_integration_tests.sh" ]]; then
     run_test "Integration Tests" "./scripts/run_integration_tests.sh"
 else
     log_warning "Integration test script not found"
@@ -108,7 +108,7 @@ fi
 log_info "=== Running API Tests ==="
 # Start server for API testing
 log_info "Starting server for API tests..."
-if [ -f "./bin/keyorix" ]; then
+if [[ -f "./bin/keyorix" ]]; then
     # Start server in background
     ./bin/keyorix server --config keyorix-simple.yaml > /dev/null 2>&1 &
     SERVER_PID=$!
@@ -128,7 +128,7 @@ fi
 
 # 5. CLI Tests
 log_info "=== Running CLI Tests ==="
-if [ -f "./bin/keyorix" ]; then
+if [[ -f "./bin/keyorix" ]]; then
     run_test "CLI Help Command" "./bin/keyorix --help"
     run_test "CLI Version Command" "./bin/keyorix version || ./bin/keyorix --version || true"
     run_test "CLI Config Validation" "./bin/keyorix config validate --config keyorix-simple.yaml || true"
@@ -160,7 +160,7 @@ run_test "TODO/FIXME Check" "! grep -r 'TODO.*security\|FIXME.*security' . --inc
 
 # 8. Performance Tests
 log_info "=== Running Performance Tests ==="
-if [ -f "./bin/keyorix" ] && command -v time &> /dev/null; then
+if [[ -f "./bin/keyorix" ]] && command -v time &> /dev/null; then
     # Start server for performance testing
     ./bin/keyorix server --config keyorix-simple.yaml > /dev/null 2>&1 &
     SERVER_PID=$!
@@ -183,9 +183,9 @@ fi
 
 # 9. Documentation Tests
 log_info "=== Running Documentation Tests ==="
-run_test "README Exists" "[ -f README.md ]"
-run_test "API Documentation Exists" "[ -f server/openapi.yaml ]"
-run_test "User Guide Exists" "[ -f docs/SECRET_SHARING_USER_GUIDE.md ] || [ -f QUICK_START.md ]"
+run_test "README Exists" "[[ -f README.md ]]"
+run_test "API Documentation Exists" "[[ -f server/openapi.yaml ]]"
+run_test "User Guide Exists" "[[ -f docs/SECRET_SHARING_USER_GUIDE.md ]] || [[ -f QUICK_START.md ]]"
 
 # Check for broken links in markdown files
 if command -v grep &> /dev/null; then
@@ -194,9 +194,9 @@ fi
 
 # 10. Configuration Tests
 log_info "=== Running Configuration Tests ==="
-run_test "Config File Exists" "[ -f keyorix-simple.yaml ]"
-run_test "Docker Compose Exists" "[ -f docker-compose.full-stack.yml ]"
-run_test "Production Config Exists" "[ -f server/config/production.yaml ]"
+run_test "Config File Exists" "[[ -f keyorix-simple.yaml ]]"
+run_test "Docker Compose Exists" "[[ -f docker-compose.full-stack.yml ]]"
+run_test "Production Config Exists" "[[ -f server/config/production.yaml ]]"
 
 # 11. Build Tests
 log_info "=== Running Build Tests ==="
@@ -204,7 +204,7 @@ if command -v go &> /dev/null; then
     run_test "Go Build Test" "go build -o test-binary ./cm./bin/keyorix && rm -f test-binary"
 fi
 
-if [ -d "web" ] && command -v npm &> /dev/null; then
+if [[ -d "web" ]] && command -v npm &> /dev/null; then
     cd web
     run_test "Web Build Test" "npm run build"
     cd ..
@@ -212,8 +212,8 @@ fi
 
 # 12. Deployment Tests
 log_info "=== Running Deployment Tests ==="
-run_test "Deployment Scripts Exist" "[ -f scripts/deploy-simple.sh ] && [ -f scripts/deploy-production.sh ]"
-run_test "Docker Files Exist" "[ -f server/Dockerfile ] || [ -f Dockerfile ]"
+run_test "Deployment Scripts Exist" "[[ -f scripts/deploy-simple.sh ]] && [[ -f scripts/deploy-production.sh ]]"
+run_test "Docker Files Exist" "[[ -f server/Dockerfile ]] || [[ -f Dockerfile ]]"
 
 # Generate test report
 log_info "=== Generating Test Report ==="
@@ -246,22 +246,22 @@ cat > TEST_REPORT.md << EOF
 
 | Category | Status | Notes |
 |----------|--------|-------|
-| Unit Tests | $([ $PASSED_TESTS -gt 0 ] && echo "✅ PASS" || echo "❌ FAIL") | Core functionality tested |
-| Integration Tests | $([ -f "scripts/run_integration_tests.sh" ] && echo "✅ PASS" || echo "⚠️ SKIP") | End-to-end workflows |
-| API Tests | $([ -f "./bin/keyorix" ] && echo "✅ PASS" || echo "⚠️ SKIP") | REST API endpoints |
+| Unit Tests | $([[ $PASSED_TESTS -gt 0 ]] && echo "✅ PASS" || echo "❌ FAIL") | Core functionality tested |
+| Integration Tests | $([[ -f "scripts/run_integration_tests.sh" ]] && echo "✅ PASS" || echo "⚠️ SKIP") | End-to-end workflows |
+| API Tests | $([[ -f "./bin/keyorix" ]] && echo "✅ PASS" || echo "⚠️ SKIP") | REST API endpoints |
 | Security Tests | $(command -v gosec &> /dev/null && echo "✅ PASS" || echo "⚠️ SKIP") | Vulnerability scanning |
-| Performance Tests | $([ -f "./bin/keyorix" ] && echo "✅ PASS" || echo "⚠️ SKIP") | Load and response time |
+| Performance Tests | $([[ -f "./bin/keyorix" ]] && echo "✅ PASS" || echo "⚠️ SKIP") | Load and response time |
 | Documentation | ✅ PASS | Comprehensive docs available |
 
 ### 🔧 Recommendations
 
-$(if [ $FAILED_TESTS -gt 0 ]; then
+$(if [[ $FAILED_TESTS -gt 0 ]]; then
     echo "- **Fix Failed Tests**: $FAILED_TESTS tests failed and need attention"
 fi)
 $(if ! command -v gosec &> /dev/null; then
     echo "- **Install gosec**: For comprehensive security scanning"
 fi)
-$(if [ ! -f "./bin/keyorix" ]; then
+$(if [[ ! -f "./bin/keyorix" ]]; then
     echo "- **Build Binary**: Run 'go build' to enable full testing"
 fi)
 - **Continuous Testing**: Set up automated testing in CI/CD pipeline
@@ -300,7 +300,7 @@ echo "Failed: $FAILED_TESTS"
 echo "Success Rate: $(( PASSED_TESTS * 100 / TOTAL_TESTS ))%"
 echo ""
 
-if [ $FAILED_TESTS -eq 0 ]; then
+if [[ $FAILED_TESTS -eq 0 ]]; then
     log_success "All tests passed! 🎉"
     echo "✅ System is ready for production deployment"
 else
