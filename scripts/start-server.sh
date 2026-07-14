@@ -32,7 +32,7 @@ if curl -s http://localhost:8080/health > /dev/null 2>&1; then
 fi
 
 # Check if config exists
-if [ ! -f "keyorix-simple.yaml" ]; then
+if [[ ! -f "keyorix-simple.yaml" ]]; then
     log_warning "Configuration file not found. Run ./scripts/deploy-simple.sh first."
     exit 1
 fi

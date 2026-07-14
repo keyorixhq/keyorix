@@ -270,6 +270,31 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	writeSCIM(w, http.StatusOK, toSCIMUser(user))
 }
 
+func parseSCIMUserPatchOp(path string, value json.RawMessage) (active *bool, displayName *string) {
+	switch strings.ToLower(strings.TrimSpace(path)) {
+	case "active":
+		var b bool
+		if json.Unmarshal(value, &b) == nil {
+			active = &b
+		}
+	case "displayname":
+		var s string
+		if json.Unmarshal(value, &s) == nil {
+			displayName = &s
+		}
+	case "": // no path → value is an object of attributes
+		var obj struct {
+			Active      *bool   `json:"active"`
+			DisplayName *string `json:"displayName"`
+		}
+		if json.Unmarshal(value, &obj) == nil {
+			active = obj.Active
+			displayName = obj.DisplayName
+		}
+	}
+	return active, displayName
+}
+
 // scimPatch is a minimal SCIM PatchOp body.
 type scimPatch struct {
 	Operations []struct {
@@ -298,30 +323,12 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(op.Op, "replace") && !strings.EqualFold(op.Op, "add") {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(op.Path)) {
-		case "active":
-			var b bool
-			if json.Unmarshal(op.Value, &b) == nil {
-				active = &b
-			}
-		case "displayname":
-			var s string
-			if json.Unmarshal(op.Value, &s) == nil {
-				displayName = &s
-			}
-		case "": // no path → value is an object of attributes
-			var obj struct {
-				Active      *bool   `json:"active"`
-				DisplayName *string `json:"displayName"`
-			}
-			if json.Unmarshal(op.Value, &obj) == nil {
-				if obj.Active != nil {
-					active = obj.Active
-				}
-				if obj.DisplayName != nil {
-					displayName = obj.DisplayName
-				}
-			}
+		a, dn := parseSCIMUserPatchOp(op.Path, op.Value)
+		if a != nil {
+			active = a
+		}
+		if dn != nil {
+			displayName = dn
 		}
 	}
 	user, err := h.coreService.UpdateSCIMUser(r.Context(), 0, id, displayName, nil, active)

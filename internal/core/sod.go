@@ -146,20 +146,7 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) (*SoDViolationsRe
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}
-		for _, u := range users {
-			if !u.IsActive {
-				continue
-			}
-			uv, err := c.userSoDViolations(ctx, u, policies)
-			if err != nil {
-				// #420: the user is still skipped (nothing else can be done without
-				// the data), but the report must say coverage is incomplete instead
-				// of looking like a clean scan that silently missed them.
-				report.degrade(fmt.Sprintf("user_permissions:user=%d", u.ID), err)
-				continue
-			}
-			report.Violations = append(report.Violations, uv...)
-		}
+		c.appendUserSoDViolations(ctx, report, users, policies)
 		if len(users) < pageSize || int64(page*pageSize) >= total {
 			break
 		}
@@ -175,6 +162,23 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) (*SoDViolationsRe
 // — so such a user violates every policy, even though their explicit role_permissions
 // rows may name only one side (or neither). Missing that made the SoD control blind to
 // exactly the most-privileged principals it exists to police. For a non-admin, the
+// appendUserSoDViolations iterates a page of users and adds any violations to
+// the report. Inactive users are skipped. Permission-resolution errors degrade
+// the report rather than abort the scan (#420).
+func (c *KeyorixCore) appendUserSoDViolations(ctx context.Context, report *SoDViolationsReport, users []*models.User, policies []*models.SoDPolicy) {
+	for _, u := range users {
+		if !u.IsActive {
+			continue
+		}
+		uv, err := c.userSoDViolations(ctx, u, policies)
+		if err != nil {
+			report.degrade(fmt.Sprintf("user_permissions:user=%d", u.ID), err)
+			continue
+		}
+		report.Violations = append(report.Violations, uv...)
+	}
+}
+
 // held-set unions direct and group-inherited permissions (mirroring Authorize).
 //
 // #420: an error resolving the user's permissions is returned to the caller rather

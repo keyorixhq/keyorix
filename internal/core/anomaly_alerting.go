@@ -54,19 +54,19 @@ func (c *KeyorixCore) AlertNewAnomalies(ctx context.Context) (int, error) {
 		a := &alerts[i]
 
 		// Resolve the owning project (for scoping the audit event + admin notify).
+		// Set sid for the audit event in the same block to avoid a second branch.
 		var projectID uint
+		var sid *uint
 		if a.SecretNodeID != 0 {
+			sID := a.SecretNodeID
+			sid = &sID
 			if s, err := c.storage.GetSecret(ctx, a.SecretNodeID); err == nil && s != nil {
 				projectID = s.ProjectID
 			}
 		}
 
 		// Audit + SIEM: a security event for the SOC, regardless of project.
-		var sid, pid *uint
-		if a.SecretNodeID != 0 {
-			s := a.SecretNodeID
-			sid = &s
-		}
+		var pid *uint
 		if projectID != 0 {
 			p := projectID
 			pid = &p

@@ -29,21 +29,29 @@ func init() {
 	SecretCmd.AddCommand(rotateCmd)
 }
 
+func promptRotateValue() (string, error) {
+	fmt.Print("New secret value (hidden): ")
+	valueBytes, perr := term.ReadPassword(int(syscall.Stdin))
+	fmt.Println()
+	if perr != nil {
+		return "", fmt.Errorf("failed to read secret value: %w", perr)
+	}
+	if len(valueBytes) == 0 {
+		return "", fmt.Errorf("secret value is required (use --value or enter it at the prompt)")
+	}
+	return string(valueBytes), nil
+}
+
 func runRotate(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
 	common.WarnInsecureFlag(cmd, "value", "omit the flag to be prompted instead.")
 	if !cmd.Flags().Changed("value") {
-		fmt.Print("New secret value (hidden): ")
-		valueBytes, perr := term.ReadPassword(int(syscall.Stdin))
-		fmt.Println()
-		if perr != nil {
-			return fmt.Errorf("failed to read secret value: %w", perr)
+		v, err := promptRotateValue()
+		if err != nil {
+			return err
 		}
-		if len(valueBytes) == 0 {
-			return fmt.Errorf("secret value is required (use --value or enter it at the prompt)")
-		}
-		rotateValue = string(valueBytes)
+		rotateValue = v
 	}
 
 	cfg, err := cliconfig.LoadCLIConfig("")

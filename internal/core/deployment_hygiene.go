@@ -108,12 +108,7 @@ func (c *KeyorixCore) DeploymentHygieneSummary(ctx context.Context, unusedDays, 
 	}
 
 	// Union of every project ID carrying at least one outstanding signal.
-	flagged := make(map[uint]struct{})
-	for _, m := range []map[uint]int{orphaned, unused, expiring, staleMI, rotationOverdue} {
-		for pid := range m {
-			flagged[pid] = struct{}{}
-		}
-	}
+	flagged := unionProjectIDs(orphaned, unused, expiring, staleMI, rotationOverdue)
 
 	out := &DeploymentHygiene{Projects: make([]ProjectHygieneBreakdown, 0, len(flagged))}
 	for pid := range flagged {
@@ -140,4 +135,15 @@ func (c *KeyorixCore) DeploymentHygieneSummary(ctx context.Context, unusedDays, 
 	sort.Slice(out.Projects, func(i, j int) bool { return out.Projects[i].ProjectID < out.Projects[j].ProjectID })
 
 	return out, nil
+}
+
+// unionProjectIDs returns the set of all project IDs that appear in any of the given maps.
+func unionProjectIDs(maps ...map[uint]int) map[uint]struct{} {
+	flagged := make(map[uint]struct{})
+	for _, m := range maps {
+		for pid := range m {
+			flagged[pid] = struct{}{}
+		}
+	}
+	return flagged
 }

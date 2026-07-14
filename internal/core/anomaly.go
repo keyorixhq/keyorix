@@ -211,65 +211,7 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 
 	var failures int
 	for _, secret := range secrets {
-		// Build 30-day baseline. A secret with NO baseline history (brand new, or
-		// unread in 30 days) used to be skipped entirely here — off_hours and
-		// frequency_spike included — which is exactly the blind spot an attacker
-		// deliberately targeting a freshly-provisioned, never-accessed secret would
-		// exploit. Proceed with an empty baseline instead; detectAnomalies still
-		// flags off-hours access, and now also flags first-ever new_ip/new_user
-		// (see detectAnomalies for how severity is scaled down for that case).
-		baselineLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, baselineWindow)
-		if err != nil {
-			// #365: the aggregate failure count below already surfaces a non-nil error to
-			// the scheduler (which logs it), but that only says "N secret(s) failed" — log
-			// which secret and which query so an operator can tell a transient DB hiccup
-			// from a genuine gap. Since the detection window is only the last hour, a
-			// skipped secret here is never retroactively re-evaluated.
-			log.Printf("anomaly detection: baseline access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
-			failures++
-			continue
-		}
-		baseline := buildBaseline(baselineLogs, now, window, d.quarantine)
-
-		// Get recent accesses over the lookback window.
-		recentLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, window)
-		if err != nil {
-			log.Printf("anomaly detection: detection-window access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
-			failures++
-			continue
-		}
-
-		for _, accessLog := range recentLogs {
-			alerts := detectAnomalies(secret, accessLog, baseline, d.offHours)
-			for _, alert := range alerts {
-				if err := d.storage.CreateAnomalyAlert(ctx, &alert); err != nil {
-					failures++
-				}
-			}
-		}
-
-		// Per-secret aggregate: a read-volume spike for the window versus the learned
-		// baseline (one alert per secret per pass, not per access).
-		if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, now); alert != nil {
-			if err := d.storage.CreateAnomalyAlert(ctx, alert); err != nil {
-				failures++
-			}
-		}
-
-		// ML pass (opt-in): score this window's accesses against an Isolation Forest
-		// trained on the secret's prior history, catching multivariate outliers the
-		// single-signal rules above miss. Train only on logs BEFORE the window — for the
-		// same reason buildBaseline excludes it: otherwise the forest learns this window's
-		// reads as normal (and the IP/user frequency features count the burst as
-		// established), so it can't isolate the very accesses it is scoring.
-		if d.ml.Enabled {
-			trainLogs := logsBefore(baselineLogs, window)
-			for _, alert := range mlOutlierAlerts(secret, trainLogs, recentLogs, d.ml, now) {
-				if err := d.storage.CreateAnomalyAlert(ctx, &alert); err != nil {
-					failures++
-				}
-			}
-		}
+		failures += d.detectOneSecretAnomalies(ctx, secret, baselineWindow, window, now)
 	}
 
 	// Per-principal aggregate (#101): a principal reading many DIFFERENT secrets it has
@@ -281,16 +223,66 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 	if err != nil {
 		failures++
 	}
-	for _, alert := range breadthAlerts {
-		if err := d.storage.CreateAnomalyAlert(ctx, &alert); err != nil {
-			failures++
-		}
-	}
+	failures += d.saveAlerts(ctx, breadthAlerts)
 
 	if failures > 0 {
 		return fmt.Errorf("anomaly detection completed with %d storage failure(s) — some alerts may not have been recorded", failures)
 	}
 	return nil
+}
+
+// detectOneSecretAnomalies runs all anomaly rules for a single secret and returns the
+// number of storage failures encountered while saving alerts.
+func (d *AnomalyDetector) detectOneSecretAnomalies(ctx context.Context, secret models.SecretNode, baselineWindow, window, now time.Time) int {
+	// Build 30-day baseline. A secret with NO baseline history (brand new, or unread
+	// in 30 days) is NOT skipped — detectAnomalies still flags off-hours access and
+	// first-ever new_ip/new_user (severity is scaled down for that case). Skipping was
+	// the prior blind spot an attacker targeting a freshly-provisioned secret could exploit.
+	baselineLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, baselineWindow)
+	if err != nil {
+		// #365: log which secret so an operator can distinguish a transient DB hiccup
+		// from a genuine coverage gap (the detection window is only ~1h and is never
+		// retroactively re-evaluated).
+		log.Printf("anomaly detection: baseline access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
+		return 1
+	}
+	baseline := buildBaseline(baselineLogs, now, window, d.quarantine)
+	recentLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, window)
+	if err != nil {
+		log.Printf("anomaly detection: detection-window access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
+		return 1
+	}
+	failures := 0
+	for _, accessLog := range recentLogs {
+		failures += d.saveAlerts(ctx, detectAnomalies(secret, accessLog, baseline, d.offHours))
+	}
+	// Per-secret aggregate: a read-volume spike for the window vs. the learned baseline
+	// (one alert per secret per pass, not per access).
+	if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, now); alert != nil {
+		if err := d.storage.CreateAnomalyAlert(ctx, alert); err != nil {
+			failures++
+		}
+	}
+	// ML pass (opt-in): score this window's accesses against an Isolation Forest trained
+	// on prior history, catching multivariate outliers the single-signal rules miss.
+	// Train only on logs BEFORE the window — otherwise the forest learns this window's
+	// reads as normal and can't isolate the very accesses it is scoring.
+	if d.ml.Enabled {
+		failures += d.saveAlerts(ctx, mlOutlierAlerts(secret, logsBefore(baselineLogs, window), recentLogs, d.ml, now))
+	}
+	return failures
+}
+
+// saveAlerts persists a slice of anomaly alerts, returning the number of storage
+// failures. Each alert is saved independently so one failure doesn't drop the rest.
+func (d *AnomalyDetector) saveAlerts(ctx context.Context, alerts []models.AnomalyAlert) int {
+	failures := 0
+	for _, alert := range alerts {
+		if err := d.storage.CreateAnomalyAlert(ctx, &alert); err != nil {
+			failures++
+		}
+	}
+	return failures
 }
 
 const (

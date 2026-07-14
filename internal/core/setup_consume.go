@@ -170,10 +170,7 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	// if a concurrent revoke/accept already resolved this invitation, that
 	// transition wins and the conditional write no-ops; the state check below
 	// still refuses to proceed either way.
-	if inv.State == InvitationPending && inv.ExpiresAt != nil && c.now().After(*inv.ExpiresAt) {
-		inv.State = InvitationExpired
-		_, _ = c.storage.UpdateProjectInvitation(ctx, inv)
-	}
+	c.expireInvitationIfOverdue(ctx, inv)
 	if inv.State != InvitationPending {
 		return nil, fmt.Errorf("%s: invitation is %s", i18n.T("ErrorValidation", nil), inv.State)
 	}
@@ -273,6 +270,17 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return &SetupConsumeResult{Session: session, User: user}, nil
+}
+
+// expireInvitationIfOverdue lazily marks an invitation expired when it is still
+// pending but past its deadline. Best-effort: a concurrent revoke/accept may
+// have already transitioned the state, in which case the conditional write
+// no-ops. The caller must re-check inv.State after this returns.
+func (c *KeyorixCore) expireInvitationIfOverdue(ctx context.Context, inv *models.ProjectInvitation) {
+	if inv.State == InvitationPending && inv.ExpiresAt != nil && c.now().After(*inv.ExpiresAt) {
+		inv.State = InvitationExpired
+		_, _ = c.storage.UpdateProjectInvitation(ctx, inv)
+	}
 }
 
 // deriveUsername builds a unique, alphanumeric username from an email's local part,

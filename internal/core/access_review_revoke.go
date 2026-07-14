@@ -70,19 +70,8 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to revoke a role grant")
 		}
 		scope := Scope{ProjectID: projectID, EnvironmentID: d.EnvironmentID}
-		switch d.PrincipalType {
-		case "group":
-			if err := c.RemoveRoleFromGroup(ctx, actorID, d.PrincipalID, d.RoleID, scope); err != nil {
-				return err
-			}
-		case "machine":
-			if err := c.RemoveMachineRole(ctx, d.PrincipalID, d.RoleID, scope, actorID); err != nil {
-				return err
-			}
-		default:
-			if err := c.RemoveUserRole(ctx, actorID, d.PrincipalID, d.RoleID, scope); err != nil {
-				return err
-			}
+		if err := c.revokeRoleByPrincipalType(ctx, actorID, d, scope); err != nil {
+			return err
 		}
 	case "direct_share", "group_share":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
@@ -98,6 +87,17 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 	}
 	c.logAccessReviewDecision(ctx, EventAccessReviewRevoked, "revoked", actorID, projectID, d)
 	return nil
+}
+
+func (c *KeyorixCore) revokeRoleByPrincipalType(ctx context.Context, actorID uint, d AccessReviewDecision, scope Scope) error {
+	switch d.PrincipalType {
+	case "group":
+		return c.RemoveRoleFromGroup(ctx, actorID, d.PrincipalID, d.RoleID, scope)
+	case "machine":
+		return c.RemoveMachineRole(ctx, d.PrincipalID, d.RoleID, scope, actorID)
+	default:
+		return c.RemoveUserRole(ctx, actorID, d.PrincipalID, d.RoleID, scope)
+	}
 }
 
 // revokeReviewShare deletes the ShareRecord matching the decision's secret +

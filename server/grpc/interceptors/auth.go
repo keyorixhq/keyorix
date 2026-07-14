@@ -3,6 +3,7 @@ package interceptors
 import (
 	"context"
 	"net"
+	"slices"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -233,16 +234,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 	// owning user, no admin bypass downstream (AuthorizePrincipal resolves machine
 	// roles). Routed by prefix, fails closed.
 	if strings.HasPrefix(token, machineTokenPrefix) {
-		machine, roles, err := coreService.ValidateMachineToken(ctx, token)
-		if err != nil {
-			return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
-		}
-		return &UserContext{
-			Username:          machine.Name,
-			Roles:             roles,
-			ActorType:         core.ActorTypeMachine,
-			MachineIdentityID: machine.ID,
-		}, nil, nil
+		return validateGRPCMachineToken(ctx, coreService, token)
 	}
 
 	// Validate the token (existence + expiry/revocation) and resolve the user. A
@@ -271,18 +263,11 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		impersonatedBy = coreService.SessionImpersonator(ctx, token)
 	}
 
-	// Enforce a PAT's network allowlist on the gRPC transport too (ADR-066), so the IP
-	// restriction is not bypassable by switching from HTTP to gRPC. Fail-closed: an
-	// undeterminable peer IP outside the allowlist is denied.
-	if restriction != nil && len(restriction.AllowedCIDRs) > 0 {
-		if !core.IPInCIDRs(PeerIP(ctx), restriction.AllowedCIDRs) {
-			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
-		}
-	}
-
+	viaSession := !viaPAT
 	// Mirror the HTTP authed-group gates over gRPC so neither is bypassable by switching
 	// transport (the same class of gap ADR-066 closed for the IP allowlist):
 	//
+	//   - PAT network allowlist (ADR-066): fail-closed on undeterminable peer IP.
 	//   - Account restriction (ADR-025): a pending_first_login / password_reset_required
 	//     account must change its password first. On HTTP it is confined to the
 	//     change-password allowlist; gRPC has no such endpoint, so it is denied outright.
@@ -293,12 +278,8 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 	//
 	// Both fail closed. viaSession is true for a session token (machine tokens already
 	// returned above; a PAT carries the patTokenPrefix).
-	if core.AccountRestricted(user.AccountState) {
-		return nil, nil, status.Errorf(codes.PermissionDenied, "password change required before access")
-	}
-	viaSession := !viaPAT
-	if requireMFA && viaSession && !(user.MFAEnabled || user.WebAuthnEnabled) {
-		return nil, nil, status.Errorf(codes.PermissionDenied, "multi-factor authentication enrolment required")
+	if err := enforceGRPCAccessPolicy(ctx, user, restriction, requireMFA, viaSession); err != nil {
+		return nil, nil, err
 	}
 
 	// Resolve roles + permissions for downstream per-method authorization.
@@ -322,6 +303,34 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		// context (core.WithImpersonation) — audit parity with HTTP.
 		ImpersonatedBy: impersonatedBy,
 	}, restriction, nil
+}
+
+func validateGRPCMachineToken(ctx context.Context, coreService *core.KeyorixCore, token string) (*UserContext, *core.PATRestriction, error) {
+	machine, roles, err := coreService.ValidateMachineToken(ctx, token)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
+	}
+	return &UserContext{
+		Username:          machine.Name,
+		Roles:             roles,
+		ActorType:         core.ActorTypeMachine,
+		MachineIdentityID: machine.ID,
+	}, nil, nil
+}
+
+func enforceGRPCAccessPolicy(ctx context.Context, user *models.User, restriction *core.PATRestriction, requireMFA, viaSession bool) error {
+	if restriction != nil && len(restriction.AllowedCIDRs) > 0 {
+		if !core.IPInCIDRs(PeerIP(ctx), restriction.AllowedCIDRs) {
+			return status.Errorf(codes.PermissionDenied, "token not permitted from this network")
+		}
+	}
+	if core.AccountRestricted(user.AccountState) {
+		return status.Errorf(codes.PermissionDenied, "password change required before access")
+	}
+	if requireMFA && viaSession && !(user.MFAEnabled || user.WebAuthnEnabled) {
+		return status.Errorf(codes.PermissionDenied, "multi-factor authentication enrolment required")
+	}
+	return nil
 }
 
 // PeerIP returns the source IP of the gRPC call from its peer (TCP) address, or "" if
@@ -352,20 +361,14 @@ func ClientUserAgent(ctx context.Context) string {
 }
 
 // isPublicMethod checks if a gRPC method is public (doesn't require authentication)
+var grpcPublicMethods = []string{
+	"/grpc.health.v1.Health/Check",
+	"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
+	"/keyorix.v1.SystemService/HealthCheck", // liveness probe — no auth
+}
+
 func isPublicMethod(method string) bool {
-	publicMethods := []string{
-		"/grpc.health.v1.Health/Check",
-		"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
-		"/keyorix.v1.SystemService/HealthCheck", // liveness probe — no auth
-	}
-
-	for _, publicMethod := range publicMethods {
-		if method == publicMethod {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(grpcPublicMethods, method)
 }
 
 // GetUserFromGRPCContext extracts the user context from the gRPC request context

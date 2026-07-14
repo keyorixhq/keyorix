@@ -5,11 +5,11 @@
 # published checksum) so install_cli's checksum-verified reuse path (#179)
 # accepts it without touching the network. Handles the two `secret export`
 # forms entrypoint.sh calls.
-if [ "$1" = "--version" ]; then
+if [[ "$1" = "--version" ]]; then
   echo "keyorix version mock-1.0.0"
   exit 0
 fi
-if [ "$1" = "secret" ] && [ "$2" = "export" ]; then
+if [[ "$1" = "secret" ]] && [[ "$2" = "export" ]]; then
   fmt=""
   outfile=""
   args=("$@")

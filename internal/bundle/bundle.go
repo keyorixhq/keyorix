@@ -290,72 +290,14 @@ func process(r io.Reader, reg *trust.KeyRegistry, opts *extractOpts) (*Manifest,
 	}
 
 	// When staging, gate on no-downgrade BEFORE writing any component, and prepare destDir.
-	if opts != nil {
-		if strings.TrimSpace(opts.destDir) == "" {
-			return nil, fmt.Errorf("bundle: extract destination is required")
-		}
-		// The PERSISTED installed version (written at the dest by the previous import) is
-		// authoritative over the operator-supplied flag, so the no-downgrade gate enforces
-		// itself on every re-import without relying on the operator passing the right
-		// --installed-version. A present-but-unreadable marker fails closed.
-		installed := strings.TrimSpace(opts.installedVersion)
-		fromMarker := false
-		if marker, ok, merr := readInstalledVersion(opts.destDir); merr != nil {
-			return nil, merr
-		} else if ok {
-			installed, fromMarker = marker, true
-		}
-		// Re-importing the EXACT same version recorded by the marker is an idempotent
-		// re-stage of identical (signature-verified) content — allow it. CheckUpgrade
-		// rejects equal as a non-upgrade, which is right for the operator-asserted flag
-		// (an upgrade check) but would break idempotent re-import against the marker.
-		idempotent := false
-		if fromMarker && installed != "" {
-			if cmp, cerr := compareVersions(m.Version, installed); cerr == nil && cmp == 0 {
-				idempotent = true
-			}
-		}
-		if !idempotent {
-			if err := m.CheckUpgrade(installed); err != nil {
-				return nil, err
-			}
-		}
-		if err := mkdirAllNoSymlink(opts.destDir, opts.destDir); err != nil {
-			return nil, fmt.Errorf("bundle: create destination: %w", err)
-		}
+	if err := validateAndPrepareExtract(opts, &m); err != nil {
+		return nil, err
 	}
 
-	pinned := m.byPath()
-	seen := make(map[string]bool, len(pinned))
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("bundle: read archive: %w", err)
-		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue
-		}
-		name, err := cleanComponentPath(hdr.Name)
-		if err != nil {
-			return nil, err
-		}
-		comp, ok := pinned[name]
-		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrUnlistedComponent, name)
-		}
-		if err := streamComponent(tr, comp, optsDest(opts)); err != nil {
-			return nil, err
-		}
-		seen[name] = true
+	if err := streamBundleComponents(tr, m.byPath(), optsDest(opts)); err != nil {
+		return nil, err
 	}
-	for p := range pinned {
-		if !seen[p] {
-			return nil, fmt.Errorf("%w: %s", ErrMissingComponent, p)
-		}
-	}
+
 	// Record the just-staged version so a subsequent import enforces no-downgrade against
 	// reality without the operator having to pass --installed-version.
 	if opts != nil {
@@ -364,6 +306,99 @@ func process(r io.Reader, reg *trust.KeyRegistry, opts *extractOpts) (*Manifest,
 		}
 	}
 	return &m, nil
+}
+
+// validateAndPrepareExtract gates extraction: validates the destination, enforces the
+// no-downgrade check (reading the persisted marker as the authoritative installed version),
+// and creates the destination directory. A nil opts means verify-only mode; returns nil.
+func validateAndPrepareExtract(opts *extractOpts, m *Manifest) error {
+	if opts == nil {
+		return nil
+	}
+	if strings.TrimSpace(opts.destDir) == "" {
+		return fmt.Errorf("bundle: extract destination is required")
+	}
+	// The PERSISTED installed version (written at the dest by the previous import) is
+	// authoritative over the operator-supplied flag, so the no-downgrade gate enforces
+	// itself on every re-import without relying on the operator passing the right
+	// --installed-version. A present-but-unreadable marker fails closed.
+	installed, idempotent, err := resolveIdempotentInstall(opts, m)
+	if err != nil {
+		return err
+	}
+	if !idempotent {
+		if err := m.CheckUpgrade(installed); err != nil {
+			return err
+		}
+	}
+	if err := mkdirAllNoSymlink(opts.destDir, opts.destDir); err != nil {
+		return fmt.Errorf("bundle: create destination: %w", err)
+	}
+	return nil
+}
+
+// resolveIdempotentInstall reads the persisted version marker and determines whether
+// re-importing the bundle's version is an idempotent re-stage (same version as marker).
+// Returns the effective installed version string and whether the import is idempotent.
+func resolveIdempotentInstall(opts *extractOpts, m *Manifest) (installed string, idempotent bool, err error) {
+	installed = strings.TrimSpace(opts.installedVersion)
+	fromMarker := false
+	if marker, ok, merr := readInstalledVersion(opts.destDir); merr != nil {
+		return "", false, merr
+	} else if ok {
+		installed, fromMarker = marker, true
+	}
+	// Re-importing the EXACT same version recorded by the marker is an idempotent
+	// re-stage of identical (signature-verified) content — allow it. CheckUpgrade
+	// rejects equal as a non-upgrade, which is right for the operator-asserted flag
+	// (an upgrade check) but would break idempotent re-import against the marker.
+	if fromMarker && installed != "" {
+		if cmp, cerr := compareVersions(m.Version, installed); cerr == nil && cmp == 0 {
+			return installed, true, nil
+		}
+	}
+	return installed, false, nil
+}
+
+// streamBundleComponents iterates the tar stream, verifies each component against its
+// pinned digest, writes it to dest (empty = verify-only), then checks that every pinned
+// component was seen. Fails closed on any mismatch or missing component.
+func streamBundleComponents(tr *tar.Reader, pinned map[string]Component, dest string) error {
+	seen := make(map[string]bool, len(pinned))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("bundle: read archive: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		name, err := cleanComponentPath(hdr.Name)
+		if err != nil {
+			return err
+		}
+		comp, ok := pinned[name]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrUnlistedComponent, name)
+		}
+		if err := streamComponent(tr, comp, dest); err != nil {
+			return err
+		}
+		seen[name] = true
+	}
+	return checkAllComponentsSeen(pinned, seen)
+}
+
+func checkAllComponentsSeen(pinned map[string]Component, seen map[string]bool) error {
+	for p := range pinned {
+		if !seen[p] {
+			return fmt.Errorf("%w: %s", ErrMissingComponent, p)
+		}
+	}
+	return nil
 }
 
 // installedVersionMarker is the file at the staging destination recording the version of
@@ -463,30 +498,34 @@ func streamComponent(tr io.Reader, comp Component, destDir string) error {
 	if tmp != nil {
 		_ = tmp.Close()
 	}
-	cleanup := func() {
-		if tmpPath != "" {
-			_ = os.Remove(tmpPath)
-		}
-	}
 	if copyErr != nil {
-		cleanup()
+		removeBundleTemp(tmpPath)
 		return fmt.Errorf("bundle: read %s: %w", comp.Path, copyErr)
 	}
 	if n != comp.Size {
-		cleanup()
+		removeBundleTemp(tmpPath)
 		return fmt.Errorf("%w: %s (size %d, want %d)", ErrDigestMismatch, comp.Path, n, comp.Size)
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != comp.SHA256 {
-		cleanup()
+		removeBundleTemp(tmpPath)
 		return fmt.Errorf("%w: %s", ErrDigestMismatch, comp.Path)
 	}
 	if tmpPath != "" {
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			cleanup()
+			removeBundleTemp(tmpPath)
 			return fmt.Errorf("bundle: stage %s: %w", comp.Path, err)
 		}
 	}
 	return nil
+}
+
+// removeBundleTemp silently removes a temporary bundle extraction file if the path is
+// non-empty. Used by streamComponent on any failure after the temp file is created so
+// partial writes never linger on disk.
+func removeBundleTemp(tmpPath string) {
+	if tmpPath != "" {
+		_ = os.Remove(tmpPath)
+	}
 }
 
 // mkdirAllNoSymlink creates dir (and any missing parents, down to and including root
@@ -667,7 +706,7 @@ func compareVersions(a, b string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if pa[i] != pb[i] {
 			if pa[i] < pb[i] {
 				return -1, nil

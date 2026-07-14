@@ -4551,11 +4551,6 @@ func TestSCIMHandler_DeleteGroup_BadID(t *testing.T) {
 
 // ── Helper constructors ────────────────────────────────────────────────────────
 
-func newAuthHandlerS4(t *testing.T) *AuthHandler {
-	t.Helper()
-	return NewAuthHandler(newHandlerCoreS4(t), false)
-}
-
 func newDashboardHandler(t *testing.T) *DashboardHandler {
 	t.Helper()
 	return NewDashboardHandler(newHandlerCoreS4(t))
@@ -4597,7 +4592,7 @@ func TestIsSafeSSOError_Unknown(t *testing.T) {
 // ── ListSSOProviders ──────────────────────────────────────────────────────────
 
 func TestListSSOProviders_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListSSOProviders(w, req)
@@ -4607,7 +4602,7 @@ func TestListSSOProviders_HappyPath(t *testing.T) {
 // ── BeginSSO ─────────────────────────────────────────────────────────────────
 
 func TestBeginSSO_UnknownProvider(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "unknown")
 	w := httptest.NewRecorder()
 	h.BeginSSO(w, req)
@@ -4617,7 +4612,7 @@ func TestBeginSSO_UnknownProvider(t *testing.T) {
 // ── CompleteSSO ───────────────────────────────────────────────────────────────
 
 func TestCompleteSSO_UnknownProvider(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "unknown")
 	w := httptest.NewRecorder()
 	h.CompleteSSO(w, req)
@@ -4895,7 +4890,7 @@ func TestUpdateLegalHoldProxy_BadJSON(t *testing.T) {
 // ── Login attempts proxy ──────────────────────────────────────────────────────
 
 func TestRecordLoginAttemptProxy_MissingIP(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.RecordLoginAttemptProxy(w, req)
@@ -4903,7 +4898,7 @@ func TestRecordLoginAttemptProxy_MissingIP(t *testing.T) {
 }
 
 func TestRecordLoginAttemptProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body, _ := json.Marshal(map[string]any{"ip": "127.0.0.1", "at": time.Now()})
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -4912,7 +4907,7 @@ func TestRecordLoginAttemptProxy_HappyPath(t *testing.T) {
 }
 
 func TestCountLoginAttemptsProxy_MissingParams(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.CountLoginAttemptsProxy(w, req)
@@ -4920,7 +4915,7 @@ func TestCountLoginAttemptsProxy_MissingParams(t *testing.T) {
 }
 
 func TestCountLoginAttemptsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?ip=127.0.0.1&since=2024-01-01T00:00:00Z", nil)
 	w := httptest.NewRecorder()
 	h.CountLoginAttemptsProxy(w, req)
@@ -4928,7 +4923,7 @@ func TestCountLoginAttemptsProxy_HappyPath(t *testing.T) {
 }
 
 func TestPruneLoginAttemptsProxy_MissingBefore(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.PruneLoginAttemptsProxy(w, req)
@@ -4936,7 +4931,7 @@ func TestPruneLoginAttemptsProxy_MissingBefore(t *testing.T) {
 }
 
 func TestPruneLoginAttemptsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body, _ := json.Marshal(map[string]any{"before": time.Now()})
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -4947,7 +4942,7 @@ func TestPruneLoginAttemptsProxy_HappyPath(t *testing.T) {
 // ── Scheduler lock proxy ──────────────────────────────────────────────────────
 
 func TestAcquireSchedulerLockProxy_MissingHolder(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.AcquireSchedulerLockProxy(w, req)
@@ -4955,7 +4950,7 @@ func TestAcquireSchedulerLockProxy_MissingHolder(t *testing.T) {
 }
 
 func TestAcquireSchedulerLockProxy_BadTTL(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"holder":"h","ttl_millis":0}`))
 	w := httptest.NewRecorder()
 	h.AcquireSchedulerLockProxy(w, req)
@@ -4963,7 +4958,7 @@ func TestAcquireSchedulerLockProxy_BadTTL(t *testing.T) {
 }
 
 func TestAcquireSchedulerLockProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body, _ := json.Marshal(map[string]any{"key": 1, "holder": "node1", "ttl_millis": 5000})
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -4972,7 +4967,7 @@ func TestAcquireSchedulerLockProxy_HappyPath(t *testing.T) {
 }
 
 func TestReleaseSchedulerLockProxy_MissingHolder(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.ReleaseSchedulerLockProxy(w, req)
@@ -4980,7 +4975,7 @@ func TestReleaseSchedulerLockProxy_MissingHolder(t *testing.T) {
 }
 
 func TestReleaseSchedulerLockProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body, _ := json.Marshal(map[string]any{"key": 1, "holder": "node1"})
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -4991,7 +4986,7 @@ func TestReleaseSchedulerLockProxy_HappyPath(t *testing.T) {
 // ── Login lockout proxy ───────────────────────────────────────────────────────
 
 func TestUpdateLoginLockoutStateProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
 	w := httptest.NewRecorder()
 	h.UpdateLoginLockoutStateProxy(w, req)
@@ -4999,7 +4994,7 @@ func TestUpdateLoginLockoutStateProxy_BadID(t *testing.T) {
 }
 
 func TestUpdateLoginLockoutStateProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("bad")), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateLoginLockoutStateProxy(w, req)
@@ -5092,7 +5087,7 @@ func TestListInvitationsProxy_HappyPath(t *testing.T) {
 // ── SSO state proxy ───────────────────────────────────────────────────────────
 
 func TestCreateSSOLoginStateProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
 	w := httptest.NewRecorder()
 	h.CreateSSOLoginStateProxy(w, req)
@@ -5100,7 +5095,7 @@ func TestCreateSSOLoginStateProxy_BadJSON(t *testing.T) {
 }
 
 func TestCreateSSOLoginStateProxy_MissingFields(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.CreateSSOLoginStateProxy(w, req)
@@ -5108,7 +5103,7 @@ func TestCreateSSOLoginStateProxy_MissingFields(t *testing.T) {
 }
 
 func TestCreateSSOLoginStateProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"state":"s1","nonce":"n1","provider":"oidc","expires_at":"2099-01-01T00:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -5117,7 +5112,7 @@ func TestCreateSSOLoginStateProxy_HappyPath(t *testing.T) {
 }
 
 func TestConsumeSSOLoginStateProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("bad"))
 	w := httptest.NewRecorder()
 	h.ConsumeSSOLoginStateProxy(w, req)
@@ -5125,7 +5120,7 @@ func TestConsumeSSOLoginStateProxy_BadJSON(t *testing.T) {
 }
 
 func TestConsumeSSOLoginStateProxy_MissingState(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.ConsumeSSOLoginStateProxy(w, req)
@@ -5133,7 +5128,7 @@ func TestConsumeSSOLoginStateProxy_MissingState(t *testing.T) {
 }
 
 func TestConsumeSSOLoginStateProxy_NotFound(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"state":"nonexistent"}`))
 	w := httptest.NewRecorder()
 	h.ConsumeSSOLoginStateProxy(w, req)
@@ -6291,7 +6286,7 @@ func TestGetSecretCertificate_Unauthorized(t *testing.T) {
 // ── SAML endpoints ────────────────────────────────────────────────────────────
 
 func TestSAMLMetadata_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "unknown")
 	w := httptest.NewRecorder()
 	h.SAMLMetadata(w, req)
@@ -6300,7 +6295,7 @@ func TestSAMLMetadata_HappyPath(t *testing.T) {
 }
 
 func TestBeginSAML_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "unknown")
 	w := httptest.NewRecorder()
 	h.BeginSAML(w, req)
@@ -6308,7 +6303,7 @@ func TestBeginSAML_HappyPath(t *testing.T) {
 }
 
 func TestCompleteSAML_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "provider", "unknown")
 	w := httptest.NewRecorder()
 	h.CompleteSAML(w, req)
@@ -6717,7 +6712,7 @@ func TestPackageLevel_DeleteUser_Dispatch(t *testing.T) {
 // ── auth.go: Profile, ListSessions, RevokeSession, UpdateProfile, ChangePassword ──
 
 func TestAuthHandler_Profile_UnauthorizedV2(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/auth/profile", nil)
 	w := httptest.NewRecorder()
 	h.Profile(w, req)
@@ -6725,7 +6720,7 @@ func TestAuthHandler_Profile_UnauthorizedV2(t *testing.T) {
 }
 
 func TestAuthHandler_Profile_UserNotFound(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	// userCtx with a non-existent user
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/auth/profile", nil))
 	w := httptest.NewRecorder()
@@ -6735,7 +6730,7 @@ func TestAuthHandler_Profile_UserNotFound(t *testing.T) {
 }
 
 func TestAuthHandler_ListSessions_UnauthorizedV2(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/auth/sessions", nil)
 	w := httptest.NewRecorder()
 	h.ListSessions(w, req)
@@ -6743,7 +6738,7 @@ func TestAuthHandler_ListSessions_UnauthorizedV2(t *testing.T) {
 }
 
 func TestAuthHandler_ListSessions_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/auth/sessions", nil))
 	w := httptest.NewRecorder()
 	h.ListSessions(w, req)
@@ -6751,7 +6746,7 @@ func TestAuthHandler_ListSessions_HappyPath(t *testing.T) {
 }
 
 func TestAuthHandler_RevokeSession_UnauthorizedV2(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.RevokeSession(w, req)
@@ -6759,7 +6754,7 @@ func TestAuthHandler_RevokeSession_UnauthorizedV2(t *testing.T) {
 }
 
 func TestAuthHandler_RevokeSession_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad"))
 	w := httptest.NewRecorder()
 	h.RevokeSession(w, req)
@@ -6767,7 +6762,7 @@ func TestAuthHandler_RevokeSession_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_RevokeSession_NotFound(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.RevokeSession(w, req)
@@ -6775,7 +6770,7 @@ func TestAuthHandler_RevokeSession_NotFound(t *testing.T) {
 }
 
 func TestAuthHandler_UpdateProfile_UnauthorizedV2(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPut, "/auth/profile", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.UpdateProfile(w, req)
@@ -6783,7 +6778,7 @@ func TestAuthHandler_UpdateProfile_UnauthorizedV2(t *testing.T) {
 }
 
 func TestAuthHandler_UpdateProfile_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodPut, "/auth/profile", strings.NewReader("{bad")))
 	w := httptest.NewRecorder()
 	h.UpdateProfile(w, req)
@@ -6791,7 +6786,7 @@ func TestAuthHandler_UpdateProfile_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_UpdateProfile_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	// Valid profile update for non-existent user → 400 (UpdateOwnProfile returns error)
 	req := withUserCtx(httptest.NewRequest(http.MethodPut, "/auth/profile", strings.NewReader(`{"display_name":"Alice"}`)))
 	w := httptest.NewRecorder()
@@ -6802,7 +6797,7 @@ func TestAuthHandler_UpdateProfile_HappyPath(t *testing.T) {
 }
 
 func TestAuthHandler_ChangePassword_UnauthorizedV2(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/auth/change-password", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.ChangePassword(w, req)
@@ -6810,7 +6805,7 @@ func TestAuthHandler_ChangePassword_UnauthorizedV2(t *testing.T) {
 }
 
 func TestAuthHandler_ChangePassword_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/auth/change-password", strings.NewReader("{bad")))
 	w := httptest.NewRecorder()
 	h.ChangePassword(w, req)
@@ -6818,7 +6813,7 @@ func TestAuthHandler_ChangePassword_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_ChangePassword_BadCurrentPassword(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"current_password":"wrong","new_password":"NewPass123!"}`
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/auth/change-password", strings.NewReader(body)))
 	w := httptest.NewRecorder()
@@ -6830,7 +6825,7 @@ func TestAuthHandler_ChangePassword_BadCurrentPassword(t *testing.T) {
 // ── auth.go Logout with and without bearer token ──────────────────────────────
 
 func TestAuthHandler_Logout_MissingToken(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	w := httptest.NewRecorder()
 	h.Logout(w, req)
@@ -6838,7 +6833,7 @@ func TestAuthHandler_Logout_MissingToken(t *testing.T) {
 }
 
 func TestAuthHandler_Logout_InvalidToken(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	req.Header.Set("Authorization", "Bearer nosuchtoken")
 	w := httptest.NewRecorder()
@@ -6850,7 +6845,7 @@ func TestAuthHandler_Logout_InvalidToken(t *testing.T) {
 // ── auth.go RefreshToken ──────────────────────────────────────────────────────
 
 func TestAuthHandler_RefreshToken_MissingToken(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
 	w := httptest.NewRecorder()
 	h.RefreshToken(w, req)
@@ -6858,7 +6853,7 @@ func TestAuthHandler_RefreshToken_MissingToken(t *testing.T) {
 }
 
 func TestAuthHandler_RefreshToken_InvalidToken(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
 	req.Header.Set("Authorization", "Bearer nosuchtoken")
 	w := httptest.NewRecorder()
@@ -6869,7 +6864,7 @@ func TestAuthHandler_RefreshToken_InvalidToken(t *testing.T) {
 // ── auth.go InitSystem ────────────────────────────────────────────────────────
 
 func TestAuthHandler_InitSystem_BadJSONV2(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/system/init", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.InitSystem(w, req)
@@ -6877,7 +6872,7 @@ func TestAuthHandler_InitSystem_BadJSONV2(t *testing.T) {
 }
 
 func TestAuthHandler_InitSystem_MissingToken(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"username":"admin","email":"admin@example.com","password":"Admin1234!"}`
 	req := httptest.NewRequest(http.MethodPost, "/system/init", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -6887,7 +6882,7 @@ func TestAuthHandler_InitSystem_MissingToken(t *testing.T) {
 }
 
 func TestAuthHandler_InitSystem_AlreadyInitialized(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	// First call bootstraps
 	body := `{"username":"admin","email":"admin@example.com","password":"Admin1234!","bootstrap_token":"devtoken"}`
 	req := httptest.NewRequest(http.MethodPost, "/system/init", strings.NewReader(body))
@@ -6906,7 +6901,7 @@ func TestAuthHandler_InitSystem_AlreadyInitialized(t *testing.T) {
 // ── auth.go buildLoginResponse and helpers (cover via successful Login flow) ──
 
 func TestAuthHandler_buildLoginResponse_Direct(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	now := time.Now()
 	later := now.Add(time.Hour)
 	absoluteExpiry := now.Add(24 * time.Hour)
@@ -6929,7 +6924,7 @@ func TestAuthHandler_buildLoginResponse_Direct(t *testing.T) {
 }
 
 func TestAuthHandler_buildLoginResponse_NoExpiry(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	session := &models.Session{SessionToken: "tok"}
 	user := &models.User{Username: "bob", Email: "bob@example.com"}
 	user.ID = 99
@@ -6939,7 +6934,7 @@ func TestAuthHandler_buildLoginResponse_NoExpiry(t *testing.T) {
 }
 
 func TestAuthHandler_setSessionCookies_Direct(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	now := time.Now().Add(time.Hour)
 	session := &models.Session{SessionToken: "cookietoken", ExpiresAt: &now}
 	w := httptest.NewRecorder()
@@ -7396,7 +7391,7 @@ func TestTagError_NotAuthorized(t *testing.T) {
 // ── sso.go: redirectFragment ──────────────────────────────────────────────────
 
 func TestRedirectFragment_Direct(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	vals := url.Values{}
@@ -7491,14 +7486,6 @@ func TestVerifyAuditChain_HappyPath(t *testing.T) {
 }
 
 // ── catalog.go: ListEnvironments, RestoreProject ─────────────────────────────
-
-func TestCatalog_ListEnvironments_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)
-	w := httptest.NewRecorder()
-	h.ListEnvironments(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 func TestCatalog_RestoreProject_BadID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -7730,22 +7717,6 @@ func TestUserToAPIResponse_WithLoginLockedUntil(t *testing.T) {
 
 // ── invitations.go: ListInvitations, CreateInvitation ────────────────────────
 
-func TestListInvitations_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ListInvitations(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestListInvitations_HappyPathV2(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListInvitations(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestCreateInvitation_BadID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"email":"a@b.com","role":"viewer"}`)), "id", "bad"))
@@ -7770,18 +7741,10 @@ func TestCreateInvitation_MissingFieldsV2(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCreateGlobalInvitation_UnauthorizedV2(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.CreateGlobalInvitation(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 // ── userIdentity (auth.go) ───────────────────────────────────────────────────
 
 func TestUserIdentity_Direct(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	// userIdentity returns empty identity on error (user 999 doesn't exist)
 	id := h.userIdentity(req, 999)
@@ -7816,14 +7779,6 @@ func TestGetAccessReviewCampaign_NotFound(t *testing.T) {
 }
 
 // ── secrets handler: GetSecretTags, SetSecretTags ─────────────────────────────
-
-func TestSecretHandler_GetTags_BadID(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.GetTags(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestSecretHandler_SetTags_BadID(t *testing.T) {
 	h := newSecretHandlerS4(t)
@@ -8251,15 +8206,6 @@ func TestGroupHandler_RemoveGroupMember_NotFound(t *testing.T) {
 
 // ── project_members.go: UpdateProjectMember, RevokeProjectAccessReview ──────
 
-func TestUpdateProjectMember_UnauthorizedV2(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParams(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)),
-		map[string]string{"id": "1", "userId": "1"})
-	w := httptest.NewRecorder()
-	h.UpdateProjectMember(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestUpdateProjectMember_BadUserID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)),
@@ -8335,25 +8281,9 @@ func TestAttestProjectAccessReview_UnauthorizedV2(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestAddProjectMember_UnauthorizedV2(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.AddProjectMember(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestAddProjectMember_BadJSON(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.AddProjectMember(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAddProjectMember_MissingFieldsV2(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1"))
 	w := httptest.NewRecorder()
 	h.AddProjectMember(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -8751,14 +8681,6 @@ func TestShareHandler_RemoveSelfFromShare_BadID(t *testing.T) {
 
 // ── secrets_list.go: ListSecrets happy path with various filters ─────────────
 
-func TestSecretHandler_ListSecrets_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSecrets(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestSecretHandler_ListSecrets_HappyPath(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?page=1&page_size=10", nil))
@@ -8832,28 +8754,12 @@ func TestDynamicSecretHandler_RenewLease_NotFound(t *testing.T) {
 
 // ── sod.go: SoD policy CRUD ──────────────────────────────────────────────────
 
-func TestSoDPolicies_ListHappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPolicies(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestSoDPolicy_Create_Unauthorized(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicy(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSoDPolicy_Create_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestSoDPolicy_Create_MissingFields(t *testing.T) {
@@ -8865,22 +8771,6 @@ func TestSoDPolicy_Create_MissingFields(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestSoDPolicy_Delete_Unauthorized(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicy(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSoDPolicy_Delete_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.DeleteSoDPolicy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestSoDPolicy_Delete_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999"))
@@ -8889,32 +8779,7 @@ func TestSoDPolicy_Delete_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestSoDViolations_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDViolations(w, req)
-	// empty DB → no violations → 200
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── secrets_reassign_owner.go: ReassignOwner ─────────────────────────────────
-
-func TestSecretHandler_ReassignOwner_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.ReassignOwner(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSecretHandler_ReassignOwner_BadID(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.ReassignOwner(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestSecretHandler_ReassignOwner_BadJSON(t *testing.T) {
 	h := newSecretHandlerS4(t)
@@ -8951,22 +8816,6 @@ func TestCatalogHandler_ListEnvironments_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCatalogHandler_ListProjectEnvironments_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ListProjectEnvironments(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_ListProjectEnvironments_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListProjectEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -9250,7 +9099,7 @@ func TestSecretHandler_GetSecretValueByRef_NotFound(t *testing.T) {
 // ── sso.go: CompleteSSO ───────────────────────────────────────────────────────
 
 func TestCompleteSSO_UnknownProviderS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "unknown-provider")
 	w := httptest.NewRecorder()
 	h.CompleteSSO(w, req)
@@ -9260,7 +9109,7 @@ func TestCompleteSSO_UnknownProviderS4(t *testing.T) {
 func TestCompleteSSO_IdPErrorParam(t *testing.T) {
 	// With a known provider (BeginSSO wouldn't error but CompleteSSO checks SSOCompleteURL).
 	// Since no SSO providers are configured in our empty DB core, it returns unknown provider.
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/?error=access_denied", nil), "provider", "google")
 	w := httptest.NewRecorder()
 	h.CompleteSSO(w, req)
@@ -9269,7 +9118,7 @@ func TestCompleteSSO_IdPErrorParam(t *testing.T) {
 }
 
 func TestCompleteSSO_MissingCodeAndState(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "google")
 	w := httptest.NewRecorder()
 	h.CompleteSSO(w, req)
@@ -9279,7 +9128,7 @@ func TestCompleteSSO_MissingCodeAndState(t *testing.T) {
 // ── saml.go: CompleteSAML ─────────────────────────────────────────────────────
 
 func TestCompleteSAML_UnknownProvider(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "provider", "unknown-provider")
 	w := httptest.NewRecorder()
 	h.CompleteSAML(w, req)
@@ -9287,7 +9136,7 @@ func TestCompleteSAML_UnknownProvider(t *testing.T) {
 }
 
 func TestCompleteSAML_KnownProviderNoSAMLResponse(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("")), "provider", "test")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -9299,7 +9148,7 @@ func TestCompleteSAML_KnownProviderNoSAMLResponse(t *testing.T) {
 // ── saml.go / sso.go: BeginSSO and BeginSAML ────────────────────────────────
 
 func TestBeginSSO_UnknownProviderS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "nonexistent")
 	w := httptest.NewRecorder()
 	h.BeginSSO(w, req)
@@ -9307,7 +9156,7 @@ func TestBeginSSO_UnknownProviderS4(t *testing.T) {
 }
 
 func TestBeginSAML_UnknownProvider(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "provider", "nonexistent")
 	w := httptest.NewRecorder()
 	h.BeginSAML(w, req)
@@ -9316,16 +9165,8 @@ func TestBeginSAML_UnknownProvider(t *testing.T) {
 
 // ── mfa.go: EnrollMFA, DisableMFA, RegenerateRecoveryCodes, RecoveryCodesStatus ──
 
-func TestEnrollMFA_UnauthorizedS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	h.EnrollMFA(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestEnrollMFA_WithUser(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
 	w := httptest.NewRecorder()
 	h.EnrollMFA(w, req)
@@ -9334,7 +9175,7 @@ func TestEnrollMFA_WithUser(t *testing.T) {
 }
 
 func TestDisableMFA_UnauthorizedS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
 	h.DisableMFA(w, req)
@@ -9342,7 +9183,7 @@ func TestDisableMFA_UnauthorizedS4(t *testing.T) {
 }
 
 func TestDisableMFA_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
 	w := httptest.NewRecorder()
 	h.DisableMFA(w, req)
@@ -9350,7 +9191,7 @@ func TestDisableMFA_BadJSON(t *testing.T) {
 }
 
 func TestDisableMFA_WithUser(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"code":"123456"}`
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
 	w := httptest.NewRecorder()
@@ -9360,7 +9201,7 @@ func TestDisableMFA_WithUser(t *testing.T) {
 }
 
 func TestRegenerateRecoveryCodes_UnauthorizedS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
 	h.RegenerateRecoveryCodes(w, req)
@@ -9368,7 +9209,7 @@ func TestRegenerateRecoveryCodes_UnauthorizedS4(t *testing.T) {
 }
 
 func TestRegenerateRecoveryCodes_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
 	w := httptest.NewRecorder()
 	h.RegenerateRecoveryCodes(w, req)
@@ -9376,7 +9217,7 @@ func TestRegenerateRecoveryCodes_BadJSON(t *testing.T) {
 }
 
 func TestRegenerateRecoveryCodes_WithUser(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"code":"123456"}`
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)))
 	w := httptest.NewRecorder()
@@ -9385,16 +9226,8 @@ func TestRegenerateRecoveryCodes_WithUser(t *testing.T) {
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestRecoveryCodesStatus_UnauthorizedS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.RecoveryCodesStatus(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestRecoveryCodesStatus_WithUser(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	w := httptest.NewRecorder()
 	h.RecoveryCodesStatus(w, req)
@@ -9450,14 +9283,6 @@ func TestLiftLegalHold_NoActiveHold(t *testing.T) {
 
 // ── shares_query.go: ListSecretShares ────────────────────────────────────────
 
-func TestShareHandler_ListSecretShares_UnauthorizedS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListSecretShares(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestShareHandler_ListSecretShares_BadID(t *testing.T) {
 	h := newShareHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad"))
@@ -9476,14 +9301,6 @@ func TestShareHandler_ListSecretShares_NotFound(t *testing.T) {
 }
 
 // ── shares_query.go: ListShares ───────────────────────────────────────────────
-
-func TestShareHandler_ListShares_UnauthorizedS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListShares(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
 
 func TestShareHandler_ListShares_WithUser(t *testing.T) {
 	h := newShareHandlerS4(t)
@@ -9504,39 +9321,7 @@ func TestShareHandler_ListShares_WithFilters(t *testing.T) {
 
 // ── shares_query.go: GetSharingStatusWithIndicators ──────────────────────────
 
-func TestShareHandler_GetSharingStatusWithIndicators_UnauthorizedS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetSharingStatusWithIndicators(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_GetSharingStatusWithIndicators_BadIDS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.GetSharingStatusWithIndicators(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── shares_query.go: RemoveSelfFromShare ─────────────────────────────────────
-
-func TestShareHandler_RemoveSelfFromShare_UnauthorizedS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.RemoveSelfFromShare(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_RemoveSelfFromShare_BadIDS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.RemoveSelfFromShare(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── shares_crud.go: ShareSecret ──────────────────────────────────────────────
 
@@ -9546,22 +9331,6 @@ func TestShareHandler_ShareSecret_UnauthorizedS4(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ShareSecret(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_ShareSecret_BadIDS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.ShareSecret(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestShareHandler_ShareSecret_BadJSONS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.ShareSecret(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestShareHandler_ShareSecret_ValidationErrorS4(t *testing.T) {
@@ -9584,14 +9353,6 @@ func TestShareHandler_UpdateSharePermission_UnauthorizedS4(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestShareHandler_UpdateSharePermission_BadIDS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.UpdateSharePermission(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestShareHandler_UpdateSharePermission_ValidationError(t *testing.T) {
 	h := newShareHandlerS4(t)
 	body := `{"permission":"invalid_permission"}`
@@ -9603,31 +9364,7 @@ func TestShareHandler_UpdateSharePermission_ValidationError(t *testing.T) {
 
 // ── shares_crud.go: RevokeShare ──────────────────────────────────────────────
 
-func TestShareHandler_RevokeShare_UnauthorizedS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.RevokeShare(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_RevokeShare_BadIDS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.RevokeShare(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── project_members.go: RevokeProjectAccessReview ────────────────────────────
-
-func TestRevokeProjectAccessReviewV3_BadProjectID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.RevokeProjectAccessReview(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestRevokeProjectAccessReviewV3_Unauthorized(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -9696,14 +9433,6 @@ func TestCreateAccessRequest_BadProjectID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCreateAccessRequest_UnauthorizedS4(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.CreateAccessRequest(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestCreateAccessRequest_BadJSON(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
@@ -9723,22 +9452,6 @@ func TestCreateAccessRequest_NotFound(t *testing.T) {
 }
 
 // ── secrets_crud.go: GetSecretByName ─────────────────────────────────────────
-
-func TestSecretHandler_GetSecretByName_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?name=foo&project_id=1&environment_id=1", nil)
-	w := httptest.NewRecorder()
-	h.GetSecretByName(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSecretHandler_GetSecretByName_MissingName(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?project_id=1&environment_id=1", nil))
-	w := httptest.NewRecorder()
-	h.GetSecretByName(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestSecretHandler_GetSecretByName_MissingProjectID(t *testing.T) {
 	h := newSecretHandlerS4(t)
@@ -9766,14 +9479,6 @@ func TestSecretHandler_GetSecretByName_NotFound(t *testing.T) {
 }
 
 // ── secrets_usage.go: UsageUnused ────────────────────────────────────────────
-
-func TestSecretHandler_UsageUnused_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.UsageUnused(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
 
 func TestSecretHandler_UsageUnused_BadProjectID(t *testing.T) {
 	h := newSecretHandlerS4(t)
@@ -9848,22 +9553,6 @@ func TestDynamicSecretHandler_ListLeases_BadID(t *testing.T) {
 
 // ── secret_dependencies.go ────────────────────────────────────────────────────
 
-func TestSecretHandler_ListSecretDependencies_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListSecretDependencies(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSecretHandler_ListSecretDependencies_BadID(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.ListSecretDependencies(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestSecretHandler_ListSecretDependencies_NotFound(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999"))
@@ -9871,14 +9560,6 @@ func TestSecretHandler_ListSecretDependencies_NotFound(t *testing.T) {
 	h.ListSecretDependencies(w, req)
 	// not found → not 401
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSecretHandler_AddSecretDependency_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.AddSecretDependency(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestSecretHandler_AddSecretDependency_BadID(t *testing.T) {
@@ -9924,28 +9605,12 @@ func TestSecretHandler_RemoveSecretDependency_BadDepID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestSecretHandler_GetSecretImpact_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetSecretImpact(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestSecretHandler_GetSecretImpact_BadID(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad"))
 	w := httptest.NewRecorder()
 	h.GetSecretImpact(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSecretHandler_GetProjectRotationOrder_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetProjectRotationOrder(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestSecretHandler_GetProjectRotationOrder_BadID(t *testing.T) {
@@ -9956,28 +9621,12 @@ func TestSecretHandler_GetProjectRotationOrder_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestSecretHandler_GetProjectRotationPlan_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.GetProjectRotationPlan(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestSecretHandler_GetProjectRotationPlan_BadID(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad"))
 	w := httptest.NewRecorder()
 	h.GetProjectRotationPlan(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSecretHandler_GetDeploymentRotationPlan_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetDeploymentRotationPlan(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestSecretHandler_GetDeploymentRotationPlan_WithUser(t *testing.T) {
@@ -10064,14 +9713,6 @@ func TestUserHandler_ConsumeMFAChallenge_MissingFields(t *testing.T) {
 
 // ── secrets_suspend.go: ResumeSecret ─────────────────────────────────────────
 
-func TestSecretHandler_ResumeSecret_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ResumeSecret(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestSecretHandler_ResumeSecret_BadID(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad"))
@@ -10090,14 +9731,6 @@ func TestSecretHandler_ResumeSecret_NotFound(t *testing.T) {
 }
 
 // ── machine_identities.go: ListStaleMachineIdentities ──────────────────────
-
-func TestCatalogHandler_ListStaleMachineIdentities_BadIDS4(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ListStaleMachineIdentities(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestCatalogHandler_ListStaleMachineIdentities_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -10295,14 +9928,6 @@ func TestCatalogHandler_UpdateProjectProxy_NotFound(t *testing.T) {
 
 // ── project_memberships_proxy.go: GetActiveMembershipProxy ──────────────────
 
-func TestCatalogHandler_GetActiveMembershipProxy_MissingParams(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetActiveMembershipProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCatalogHandler_GetActiveMembershipProxy_BadProjectID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := httptest.NewRequest(http.MethodGet, "/?project_id=bad&user_id=1", nil)
@@ -10388,14 +10013,6 @@ func TestUserHandler_LastUserSecretWriteActivityProxy_HappyPath(t *testing.T) {
 
 // ── environment_catalog_proxy.go: DeleteEnvironmentProxy, RestoreEnvironmentProxy ──
 
-func TestCatalogHandler_DeleteEnvironmentProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteEnvironmentProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCatalogHandler_DeleteEnvironmentProxy_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
@@ -10435,16 +10052,8 @@ func TestCatalogHandler_RestoreEnvironmentProxy_NotFound(t *testing.T) {
 
 // ── mfa_management_proxy.go: GetMFASecretProxy, SetUserMFAEnabledProxy, CreateMFARecoveryCodesProxy ──
 
-func TestAuthHandler_GetMFASecretProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestAuthHandler_GetMFASecretProxy_BadUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?user_id=bad", nil)
 	w := httptest.NewRecorder()
 	h.GetMFASecretProxy(w, req)
@@ -10452,7 +10061,7 @@ func TestAuthHandler_GetMFASecretProxy_BadUserID(t *testing.T) {
 }
 
 func TestAuthHandler_GetMFASecretProxy_NotFound(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?user_id=9999", nil)
 	w := httptest.NewRecorder()
 	h.GetMFASecretProxy(w, req)
@@ -10460,7 +10069,7 @@ func TestAuthHandler_GetMFASecretProxy_NotFound(t *testing.T) {
 }
 
 func TestAuthHandler_SetUserMFAEnabledProxy_BadUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"enabled":true}`)), "userId", "bad")
 	w := httptest.NewRecorder()
 	h.SetUserMFAEnabledProxy(w, req)
@@ -10468,7 +10077,7 @@ func TestAuthHandler_SetUserMFAEnabledProxy_BadUserID(t *testing.T) {
 }
 
 func TestAuthHandler_SetUserMFAEnabledProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "userId", "1")
 	w := httptest.NewRecorder()
 	h.SetUserMFAEnabledProxy(w, req)
@@ -10476,7 +10085,7 @@ func TestAuthHandler_SetUserMFAEnabledProxy_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_CreateMFARecoveryCodesProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"code_hashes":["abc123"]}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -10485,7 +10094,7 @@ func TestAuthHandler_CreateMFARecoveryCodesProxy_MissingUserID(t *testing.T) {
 }
 
 func TestAuthHandler_CreateMFARecoveryCodesProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/?user_id=1", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.CreateMFARecoveryCodesProxy(w, req)
@@ -10495,7 +10104,7 @@ func TestAuthHandler_CreateMFARecoveryCodesProxy_BadJSON(t *testing.T) {
 // ── setup_tokens_proxy.go: ConsumeSetupTokenProxy ────────────────────────────
 
 func TestAuthHandler_ConsumeSetupTokenProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad")
 	w := httptest.NewRecorder()
 	h.ConsumeSetupTokenProxy(w, req)
@@ -10503,7 +10112,7 @@ func TestAuthHandler_ConsumeSetupTokenProxy_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_ConsumeSetupTokenProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1")
 	w := httptest.NewRecorder()
 	h.ConsumeSetupTokenProxy(w, req)
@@ -10511,7 +10120,7 @@ func TestAuthHandler_ConsumeSetupTokenProxy_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_ConsumeSetupTokenProxy_MissingConsumedAt(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"consumed_at":"0001-01-01T00:00:00Z"}`
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
@@ -10733,7 +10342,7 @@ func TestAuditHandler_ExportAuditLogs_HappyPath(t *testing.T) {
 // ── auth.go: ConsumeSetup, Logout ────────────────────────────────────────────
 
 func TestAuthHandler_Logout_NoSession(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
 	h.Logout(w, req)
@@ -10744,7 +10353,7 @@ func TestAuthHandler_Logout_NoSession(t *testing.T) {
 // ── auth.go: RefreshToken ─────────────────────────────────────────────────────
 
 func TestAuthHandler_RefreshToken_NoTokenS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.RefreshToken(w, req)
@@ -10753,38 +10362,6 @@ func TestAuthHandler_RefreshToken_NoTokenS4(t *testing.T) {
 }
 
 // ── sod.go: ListSoDPolicies, CreateSoDPolicy, ListSoDViolations ──────────────
-
-func TestSoDPolicies_ListSoDPolicies_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPolicies(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestSoDPolicies_CreateSoDPolicy_Unauthorized(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicy(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSoDPolicies_CreateSoDPolicy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
-	w := httptest.NewRecorder()
-	h.CreateSoDPolicy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSoDPolicies_ListSoDViolations_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDViolations(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 // ── rbac.go: ListRoles, ListPermissions ──────────────────────────────────────
 
@@ -10866,7 +10443,7 @@ func TestShareHandler_DeleteExpiredShareRecordsProxy_MissingBefore(t *testing.T)
 // ── webauthn.go: FinishWebAuthnPasswordlessLogin ──────────────────────────────
 
 func TestWebAuthnHandler_FinishWebAuthnPasswordlessLoginS4_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "sessionID", "test-session")
 	w := httptest.NewRecorder()
 	h.FinishWebAuthnPasswordlessLogin(w, req)
@@ -10876,7 +10453,7 @@ func TestWebAuthnHandler_FinishWebAuthnPasswordlessLoginS4_BadJSON(t *testing.T)
 // ── auth.go: Login, ListSessions ─────────────────────────────────────────────
 
 func TestAuthHandler_Login_BadJSONS4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.Login(w, req)
@@ -10884,7 +10461,7 @@ func TestAuthHandler_Login_BadJSONS4(t *testing.T) {
 }
 
 func TestAuthHandler_ListSessions_WithUser(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	w := httptest.NewRecorder()
 	h.ListSessions(w, req)
@@ -10894,28 +10471,12 @@ func TestAuthHandler_ListSessions_WithUser(t *testing.T) {
 
 // ── shares_query.go: ListSharedSecrets, ListGroupSharedSecrets ───────────────
 
-func TestShareHandler_ListSharedSecrets_UnauthorizedS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSharedSecrets(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestShareHandler_ListSharedSecrets_HappyPath(t *testing.T) {
 	h := newShareHandlerS4(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	w := httptest.NewRecorder()
 	h.ListSharedSecrets(w, req)
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_ListGroupSharedSecrets_UnauthorizedS4(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListGroupSharedSecrets(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestShareHandler_ListGroupSharedSecrets_BadID(t *testing.T) {
@@ -11019,14 +10580,6 @@ func TestShareHandler_DeleteExpiredShareRecordsProxy_HappyPath(t *testing.T) {
 
 // ── project_catalog_proxy.go: DeleteProjectProxy, RestoreProjectProxy ─────────
 
-func TestCatalogHandler_DeleteProjectProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteProjectProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCatalogHandler_DeleteProjectProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999")
@@ -11034,14 +10587,6 @@ func TestCatalogHandler_DeleteProjectProxy_HappyPath(t *testing.T) {
 	h.DeleteProjectProxy(w, req)
 	// 404 (not found) or 200 — not 400
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_RestoreProjectProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.RestoreProjectProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCatalogHandler_DeleteProjectIfEmptyProxy_BadID(t *testing.T) {
@@ -11146,14 +10691,6 @@ func TestCatalogHandler_GetMachineIdentityCredentialByIDProxy_BadID(t *testing.T
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCatalogHandler_ListMachineIdentityCredentialsProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ListMachineIdentityCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCatalogHandler_ListMachineIdentityCredentialsProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
@@ -11170,36 +10707,12 @@ func TestCatalogHandler_RevokeMachineIdentityCredentialProxy_BadID(t *testing.T)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCatalogHandler_GetMachineRoleIDsAtProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetMachineRoleIDsAtProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_GetMachineRolesProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetMachineRolesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCatalogHandler_GetMachineRolesProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.GetMachineRolesProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCatalogHandler_ListOIDCBindingsProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ListOIDCBindingsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCatalogHandler_ListOIDCBindingsProxy_HappyPath(t *testing.T) {
@@ -11314,14 +10827,6 @@ func TestDynamicSecretHandler_SetConfigEnabled_BadID(t *testing.T) {
 
 // ── access_review_campaigns_proxy.go: GetAccessReviewCampaignProxy ────────────
 
-func TestCatalogHandler_GetAccessReviewCampaignProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCatalogHandler_GetAccessReviewCampaignProxy_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
@@ -11332,14 +10837,6 @@ func TestCatalogHandler_GetAccessReviewCampaignProxy_NotFound(t *testing.T) {
 
 // ── secrets_versions.go: RotateSecret ────────────────────────────────────────
 
-func TestSecretHandler_RotateSecret_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.RotateSecret(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestSecretHandler_RotateSecret_BadID(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad"))
@@ -11349,22 +10846,6 @@ func TestSecretHandler_RotateSecret_BadID(t *testing.T) {
 }
 
 // ── secrets_access_history.go: AccessHistory ─────────────────────────────────
-
-func TestSecretHandler_AccessHistory_Unauthorized(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.AccessHistory(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSecretHandler_AccessHistory_BadID(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.AccessHistory(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 // ── admin_impersonation.go: End (S4 extra) ───────────────────────────────────
 
@@ -11379,16 +10860,8 @@ func TestImpersonationHandler_End_UnauthorizedS4(t *testing.T) {
 
 // ── mfa_management_proxy.go: CountUnusedMFARecoveryCodesProxy ────────────────
 
-func TestAuthHandler_CountUnusedMFARecoveryCodesProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountUnusedMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestAuthHandler_CountUnusedMFARecoveryCodesProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
 	w := httptest.NewRecorder()
 	h.CountUnusedMFARecoveryCodesProxy(w, req)
@@ -11503,14 +10976,6 @@ func TestCatalogHandler_GetMachineIdentityCredentialByIDProxy_HappyPath(t *testi
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCatalogHandler_UpdateMachineIdentityCredentialProxy_BadIDDup(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateMachineIdentityCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCatalogHandler_UpdateMachineIdentityCredentialProxy_BadJSONDup(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
@@ -11526,14 +10991,6 @@ func TestCatalogHandler_UpdateMachineIdentityCredentialProxy_HappyPath(t *testin
 	h.UpdateMachineIdentityCredentialProxy(w, req)
 	// storage error expected (no such credential), but not a bad request
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_TouchMachineIdentityCredentialProxy_BadIDDup(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.TouchMachineIdentityCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCatalogHandler_TouchMachineIdentityCredentialProxy_BadJSON(t *testing.T) {
@@ -11592,75 +11049,11 @@ func TestSecretHandler_DeleteSecretDependencyProxy_HappyPath(t *testing.T) {
 
 // ── access_review_campaigns_proxy.go: happy paths ────────────────────────────
 
-func TestCatalogHandler_ListAccessReviewCampaignsProxy_MissingProjectID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListAccessReviewCampaignsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_ListAccessReviewCampaignsProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListAccessReviewCampaignsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCatalogHandler_GetOpenAccessReviewCampaignProxy_MissingProjectID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetOpenAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_GetOpenAccessReviewCampaignProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.GetOpenAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCatalogHandler_GetLatestClosedAccessReviewCampaignProxy_MissingProjectID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetLatestClosedAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_GetLatestClosedAccessReviewCampaignProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.GetLatestClosedAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestCatalogHandler_UpdateAccessReviewCampaignProxy_BadID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_UpdateAccessReviewCampaignProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateAccessReviewCampaignProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_CreateAccessReviewCampaignProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateAccessReviewCampaignProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -11672,60 +11065,12 @@ func TestCatalogHandler_CreateAccessReviewItemsProxy_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCatalogHandler_ListAccessReviewItemsProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ListAccessReviewItemsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_ListAccessReviewItemsProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListAccessReviewItemsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCatalogHandler_GetAccessReviewItemProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", "bad")
-	w := httptest.NewRecorder()
-	h.GetAccessReviewItemProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_GetAccessReviewItemProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", "9999")
-	w := httptest.NewRecorder()
-	h.GetAccessReviewItemProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 func TestCatalogHandler_UpdateAccessReviewItemProxy_BadID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "itemID", "bad")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewItemProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_CountPendingAccessReviewItemsProxy_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.CountPendingAccessReviewItemsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_CountPendingAccessReviewItemsProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.CountPendingAccessReviewItemsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // ── access_request_proxy.go: happy paths ─────────────────────────────────────
@@ -11738,44 +11083,12 @@ func TestCatalogHandler_GetAccessRequestProxy_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestCatalogHandler_GetAccessRequestProxy_NotFound(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.GetAccessRequestProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 func TestCatalogHandler_UpdateAccessRequestProxy_BadID(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_UpdateAccessRequestProxy_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateAccessRequestProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_ListAccessRequestsProxy_MissingProjectID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListAccessRequestsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_ListAccessRequestsProxy_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListAccessRequestsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestCatalogHandler_CreateAccessRequestApprovalProxy_BadJSON(t *testing.T) {
@@ -12152,33 +11465,17 @@ func TestCatalogHandler_CountMachineIdentityCredentialsByClassificationProxy_Hap
 // ── connect_grants_proxy.go: ListConnectRefGrantsByConnectorProxy ─────────────
 
 func TestAuthHandler_ListConnectRefGrantsByConnectorProxy_MissingConnector(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListConnectRefGrantsByConnectorProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestAuthHandler_ListConnectRefGrantsByConnectorProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "connector", "github")
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsByConnectorProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestAuthHandler_ListConnectRefGrantsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── webauthn_proxy.go: DeleteWebAuthnCredentialProxy ─────────────────────────
 
 func TestAuthHandler_DeleteWebAuthnCredentialProxy_BadUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "bad")
 	w := httptest.NewRecorder()
 	h.DeleteWebAuthnCredentialProxy(w, req)
@@ -12186,7 +11483,7 @@ func TestAuthHandler_DeleteWebAuthnCredentialProxy_BadUserID(t *testing.T) {
 }
 
 func TestAuthHandler_DeleteWebAuthnCredentialProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParams(httptest.NewRequest(http.MethodDelete, "/", nil), map[string]string{"userId": "1", "id": "1"})
 	w := httptest.NewRecorder()
 	h.DeleteWebAuthnCredentialProxy(w, req)
@@ -12235,7 +11532,7 @@ func TestSecretHandler_AccessHistory_HappyPath(t *testing.T) {
 // ── scheduler_lock_proxy.go: ReleaseSchedulerLockProxy ───────────────────────
 
 func TestAuthHandler_ReleaseSchedulerLockProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.ReleaseSchedulerLockProxy(w, req)
@@ -12243,7 +11540,7 @@ func TestAuthHandler_ReleaseSchedulerLockProxy_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_ReleaseSchedulerLockProxy_MissingField(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.ReleaseSchedulerLockProxy(w, req)
@@ -12271,7 +11568,7 @@ func TestSecretHandler_GetSecretIncludingDeletedProxy_NotFound(t *testing.T) {
 // ── setup_tokens_proxy.go: more paths ────────────────────────────────────────
 
 func TestAuthHandler_SupersedeSetupTokensProxy_MissingFields(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.SupersedeSetupTokensProxy(w, req)
@@ -12279,7 +11576,7 @@ func TestAuthHandler_SupersedeSetupTokensProxy_MissingFields(t *testing.T) {
 }
 
 func TestAuthHandler_SupersedeSetupTokensProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"purpose":"invite","subject_email":"test@example.com"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -12288,7 +11585,7 @@ func TestAuthHandler_SupersedeSetupTokensProxy_HappyPath(t *testing.T) {
 }
 
 func TestAuthHandler_CountSetupTokensSinceProxy_MissingParams(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.CountSetupTokensSinceProxy(w, req)
@@ -12296,7 +11593,7 @@ func TestAuthHandler_CountSetupTokensSinceProxy_MissingParams(t *testing.T) {
 }
 
 func TestAuthHandler_CountSetupTokensSinceProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?purpose=invite&subject_email=test@example.com&since=2026-01-01T00:00:00Z", nil)
 	w := httptest.NewRecorder()
 	h.CountSetupTokensSinceProxy(w, req)
@@ -12306,7 +11603,7 @@ func TestAuthHandler_CountSetupTokensSinceProxy_HappyPath(t *testing.T) {
 // ── login_attempts_proxy.go: RecordLoginAttemptProxy ─────────────────────────
 
 func TestAuthHandler_RecordLoginAttemptProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.RecordLoginAttemptProxy(w, req)
@@ -12314,7 +11611,7 @@ func TestAuthHandler_RecordLoginAttemptProxy_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_RecordLoginAttemptProxy_MissingFields(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.RecordLoginAttemptProxy(w, req)
@@ -12765,58 +12062,18 @@ func TestRBACHandler_ListGlobalAdminAssignmentsForUpdateProxy_HappyPath(t *testi
 
 // ── webauthn_proxy.go: CreateWebAuthnCredentialProxy ─────────────────────────
 
-func TestAuthHandler_CreateWebAuthnCredentialProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_ListWebAuthnCredentialsProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_ListWebAuthnCredentialsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestAuthHandler_CountWebAuthnCredentialsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── connect_grants_proxy.go: CreateConnectRefGrantProxy ──────────────────────
 
 func TestAuthHandler_CreateConnectRefGrantProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.CreateConnectRefGrantProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestAuthHandler_DeleteConnectRefGrantProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestAuthHandler_DeleteConnectRefGrantProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.DeleteConnectRefGrantProxy(w, req)
@@ -12826,7 +12083,7 @@ func TestAuthHandler_DeleteConnectRefGrantProxy_HappyPath(t *testing.T) {
 // ── scheduler_lock_proxy.go: AcquireSchedulerLockProxy ───────────────────────
 
 func TestAuthHandler_AcquireSchedulerLockProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.AcquireSchedulerLockProxy(w, req)
@@ -12834,7 +12091,7 @@ func TestAuthHandler_AcquireSchedulerLockProxy_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_AcquireSchedulerLockProxy_MissingFields(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.AcquireSchedulerLockProxy(w, req)
@@ -12844,7 +12101,7 @@ func TestAuthHandler_AcquireSchedulerLockProxy_MissingFields(t *testing.T) {
 // ── login_attempts_proxy.go: CountLoginAttemptsProxy ─────────────────────────
 
 func TestAuthHandler_CountLoginAttemptsProxy_MissingParams(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.CountLoginAttemptsProxy(w, req)
@@ -12852,7 +12109,7 @@ func TestAuthHandler_CountLoginAttemptsProxy_MissingParams(t *testing.T) {
 }
 
 func TestAuthHandler_CountLoginAttemptsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?ip=127.0.0.1&since=2026-01-01T00:00:00Z", nil)
 	w := httptest.NewRecorder()
 	h.CountLoginAttemptsProxy(w, req)
@@ -12862,7 +12119,7 @@ func TestAuthHandler_CountLoginAttemptsProxy_HappyPath(t *testing.T) {
 // ── setup_tokens_proxy.go: GetSetupTokenByHashProxy ──────────────────────────
 
 func TestAuthHandler_GetSetupTokenByHashProxy_MissingHash(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.GetSetupTokenByHashProxy(w, req)
@@ -12870,23 +12127,15 @@ func TestAuthHandler_GetSetupTokenByHashProxy_MissingHash(t *testing.T) {
 }
 
 func TestAuthHandler_GetSetupTokenByHashProxy_NotFound(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "hash", "nonexistenthash")
 	w := httptest.NewRecorder()
 	h.GetSetupTokenByHashProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestAuthHandler_ExpireSetupTokenProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ExpireSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestAuthHandler_ExpireSetupTokenProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
 	w := httptest.NewRecorder()
 	h.ExpireSetupTokenProxy(w, req)
@@ -13001,7 +12250,7 @@ func TestAcknowledgeAnomalyAlert_BadID(t *testing.T) {
 // ── mfa_management_proxy.go: ActivateMFASecretProxy, DeleteMFAForUserProxy ───
 
 func TestAuthHandler_ActivateMFASecretProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "userId", "bad")
 	w := httptest.NewRecorder()
 	h.ActivateMFASecretProxy(w, req)
@@ -13009,7 +12258,7 @@ func TestAuthHandler_ActivateMFASecretProxy_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_ActivateMFASecretProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "userId", "1")
 	w := httptest.NewRecorder()
 	h.ActivateMFASecretProxy(w, req)
@@ -13017,7 +12266,7 @@ func TestAuthHandler_ActivateMFASecretProxy_HappyPath(t *testing.T) {
 }
 
 func TestAuthHandler_DeleteMFAForUserProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "bad")
 	w := httptest.NewRecorder()
 	h.DeleteMFAForUserProxy(w, req)
@@ -13025,7 +12274,7 @@ func TestAuthHandler_DeleteMFAForUserProxy_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_DeleteMFAForUserProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "1")
 	w := httptest.NewRecorder()
 	h.DeleteMFAForUserProxy(w, req)
@@ -13033,7 +12282,7 @@ func TestAuthHandler_DeleteMFAForUserProxy_HappyPath(t *testing.T) {
 }
 
 func TestAuthHandler_DeleteMFARecoveryCodesProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "bad")
 	w := httptest.NewRecorder()
 	h.DeleteMFARecoveryCodesProxy(w, req)
@@ -13041,7 +12290,7 @@ func TestAuthHandler_DeleteMFARecoveryCodesProxy_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_DeleteMFARecoveryCodesProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "userId", "1")
 	w := httptest.NewRecorder()
 	h.DeleteMFARecoveryCodesProxy(w, req)
@@ -13049,7 +12298,7 @@ func TestAuthHandler_DeleteMFARecoveryCodesProxy_HappyPath(t *testing.T) {
 }
 
 func TestAuthHandler_SetUserMFAEnabledProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"enabled":true}`)), "userId", "bad")
 	w := httptest.NewRecorder()
 	h.SetUserMFAEnabledProxy(w, req)
@@ -13057,7 +12306,7 @@ func TestAuthHandler_SetUserMFAEnabledProxy_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_SetUserMFAEnabledProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"enabled":true}`)), "userId", "1")
 	w := httptest.NewRecorder()
 	h.SetUserMFAEnabledProxy(w, req)
@@ -13373,7 +12622,7 @@ func TestGroupHandler_CreateGroupProxy_HappyPath(t *testing.T) {
 // ── connect_grants_proxy.go: ListConnectRefGrantsProxy ───────────────────────
 
 func TestAuthHandler_ListConnectRefGrantsProxy_HappyPath_S4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListConnectRefGrantsProxy(w, req)
@@ -13443,7 +12692,7 @@ func TestCatalogHandler_ListEnvironmentsProxy_HappyPath(t *testing.T) {
 // ── login_lockout_proxy.go: UpdateLoginLockoutStateProxy ──────────────────────
 
 func TestAuthHandler_UpdateLoginLockoutStateProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
 	w := httptest.NewRecorder()
 	h.UpdateLoginLockoutStateProxy(w, req)
@@ -13451,7 +12700,7 @@ func TestAuthHandler_UpdateLoginLockoutStateProxy_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_UpdateLoginLockoutStateProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateLoginLockoutStateProxy(w, req)
@@ -13459,7 +12708,7 @@ func TestAuthHandler_UpdateLoginLockoutStateProxy_BadJSON(t *testing.T) {
 }
 
 func TestAuthHandler_UpdateLoginLockoutStateProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"locked":false}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
@@ -13470,7 +12719,7 @@ func TestAuthHandler_UpdateLoginLockoutStateProxy_HappyPath(t *testing.T) {
 // ── webauthn_proxy.go: UpdateWebAuthnCredentialProxy, AdvanceWebAuthnCredentialCounterProxy ─
 
 func TestAuthHandler_UpdateWebAuthnCredentialProxy_BadID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParams(
 		httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)),
 		map[string]string{"userId": "1", "id": "bad"},
@@ -13481,7 +12730,7 @@ func TestAuthHandler_UpdateWebAuthnCredentialProxy_BadID(t *testing.T) {
 }
 
 func TestAuthHandler_AdvanceWebAuthnCredentialCounterProxy_BadUserID(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParams(
 		httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"counter":1}`)),
 		map[string]string{"userId": "bad", "id": "1"},
@@ -13492,19 +12741,11 @@ func TestAuthHandler_AdvanceWebAuthnCredentialCounterProxy_BadUserID(t *testing.
 }
 
 func TestAuthHandler_AdvanceWebAuthnCredentialCounterProxy_MissingRequiredFields(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	// credential_id, user_id, new_blob are all required; empty body → 400
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.AdvanceWebAuthnCredentialCounterProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_CreateWebAuthnSessionProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -13544,16 +12785,8 @@ func TestCatalogHandler_GetMachineByOIDCSubjectProxy_NotFound(t *testing.T) {
 
 // ── setup_tokens_proxy.go: CreateSetupTokenProxy ─────────────────────────────
 
-func TestAuthHandler_CreateSetupTokenProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerS4(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestAuthHandler_CreateSetupTokenProxy_MissingFields(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, req)
@@ -13561,7 +12794,7 @@ func TestAuthHandler_CreateSetupTokenProxy_MissingFields(t *testing.T) {
 }
 
 func TestAuthHandler_CreateSetupTokenProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"token_hash":"abc123","purpose":"invite","subject_email":"test@example.com","expires_at":"2026-12-31T00:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -14307,7 +13540,7 @@ func TestCatalogHandler_RevokeBreakGlass_BadID(t *testing.T) {
 // ── auth.go: Login (bad body), Logout, ListSessions ──────────────────────────
 
 func TestAuthHandler_Login_BadJSON_S4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.Login(w, req)
@@ -14315,7 +13548,7 @@ func TestAuthHandler_Login_BadJSON_S4(t *testing.T) {
 }
 
 func TestAuthHandler_Logout_NoSession_S4(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
 	h.Logout(w, req)
@@ -14324,7 +13557,7 @@ func TestAuthHandler_Logout_NoSession_S4(t *testing.T) {
 }
 
 func TestAuthHandler_RefreshToken_NoTokenBr(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	w := httptest.NewRecorder()
 	h.RefreshToken(w, req)
@@ -14332,7 +13565,7 @@ func TestAuthHandler_RefreshToken_NoTokenBr(t *testing.T) {
 }
 
 func TestAuthHandler_ListSessions_NoUserCtx(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	h.ListSessions(w, req)

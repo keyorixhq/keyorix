@@ -17,7 +17,7 @@ fail_line="$(grep -m1 -E 'FAIL|panic:' "$LOGFILE" || true)"
 fail_hash="$(printf '%s' "${fail_line:-unknown}" | sha256sum | cut -c1-16)"
 marker="$NOTIFIED_STATE_DIR/notified-$FUNC-$fail_hash"
 
-if [ -f "$marker" ]; then
+if [[ -f "$marker" ]]; then
   exit 0 # already alerted for this exact failure
 fi
 

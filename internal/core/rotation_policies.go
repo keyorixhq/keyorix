@@ -264,39 +264,7 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID, environm
 			continue
 		}
 
-		for _, secret := range secrets {
-			lastRotated := secret.CreatedAt
-			if secret.LastRotatedAt != nil {
-				lastRotated = *secret.LastRotatedAt
-			}
-
-			daysSince := int(now.Sub(lastRotated).Hours() / 24)
-			daysOverdue := daysSince - policy.IntervalDays
-
-			status := RotationStatusOK
-			if daysOverdue > 0 {
-				status = RotationStatusOverdue
-			} else if (policy.IntervalDays - daysSince) <= policy.AlertDaysBefore {
-				status = RotationStatusDueSoon
-			}
-
-			entries = append(entries, &RotationStatusEntry{
-				PolicyID:          policy.ID,
-				PolicyName:        policy.Name,
-				IntervalDays:      policy.IntervalDays,
-				AlertDaysBefore:   policy.AlertDaysBefore,
-				SecretID:          secret.ID,
-				SecretName:        secret.Name,
-				ProjectID:         secret.ProjectID,
-				EnvironmentID:     secret.EnvironmentID,
-				LastRotatedAt:     secret.LastRotatedAt,
-				DaysSinceRotation: daysSince,
-				DaysOverdue:       daysOverdue,
-				Status:            status,
-				AutoRotate:        secret.AutoRotate,
-				RotationBackend:   secret.RotationBackend,
-			})
-		}
+		entries = appendSecretRotationEntries(entries, secrets, policy, now)
 	}
 
 	if failedPolicies > 0 {
@@ -304,6 +272,46 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID, environm
 	}
 
 	return entries, nil
+}
+
+// appendSecretRotationEntries builds RotationStatusEntry records for each secret
+// covered by policy and appends them to entries. Extracted from GetRotationStatus
+// to reduce its cognitive complexity.
+func appendSecretRotationEntries(entries []*RotationStatusEntry, secrets []*models.SecretNode, policy *models.RotationPolicy, now time.Time) []*RotationStatusEntry {
+	for _, secret := range secrets {
+		lastRotated := secret.CreatedAt
+		if secret.LastRotatedAt != nil {
+			lastRotated = *secret.LastRotatedAt
+		}
+
+		daysSince := int(now.Sub(lastRotated).Hours() / 24)
+		daysOverdue := daysSince - policy.IntervalDays
+
+		status := RotationStatusOK
+		if daysOverdue > 0 {
+			status = RotationStatusOverdue
+		} else if (policy.IntervalDays - daysSince) <= policy.AlertDaysBefore {
+			status = RotationStatusDueSoon
+		}
+
+		entries = append(entries, &RotationStatusEntry{
+			PolicyID:          policy.ID,
+			PolicyName:        policy.Name,
+			IntervalDays:      policy.IntervalDays,
+			AlertDaysBefore:   policy.AlertDaysBefore,
+			SecretID:          secret.ID,
+			SecretName:        secret.Name,
+			ProjectID:         secret.ProjectID,
+			EnvironmentID:     secret.EnvironmentID,
+			LastRotatedAt:     secret.LastRotatedAt,
+			DaysSinceRotation: daysSince,
+			DaysOverdue:       daysOverdue,
+			Status:            status,
+			AutoRotate:        secret.AutoRotate,
+			RotationBackend:   secret.RotationBackend,
+		})
+	}
+	return entries
 }
 
 func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID, environmentID *uint) ([]*RotationPolicyEvaluation, error) {

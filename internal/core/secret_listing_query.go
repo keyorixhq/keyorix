@@ -229,40 +229,52 @@ func (c *KeyorixCore) applySecretFilters(ctx context.Context, secrets []*models.
 	// Tag filter: require every requested tag (AND). Resolved per secret only when a
 	// tag filter is present, so the common no-tag list path does no extra queries.
 	want := normalizeTagFilter(filter.Tags)
-
 	var out []*models.SecretWithSharingInfo
 	for _, s := range secrets {
-		if filter.ShowSharedOnly && !s.IsShared {
-			continue
+		if c.secretPassesFilters(ctx, s, filter, want) {
+			out = append(out, s)
 		}
-		if len(want) > 0 && !c.secretHasAllTags(ctx, s.ID, want) {
-			continue
-		}
-		if filter.Search != nil && *filter.Search != "" {
-			if !c.secretMatchesSearch(ctx, s, strings.ToLower(*filter.Search)) {
-				continue
-			}
-		}
-		if filter.Type != nil && *filter.Type != "" && s.Type != *filter.Type {
-			continue
-		}
-		if filter.Classification != nil && *filter.Classification != "" {
-			if *filter.Classification == "unclassified" {
-				if s.Classification != "" {
-					continue
-				}
-			} else if s.Classification != *filter.Classification {
-				continue
-			}
-		}
-		if filter.ExpiresBefore != nil {
-			if s.Expiration == nil || !s.Expiration.Before(*filter.ExpiresBefore) {
-				continue // no expiration, or expires at/after the cutoff
-			}
-		}
-		out = append(out, s)
 	}
 	return out
+}
+
+// secretPassesFilters reports whether a secret satisfies all active list filters.
+func (c *KeyorixCore) secretPassesFilters(ctx context.Context, s *models.SecretWithSharingInfo, filter *models.SecretListFilter, want []string) bool {
+	if filter.ShowSharedOnly && !s.IsShared {
+		return false
+	}
+	if len(want) > 0 && !c.secretHasAllTags(ctx, s.ID, want) {
+		return false
+	}
+	if filter.Search != nil && *filter.Search != "" {
+		if !c.secretMatchesSearch(ctx, s, strings.ToLower(*filter.Search)) {
+			return false
+		}
+	}
+	if filter.Type != nil && *filter.Type != "" && s.Type != *filter.Type {
+		return false
+	}
+	if !secretMatchesClassification(s, filter) {
+		return false
+	}
+	return secretMatchesExpiration(s, filter)
+}
+
+func secretMatchesClassification(s *models.SecretWithSharingInfo, filter *models.SecretListFilter) bool {
+	if filter.Classification == nil || *filter.Classification == "" {
+		return true
+	}
+	if *filter.Classification == "unclassified" {
+		return s.Classification == ""
+	}
+	return s.Classification == *filter.Classification
+}
+
+func secretMatchesExpiration(s *models.SecretWithSharingInfo, filter *models.SecretListFilter) bool {
+	if filter.ExpiresBefore == nil {
+		return true
+	}
+	return s.Expiration != nil && s.Expiration.Before(*filter.ExpiresBefore)
 }
 
 // normalizeTagFilter trims/lowercases/de-duplicates requested tag filters (matching

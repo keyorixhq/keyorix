@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -58,12 +59,7 @@ var membershipTransitions = map[string][]string{
 
 // canTransition reports whether a membership may move from → to.
 func canTransition(from, to string) bool {
-	for _, next := range membershipTransitions[from] {
-		if next == to {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(membershipTransitions[from], to)
 }
 
 // SetMembershipValidationMode overrides the install validation mode (default
@@ -146,12 +142,10 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 		// and CreateProjectMembership wraps it in ErrDuplicateActiveMembership; surface the
 		// same clean "already has a membership" error the winner's sequential check would
 		// have produced, instead of a raw constraint-violation message or an orphaned row.
-		if errors.Is(err, storage.ErrDuplicateActiveMembership) {
-			return nil, fmt.Errorf("user already has a membership in this project")
-		}
-		return nil, fmt.Errorf("failed to create membership: %w", err)
+		return nil, wrapCreateMembershipError(err)
 	}
 
+	c.logMembershipEvent(ctx, "membership.invited", created, invitedBy)
 	// If the mode put us straight into active, grant the role now.
 	if created.State == MembershipActive {
 		if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role); err != nil {
@@ -168,12 +162,16 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 			c.revertFailedActivation(ctx, created, MembershipRevoked)
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
-	}
-	c.logMembershipEvent(ctx, "membership.invited", created, invitedBy)
-	if created.State == MembershipActive {
 		c.logMembershipEvent(ctx, "membership.activated", created, invitedBy)
 	}
 	return created, nil
+}
+
+func wrapCreateMembershipError(err error) error {
+	if errors.Is(err, storage.ErrDuplicateActiveMembership) {
+		return fmt.Errorf("user already has a membership in this project")
+	}
+	return fmt.Errorf("failed to create membership: %w", err)
 }
 
 // initialMembershipStateForMode resolves the starting state for a new invite under

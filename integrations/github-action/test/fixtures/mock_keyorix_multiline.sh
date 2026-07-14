@@ -6,11 +6,11 @@
 # accepts it without touching the network. Returns a secret VALUE that spans
 # multiple lines (simulating, e.g., a PEM private key), so the test can
 # verify every line gets its own ::add-mask:: directive, not just the first.
-if [ "$1" = "--version" ]; then
+if [[ "$1" = "--version" ]]; then
   echo "keyorix version mock-1.0.0"
   exit 0
 fi
-if [ "$1" = "secret" ] && [ "$2" = "export" ]; then
+if [[ "$1" = "secret" ]] && [[ "$2" = "export" ]]; then
   fmt=""
   args=("$@")
   for ((i = 0; i < ${#args[@]}; i++)); do

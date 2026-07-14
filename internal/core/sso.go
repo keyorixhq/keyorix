@@ -195,18 +195,13 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", err
 	}
 
-	user, err := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified)
+	resolved, err := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if user == nil {
-		// No Keyorix account matches this verified identity.
-		if !p.AutoProvision {
-			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
-		}
-		if user, err = c.provisionSSOUser(ctx, p, sub, email, emailVerified, name); err != nil {
-			return nil, nil, "", err
-		}
+	user, err := c.ensureSSOUser(ctx, p, resolved, sub, email, emailVerified, name)
+	if err != nil {
+		return nil, nil, "", err
 	}
 	if AccountLoginBlocked(user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
@@ -423,6 +418,19 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 	return u, nil
 }
 
+// ensureSSOUser returns the resolved user if one exists; otherwise JIT-provisions one
+// via provisionSSOUser when p.AutoProvision is enabled. Extracted from CompleteSSO to
+// reduce its cognitive complexity.
+func (c *KeyorixCore) ensureSSOUser(ctx context.Context, p *SSOProvider, existing *models.User, sub, email string, emailVerified bool, name string) (*models.User, error) {
+	if existing != nil {
+		return existing, nil
+	}
+	if !p.AutoProvision {
+		return nil, fmt.Errorf("no Keyorix account matches this SSO identity")
+	}
+	return c.provisionSSOUser(ctx, p, sub, email, emailVerified, name)
+}
+
 // provisionSSOUser JIT-creates a Keyorix account for a verified SSO identity that
 // matches no existing user (auto_provision must be enabled — the caller gates this).
 // The identity has already passed full id_token verification (signature, issuer,
@@ -544,17 +552,25 @@ func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, us
 		currentSet[g.ID] = true
 	}
 
-	added, removed, blocked := 0, 0, 0
+	added, blocked := c.reconcileSSOGroupAdditions(ctx, userID, desired, currentSet)
+	removed := c.reconcileSSOGroupRemovals(ctx, userID, desired, currentSet)
+	if added > 0 || removed > 0 || blocked > 0 {
+		msg := fmt.Sprintf("SSO group sync via %s: user %d (+%d/-%d native group memberships)", p.Name, userID, added, removed)
+		if blocked > 0 {
+			msg += fmt.Sprintf("; %d admin-conferring group(s) refused (IdP assertion cannot grant admin)", blocked)
+		}
+		c.writeAuditEvent(ctx, EventSSOGroupsSynced, actorPtr(userID), nil, msg)
+	}
+}
+
+func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uint, desired, currentSet map[uint]bool) (added, blocked int) {
 	for id := range desired {
 		if currentSet[id] {
 			continue
 		}
 		// Refuse to ESCALATE into an admin-conferring group via an IdP group assertion —
 		// the same guard SCIM applies (scimGroupConfersAdmin; the predicate is not
-		// SCIM-specific). IdP group membership/names are often self-service or governed by
-		// people who are not Keyorix admins, so silently inheriting an admin role from a
-		// name match would be a privilege escalation. scimGroupConfersAdmin fails CLOSED on
-		// a lookup error, so an unverifiable group is treated as admin-bearing and skipped.
+		// SCIM-specific). scimGroupConfersAdmin fails CLOSED on a lookup error.
 		if c.scimGroupConfersAdmin(ctx, id) {
 			blocked++
 			continue
@@ -563,6 +579,10 @@ func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, us
 			added++
 		}
 	}
+	return added, blocked
+}
+
+func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint, desired, currentSet map[uint]bool) (removed int) {
 	// De-escalating removals are unconditional (dropping a group only reduces privilege).
 	for id := range currentSet {
 		if !desired[id] {
@@ -571,13 +591,7 @@ func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, us
 			}
 		}
 	}
-	if added > 0 || removed > 0 || blocked > 0 {
-		msg := fmt.Sprintf("SSO group sync via %s: user %d (+%d/-%d native group memberships)", p.Name, userID, added, removed)
-		if blocked > 0 {
-			msg += fmt.Sprintf("; %d admin-conferring group(s) refused (IdP assertion cannot grant admin)", blocked)
-		}
-		c.writeAuditEvent(ctx, EventSSOGroupsSynced, actorPtr(userID), nil, msg)
-	}
+	return removed
 }
 
 // syncSSORoles reconciles the user's grants of the MAPPED (system) roles to match the
@@ -613,18 +627,7 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 
 	// desiredRoles = role names an asserted group maps to; managedRoles = every role
 	// name the map can grant (the authoritative scope).
-	desiredRoles := make(map[string]bool)
-	managedRoles := make(map[string]bool)
-	for group, role := range p.GroupRoleMap {
-		role = strings.TrimSpace(role)
-		if role == "" {
-			continue
-		}
-		managedRoles[role] = true
-		if assertedSet[group] {
-			desiredRoles[role] = true
-		}
-	}
+	desiredRoles, managedRoles := buildSSORoleMaps(p, assertedSet)
 
 	// The user's current global-scope role names.
 	current, err := c.storage.GetUserRoles(ctx, userID)
@@ -649,39 +652,61 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 	// the point, since authorization here is rooted in the admin-configured
 	// GroupRoleMap and the verified IdP assertion, not in the user's own
 	// roles.assign-derived authority.
-	added, removed, blocked := 0, 0, 0
+	counts := &ssoRoleCounters{}
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
 		if rerr != nil {
 			continue // unknown role — skip rather than fail the login
 		}
-		switch {
-		case desiredRoles[role] && !currentSet[role]:
-			// Refuse to grant an admin-tier role from an IdP group mapping (#96) —
-			// the same escalation-by-proxy guard reconcileSSOGroups already applies to
-			// admin-conferring GROUPS. GroupRoleMap is configured once by an admin, but
-			// IdP group membership is frequently self-service or governed by people
-			// who are not Keyorix admins, so a mapping intended for a routine role must
-			// not double as a path to global admin for anyone who can join the group.
-			if isAdminRoleName(role) {
-				blocked++
-				continue
-			}
-			if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
-				added++
-			}
-		case !desiredRoles[role] && currentSet[role]:
-			if c.RemoveUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
-				removed++
-			}
-		}
+		c.applySSOManagedRole(ctx, userID, r, role, desiredRoles, currentSet, counts)
 	}
-	if added > 0 || removed > 0 || blocked > 0 {
-		msg := fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, added, removed)
-		if blocked > 0 {
-			msg += fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", blocked)
+	if counts.added > 0 || counts.removed > 0 || counts.blocked > 0 {
+		msg := fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, counts.added, counts.removed)
+		if counts.blocked > 0 {
+			msg += fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", counts.blocked)
 		}
 		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil, msg)
+	}
+}
+
+func buildSSORoleMaps(p *SSOProvider, assertedSet map[string]bool) (desiredRoles, managedRoles map[string]bool) {
+	desiredRoles = make(map[string]bool)
+	managedRoles = make(map[string]bool)
+	for group, role := range p.GroupRoleMap {
+		role = strings.TrimSpace(role)
+		if role == "" {
+			continue
+		}
+		managedRoles[role] = true
+		if assertedSet[group] {
+			desiredRoles[role] = true
+		}
+	}
+	return desiredRoles, managedRoles
+}
+
+type ssoRoleCounters struct {
+	added, removed, blocked int
+}
+
+func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *models.Role, role string, desired, current map[string]bool, counts *ssoRoleCounters) {
+	switch {
+	case desired[role] && !current[role]:
+		// Refuse to grant an admin-tier role from an IdP group mapping (#96) —
+		// GroupRoleMap is configured once by an admin, but IdP group membership is
+		// frequently self-service, so a mapping intended for a routine role must not
+		// double as a path to global admin for anyone who can join the group.
+		if isAdminRoleName(role) {
+			counts.blocked++
+			return
+		}
+		if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
+			counts.added++
+		}
+	case !desired[role] && current[role]:
+		if c.RemoveUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
+			counts.removed++
+		}
 	}
 }
 

@@ -56,10 +56,10 @@ mkdir -p bin
 # $VERSION are passed to `go build` as literal argv entries, never as shell
 # syntax to be re-interpreted (see #467/#468).
 BUILD_FLAGS=()
-if [ "$BUILD_MODE" = "debug" ]; then
+if [[ "$BUILD_MODE" = "debug" ]]; then
     BUILD_FLAGS+=(-gcflags="all=-N -l")
     log_info "Debug mode: Including debug symbols"
-elif [ "$BUILD_MODE" = "release" ]; then
+elif [[ "$BUILD_MODE" = "release" ]]; then
     BUILD_FLAGS+=(-ldflags="-s -w -X main.Version=$VERSION -X main.BuildTime=$BUILD_TIME -X main.GitCommit=$GIT_COMMIT")
     log_info "Release mode: Optimized build with version info"
 else
@@ -89,7 +89,7 @@ else
 fi
 
 # Build additional tools if they exist
-if [ -d "examples/secret_crud" ]; then
+if [[ -d "examples/secret_crud" ]]; then
     log_info "Building secret_crud example..."
     if go build "${BUILD_FLAGS[@]}" -o bin/secret_crud ./examples/secret_crud; then
         log_success "secret_crud built successfully"
@@ -98,7 +98,7 @@ if [ -d "examples/secret_crud" ]; then
     fi
 fi
 
-if [ -d "examples/new-architecture" ]; then
+if [[ -d "examples/new-architecture" ]]; then
     log_info "Building new-architecture example..."
     if go build "${BUILD_FLAGS[@]}" -o bin/new-architecture ./examples/new-architecture; then
         log_success "new-architecture built successfully"
@@ -108,7 +108,7 @@ if [ -d "examples/new-architecture" ]; then
 fi
 
 # Build validation tools if they exist
-if [ -f "cmd/validate-translations/main.go" ]; then
+if [[ -f "cmd/validate-translations/main.go" ]]; then
     log_info "Building translation validator..."
     if go build "${BUILD_FLAGS[@]}" -o bin/validate-translations ./cmd/validate-translations; then
         log_success "validate-translations built successfully"
@@ -122,11 +122,11 @@ log_info "Setting executable permissions..."
 chmod +x bin/*
 
 # Build web assets if web directory exists
-if [ -d "web" ] && [ -f "web/package.json" ]; then
+if [[ -d "web" ]] && [[ -f "web/package.json" ]]; then
     log_info "Building web assets..."
     cd web
     if command -v npm &> /dev/null; then
-        if [ ! -d "node_modules" ]; then
+        if [[ ! -d "node_modules" ]]; then
             log_info "Installing web dependencies..."
             npm install
         fi

@@ -133,22 +133,8 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	want := make(map[uint]bool, len(memberIDs))
-	for _, id := range memberIDs {
-		if id != 0 {
-			want[id] = true
-		}
-	}
-	have := make(map[uint]bool, len(current))
-	for _, u := range current {
-		have[u.ID] = true
-	}
-	toAdd := make([]uint, 0)
-	for id := range want {
-		if !have[id] {
-			toAdd = append(toAdd, id)
-		}
-	}
+	want, have := buildSCIMMemberMaps(memberIDs, current)
+	toAdd := computeSCIMToAdd(want, have)
 	// SCIM must not be able to grant administrative access by adding members to a group
 	// that carries an admin role. Block the add (de-escalating removals are still fine).
 	if len(toAdd) > 0 && c.scimGroupConfersAdmin(ctx, groupID) {
@@ -159,14 +145,7 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 	if _, rejected := c.filterSCIMManaged(ctx, toAdd); len(rejected) > 0 {
 		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
 	}
-	for _, u := range current {
-		if !want[u.ID] {
-			_ = c.storage.RemoveUserFromGroup(ctx, u.ID, groupID)
-		}
-	}
-	for _, id := range toAdd {
-		_ = c.storage.AddUserToGroup(ctx, id, groupID)
-	}
+	c.applyGroupMembershipChanges(ctx, groupID, want, current, toAdd)
 	c.writeAuditEvent(ctx, EventSCIMGroupUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM replaced group %d (members=%d)", groupID, len(want)))
 	return c.storage.GetGroup(ctx, groupID)
@@ -185,14 +164,7 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 	}
-	hasAdds := false
-	for _, id := range addIDs {
-		if id != 0 {
-			hasAdds = true
-			break
-		}
-	}
-	if hasAdds && c.scimGroupConfersAdmin(ctx, groupID) {
+	if hasSCIMAdditions(addIDs) && c.scimGroupConfersAdmin(ctx, groupID) {
 		return nil, fmt.Errorf("%s: SCIM cannot add members to a group that grants administrative roles", i18n.T("ErrorNotAuthorized", nil))
 	}
 	// Every add must target a SCIM-managed account (#167); a native/non-SCIM id in the
@@ -204,10 +176,8 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	for _, id := range allowedAdds {
 		_ = c.storage.AddUserToGroup(ctx, id, groupID)
 	}
-	for _, id := range removeIDs {
-		if id != 0 {
-			_ = c.storage.RemoveUserFromGroup(ctx, id, groupID)
-		}
+	for _, id := range filterNonZero(removeIDs) {
+		_ = c.storage.RemoveUserFromGroup(ctx, id, groupID)
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM patched group %d (+%d/-%d members)", groupID, len(addIDs), len(removeIDs)))
@@ -228,6 +198,60 @@ func (c *KeyorixCore) scimGroupConfersAdmin(ctx context.Context, groupID uint) b
 		ids = append(ids, r.ID)
 	}
 	return c.roleSetContainsAdmin(ctx, ids)
+}
+
+func buildSCIMMemberMaps(memberIDs []uint, current []*models.User) (want, have map[uint]bool) {
+	want = make(map[uint]bool, len(memberIDs))
+	for _, id := range memberIDs {
+		if id != 0 {
+			want[id] = true
+		}
+	}
+	have = make(map[uint]bool, len(current))
+	for _, u := range current {
+		have[u.ID] = true
+	}
+	return want, have
+}
+
+func computeSCIMToAdd(want, have map[uint]bool) []uint {
+	toAdd := make([]uint, 0)
+	for id := range want {
+		if !have[id] {
+			toAdd = append(toAdd, id)
+		}
+	}
+	return toAdd
+}
+
+func hasSCIMAdditions(addIDs []uint) bool {
+	for _, id := range addIDs {
+		if id != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func filterNonZero(ids []uint) []uint {
+	out := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if id != 0 {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint) {
+	for _, u := range current {
+		if !want[u.ID] {
+			_ = c.storage.RemoveUserFromGroup(ctx, u.ID, groupID)
+		}
+	}
+	for _, id := range toAdd {
+		_ = c.storage.AddUserToGroup(ctx, id, groupID)
+	}
 }
 
 // DeprovisionSCIMGroup handles a SCIM DELETE — removes the group (membership links

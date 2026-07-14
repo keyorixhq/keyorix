@@ -64,7 +64,7 @@ assert_invalid "FOO<<EOF"
 # shellcheck disable=SC2016
 assert_invalid 'FOO$(whoami)'
 
-if [ "$fail" -ne 0 ]; then
+if [[ "$fail" -ne 0 ]]; then
   echo
   echo "entrypoint_test.sh: FAILED"
   exit 1

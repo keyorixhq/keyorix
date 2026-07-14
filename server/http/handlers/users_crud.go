@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -49,11 +50,8 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		// Atomic provisioning (ADR-028): an optional system role override and a set
 		// of project-scoped role assignments, applied with the create in one
 		// transaction. Supported on the admin-set-password path only.
-		Role               string `json:"role,omitempty"`
-		ProjectAssignments []struct {
-			ProjectID uint   `json:"project_id"`
-			Role      string `json:"role"`
-		} `json:"project_assignments,omitempty"`
+		Role               string                 `json:"role,omitempty"`
+		ProjectAssignments []projectAssignmentBody `json:"project_assignments,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -91,90 +89,88 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// One-time-password path (ADR-028 Part E): server generates the initial password,
 	// returns it once for out-of-band relay, and forces a change on first login.
 	if body.GenerateOneTimePassword {
-		created, otp, err := h.coreService.CreateUserWithOneTimePassword(r.Context(), req, userCtx.UserID)
-		if err != nil {
-			log.Printf("Error creating user with one-time password: %v", err)
-			if strings.Contains(err.Error(), "already exists") {
-				sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
-				return
-			}
-			if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
-				sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
-				return
-			}
-			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		sendSuccess(w, map[string]interface{}{
-			"user":              userToAPIResponse(created),
-			"one_time_password": otp,
-		}, i18n.T("SuccessUserCreated", nil))
+		h.createUserWithOTP(w, r, req, userCtx.UserID)
 		return
 	}
-
-	// Setup-link provisioning path (ADR-028): no admin password; deliver a link.
 	if body.DeliverSetupLink {
-		created, prov, err := h.coreService.CreateUserWithSetupLink(r.Context(), req, userCtx.UserID)
-		if err != nil {
-			log.Printf("Error creating user with setup link: %v", err)
-			if strings.Contains(err.Error(), "already exists") {
-				sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
-				return
-			}
-			if errors.Is(err, core.ErrSetupBaseURLRequired) {
-				sendError(w, "ConfigError", err.Error(), http.StatusBadRequest, nil)
-				return
-			}
-			if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
-				sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
-				return
-			}
-			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		sendSuccess(w, map[string]interface{}{
-			"user":       userToAPIResponse(created),
-			"setup_link": prov,
-		}, i18n.T("SuccessUserCreated", nil))
+		h.createUserWithSetupLink(w, r, req, userCtx.UserID)
 		return
 	}
+	h.createUserClassic(w, r, req, userCtx, body.Password, body.Role, body.ProjectAssignments)
+}
 
-	// Classic path: the admin supplies the initial password.
-	if body.Password == "" {
+type projectAssignmentBody struct {
+	ProjectID uint   `json:"project_id"`
+	Role      string `json:"role"`
+}
+
+func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, actorID uint) {
+	created, otp, err := h.coreService.CreateUserWithOneTimePassword(r.Context(), req, actorID)
+	if err != nil {
+		log.Printf("Error creating user with one-time password: %v", err)
+		if strings.Contains(err.Error(), "already exists") {
+			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
+			return
+		}
+		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, map[string]interface{}{
+		"user":              userToAPIResponse(created),
+		"one_time_password": otp,
+	}, i18n.T("SuccessUserCreated", nil))
+}
+
+func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, actorID uint) {
+	created, prov, err := h.coreService.CreateUserWithSetupLink(r.Context(), req, actorID)
+	if err != nil {
+		log.Printf("Error creating user with setup link: %v", err)
+		if strings.Contains(err.Error(), "already exists") {
+			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
+			return
+		}
+		if errors.Is(err, core.ErrSetupBaseURLRequired) {
+			sendError(w, "ConfigError", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
+		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, map[string]interface{}{
+		"user":       userToAPIResponse(created),
+		"setup_link": prov,
+	}, i18n.T("SuccessUserCreated", nil))
+}
+
+func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, userCtx *middleware.UserContext, password, role string, projAssignments []projectAssignmentBody) {
+	if password == "" {
 		sendError(w, "ValidationError", "Password is required unless deliver_setup_link or generate_one_time_password is set", http.StatusBadRequest, nil)
 		return
 	}
-
-	// Atomic provisioning must not let the caller hand out access they could not
-	// assign directly (defense-in-depth beyond the users.write route gate, and the
-	// principled fix for the cross-project privesc class): a system-role override
-	// requires roles.assign at global scope; each project assignment requires
-	// roles.assign at that project. A global admin passes both via admin-bypass.
-	if hasAssignments {
-		if body.Role != "" {
-			if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
-				sendError(w, "Forbidden", "You may not assign a system role", http.StatusForbidden, nil)
-				return
-			}
-		}
-		for _, a := range body.ProjectAssignments {
-			if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
-				sendError(w, "Forbidden", "You may not assign roles in the target project", http.StatusForbidden, nil)
-				return
-			}
+	if role != "" || len(projAssignments) > 0 {
+		if err := h.authorizeUserCreationAssignments(r.Context(), userCtx, role, projAssignments); err != nil {
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+			return
 		}
 	}
-
 	var created *models.User
 	var err error
-	if hasAssignments {
-		assignments := make([]core.ProjectAssignment, 0, len(body.ProjectAssignments))
-		for _, a := range body.ProjectAssignments {
+	if role != "" || len(projAssignments) > 0 {
+		assignments := make([]core.ProjectAssignment, 0, len(projAssignments))
+		for _, a := range projAssignments {
 			assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
 		}
-		created, err = h.coreService.CreateUserWithAssignments(r.Context(), req, body.Role, assignments, userCtx.UserID)
+		created, err = h.coreService.CreateUserWithAssignments(r.Context(), req, role, assignments, userCtx.UserID)
 	} else {
 		created, err = h.coreService.CreateUser(r.Context(), req)
 	}
@@ -194,9 +190,22 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, userToAPIResponse(created), i18n.T("SuccessUserCreated", nil))
+}
+
+func (h *UserHandler) authorizeUserCreationAssignments(ctx context.Context, userCtx *middleware.UserContext, role string, projAssignments []projectAssignmentBody) error {
+	if role != "" {
+		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
+			return fmt.Errorf("you may not assign a system role")
+		}
+	}
+	for _, a := range projAssignments {
+		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
+			return fmt.Errorf("you may not assign roles in the target project")
+		}
+	}
+	return nil
 }
 
 // GetUser handles GET /api/v1/users/{id}

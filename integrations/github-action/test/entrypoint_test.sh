@@ -113,7 +113,7 @@ PATH="${mockbin}:${PATH}" \
 rc1=$?
 set -e
 
-if [ "$rc1" -ne 0 ] && grep -qi "checksum mismatch" "${workdir}/stderr1.log"; then
+if [[ "$rc1" -ne 0 ]] && grep -qi "checksum mismatch" "${workdir}/stderr1.log"; then
   ok "#175: checksum mismatch aborts the pinned-version install"
 else
   bad "#175: checksum mismatch did not abort as expected (rc=${rc1}); stderr: $(cat "${workdir}/stderr1.log")"
@@ -136,7 +136,7 @@ PATH="${mockbin}:${PATH}" \
 rc1b=$?
 set -e
 
-if [ "$rc1b" -ne 0 ] \
+if [[ "$rc1b" -ne 0 ]] \
   && grep -qi "does not match .* published checksum" "${workdir}/stderr1b.log" \
   && grep -qi "checksum mismatch" "${workdir}/stderr1b.log"; then
   ok "#179: an on-PATH keyorix with a mismatched checksum is not silently trusted"
@@ -168,13 +168,13 @@ PATH="${mockbin}:${PATH}" \
 rc2=$?
 set -e
 
-if [ "$rc2" -eq 0 ] && grep -q "::add-mask::topsecretvalue123" "${workdir}/stdout2.log"; then
+if [[ "$rc2" -eq 0 ]] && grep -q "::add-mask::topsecretvalue123" "${workdir}/stdout2.log"; then
   ok "#177: output-file path masks secret values even with export-to-env=false"
 else
   bad "#177: output-file path did not mask secret values as expected (rc=${rc2}); stdout: $(cat "${workdir}/stdout2.log"); stderr: $(cat "${workdir}/stderr2.log")"
 fi
 
-if [ -f "$out_file" ] && grep -q "SUPER_SECRET=topsecretvalue123" "$out_file"; then
+if [[ -f "$out_file" ]] && grep -q "SUPER_SECRET=topsecretvalue123" "$out_file"; then
   ok "#177: output file was still written with the secret"
 else
   bad "#177: output file was not written as expected"
@@ -210,7 +210,7 @@ PATH="${mockbin}:${PATH}" \
 rc3=$?
 set -e
 
-if [ "$rc3" -eq 0 ] \
+if [[ "$rc3" -eq 0 ]] \
   && grep -q "::add-mask::line-one-secret" "${workdir}/stdout3.log" \
   && grep -q "::add-mask::line-two-secret" "${workdir}/stdout3.log" \
   && grep -q "::add-mask::line-three-secret" "${workdir}/stdout3.log"; then
@@ -225,7 +225,7 @@ fi
 # CSPRNG value hex-encodes to 32 hex characters).
 delim_line="$(grep -o 'KEYORIX_EOF_[0-9a-f]*' "$github_env" | head -1)"
 delim_suffix="${delim_line#KEYORIX_EOF_}"
-if [ "${#delim_suffix}" -ge 32 ]; then
+if [[ "${#delim_suffix}" -ge 32 ]]; then
   ok "#179: heredoc delimiter has >=32 hex characters of entropy (got ${#delim_suffix})"
 else
   bad "#179: heredoc delimiter entropy looks too low (delimiter: '${delim_line}', suffix length: ${#delim_suffix})"
@@ -233,4 +233,4 @@ fi
 
 echo
 echo "${pass} passed, ${fail} failed"
-[ "$fail" -eq 0 ]
+[[ "$fail" -eq 0 ]]

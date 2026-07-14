@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -138,12 +139,7 @@ var adminRoleNames = []string{"super_admin", "admin", "system_admin", "project_a
 // roles — a pure-string check requiring no storage lookup, for guards that already
 // hold the role name.
 func isAdminRoleName(roleName string) bool {
-	for _, n := range adminRoleNames {
-		if n == roleName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(adminRoleNames, roleName)
 }
 
 // AuthorizePrincipal reports whether a principal — a human user or a machine
@@ -413,19 +409,26 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 		case "user":
 			holders[a.PrincipalID] = true
 		case "group":
-			members, merr := c.storage.ListGroupMembers(ctx, a.PrincipalID)
-			if merr != nil {
-				return nil, fmt.Errorf("failed to resolve group %d membership: %w", a.PrincipalID, merr)
-			}
-			for _, m := range members {
-				if excludeMember != nil && excludeMember(a.PrincipalID, m.ID) {
-					continue
-				}
-				holders[m.ID] = true
+			if err := c.resolveGroupAdminMembers(ctx, a.PrincipalID, excludeMember, holders); err != nil {
+				return nil, err
 			}
 		}
 	}
 	return holders, nil
+}
+
+func (c *KeyorixCore) resolveGroupAdminMembers(ctx context.Context, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
+	members, merr := c.storage.ListGroupMembers(ctx, groupID)
+	if merr != nil {
+		return fmt.Errorf("failed to resolve group %d membership: %w", groupID, merr)
+	}
+	for _, m := range members {
+		if excludeMember != nil && excludeMember(groupID, m.ID) {
+			continue
+		}
+		holders[m.ID] = true
+	}
+	return nil
 }
 
 // guardLastGlobalAdminGroupRole is guardLastGlobalAdmin's group-role-removal

@@ -155,70 +155,7 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 
 	var activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers int64
 	if hasAuditRead {
-		// Active users from storage stats.
-		if storageStats, err := c.storage.GetStats(ctx); err == nil {
-			activeUsers = storageStats.TotalUsers
-		} else {
-			stats.degrade("active_users", err)
-		}
-
-		// Audit events in the last 30 days — total count only.
-		thirtyDaysAgo := time.Now().UTC().Add(-30 * 24 * time.Hour)
-		var auditErr error
-		_, auditCount, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-			StartTime: &thirtyDaysAgo,
-			Page:      1,
-			PageSize:  1,
-		})
-		if auditErr != nil {
-			stats.degrade("audit_count", auditErr)
-		}
-		// Auth events (login/logout) vs secret events in last 30 days.
-		authAction := "auth.login"
-		_, auditLogins, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-			StartTime: &thirtyDaysAgo,
-			Action:    &authAction,
-			Page:      1,
-			PageSize:  1,
-		})
-		if auditErr != nil {
-			stats.degrade("audit_logins", auditErr)
-		}
-		secretReadAction := "secret.read"
-		_, auditSecretReads, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-			StartTime: &thirtyDaysAgo,
-			Action:    &secretReadAction,
-			Page:      1,
-			PageSize:  1,
-		})
-		if auditErr != nil {
-			stats.degrade("audit_secret_reads", auditErr)
-		}
-
-		// Failed auth attempts in the last 24 hours (success=false, any action).
-		twentyFourHoursAgo := time.Now().UTC().Add(-24 * time.Hour)
-		successFalse := false
-		_, failedAuth24h, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-			StartTime: &twentyFourHoursAgo,
-			Success:   &successFalse,
-			Page:      1,
-			PageSize:  1,
-		})
-		if auditErr != nil {
-			stats.degrade("failed_auth_24h", auditErr)
-		}
-
-		// Inactive users: registered users whose last_login_at is null or older than
-		// 30 days. Counted directly off the users table (no audit-log scan).
-		inactiveCutoff := thirtyDaysAgo
-		_, inactiveUsers, auditErr = c.storage.ListUsers(ctx, &storage.UserFilter{
-			InactiveSince: &inactiveCutoff,
-			Page:          1,
-			PageSize:      1,
-		})
-		if auditErr != nil {
-			stats.degrade("inactive_users", auditErr)
-		}
+		activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers = c.fetchAdminDashboardStats(ctx, stats)
 	}
 
 	stats.TotalSecrets = total
@@ -254,6 +191,46 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	}
 
 	return stats, nil
+}
+
+// fetchAdminDashboardStats fetches the deployment-wide aggregates visible only to
+// callers holding audit.read (active-user count, audit-event counts, failed-auth
+// count, inactive-user count). Errors degrade the stats struct; all counts default
+// to 0. Extracted from GetDashboardStats to reduce its cognitive complexity.
+func (c *KeyorixCore) fetchAdminDashboardStats(ctx context.Context, stats *DashboardStats) (activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers int64) {
+	if storageStats, err := c.storage.GetStats(ctx); err == nil {
+		activeUsers = storageStats.TotalUsers
+	} else {
+		stats.degrade("active_users", err)
+	}
+	thirtyDaysAgo := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	var auditErr error
+	_, auditCount, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{StartTime: &thirtyDaysAgo, Page: 1, PageSize: 1})
+	if auditErr != nil {
+		stats.degrade("audit_count", auditErr)
+	}
+	authAction := "auth.login"
+	_, auditLogins, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{StartTime: &thirtyDaysAgo, Action: &authAction, Page: 1, PageSize: 1})
+	if auditErr != nil {
+		stats.degrade("audit_logins", auditErr)
+	}
+	secretReadAction := "secret.read"
+	_, auditSecretReads, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{StartTime: &thirtyDaysAgo, Action: &secretReadAction, Page: 1, PageSize: 1})
+	if auditErr != nil {
+		stats.degrade("audit_secret_reads", auditErr)
+	}
+	twentyFourHoursAgo := time.Now().UTC().Add(-24 * time.Hour)
+	successFalse := false
+	_, failedAuth24h, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{StartTime: &twentyFourHoursAgo, Success: &successFalse, Page: 1, PageSize: 1})
+	if auditErr != nil {
+		stats.degrade("failed_auth_24h", auditErr)
+	}
+	inactiveCutoff := thirtyDaysAgo
+	_, inactiveUsers, auditErr = c.storage.ListUsers(ctx, &storage.UserFilter{InactiveSince: &inactiveCutoff, Page: 1, PageSize: 1})
+	if auditErr != nil {
+		stats.degrade("inactive_users", auditErr)
+	}
+	return
 }
 
 // GetActivityFeed returns a paginated, deployment-wide activity feed. userID is
