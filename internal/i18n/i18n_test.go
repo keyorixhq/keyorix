@@ -73,7 +73,7 @@ func TestGetLocalizer(t *testing.T) {
 
 	// Test panic when not initialized
 	defer func() {
-		if r := recover(); r == nil {
+		if recover() == nil {
 			t.Error("GetLocalizer() should panic when not initialized")
 		}
 	}()
@@ -205,7 +205,7 @@ func TestMustLocalize(t *testing.T) {
 
 	t.Run("non-existing message panics", func(t *testing.T) {
 		defer func() {
-			if r := recover(); r == nil {
+			if recover() == nil {
 				t.Error("MustLocalize() should panic for non-existing message")
 			}
 		}()
@@ -302,7 +302,7 @@ func TestMustTFunction(t *testing.T) {
 
 	t.Run("non-existing message panics", func(t *testing.T) {
 		defer func() {
-			if r := recover(); r == nil {
+			if recover() == nil {
 				t.Error("MustT() should panic for non-existing message")
 			}
 		}()

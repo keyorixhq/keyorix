@@ -30,7 +30,7 @@ func (f *fakeAzKV) GetSecret(_ context.Context, name, version string, _ *azsecre
 
 func azKVConnectorWith(name, vaultURL string, fake *fakeAzKV, allowed ...string) *AzureKeyVaultConnector {
 	c := NewAzureKeyVaultConnector(name, vaultURL, allowed)
-	c.newClient = func(_ context.Context) (azKVGetAPI, error) { return fake, nil }
+	c.newClient = func(_ context.Context) (azSecretGetter, error) { return fake, nil }
 	return c
 }
 

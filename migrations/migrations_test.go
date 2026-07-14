@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // registers the sqlite3 driver with database/sql
 )
 
 // openTestDB opens a fresh, file-backed (not shared in-memory) SQLite

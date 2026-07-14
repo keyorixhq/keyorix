@@ -486,7 +486,7 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 		if l.Status != "active" && l.Status != "revoke_failed" {
 			continue
 		}
-		if rerr := c.RevokeLease(ctx, l.LeaseID, userID, reason); rerr != nil {
+		if c.RevokeLease(ctx, l.LeaseID, userID, reason) != nil {
 			failed++
 		} else {
 			revoked++

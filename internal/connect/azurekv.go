@@ -15,9 +15,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 )
 
-// azKVGetAPI is the slice of the Key Vault secrets client the connector uses — an
+// azSecretGetter is the slice of the Key Vault secrets client the connector uses — an
 // interface seam so it is unit-tested with a fake and the SDK stays contained here.
-type azKVGetAPI interface {
+type azSecretGetter interface {
 	GetSecret(ctx context.Context, name, version string, options *azsecrets.GetSecretOptions) (azsecrets.GetSecretResponse, error)
 }
 
@@ -28,7 +28,7 @@ type AzureKeyVaultConnector struct {
 	allowedRefs []string
 	// newClient builds a Key Vault client for vaultURL; nil uses the real client with
 	// DefaultAzureCredential. Tests inject a fake.
-	newClient func(ctx context.Context) (azKVGetAPI, error)
+	newClient func(ctx context.Context) (azSecretGetter, error)
 }
 
 // NewAzureKeyVaultConnector builds an Azure Key Vault connector. vaultURL is the vault
@@ -42,7 +42,7 @@ func NewAzureKeyVaultConnector(name, vaultURL string, allowedRefs []string) *Azu
 func (c *AzureKeyVaultConnector) Name() string { return c.name }
 func (c *AzureKeyVaultConnector) Type() string { return "azure-key-vault" }
 
-func (c *AzureKeyVaultConnector) client(ctx context.Context) (azKVGetAPI, error) {
+func (c *AzureKeyVaultConnector) client(ctx context.Context) (azSecretGetter, error) {
 	if c.newClient != nil {
 		return c.newClient(ctx)
 	}

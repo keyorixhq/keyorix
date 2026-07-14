@@ -96,7 +96,7 @@ func subsample(data [][]float64, k int, rng *rand.Rand) [][]float64 {
 		k = n
 	}
 	for i := 0; i < k; i++ {
-		j := i + rng.Intn(n-i)
+		j := i + rng.Intn(n-i) // NOSONAR -- PRNG intentional for isolation forest ML algorithm
 		idx[i], idx[j] = idx[j], idx[i]
 	}
 	out := make([][]float64, k)
@@ -121,7 +121,7 @@ func buildITree(samples [][]float64, depth, heightLimit int, rng *rand.Rand) *iT
 	if !ok {
 		return &iTreeNode{external: true, size: len(samples)}
 	}
-	split := minV + rng.Float64()*(maxV-minV)
+	split := minV + rng.Float64()*(maxV-minV) // NOSONAR -- PRNG intentional for isolation forest ML algorithm
 
 	left := make([][]float64, 0, len(samples))
 	right := make([][]float64, 0, len(samples))
@@ -169,7 +169,7 @@ func pickSplitFeature(samples [][]float64, rng *rand.Rand) (feat int, minV, maxV
 	if len(varying) == 0 {
 		return 0, 0, 0, false
 	}
-	feat = varying[rng.Intn(len(varying))]
+	feat = varying[rng.Intn(len(varying))] // NOSONAR -- PRNG intentional for isolation forest ML algorithm
 	return feat, ranges[feat].lo, ranges[feat].hi, true
 }
 

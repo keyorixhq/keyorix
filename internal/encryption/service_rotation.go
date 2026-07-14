@@ -47,7 +47,7 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 			return fmt.Errorf("failed to begin transaction: %w", tx.Error)
 		}
 		defer func() {
-			if r := recover(); r != nil {
+			if recover() != nil {
 				tx.Rollback()
 			}
 		}()
@@ -119,7 +119,7 @@ func (s *Service) PreviewRotationSweep(db *gorm.DB) (*SweepResult, error) {
 	// Always rolled back — a dry run must never persist anything, no matter what.
 	defer tx.Rollback()
 	defer func() {
-		if r := recover(); r != nil {
+		if recover() != nil {
 			tx.Rollback()
 		}
 	}()
@@ -160,7 +160,7 @@ func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
 		return nil, fmt.Errorf("failed to begin transaction: %w", tx.Error)
 	}
 	defer func() {
-		if r := recover(); r != nil {
+		if recover() != nil {
 			tx.Rollback()
 		}
 	}()

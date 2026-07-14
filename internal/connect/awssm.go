@@ -15,9 +15,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 )
 
-// smGetAPI is the slice of the Secrets Manager client the connector uses — an
+// smSecretGetter is the slice of the Secrets Manager client the connector uses — an
 // interface seam so it is unit-tested with a fake and the SDK stays contained here.
-type smGetAPI interface {
+type smSecretGetter interface {
 	GetSecretValue(ctx context.Context, in *secretsmanager.GetSecretValueInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
 }
 
@@ -28,7 +28,7 @@ type AWSSecretsManagerConnector struct {
 	allowedRefs []string
 	// newClient builds an SM client for the region; nil uses the real AWS client
 	// (the standard credential chain). Tests inject a fake.
-	newClient func(ctx context.Context, region string) (smGetAPI, error)
+	newClient func(ctx context.Context, region string) (smSecretGetter, error)
 }
 
 // NewAWSSecretsManagerConnector builds an AWS Secrets Manager connector. allowedRefs,
@@ -41,7 +41,7 @@ func NewAWSSecretsManagerConnector(name, region string, allowedRefs []string) *A
 func (c *AWSSecretsManagerConnector) Name() string { return c.name }
 func (c *AWSSecretsManagerConnector) Type() string { return "aws-secrets-manager" }
 
-func (c *AWSSecretsManagerConnector) client(ctx context.Context) (smGetAPI, error) {
+func (c *AWSSecretsManagerConnector) client(ctx context.Context) (smSecretGetter, error) {
 	if c.newClient != nil {
 		return c.newClient(ctx, c.region)
 	}

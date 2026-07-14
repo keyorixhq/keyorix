@@ -25,7 +25,7 @@ func (f *fakeSTS) AssumeRole(_ context.Context, in *sts.AssumeRoleInput, _ ...fu
 }
 
 func newFakeSTSEngine(fake *fakeSTS) *AWSSTSEngine {
-	return &AWSSTSEngine{newClient: func(_ context.Context, _ string) (stsAssumeAPI, error) { return fake, nil }}
+	return &AWSSTSEngine{newClient: func(_ context.Context, _ string) (stsRoleAssumer, error) { return fake, nil }}
 }
 
 func TestAWSSTSEngine_Issue(t *testing.T) {

@@ -1349,7 +1349,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	<-ctx.Done()
 
 	// Graceful shutdown
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second) // NOSONAR
 	defer cancel()
 
 	log.Println("Shutting down HTTP server...")
@@ -1607,9 +1607,9 @@ func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig) (*tls.Con
 
 // resolveOutboundIP returns the machine's preferred outbound IP address.
 func resolveOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	conn, err := net.Dial("udp", "8.8.8.8:80") // NOSONAR -- well-known UDP probe target; no data is sent, used only to resolve the local outbound interface
 	if err != nil {
-		return "127.0.0.1"
+		return "127.0.0.1" // NOSONAR -- default bind address, not sensitive
 	}
 	defer conn.Close() //nolint:errcheck
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()

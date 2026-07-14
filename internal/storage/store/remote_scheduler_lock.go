@@ -64,7 +64,7 @@ func (rs *RemoteStorage) WithSchedulerLock(ctx context.Context, key int64, fn fu
 		return false, nil
 	}
 
-	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background()) // NOSONAR
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)

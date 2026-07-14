@@ -165,7 +165,7 @@ func blockedUnderImpersonation(fullMethod string) bool {
 // wrappedServerStream wraps grpc.ServerStream to override context
 type wrappedServerStream struct {
 	grpc.ServerStream
-	ctx context.Context
+	ctx context.Context // NOSONAR
 }
 
 func (w *wrappedServerStream) Context() context.Context {

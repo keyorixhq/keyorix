@@ -55,7 +55,7 @@ var explanations = []secretExplanation{
 		Example: "AWS_SECRET_ACCESS_KEY=os.getenv(\"AWS_SECRET_ACCESS_KEY\")",
 	},
 	{
-		KeyPattern:  "db_password",
+		KeyPattern:  "db_password", // NOSONAR
 		RiskLevel:   "HIGH",
 		RiskSummary: "Database password hardcoded in source code or config file",
 		Impact:      "Direct database access. An attacker can read, modify, or delete all data. Often reused across environments.",

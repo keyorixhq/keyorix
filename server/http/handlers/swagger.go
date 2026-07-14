@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	_ "embed"
+	_ "embed" // required for //go:embed directives in this file
 	"net/http"
 	"strings"
 )

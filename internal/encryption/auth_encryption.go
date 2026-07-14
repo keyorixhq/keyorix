@@ -58,7 +58,7 @@ func (ae *AuthEncryption) GetAuthEncryptionStatus() map[string]interface{} {
 }
 
 // ValidateEncryptedToken decrypts storedToken and compares to plainToken using constant-time compare.
-func (ae *AuthEncryption) ValidateEncryptedToken(encryptedToken []byte, metadata []byte, plainToken string) (bool, error) {
+func (ae *AuthEncryption) ValidateEncryptedToken(encryptedToken, metadata []byte, plainToken string) (bool, error) {
 	storedToken, err := ae.DecryptSessionToken(encryptedToken, metadata)
 	if err != nil {
 		return false, fmt.Errorf("failed to decrypt stored token: %w", err)
@@ -79,7 +79,7 @@ func (ae *AuthEncryption) EncryptClientSecret(plainSecret string) ([]byte, []byt
 }
 
 // DecryptClientSecret decrypts an API client secret.
-func (ae *AuthEncryption) DecryptClientSecret(encryptedData []byte, metadata []byte) (string, error) {
+func (ae *AuthEncryption) DecryptClientSecret(encryptedData, metadata []byte) (string, error) {
 	if !ae.service.IsEnabled() {
 		return string(encryptedData), nil
 	}
@@ -103,7 +103,7 @@ func (ae *AuthEncryption) EncryptSessionToken(plainToken string) ([]byte, []byte
 }
 
 // DecryptSessionToken decrypts a session token.
-func (ae *AuthEncryption) DecryptSessionToken(encryptedData []byte, metadata []byte) (string, error) {
+func (ae *AuthEncryption) DecryptSessionToken(encryptedData, metadata []byte) (string, error) {
 	if !ae.service.IsEnabled() {
 		return string(encryptedData), nil
 	}
@@ -127,7 +127,7 @@ func (ae *AuthEncryption) EncryptAPIToken(plainToken string) ([]byte, []byte, er
 }
 
 // DecryptAPIToken decrypts an API token.
-func (ae *AuthEncryption) DecryptAPIToken(encryptedData []byte, metadata []byte) (string, error) {
+func (ae *AuthEncryption) DecryptAPIToken(encryptedData, metadata []byte) (string, error) {
 	if !ae.service.IsEnabled() {
 		return string(encryptedData), nil
 	}
@@ -151,7 +151,7 @@ func (ae *AuthEncryption) EncryptPasswordResetToken(plainToken string) ([]byte, 
 }
 
 // DecryptPasswordResetToken decrypts a password reset token.
-func (ae *AuthEncryption) DecryptPasswordResetToken(encryptedData []byte, metadata []byte) (string, error) {
+func (ae *AuthEncryption) DecryptPasswordResetToken(encryptedData, metadata []byte) (string, error) {
 	if !ae.service.IsEnabled() {
 		return string(encryptedData), nil
 	}

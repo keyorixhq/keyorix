@@ -52,13 +52,13 @@ func SetSessionCookie(w http.ResponseWriter, token string, expiresAt *time.Time,
 	if expiresAt != nil {
 		cookie.Expires = *expiresAt
 	}
-	http.SetCookie(w, cookie)
+	http.SetCookie(w, cookie) // NOSONAR -- Secure flag comes from runtime TLS config
 }
 
 // ClearSessionCookie expires the session cookie immediately (logout, or the
 // gone-original-session case when ending impersonation).
 func ClearSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is threaded from cfg.Server.HTTP.TLS.Enabled; hardcoding true would break local HTTP dev
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is threaded from cfg.Server.HTTP.TLS.Enabled; hardcoding true would break local HTTP dev NOSONAR
 		Name:     SessionCookieName,
 		Value:    "",
 		Path:     "/",
@@ -75,7 +75,7 @@ func ClearSessionCookie(w http.ResponseWriter, secure bool) {
 // custom header on a request to this origin (no third-party origin is
 // allowlisted by this app's CORS config), not from the cookie being secret.
 func SetCSRFCookie(w http.ResponseWriter, token string, secure bool) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly:false is intentional (double-submit pattern requires JS to read it); Secure is threaded from cfg.Server.HTTP.TLS.Enabled
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly:false is intentional (double-submit pattern requires JS to read it); Secure is threaded from cfg.Server.HTTP.TLS.Enabled NOSONAR
 		Name:     CSRFCookieName,
 		Value:    token,
 		Path:     "/",
@@ -87,7 +87,7 @@ func SetCSRFCookie(w http.ResponseWriter, token string, secure bool) {
 
 // ClearCSRFCookie expires the CSRF cookie (logout).
 func ClearCSRFCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly:false is intentional (double-submit pattern requires JS to read it); Secure is threaded from cfg.Server.HTTP.TLS.Enabled
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly:false is intentional (double-submit pattern requires JS to read it); Secure is threaded from cfg.Server.HTTP.TLS.Enabled NOSONAR
 		Name:     CSRFCookieName,
 		Value:    "",
 		Path:     "/",
