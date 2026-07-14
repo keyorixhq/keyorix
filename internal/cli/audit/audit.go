@@ -347,20 +347,40 @@ consumption use 'keyorix audit export' (NDJSON) instead. Requires audit.read.`,
 }
 
 func runLogsQuery() error {
+	q, err := buildAuditLogQuery()
+	if err != nil {
+		return err
+	}
+	c, err := client()
+	if err != nil {
+		return err
+	}
+	var page logsPage
+	if err := c.Get(context.Background(), "/api/v1/audit/logs?"+q.Encode(), &page); err != nil {
+		return err
+	}
+	if len(page.Logs) == 0 {
+		fmt.Println("No audit events match.")
+		return nil
+	}
+	printAuditLogTable(page.Logs, page.Total)
+	return nil
+}
+
+func buildAuditLogQuery() (url.Values, error) {
 	if logLimit < 1 || logLimit > 100 {
-		return fmt.Errorf("--limit must be between 1 and 100")
+		return nil, fmt.Errorf("--limit must be between 1 and 100")
 	}
 	for label, v := range map[string]string{"--since": flagSince, "--until": logUntil} {
 		if v != "" {
 			if _, err := time.Parse(time.RFC3339, v); err != nil {
-				return fmt.Errorf("invalid %s %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", label, v, err)
+				return nil, fmt.Errorf("invalid %s %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", label, v, err)
 			}
 		}
 	}
 	if logActorType != "" && logActorType != "user" && logActorType != "machine_identity" && logActorType != "system" {
-		return fmt.Errorf("--actor-type must be user, machine_identity, or system")
+		return nil, fmt.Errorf("--actor-type must be user, machine_identity, or system")
 	}
-
 	q := url.Values{}
 	q.Set("page_size", strconv.Itoa(logLimit))
 	if logEventType != "" {
@@ -381,21 +401,12 @@ func runLogsQuery() error {
 	if logUntil != "" {
 		q.Set("end_time", logUntil)
 	}
+	return q, nil
+}
 
-	c, err := client()
-	if err != nil {
-		return err
-	}
-	var page logsPage
-	if err := c.Get(context.Background(), "/api/v1/audit/logs?"+q.Encode(), &page); err != nil {
-		return err
-	}
-	if len(page.Logs) == 0 {
-		fmt.Println("No audit events match.")
-		return nil
-	}
+func printAuditLogTable(logs []logEntry, total int64) {
 	fmt.Printf("%-6s %-20s %-16s %-9s %-22s %s\n", "ID", "TIME", "ACTOR", "KIND", "EVENT", "DESCRIPTION")
-	for _, e := range page.Logs {
+	for _, e := range logs {
 		actor := e.Actor
 		if e.Impersonation && e.ImpersonatedBy != "" {
 			actor = e.ImpersonatedBy + "→" + e.Actor
@@ -403,8 +414,7 @@ func runLogsQuery() error {
 		fmt.Printf("%-6d %-20s %-16s %-9s %-22s %s\n",
 			e.ID, shortTime(e.Timestamp), truncate(actor, 16), e.ActorType, truncate(e.EventType, 22), e.Description)
 	}
-	fmt.Printf("\nShowing %d of %d total event(s).\n", len(page.Logs), page.Total)
-	return nil
+	fmt.Printf("\nShowing %d of %d total event(s).\n", len(logs), total)
 }
 
 // shortTime renders an RFC3339 timestamp as "2006-01-02 15:04:05" (UTC), or the

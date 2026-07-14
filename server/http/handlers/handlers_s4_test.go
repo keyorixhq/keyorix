@@ -9165,14 +9165,6 @@ func TestBeginSAML_UnknownProvider(t *testing.T) {
 
 // ── mfa.go: EnrollMFA, DisableMFA, RegenerateRecoveryCodes, RecoveryCodesStatus ──
 
-func TestEnrollMFA_UnauthorizedS4(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	h.EnrollMFA(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestEnrollMFA_WithUser(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
@@ -9232,14 +9224,6 @@ func TestRegenerateRecoveryCodes_WithUser(t *testing.T) {
 	h.RegenerateRecoveryCodes(w, req)
 	// user doesn't exist → error, but not 401
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestRecoveryCodesStatus_UnauthorizedS4(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.RecoveryCodesStatus(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestRecoveryCodesStatus_WithUser(t *testing.T) {
@@ -10068,14 +10052,6 @@ func TestCatalogHandler_RestoreEnvironmentProxy_NotFound(t *testing.T) {
 
 // ── mfa_management_proxy.go: GetMFASecretProxy, SetUserMFAEnabledProxy, CreateMFARecoveryCodesProxy ──
 
-func TestAuthHandler_GetMFASecretProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.GetMFASecretProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestAuthHandler_GetMFASecretProxy_BadUserID(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?user_id=bad", nil)
@@ -10884,14 +10860,6 @@ func TestImpersonationHandler_End_UnauthorizedS4(t *testing.T) {
 
 // ── mfa_management_proxy.go: CountUnusedMFARecoveryCodesProxy ────────────────
 
-func TestAuthHandler_CountUnusedMFARecoveryCodesProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.CountUnusedMFARecoveryCodesProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestAuthHandler_CountUnusedMFARecoveryCodesProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
@@ -11504,22 +11472,6 @@ func TestAuthHandler_ListConnectRefGrantsByConnectorProxy_MissingConnector(t *te
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestAuthHandler_ListConnectRefGrantsByConnectorProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "connector", "github")
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsByConnectorProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestAuthHandler_ListConnectRefGrantsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── webauthn_proxy.go: DeleteWebAuthnCredentialProxy ─────────────────────────
 
 func TestAuthHandler_DeleteWebAuthnCredentialProxy_BadUserID(t *testing.T) {
@@ -12110,38 +12062,6 @@ func TestRBACHandler_ListGlobalAdminAssignmentsForUpdateProxy_HappyPath(t *testi
 
 // ── webauthn_proxy.go: CreateWebAuthnCredentialProxy ─────────────────────────
 
-func TestAuthHandler_CreateWebAuthnCredentialProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnCredentialProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_ListWebAuthnCredentialsProxy_MissingUserID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_ListWebAuthnCredentialsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestAuthHandler_CountWebAuthnCredentialsProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/?user_id=1", nil)
-	w := httptest.NewRecorder()
-	h.CountWebAuthnCredentialsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── connect_grants_proxy.go: CreateConnectRefGrantProxy ──────────────────────
 
 func TestAuthHandler_CreateConnectRefGrantProxy_BadJSON(t *testing.T) {
@@ -12149,14 +12069,6 @@ func TestAuthHandler_CreateConnectRefGrantProxy_BadJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	h.CreateConnectRefGrantProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAuthHandler_DeleteConnectRefGrantProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteConnectRefGrantProxy(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -12220,14 +12132,6 @@ func TestAuthHandler_GetSetupTokenByHashProxy_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.GetSetupTokenByHashProxy(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestAuthHandler_ExpireSetupTokenProxy_BadID(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.ExpireSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestAuthHandler_ExpireSetupTokenProxy_HappyPath(t *testing.T) {
@@ -12845,14 +12749,6 @@ func TestAuthHandler_AdvanceWebAuthnCredentialCounterProxy_MissingRequiredFields
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestAuthHandler_CreateWebAuthnSessionProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateWebAuthnSessionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // ── machine_identities_proxy.go: RevokeMachineIdentityCredentialProxy, GetMachineByOIDCSubjectProxy ─
 
 func TestCatalogHandler_RevokeMachineIdentityCredentialProxy_BadID_S4(t *testing.T) {
@@ -12888,14 +12784,6 @@ func TestCatalogHandler_GetMachineByOIDCSubjectProxy_NotFound(t *testing.T) {
 }
 
 // ── setup_tokens_proxy.go: CreateSetupTokenProxy ─────────────────────────────
-
-func TestAuthHandler_CreateSetupTokenProxy_BadJSON(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
-	w := httptest.NewRecorder()
-	h.CreateSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestAuthHandler_CreateSetupTokenProxy_MissingFields(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)

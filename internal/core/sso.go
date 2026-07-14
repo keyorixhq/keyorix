@@ -652,18 +652,18 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 	// the point, since authorization here is rooted in the admin-configured
 	// GroupRoleMap and the verified IdP assertion, not in the user's own
 	// roles.assign-derived authority.
-	added, removed, blocked := 0, 0, 0
+	counts := &ssoRoleCounters{}
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
 		if rerr != nil {
 			continue // unknown role — skip rather than fail the login
 		}
-		c.applySSOManagedRole(ctx, userID, r, role, desiredRoles, currentSet, &added, &removed, &blocked)
+		c.applySSOManagedRole(ctx, userID, r, role, desiredRoles, currentSet, counts)
 	}
-	if added > 0 || removed > 0 || blocked > 0 {
-		msg := fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, added, removed)
-		if blocked > 0 {
-			msg += fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", blocked)
+	if counts.added > 0 || counts.removed > 0 || counts.blocked > 0 {
+		msg := fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, counts.added, counts.removed)
+		if counts.blocked > 0 {
+			msg += fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", counts.blocked)
 		}
 		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil, msg)
 	}
@@ -685,7 +685,11 @@ func buildSSORoleMaps(p *SSOProvider, assertedSet map[string]bool) (desiredRoles
 	return desiredRoles, managedRoles
 }
 
-func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *models.Role, role string, desired, current map[string]bool, added, removed, blocked *int) {
+type ssoRoleCounters struct {
+	added, removed, blocked int
+}
+
+func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *models.Role, role string, desired, current map[string]bool, counts *ssoRoleCounters) {
 	switch {
 	case desired[role] && !current[role]:
 		// Refuse to grant an admin-tier role from an IdP group mapping (#96) —
@@ -693,15 +697,15 @@ func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *m
 		// frequently self-service, so a mapping intended for a routine role must not
 		// double as a path to global admin for anyone who can join the group.
 		if isAdminRoleName(role) {
-			*blocked++
+			counts.blocked++
 			return
 		}
 		if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
-			*added++
+			counts.added++
 		}
 	case !desired[role] && current[role]:
 		if c.RemoveUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
-			*removed++
+			counts.removed++
 		}
 	}
 }

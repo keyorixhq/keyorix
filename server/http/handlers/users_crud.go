@@ -96,7 +96,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		h.createUserWithSetupLink(w, r, req, userCtx.UserID)
 		return
 	}
-	h.createUserClassic(w, r, req, userCtx, body.Password, body.Role, body.ProjectAssignments, hasAssignments)
+	h.createUserClassic(w, r, req, userCtx, body.Password, body.Role, body.ProjectAssignments)
 }
 
 type projectAssignmentBody struct {
@@ -152,12 +152,12 @@ func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Req
 	}, i18n.T("SuccessUserCreated", nil))
 }
 
-func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, userCtx *middleware.UserContext, password, role string, projAssignments []projectAssignmentBody, hasAssignments bool) {
+func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, userCtx *middleware.UserContext, password, role string, projAssignments []projectAssignmentBody) {
 	if password == "" {
 		sendError(w, "ValidationError", "Password is required unless deliver_setup_link or generate_one_time_password is set", http.StatusBadRequest, nil)
 		return
 	}
-	if hasAssignments {
+	if role != "" || len(projAssignments) > 0 {
 		if err := h.authorizeUserCreationAssignments(r.Context(), userCtx, role, projAssignments); err != nil {
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
@@ -165,7 +165,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 	}
 	var created *models.User
 	var err error
-	if hasAssignments {
+	if role != "" || len(projAssignments) > 0 {
 		assignments := make([]core.ProjectAssignment, 0, len(projAssignments))
 		for _, a := range projAssignments {
 			assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})

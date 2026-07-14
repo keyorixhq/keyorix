@@ -45,6 +45,8 @@ const (
 const (
 	invitationTTL    = 14 * 24 * time.Hour
 	accessRequestTTL = 7 * 24 * time.Hour
+
+	eventInvitationRaceRevokeFailed = "invitation.accept_race_revoke_failed" // #nosec G101 -- audit event type, not a credential
 )
 
 // ── Invitations ────────────────────────────────────────────────────────────
@@ -317,7 +319,7 @@ func (c *KeyorixCore) revokeInvitationGrants(ctx context.Context, inv *models.Pr
 	}
 	// Project-scoped invite: revert the single project membership/role.
 	if err := c.RemoveProjectMember(ctx, 0, inv.ProjectID, userID); err != nil {
-		c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, inv.ProjectID,
+		c.auditProjectScoped(ctx, eventInvitationRaceRevokeFailed, userID, inv.ProjectID,
 			fmt.Sprintf("failed to revert project role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.Role, userID, inv.ID, err))
 	}
 }
@@ -331,7 +333,7 @@ func (c *KeyorixCore) revokeSystemRoleGrant(ctx context.Context, inv *models.Pro
 		return
 	}
 	if err := c.RemoveUserRole(ctx, 0, userID, role.ID, Scope{ProjectID: 0}); err != nil {
-		c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, 0,
+		c.auditProjectScoped(ctx, eventInvitationRaceRevokeFailed, userID, 0,
 			fmt.Sprintf("failed to revert system role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.SystemRole, userID, inv.ID, err))
 	}
 }
@@ -346,7 +348,7 @@ func (c *KeyorixCore) revokeAssignmentGrants(ctx context.Context, inv *models.Pr
 	}
 	for _, a := range assignments {
 		if err := c.RemoveProjectMember(ctx, 0, a.ProjectID, userID); err != nil {
-			c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, a.ProjectID,
+			c.auditProjectScoped(ctx, eventInvitationRaceRevokeFailed, userID, a.ProjectID,
 				fmt.Sprintf("failed to revert project assignment %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", a.Role, userID, inv.ID, err))
 		}
 	}
@@ -620,7 +622,7 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 		return c.recordPartialApproval(ctx, req, requestID, approverID, received, required)
 	}
 	// Threshold reached — grant the role and finalize.
-	return c.finalizeAccessRequestApproval(ctx, req, requestID, approverID, role, roleModel, grantTTL, received, required)
+	return c.finalizeAccessRequestApproval(ctx, req, approverID, roleModel, grantTTL, received, required)
 }
 
 // resolveApprovalRole determines the role string to grant for an approval, enforcing
@@ -674,12 +676,12 @@ func (c *KeyorixCore) recordPartialApproval(ctx context.Context, req *models.Acc
 // finalizeAccessRequestApproval handles the threshold-reached path: grants the role,
 // records the approval, and updates the request state atomically. On a concurrent
 // write race (!ok) the grant is reverted and the caller receives an error.
-func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *models.AccessRequest, requestID, approverID uint, role string, roleModel *models.Role, grantTTL time.Duration, received, required int) (*models.AccessRequest, error) {
+func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *models.AccessRequest, approverID uint, roleModel *models.Role, grantTTL time.Duration, received, required int) (*models.AccessRequest, error) {
 	now := c.now()
 	scope := storage.Scope{ProjectID: req.ProjectID}
 	// Grant the role FIRST so that a grant failure leaves the approval unrecorded
 	// (retryable) rather than stuck above-threshold-but-ungranted.
-	grantDesc := role
+	grantDesc := roleModel.Name
 	if grantTTL > 0 {
 		expiresAt := now.Add(grantTTL)
 		// Routed through the audited wrapper so this grant lands in the RBAC audit
@@ -688,19 +690,19 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
-		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", role, expiresAt.UTC().Format(time.RFC3339), grantTTL)
+		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", roleModel.Name, expiresAt.UTC().Format(time.RFC3339), grantTTL)
 	} else {
 		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 	}
 	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-		RequestID: requestID, ApproverID: approverID, CreatedAt: now,
+		RequestID: req.ID, ApproverID: approverID, CreatedAt: now,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to record approval: %w", err)
 	}
 	req.State = AccessRequestApproved
-	req.GrantedRole = role
+	req.GrantedRole = roleModel.Name
 	req.ResolvedBy = approverID
 	req.ResolvedAt = &now
 	ok, err := c.storage.UpdateAccessRequest(ctx, req)
@@ -715,10 +717,10 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 		// fail closed rather than reporting success with a stale/contradictory state.
 		if rerr := c.RemoveUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); rerr != nil {
 			c.auditProjectScoped(ctx, "access_request.approval_race_revoke_failed", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d was concurrently withdrawn/rejected after granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, role, req.UserID, rerr))
+				fmt.Sprintf("access request %d was concurrently withdrawn/rejected after granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, roleModel.Name, req.UserID, rerr))
 		} else {
 			c.auditProjectScoped(ctx, "access_request.approval_race_reverted", approverID, req.ProjectID,
-				fmt.Sprintf("access request %d was concurrently withdrawn/rejected; reverted the %s grant just made to user %d", req.ID, role, req.UserID))
+				fmt.Sprintf("access request %d was concurrently withdrawn/rejected; reverted the %s grant just made to user %d", req.ID, roleModel.Name, req.UserID))
 		}
 		return nil, fmt.Errorf("access request was concurrently withdrawn or resolved; the role grant was reverted")
 	}

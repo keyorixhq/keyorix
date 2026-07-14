@@ -389,6 +389,10 @@ func streamBundleComponents(tr *tar.Reader, pinned map[string]Component, dest st
 		}
 		seen[name] = true
 	}
+	return checkAllComponentsSeen(pinned, seen)
+}
+
+func checkAllComponentsSeen(pinned map[string]Component, seen map[string]bool) error {
 	for p := range pinned {
 		if !seen[p] {
 			return fmt.Errorf("%w: %s", ErrMissingComponent, p)
