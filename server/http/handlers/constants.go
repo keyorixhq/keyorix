@@ -13,7 +13,7 @@ const (
 	errInvalidBody = "invalid request body"
 	errInvalidCampaignID = "Invalid campaign ID"
 	errInvalidCampaignIDLower = "invalid campaign id"
-	errInvalidCredentialID = "invalid credential id"
+	errInvalidCredentialID = "invalid credential id" // #nosec G101 -- error message string, not a hardcoded credential
 	errInvalidEnvIDField = "Invalid environment_id"
 	errInvalidEnvironmentID = "invalid environment ID"
 	errInvalidGroupID = "Invalid group ID"
@@ -47,7 +47,7 @@ const (
 	errUserContext = "User context not found"
 	errUserHandlerNotInit = "User handler not initialised"
 	errUserNotFound = "User not found"
-	errWebAuthnCredNotFound = "webauthn credential not found"
+	errWebAuthnCredNotFound = "webauthn credential not found" // #nosec G101 -- error message string, not a hardcoded credential
 	hdrUserAgent = "User-Agent"
 	permSecretsRead = "secrets.read"
 	permSecretsWrite = "secrets.write"

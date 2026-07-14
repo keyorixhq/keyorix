@@ -2,7 +2,7 @@ package store
 
 const (
 	apiAuditEventsPath = "/api/v1/audit/events"
-	apiSecretsPath = "/api/v1/secrets"
+	apiSecretsPath = "/api/v1/secrets" // #nosec G101 -- API path constant, not a hardcoded credential
 	apiUsersPath = "/api/v1/users"
 	sqlIncrReadCount = "read_count + 1"
 	sqlJoinGroups = "JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL"
@@ -16,9 +16,9 @@ const (
 	sqlWhereGroupRoleEnv = "group_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?"
 	sqlWhereID = "id = ?"
 	sqlWhereIDsDeletedBefore = "id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?"
-	sqlWhereIsSecret = "s.is_secret = ?"
+	sqlWhereIsSecret = "s.is_secret = ?" // #nosec G101 -- SQL predicate fragment, not a hardcoded credential
 	sqlWhereProjectID = "project_id = ?"
-	sqlWhereSecretNodeID = "secret_node_id = ?"
+	sqlWhereSecretNodeID = "secret_node_id = ?" // #nosec G101 -- SQL predicate fragment, not a hardcoded credential
 	sqlWhereShareActive = "secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL"
 	sqlWhereUGUserID = "user_groups.user_id = ?"
 	sqlWhereURNotExpired = "user_roles.expires_at IS NULL OR user_roles.expires_at > ?"
