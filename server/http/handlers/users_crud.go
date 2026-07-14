@@ -197,12 +197,12 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 func (h *UserHandler) authorizeUserCreationAssignments(ctx context.Context, userCtx *middleware.UserContext, role string, projAssignments []projectAssignmentBody) error {
 	if role != "" {
 		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
-			return fmt.Errorf("You may not assign a system role")
+			return fmt.Errorf("you may not assign a system role")
 		}
 	}
 	for _, a := range projAssignments {
 		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
-			return fmt.Errorf("You may not assign roles in the target project")
+			return fmt.Errorf("you may not assign roles in the target project")
 		}
 	}
 	return nil
