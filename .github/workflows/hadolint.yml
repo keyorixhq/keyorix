@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
 
       - name: Run hadolint on all Dockerfiles
-        uses: hadolint/hadolint-action@f988afea3da57ee48710a9795b6bb677cc901183
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5
         with:
           recursive: true
           format: sarif
