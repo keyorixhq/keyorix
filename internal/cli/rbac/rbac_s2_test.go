@@ -101,13 +101,6 @@ func TestListRoles_EmbeddedMode_Empty(t *testing.T) {
 
 // TestListRoles_EmbeddedMode_WithRoles verifies the listing path when roles exist.
 // We seed the DB with a minimal config and rely on core bootstrap seeding default roles.
-func TestListRoles_EmbeddedMode_MultipleRoles(t *testing.T) {
-	setupEmbeddedMode(t)
-	// Roles are seeded by BootstrapSystem; without it, ListRoles returns empty.
-	// Either branch is exercised.
-	err := runListRoles(nil, nil)
-	_ = err
-}
 
 // ──────────────────────────── runListUserRoles embedded ──────────────────────
 
@@ -125,16 +118,6 @@ func TestListUserRoles_EmbeddedMode_UserNotFound(t *testing.T) {
 
 // TestListUserRoles_EmbeddedMode_Empty verifies the "no roles assigned" branch
 // is reachable (user exists but has no roles).
-func TestListUserRoles_EmbeddedMode_NoRoles(t *testing.T) {
-	setupEmbeddedMode(t)
-
-	origU := listUserEmail
-	defer func() { listUserEmail = origU }()
-	listUserEmail = "someone@example.com" // user doesn't exist → service error
-
-	err := runListUserRoles(nil, nil)
-	_ = err
-}
 
 // ──────────────────────────── runListPermissions embedded ────────────────────
 
@@ -151,16 +134,6 @@ func TestListPermissions_EmbeddedMode_UserNotFound(t *testing.T) {
 
 // TestListPermissions_EmbeddedMode_NoPermissions exercises the "No permissions found"
 // branch — reachable when the user exists but has no roles/permissions.
-func TestListPermissions_EmbeddedMode_NoPermissions(t *testing.T) {
-	setupEmbeddedMode(t)
-
-	origU := listPermissionsUserEmail
-	defer func() { listPermissionsUserEmail = origU }()
-	listPermissionsUserEmail = "someone@example.com"
-
-	err := runListPermissions(nil, nil)
-	_ = err
-}
 
 // ──────────────────────────── runCheckPermission embedded ────────────────────
 

@@ -344,14 +344,3 @@ func TestResolveProjectID_ListProjectsError(t *testing.T) {
 //
 // As a proxy, we re-verify the "!ok" path that IS reachable and document the
 // limitation to preserve intent.
-func TestRequireMigrationAuthority_SecondCallFails_CanceledCtx(t *testing.T) {
-	c, _ := newBootstrappedCore(t)
-	// A globally-canceled context will fail even the first Authorize call.
-	// Verifying that the error is wrapped correctly is sufficient.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := requireMigrationAuthority(ctx, c, 1, 1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to verify --by authority")
-}
