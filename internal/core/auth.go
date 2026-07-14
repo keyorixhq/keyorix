@@ -41,7 +41,7 @@ type LoginRequest struct {
 // dummyBcryptHash is a fixed bcrypt hash (DefaultCost) used to equalize the timing of
 // the user-not-found login path with the wrong-password path, so /auth/login can't be
 // used as a username-existence oracle. Computed once at package load.
-var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("keyorix-login-timing-equalizer"), bcrypt.DefaultCost)
+var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("keyorix-login-timing-equalizer"), bcrypt.DefaultCost) // NOSONAR -- not a credential; this is a timing-equalization sentinel to prevent username-existence oracle attacks
 
 // RemoteLoginVerifier is implemented by storage backends that cannot themselves
 // supply a real password hash for VerifyPasswordCredentials to compare against

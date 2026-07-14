@@ -331,7 +331,7 @@ func TestAWSSTSEngine_Issue_ExternalID(t *testing.T) {
 
 func TestAWSSTSEngine_Issue_ClientError(t *testing.T) {
 	eng := &AWSSTSEngine{
-		newClient: func(_ context.Context, _ string) (stsAssumeAPI, error) {
+		newClient: func(_ context.Context, _ string) (stsRoleAssumer, error) {
 			return nil, fmt.Errorf("cannot build STS client")
 		},
 	}

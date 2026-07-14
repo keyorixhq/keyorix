@@ -84,8 +84,8 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 		// updating the row that won the race, preserving CreateShareRecord's upsert
 		// contract instead of surfacing a raw constraint error to the caller.
 		if isUniqueConstraintErr(err) {
-			if rerr := ls.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
-				share.SecretID, share.RecipientID, share.IsGroup).First(&existing).Error; rerr == nil {
+			if ls.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
+				share.SecretID, share.RecipientID, share.IsGroup).First(&existing).Error == nil {
 				existing.Permission = share.Permission
 				existing.UpdatedAt = time.Now()
 				if serr := ls.db.Save(&existing).Error; serr != nil {

@@ -45,9 +45,9 @@ import (
 // stsMinDurationSeconds is the AWS AssumeRole minimum (15 minutes).
 const stsMinDurationSeconds int32 = 900
 
-// stsAssumeAPI is the slice of the STS client the engine uses — an interface seam so
+// stsRoleAssumer is the slice of the STS client the engine uses — an interface seam so
 // the engine is unit-tested with a fake and the SDK stays contained here.
-type stsAssumeAPI interface {
+type stsRoleAssumer interface {
 	AssumeRole(ctx context.Context, in *sts.AssumeRoleInput, optFns ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
 }
 
@@ -55,7 +55,7 @@ type stsAssumeAPI interface {
 type AWSSTSEngine struct {
 	// newClient builds an STS client for a region; nil uses the real AWS client
 	// (the standard credential chain). Tests inject a fake.
-	newClient func(ctx context.Context, region string) (stsAssumeAPI, error)
+	newClient func(ctx context.Context, region string) (stsRoleAssumer, error)
 }
 
 func (e *AWSSTSEngine) BackendType() string        { return "aws-sts" }
@@ -69,7 +69,7 @@ type awsSTSConfig struct {
 	DurationSeconds int32  `json:"duration_seconds,omitempty"`
 }
 
-func (e *AWSSTSEngine) client(ctx context.Context, region string) (stsAssumeAPI, error) {
+func (e *AWSSTSEngine) client(ctx context.Context, region string) (stsRoleAssumer, error) {
 	if e.newClient != nil {
 		return e.newClient(ctx, region)
 	}

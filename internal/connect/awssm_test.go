@@ -25,7 +25,7 @@ func (f *fakeSM) GetSecretValue(_ context.Context, in *secretsmanager.GetSecretV
 
 func connectorWith(name string, fake *fakeSM) *AWSSecretsManagerConnector {
 	c := NewAWSSecretsManagerConnector(name, "eu-west-1", nil)
-	c.newClient = func(_ context.Context, _ string) (smGetAPI, error) { return fake, nil }
+	c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) { return fake, nil }
 	return c
 }
 
@@ -38,7 +38,7 @@ func TestAWSSM_TypeAndName(t *testing.T) {
 func TestAWSSM_AllowedRefsGuardrail(t *testing.T) {
 	fake := &fakeSM{out: &secretsmanager.GetSecretValueOutput{SecretString: aws.String("ok")}}
 	c := NewAWSSecretsManagerConnector("aws", "eu-west-1", []string{"keyorix/", "shared/"})
-	c.newClient = func(_ context.Context, _ string) (smGetAPI, error) { return fake, nil }
+	c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) { return fake, nil }
 
 	// A ref matching an allowed prefix passes.
 	val, err := c.GetSecret(context.Background(), "keyorix/prod/db")

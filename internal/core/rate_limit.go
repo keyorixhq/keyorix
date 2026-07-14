@@ -102,7 +102,7 @@ func (c *KeyorixCore) PruneLoginAttempts(ctx context.Context) (int64, error) {
 // rate-limiting of any kind before this; composing the key this way (rather
 // than a second table/migration) matches the codebase's existing convention
 // for "per-IP request budget" and needs no schema change.
-const passwordResetRateLimitPrefix = "pwreset:"
+const passwordResetRateLimitPrefix = "pwreset:" // NOSONAR
 
 const (
 	// PasswordResetMaxAttempts is the request budget per IP within

@@ -66,10 +66,10 @@ func TestIsolationForestDeterministic(t *testing.T) {
 }
 
 func TestIsolationForestTooLittleData(t *testing.T) {
-	if f := newIsolationForest([][]float64{{1, 2, 3}}, 100, 256, rand.New(rand.NewSource(1))); f != nil {
+	if newIsolationForest([][]float64{{1, 2, 3}}, 100, 256, rand.New(rand.NewSource(1))) != nil {
 		t.Fatal("a single-row dataset should yield no forest")
 	}
-	if f := newIsolationForest(nil, 100, 256, rand.New(rand.NewSource(1))); f != nil {
+	if newIsolationForest(nil, 100, 256, rand.New(rand.NewSource(1))) != nil {
 		t.Fatal("empty data should yield no forest")
 	}
 }

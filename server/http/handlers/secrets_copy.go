@@ -66,7 +66,7 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
 			status = http.StatusForbidden
 		default:
-			log.Printf("Error copying secret %d to environment %d: %v", id, reqBody.EnvironmentID, err)
+			log.Printf("Error copying secret %d to environment %d: %v", id, reqBody.EnvironmentID, err) // NOSONAR
 			msg = clientSafe(err)
 		}
 		h.sendError(w, "Error", msg, status, nil)

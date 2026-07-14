@@ -506,7 +506,7 @@ func streamComponent(tr io.Reader, comp Component, destDir string) error {
 		removeBundleTemp(tmpPath)
 		return fmt.Errorf("%w: %s (size %d, want %d)", ErrDigestMismatch, comp.Path, n, comp.Size)
 	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != comp.SHA256 {
+	if hex.EncodeToString(h.Sum(nil)) != comp.SHA256 {
 		removeBundleTemp(tmpPath)
 		return fmt.Errorf("%w: %s", ErrDigestMismatch, comp.Path)
 	}

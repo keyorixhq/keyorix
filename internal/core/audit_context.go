@@ -66,7 +66,7 @@ func impersonatorFromContext(ctx context.Context) (uint, bool) {
 // impersonation tag from parent. Audit writes run in goroutines that must
 // outlive the request, but still need to record the impersonating admin.
 func DetachedAuditContext(parent context.Context) context.Context {
-	ctx := context.Background()
+	ctx := context.Background() // NOSONAR
 	if adminID, ok := impersonatorFromContext(parent); ok {
 		ctx = WithImpersonation(ctx, adminID)
 	}
