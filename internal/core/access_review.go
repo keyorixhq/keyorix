@@ -149,7 +149,6 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 	if projectID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
-
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -165,156 +164,20 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 	}
 	assignments = append(assignments, machineAssignments...)
 
-	type roleInfo struct{ name, action string }
-	roleCache := map[uint]roleInfo{}
-	resolveRole := func(roleID uint) (roleInfo, error) {
-		if ri, ok := roleCache[roleID]; ok {
-			return ri, nil
-		}
-		perms, err := c.storage.GetRolePermissions(ctx, roleID)
-		if err != nil {
-			return roleInfo{}, err
-		}
-		ri := roleInfo{action: highestSecretsAction(perms)}
-		if role, err := c.storage.GetRole(ctx, roleID); err == nil && role != nil {
-			ri.name = role.Name
-		}
-		roleCache[roleID] = ri
-		return ri, nil
-	}
-
-	userCache := map[uint][2]string{} // id -> {name, email}
-	resolveUser := func(id uint) (string, string) {
-		if ne, ok := userCache[id]; ok {
-			return ne[0], ne[1]
-		}
-		ne := [2]string{}
-		if u, err := c.storage.GetUser(ctx, id); err == nil && u != nil {
-			ne = [2]string{u.Username, u.Email}
-		}
-		userCache[id] = ne
-		return ne[0], ne[1]
-	}
-	groupCache := map[uint]string{}
-	resolveGroup := func(id uint) string {
-		if n, ok := groupCache[id]; ok {
-			return n
-		}
-		n := ""
-		if g, err := c.storage.GetGroup(ctx, id); err == nil && g != nil {
-			n = g.Name
-		}
-		groupCache[id] = n
-		return n
-	}
-	machineCache := map[uint]string{}
-	resolveMachine := func(id uint) string {
-		if n, ok := machineCache[id]; ok {
-			return n
-		}
-		n := ""
-		if m, err := c.storage.GetMachineIdentity(ctx, id); err == nil && m != nil {
-			n = m.Name
-		}
-		machineCache[id] = n
-		return n
-	}
-
+	res := newAccessReviewResolver(c.storage)
 	report := &AccessReviewReport{}
 	var entries []*AccessReviewEntry
 
-	// (1) Role-based standing access — project-scoped role grants whose role confers
-	// a secrets.* permission. Applies project-wide (no specific secret).
-	for _, a := range assignments {
-		ri, err := resolveRole(a.RoleID)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-		}
-		if ri.action == "" {
-			continue // role grants no secret access — not a secret-access reviewer
-		}
-		entry := &AccessReviewEntry{
-			PrincipalType: a.PrincipalType,
-			PrincipalID:   a.PrincipalID,
-			Source:        "role",
-			RoleID:        a.RoleID,
-			RoleName:      ri.name,
-			AccessLevel:   ri.action,
-			EnvironmentID: a.EnvironmentID,
-		}
-		switch a.PrincipalType {
-		case "group":
-			entry.PrincipalName = resolveGroup(a.PrincipalID)
-		case "machine":
-			entry.PrincipalName = resolveMachine(a.PrincipalID)
-		default:
-			entry.PrincipalName, entry.Email = resolveUser(a.PrincipalID)
-		}
-		entries = append(entries, entry)
+	if err := c.appendRoleEntries(ctx, assignments, &entries, res); err != nil {
+		return nil, err
 	}
-
-	// (2) Per-secret grants — ownership plus direct/group shares (the granular
-	// exceptions, beyond the project's role-based access).
 	secrets, err := c.listAllProjectSecrets(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	for _, s := range secrets {
-		if s.OwnerID != 0 {
-			name, email := resolveUser(s.OwnerID)
-			entries = append(entries, &AccessReviewEntry{
-				PrincipalType: "user", PrincipalID: s.OwnerID, PrincipalName: name, Email: email,
-				Source: "owner", AccessLevel: "owner", SecretID: s.ID, SecretName: s.Name,
-			})
-		}
-		shares, err := c.storage.ListSharesBySecret(ctx, s.ID)
-		if err != nil {
-			// #483: a transient error reading ONE secret's shares must not silently drop
-			// its direct/group grants from the report with no signal — that reads
-			// identically to "this secret has no shares" to every downstream consumer
-			// (the campaign snapshot, the API/CLI), exactly the fail-open pattern #453
-			// already fixed for LastUserSecretActivity below. The secret's shares still
-			// can't be reported (there's nothing else to do without the data), but the
-			// caller must now be told coverage is incomplete.
-			report.degrade(fmt.Sprintf("shares:secret=%d", s.ID), err)
-			continue // best-effort; a secret whose shares can't be read is skipped
-		}
-		for _, sh := range shares {
-			e := &AccessReviewEntry{
-				PrincipalID: sh.RecipientID, AccessLevel: sh.Permission,
-				SecretID: s.ID, SecretName: s.Name,
-			}
-			if sh.IsGroup {
-				e.PrincipalType, e.Source = "group", "group_share"
-				e.PrincipalName = resolveGroup(sh.RecipientID)
-			} else {
-				e.PrincipalType, e.Source = "user", "direct_share"
-				e.PrincipalName, e.Email = resolveUser(sh.RecipientID)
-			}
-			entries = append(entries, e)
-		}
-	}
-
+	c.appendSecretGrantEntries(ctx, secrets, report, &entries, res)
 	report.Entries = entries
-
-	// Annotate user principals with their last secret-access time (dormant-access
-	// detection). #453: on storage.type: remote, LastUserSecretActivity is
-	// unconditionally unimplemented, so a lookup failure must not silently leave
-	// every LastUsedAt at nil with no signal — that reads identically to
-	// "genuinely never used" for this compliance-critical report's entire
-	// lifetime under that backend. Record the gap instead.
-	if activity, err := c.storage.LastUserSecretActivity(ctx, projectID); err == nil {
-		for _, e := range entries {
-			if e.PrincipalType == "user" {
-				if t, ok := activity[e.PrincipalID]; ok {
-					tt := t
-					e.LastUsedAt = &tt
-				}
-			}
-		}
-	} else {
-		report.degrade(fmt.Sprintf("last_used:project=%d", projectID), err)
-	}
+	c.annotateLastUsedAt(ctx, entries, report, projectID)
 	return report, nil
 }
 
@@ -336,4 +199,165 @@ func (c *KeyorixCore) listAllProjectSecrets(ctx context.Context, projectID uint)
 		}
 	}
 	return all, nil
+}
+
+// roleInfo holds a role's name and its highest secrets.* action for an access review.
+type roleInfo struct{ name, action string }
+
+// accessReviewResolver caches storage lookups (roles, users, groups, machines) within
+// a single access review so each entity is fetched at most once.
+type accessReviewResolver struct {
+	store    storage.Storage
+	roles    map[uint]roleInfo
+	users    map[uint][2]string // id → {username, email}
+	groups   map[uint]string
+	machines map[uint]string
+}
+
+func newAccessReviewResolver(store storage.Storage) *accessReviewResolver {
+	return &accessReviewResolver{
+		store:    store,
+		roles:    map[uint]roleInfo{},
+		users:    map[uint][2]string{},
+		groups:   map[uint]string{},
+		machines: map[uint]string{},
+	}
+}
+
+func (r *accessReviewResolver) resolveRole(ctx context.Context, roleID uint) (roleInfo, error) {
+	if ri, ok := r.roles[roleID]; ok {
+		return ri, nil
+	}
+	perms, err := r.store.GetRolePermissions(ctx, roleID)
+	if err != nil {
+		return roleInfo{}, err
+	}
+	ri := roleInfo{action: highestSecretsAction(perms)}
+	if role, err := r.store.GetRole(ctx, roleID); err == nil && role != nil {
+		ri.name = role.Name
+	}
+	r.roles[roleID] = ri
+	return ri, nil
+}
+
+func (r *accessReviewResolver) resolveUser(ctx context.Context, id uint) (string, string) {
+	if ne, ok := r.users[id]; ok {
+		return ne[0], ne[1]
+	}
+	ne := [2]string{}
+	if u, err := r.store.GetUser(ctx, id); err == nil && u != nil {
+		ne = [2]string{u.Username, u.Email}
+	}
+	r.users[id] = ne
+	return ne[0], ne[1]
+}
+
+func (r *accessReviewResolver) resolveGroup(ctx context.Context, id uint) string {
+	if n, ok := r.groups[id]; ok {
+		return n
+	}
+	n := ""
+	if g, err := r.store.GetGroup(ctx, id); err == nil && g != nil {
+		n = g.Name
+	}
+	r.groups[id] = n
+	return n
+}
+
+func (r *accessReviewResolver) resolveMachine(ctx context.Context, id uint) string {
+	if n, ok := r.machines[id]; ok {
+		return n
+	}
+	n := ""
+	if m, err := r.store.GetMachineIdentity(ctx, id); err == nil && m != nil {
+		n = m.Name
+	}
+	r.machines[id] = n
+	return n
+}
+
+// appendRoleEntries adds role-based standing access entries for all project assignments
+// (role grants whose role confers a secrets.* permission).
+func (c *KeyorixCore) appendRoleEntries(ctx context.Context, assignments []storage.RoleAssignment, entries *[]*AccessReviewEntry, res *accessReviewResolver) error {
+	for _, a := range assignments {
+		ri, err := res.resolveRole(ctx, a.RoleID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		if ri.action == "" {
+			continue // role grants no secret access
+		}
+		entry := &AccessReviewEntry{
+			PrincipalType: a.PrincipalType,
+			PrincipalID:   a.PrincipalID,
+			Source:        "role",
+			RoleID:        a.RoleID,
+			RoleName:      ri.name,
+			AccessLevel:   ri.action,
+			EnvironmentID: a.EnvironmentID,
+		}
+		switch a.PrincipalType {
+		case "group":
+			entry.PrincipalName = res.resolveGroup(ctx, a.PrincipalID)
+		case "machine":
+			entry.PrincipalName = res.resolveMachine(ctx, a.PrincipalID)
+		default:
+			entry.PrincipalName, entry.Email = res.resolveUser(ctx, a.PrincipalID)
+		}
+		*entries = append(*entries, entry)
+	}
+	return nil
+}
+
+// appendSecretGrantEntries adds per-secret access entries: ownership and direct/group
+// shares. #483: a transient share-list error for ONE secret degrades (not aborts) the
+// report so that coverage for remaining secrets is not silently dropped.
+func (c *KeyorixCore) appendSecretGrantEntries(ctx context.Context, secrets []*models.SecretNode, report *AccessReviewReport, entries *[]*AccessReviewEntry, res *accessReviewResolver) {
+	for _, s := range secrets {
+		if s.OwnerID != 0 {
+			name, email := res.resolveUser(ctx, s.OwnerID)
+			*entries = append(*entries, &AccessReviewEntry{
+				PrincipalType: "user", PrincipalID: s.OwnerID, PrincipalName: name, Email: email,
+				Source: "owner", AccessLevel: "owner", SecretID: s.ID, SecretName: s.Name,
+			})
+		}
+		shares, err := c.storage.ListSharesBySecret(ctx, s.ID)
+		if err != nil {
+			report.degrade(fmt.Sprintf("shares:secret=%d", s.ID), err)
+			continue
+		}
+		for _, sh := range shares {
+			e := &AccessReviewEntry{
+				PrincipalID: sh.RecipientID, AccessLevel: sh.Permission,
+				SecretID: s.ID, SecretName: s.Name,
+			}
+			if sh.IsGroup {
+				e.PrincipalType, e.Source = "group", "group_share"
+				e.PrincipalName = res.resolveGroup(ctx, sh.RecipientID)
+			} else {
+				e.PrincipalType, e.Source = "user", "direct_share"
+				e.PrincipalName, e.Email = res.resolveUser(ctx, sh.RecipientID)
+			}
+			*entries = append(*entries, e)
+		}
+	}
+}
+
+// annotateLastUsedAt stamps each user entry with their most recent secret-access time
+// (dormant-access detection). #453: a lookup failure must degrade the report rather
+// than silently leave every LastUsedAt nil — that would read as "genuinely never used."
+func (c *KeyorixCore) annotateLastUsedAt(ctx context.Context, entries []*AccessReviewEntry, report *AccessReviewReport, projectID uint) {
+	activity, err := c.storage.LastUserSecretActivity(ctx, projectID)
+	if err != nil {
+		report.degrade(fmt.Sprintf("last_used:project=%d", projectID), err)
+		return
+	}
+	for _, e := range entries {
+		if e.PrincipalType == "user" {
+			if t, ok := activity[e.PrincipalID]; ok {
+				tt := t
+				e.LastUsedAt = &tt
+			}
+		}
+	}
 }
