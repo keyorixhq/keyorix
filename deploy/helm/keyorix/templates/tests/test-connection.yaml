@@ -9,6 +9,7 @@ metadata:
     helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
 spec:
   restartPolicy: Never
+  automountServiceAccountToken: false
   securityContext:
     # A plain `wget --spider` needs no elevated privileges at all -- matches the
     # same hardening baseline as the application's own containers (#helm-chart-security).
