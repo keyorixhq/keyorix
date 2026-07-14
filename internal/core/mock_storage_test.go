@@ -144,11 +144,9 @@ func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID 
 }
 
 func (m *MockStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
-	args := m.Called(ctx, projectID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+	a := m.Called(ctx, projectID)
+	v, _ := a.Get(0).([]storage.RoleAssignment)
+	return v, a.Error(1)
 }
 
 // ListGlobalAdminAssignmentsForUpdate is unused by the tests that construct a
@@ -284,11 +282,9 @@ func (m *MockStorage) GetOpenAccessReviewCampaign(ctx context.Context, projectID
 }
 
 func (m *MockStorage) GetLatestClosedAccessReviewCampaign(ctx context.Context, projectID uint) (*models.AccessReviewCampaign, error) {
-	args := m.Called(ctx, projectID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.AccessReviewCampaign), args.Error(1)
+	a := m.Called(ctx, projectID)
+	v, _ := a.Get(0).(*models.AccessReviewCampaign)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error) {
@@ -336,35 +332,27 @@ func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint
 }
 
 func (m *MockStorage) LastUserRoleManagementActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	args := m.Called(ctx, projectID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[uint]time.Time), args.Error(1)
+	a := m.Called(ctx, projectID)
+	v, _ := a.Get(0).(map[uint]time.Time)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	args := m.Called(ctx, projectID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[uint]time.Time), args.Error(1)
+	a := m.Called(ctx, projectID)
+	v, _ := a.Get(0).(map[uint]time.Time)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) LastUserSecretReadActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	args := m.Called(ctx, projectID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[uint]time.Time), args.Error(1)
+	a := m.Called(ctx, projectID)
+	v, _ := a.Get(0).(map[uint]time.Time)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) LastUserSecretWriteActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	args := m.Called(ctx, projectID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[uint]time.Time), args.Error(1)
+	a := m.Called(ctx, projectID)
+	v, _ := a.Get(0).(map[uint]time.Time)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy) (*models.SoDPolicy, error) {
@@ -438,16 +426,13 @@ func (m *MockStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Cont
 }
 
 func (m *MockStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
-	args := m.Called(ctx, d)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.SecretDependency), args.Error(1)
+	a := m.Called(ctx, d)
+	v, _ := a.Get(0).(*models.SecretDependency)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error) {
@@ -605,21 +590,17 @@ func (m *MockStorage) UpdateSecret(ctx context.Context, secret *models.SecretNod
 }
 
 func (m *MockStorage) DeleteSecret(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) RestoreSecret(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) (*models.SecretNode, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.SecretNode), args.Error(1)
+	a := m.Called(ctx, id)
+	v, _ := a.Get(0).(*models.SecretNode)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
@@ -638,13 +619,13 @@ func (m *MockStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, befor
 }
 
 func (m *MockStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
-	args := m.Called(ctx, before)
-	return args.Get(0).(int64), args.Error(1)
+	a := m.Called(ctx, before)
+	return a.Get(0).(int64), a.Error(1)
 }
 
 func (m *MockStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
-	args := m.Called(ctx, before)
-	return args.Get(0).(int64), args.Get(1).(int64), args.Error(2)
+	a := m.Called(ctx, before)
+	return a.Get(0).(int64), a.Get(1).(int64), a.Error(2)
 }
 
 func (m *MockStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
@@ -770,11 +751,9 @@ func (m *MockStorage) GetShareRecord(ctx context.Context, shareID uint) (*models
 }
 
 func (m *MockStorage) UpdateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
-	args := m.Called(ctx, share)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.ShareRecord), args.Error(1)
+	a := m.Called(ctx, share)
+	v, _ := a.Get(0).(*models.ShareRecord)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) DeleteShareRecord(ctx context.Context, shareID uint) error {
@@ -906,28 +885,26 @@ func (m *MockStorage) UpdateLoginLockoutState(ctx context.Context, id uint, atte
 }
 
 func (m *MockStorage) DeleteUser(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) RestoreUser(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) {
-	args := m.Called(ctx, before)
-	return args.Get(0).(int64), args.Error(1)
+	a := m.Called(ctx, before)
+	return a.Get(0).(int64), a.Error(1)
 }
 
 func (m *MockStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
-	args := m.Called(ctx, before)
-	return args.Get(0).(int64), args.Error(1)
+	a := m.Called(ctx, before)
+	return a.Get(0).(int64), a.Error(1)
 }
 
 func (m *MockStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {
-	args := m.Called(ctx, before)
-	return args.Get(0).(int64), args.Error(1)
+	a := m.Called(ctx, before)
+	return a.Get(0).(int64), a.Error(1)
 }
 
 func (m *MockStorage) ListUsers(ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error) {
@@ -1013,21 +990,17 @@ func (m *MockStorage) GetGroup(ctx context.Context, id uint) (*models.Group, err
 }
 
 func (m *MockStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	args := m.Called(ctx, group)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.Group), args.Error(1)
+	a := m.Called(ctx, group)
+	v, _ := a.Get(0).(*models.Group)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) DeleteGroup(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) RestoreGroup(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
@@ -1052,8 +1025,7 @@ func (m *MockStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) 
 }
 
 func (m *MockStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
-	args := m.Called(ctx, userID, groupID)
-	return args.Error(0)
+	return m.Called(ctx, userID, groupID).Error(0)
 }
 
 func (m *MockStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {
@@ -1099,16 +1071,13 @@ func (m *MockStorage) GetRoleByName(ctx context.Context, name string) (*models.R
 }
 
 func (m *MockStorage) UpdateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
-	args := m.Called(ctx, role)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.Role), args.Error(1)
+	a := m.Called(ctx, role)
+	v, _ := a.Get(0).(*models.Role)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) DeleteRole(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) ListRoles(ctx context.Context) ([]*models.Role, error) {
@@ -1132,8 +1101,7 @@ func (m *MockStorage) AssignRoleWithExpiry(ctx context.Context, userID, roleID u
 }
 
 func (m *MockStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
-	args := m.Called(ctx, userID, roleID, scope)
-	return args.Error(0)
+	return m.Called(ctx, userID, roleID, scope).Error(0)
 }
 
 func (m *MockStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
@@ -1171,11 +1139,9 @@ func (m *MockStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope s
 }
 
 func (m *MockStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
-	args := m.Called(ctx, userID, scope)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]uint), args.Error(1)
+	a := m.Called(ctx, userID, scope)
+	v, _ := a.Get(0).([]uint)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error) {
@@ -1184,11 +1150,9 @@ func (m *MockStorage) IsProjectMember(ctx context.Context, userID, projectID uin
 }
 
 func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
-	args := m.Called(ctx, userID, scope)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]uint), args.Error(1)
+	a := m.Called(ctx, userID, scope)
+	v, _ := a.Get(0).([]uint)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]storage.Scope, error) {
@@ -1213,11 +1177,9 @@ func (m *MockStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*s
 }
 
 func (m *MockStorage) GetUserGroupPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
-	args := m.Called(ctx, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*storage.Permission), args.Error(1)
+	a := m.Called(ctx, userID)
+	v, _ := a.Get(0).([]*storage.Permission)
+	return v, a.Error(1)
 }
 
 // Audit Logging
@@ -1356,8 +1318,7 @@ func (m *MockStorage) ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.
 }
 
 func (m *MockStorage) MarkAnomalyAlertAlerted(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
@@ -1395,11 +1356,9 @@ func (m *MockStorage) GetSession(ctx context.Context, token string) (*models.Ses
 }
 
 func (m *MockStorage) GetSessionAny(ctx context.Context, token string) (*models.Session, error) {
-	args := m.Called(ctx, token)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.Session), args.Error(1)
+	a := m.Called(ctx, token)
+	v, _ := a.Get(0).(*models.Session)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) RotateSession(ctx context.Context, oldID uint, newSession *models.Session, now time.Time) (*models.Session, bool, error) {
@@ -1424,8 +1383,7 @@ func (m *MockStorage) DeleteSessionsByFamily(ctx context.Context, familyID strin
 }
 
 func (m *MockStorage) DeleteSession(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) CleanupExpiredSessions(ctx context.Context) error {
@@ -1512,16 +1470,13 @@ func (m *MockStorage) GetPersonalAccessTokenByHash(ctx context.Context, hash str
 }
 
 func (m *MockStorage) RevokePersonalAccessToken(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
-	args := m.Called(ctx, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]string), args.Error(1)
+	a := m.Called(ctx, userID)
+	v, _ := a.Get(0).([]string)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
@@ -1558,8 +1513,7 @@ func (m *MockStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consu
 }
 
 func (m *MockStorage) MarkSetupTokenExpired(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error) {
@@ -1570,8 +1524,7 @@ func (m *MockStorage) CountSetupTokensSince(ctx context.Context, purpose, email 
 // Health and Maintenance
 
 func (m *MockStorage) HealthCheck(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
+	return m.Called(ctx).Error(0)
 }
 
 func (m *MockStorage) GetStats(ctx context.Context) (*storage.StorageStats, error) {
@@ -1699,11 +1652,9 @@ func (m *MockStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.
 }
 
 func (m *MockStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+	a := m.Called(ctx, id)
+	v, _ := a.Get(0).(*models.MachineIdentity)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) UpdateMachineIdentity(ctx context.Context, mi *models.MachineIdentity) error {
@@ -1794,16 +1745,13 @@ func (m *MockStorage) UpdateMachineIdentityCredential(ctx context.Context, c *mo
 }
 
 func (m *MockStorage) CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]int), args.Error(1)
+	a := m.Called(ctx)
+	v, _ := a.Get(0).(map[string]int)
+	return v, a.Error(1)
 }
 
 func (m *MockStorage) RevokeMachineIdentityCredential(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 func (m *MockStorage) TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
@@ -1822,8 +1770,7 @@ func (m *MockStorage) AssignMachineRole(ctx context.Context, machineID, roleID u
 }
 
 func (m *MockStorage) RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope storage.Scope) error {
-	args := m.Called(ctx, machineID, roleID, scope)
-	return args.Error(0)
+	return m.Called(ctx, machineID, roleID, scope).Error(0)
 }
 
 func (m *MockStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope storage.Scope) ([]uint, error) {
@@ -1875,8 +1822,7 @@ func (m *MockStorage) GetOIDCBindingByID(ctx context.Context, id uint) (*models.
 }
 
 func (m *MockStorage) DeleteOIDCBinding(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
+	return m.Called(ctx, id).Error(0)
 }
 
 // Project membership lifecycle (ADR-022).
