@@ -7,6 +7,10 @@ on:
     branches: [main]
     tags: ['v*']
 
+# Lock down GITHUB_TOKEN defaults: no permissions at the top level; each job
+# below requests only what it needs (packages/id-token for image publish).
+permissions: {}
+
 env:
   # Pinned, checksum-verified (mirrors gitleaks in ci.yml) — the tool that scans
   # our images for vulnerabilities is itself a supply-chain surface.

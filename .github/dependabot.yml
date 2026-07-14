@@ -9,13 +9,19 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   # #478: without a gomod entry, Go dependency/toolchain-minimum drift (e.g. #477)
   # has no automated forcing function and depends on someone noticing manually.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: gomod
     directory: /operator
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
