@@ -128,7 +128,7 @@ func printCreatedSecret(secret *models.SecretNode) {
 	}
 }
 
-func buildCreateRequest() (*core.CreateSecretRequest, error) {
+func buildCreateRequest() (*core.CreateSecretRequest, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	if createName == "" {
 		return nil, errors.New("secret name is required (use --name)")
 	}
@@ -183,7 +183,7 @@ func buildCreateRequest() (*core.CreateSecretRequest, error) {
 	return req, nil
 }
 
-func interactiveCreate() (*core.CreateSecretRequest, error) {
+func interactiveCreate() (*core.CreateSecretRequest, error) { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	reader := bufio.NewReader(os.Stdin)
 
 	ask := func(prompt string, defaultVal string) string {

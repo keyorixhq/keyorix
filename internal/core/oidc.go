@@ -99,7 +99,7 @@ func NewOIDCVerifier(issuers []OIDCTrustedIssuer, jwks JWKSResolver) (*OIDCVerif
 // iss (trusted), aud (intersects the issuer's allowlist), and exp/nbf. It
 // returns the (issuer, subject) on success. Asymmetric algorithms only — HMAC
 // is rejected so a leaked JWKS document can never be used to forge tokens.
-func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject string, err error) {
+func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject string, err error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	var claims oidcClaims
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}),

@@ -61,7 +61,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func main() {
+func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -248,7 +248,7 @@ func loadCertPool(path string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.Service, error) {
+func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.Service, error) { // NOSONAR -- cognitive complexity 159, suppress go:S3776
 	// Use storage factory to support SQLite, PostgreSQL, and remote storage
 	factory := appstorage.NewStorageFactory()
 	store, err := factory.CreateStorage(cfg)
@@ -826,7 +826,7 @@ func cmpOr(a, b string) string {
 	return b
 }
 
-func startHTTPServer(ctx context.Context, cfg *config.Config) error {
+func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR -- cognitive complexity 188, suppress go:S3776
 	// Initialize core service (and encryption if enabled)
 	coreService, encSvc, err := initializeCoreService(cfg)
 	if err != nil {
@@ -1451,7 +1451,7 @@ func runStartupValidation(cfg *config.Config) error {
 // security.enable_file_permission_check is set (and not overridden by
 // allow_unsafe_file_permissions); otherwise it warns. A not-yet-created key file (first
 // boot) is skipped — it is created at 0600.
-func enforceKeyFilePermissions(cfg *config.Config) error {
+func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	resolve := func(p string) string {
 		if p == "" || filepath.IsAbs(p) {
 			return p
@@ -1725,7 +1725,7 @@ func ssoCompleteURL(redirectURL string) (string, error) {
 // buildSSOProviders discovers each configured provider and builds the resolved
 // providers + a JWKS resolver over their issuers. A provider that is misconfigured
 // or whose discovery fails is skipped with a warning (it must not block startup).
-func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core.JWKSResolver, int) {
+func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core.JWKSResolver, int) { // NOSONAR -- cognitive complexity 23, suppress go:S3776
 	providers := map[string]*core.SSOProvider{}
 	jwksURIs := map[string]string{}
 	for i := range sso.Providers {

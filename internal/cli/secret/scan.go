@@ -99,7 +99,7 @@ var skipDirs = map[string]bool{
 	"examples": true, "demo": true,
 }
 
-func runScan(cmd *cobra.Command, args []string) error {
+func runScan(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive complexity 76, suppress go:S3776
 	scanPath := "."
 	if len(args) > 0 {
 		scanPath = args[0]

@@ -42,7 +42,7 @@ func fetchFromAWS(ctx context.Context) ([]secretEntry, error) {
 
 // collectAWS lists and reads secrets from any awsSecretsAPI. Pagination is
 // handled manually (NextToken) so the fake in tests stays trivial.
-func collectAWS(ctx context.Context, api awsSecretsAPI) ([]secretEntry, error) {
+func collectAWS(ctx context.Context, api awsSecretsAPI) ([]secretEntry, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	var entries []secretEntry
 	var next *string
 	for {

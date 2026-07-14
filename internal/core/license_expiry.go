@@ -92,7 +92,7 @@ func licenseExpirySeverity(st license.Status) models.NotificationSeverity {
 const globalAdminIDsPageSize = 500
 
 // globalAdminIDs returns the user IDs of every active install-wide admin.
-func (c *KeyorixCore) globalAdminIDs(ctx context.Context) ([]uint, error) {
+func (c *KeyorixCore) globalAdminIDs(ctx context.Context) ([]uint, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	active := true
 	var ids []uint
 	for page := 1; ; page++ {

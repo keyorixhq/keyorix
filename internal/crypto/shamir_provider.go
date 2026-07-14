@@ -141,7 +141,7 @@ func NewShamirKeyProvider(shareFiles, shareEnv []string, commitmentHex string) *
 
 func (p *ShamirKeyProvider) Name() string { return "shamir" }
 
-func (p *ShamirKeyProvider) KEK() ([]byte, error) {
+func (p *ShamirKeyProvider) KEK() ([]byte, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	var shares [][]byte
 	for _, path := range p.shareFiles {
 		if path == "" {

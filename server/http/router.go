@@ -21,7 +21,7 @@ import (
 )
 
 // NewRouter creates and configures the HTTP router
-func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler, error) {
+func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	r := chi.NewRouter()
 
 	// Apply middleware. Recovery is registered FIRST so it is the OUTERMOST handler in

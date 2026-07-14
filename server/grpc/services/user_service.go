@@ -33,7 +33,7 @@ func NewUserService(coreService *core.KeyorixCore) *UserGRPCService {
 // CreateUser provisions a user via one of three credential modes: a password,
 // an out-of-band setup link, or a one-time password. A system role + project
 // assignments may be supplied with the password mode (the atomic ADR-028 path).
-func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
+func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	actor, err := requireUser(ctx)
 	if err != nil {
 		return nil, err

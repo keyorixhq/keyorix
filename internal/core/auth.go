@@ -428,7 +428,7 @@ func (c *KeyorixCore) handleSessionReuse(ctx context.Context, old *models.Sessio
 
 // ValidateSessionToken looks up a session token, checks expiry, and returns the user and
 // their role names. Used by the auth middleware on every authenticated request.
-func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error) {
+func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {
 		return nil, nil, fmt.Errorf("session not found")

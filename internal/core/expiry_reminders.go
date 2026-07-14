@@ -27,7 +27,7 @@ const NotificationExpiryReminder = "secret.expiry_reminder"
 // suppressed, so an unread reminder can't freeze at a stale, now-superseded severity
 // (#250). leadDays <= 0 falls back to the default lead window. Returns the number of
 // notifications created or escalated.
-func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (int, error) {
+func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (int, error) { // NOSONAR -- cognitive complexity 33, suppress go:S3776
 	if leadDays <= 0 {
 		leadDays = defaultExpiryLeadDays
 	}

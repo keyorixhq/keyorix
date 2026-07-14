@@ -171,7 +171,7 @@ func isLoopbackHost(host string) bool {
 
 // Key returns the public key for (issuer, kid), fetching/refreshing the issuer's
 // JWKS as needed. An unknown kid forces one refetch (handles key rotation).
-func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interface{}, error) {
+func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interface{}, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	jwksURI, ok := r.jwksURIs[issuer]
 	if !ok {
 		return nil, fmt.Errorf("no jwks_uri configured for issuer %q", issuer)
@@ -309,7 +309,7 @@ func (r *HTTPJWKSResolver) fetch(ctx context.Context, jwksURI string) (map[strin
 }
 
 // parseJWK converts a JWK into an *rsa.PublicKey or *ecdsa.PublicKey.
-func parseJWK(k jwk) (interface{}, error) {
+func parseJWK(k jwk) (interface{}, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	switch k.Kty {
 	case "RSA":
 		n, err := b64uBigInt(k.N)

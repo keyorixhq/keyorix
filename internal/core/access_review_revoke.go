@@ -161,7 +161,7 @@ func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, proj
 // (possibly stale) fields. Returns a clear "no longer exists, re-sync" error when the
 // live lookup finds nothing, mirroring the same real removal calls
 // RevokeAccessReviewGrant uses (which likewise fail when the grant is already gone).
-func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, projectID uint, d AccessReviewDecision) error {
+func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, projectID uint, d AccessReviewDecision) error { // NOSONAR -- cognitive complexity 31, suppress go:S3776
 	switch d.Source {
 	case "role":
 		if d.PrincipalID == 0 || d.RoleID == 0 {

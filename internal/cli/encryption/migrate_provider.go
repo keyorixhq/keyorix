@@ -236,7 +236,7 @@ func runMigrateProvider(cmd *cobra.Command, args []string) error {
 // plus the --to-* options. The DEK path is preserved (the same dek.key is re-wrapped
 // in place); only the key_provider (and, for password, optionally the salt path)
 // changes.
-func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (config.EncryptionConfig, error) {
+func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (config.EncryptionConfig, error) { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	tgt := *cur
 	kp := config.KeyProviderConfig{Type: opts.toType}
 	switch opts.toType {

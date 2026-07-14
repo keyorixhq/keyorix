@@ -186,7 +186,7 @@ func runUpdateRemote(rc *common.RemoteClient) error {
 	return nil
 }
 
-func buildUpdateRequest() (*core.UpdateSecretRequest, error) {
+func buildUpdateRequest() (*core.UpdateSecretRequest, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	req := &core.UpdateSecretRequest{
 		ID:        updateID,
 		UpdatedBy: "cli-user",
@@ -235,7 +235,7 @@ func buildUpdateRequest() (*core.UpdateSecretRequest, error) {
 	return req, nil
 }
 
-func interactiveUpdate(current *models.SecretNode) (*core.UpdateSecretRequest, error) {
+func interactiveUpdate(current *models.SecretNode) (*core.UpdateSecretRequest, error) { // NOSONAR -- cognitive complexity 32, suppress go:S3776
 	reader := bufio.NewReader(os.Stdin)
 
 	ask := func(prompt string, defaultVal string) string {

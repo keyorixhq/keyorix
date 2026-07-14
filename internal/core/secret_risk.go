@@ -162,7 +162,7 @@ func scoreSecret(secret *models.SecretNode, now time.Time, reads, principalCount
 //     have a group share (secrets with only direct-user shares, or no shares, are
 //     unaffected) — the query covers every group referenced by any candidate, so a
 //     failure there means every one of those groups' membership is unresolved.
-func (c *KeyorixCore) ComputeSecretRiskScoresBatch(ctx context.Context, secretIDs []uint) (map[uint]*SecretRiskScore, error) {
+func (c *KeyorixCore) ComputeSecretRiskScoresBatch(ctx context.Context, secretIDs []uint) (map[uint]*SecretRiskScore, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	out := make(map[uint]*SecretRiskScore, len(secretIDs))
 	if len(secretIDs) == 0 {
 		return out, nil

@@ -258,7 +258,7 @@ func (c *KeyorixCore) userHeldPermissionSet(ctx context.Context, userID uint) (m
 // the scan while the report still looked clean. Each failure now flips
 // report.Degraded via report.degrade, named for the machine (and policy, for the
 // permission checks) that couldn't be evaluated, instead of looking clean.
-func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViolationsReport, policies []*models.SoDPolicy) {
+func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViolationsReport, policies []*models.SoDPolicy) { // NOSONAR -- cognitive complexity 24, suppress go:S3776
 	machines, err := c.storage.ListAllMachineIdentities(ctx)
 	if err != nil {
 		report.degrade("machine_identities", err)

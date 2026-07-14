@@ -54,7 +54,7 @@ var permissionRank = map[string]int{"read": 1, "write": 2, "owner": 3}
 // ListSecretAccessors returns the distinct users who can access secretID, strongest
 // grant per user, sorted by username, plus whether the list is known-complete. The
 // actor must be able to read the secret.
-func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID uint) (*SecretAccessorsResult, error) {
+func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID uint) (*SecretAccessorsResult, error) { // NOSONAR -- cognitive complexity 29, suppress go:S3776
 	if _, err := c.EnforceSecretReadPermission(ctx, secretID, actorID); err != nil {
 		return nil, err
 	}

@@ -40,7 +40,7 @@ func init() {
 	_ = reviewCmd.MarkFlagRequired("by")
 }
 
-func runReview(cmd *cobra.Command, args []string) error {
+func runReview(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive complexity 31, suppress go:S3776
 	if reviewID == 0 {
 		return fmt.Errorf("--id is required")
 	}

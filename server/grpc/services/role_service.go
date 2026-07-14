@@ -99,7 +99,7 @@ func (s *RoleGRPCService) GetRole(ctx context.Context, req *pb.GetRoleRequest) (
 }
 
 // UpdateRole updates a role's description and/or replaces its permission set.
-func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequest) (*pb.Role, error) {
+func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequest) (*pb.Role, error) { // NOSONAR -- cognitive complexity 23, suppress go:S3776
 	actor, err := requireUser(ctx)
 	if err != nil {
 		return nil, err

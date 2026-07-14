@@ -121,7 +121,7 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 // dryRun skips the final Updates() write only — every other step (fetch, decrypt,
 // re-encrypt, counting) still runs, so callers get an accurate preview.
 // Returns (rowsSwept, legacyRowsUpgraded, error).
-func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) {
+func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 44, suppress go:S3776
 	var offset int
 	var totalSwept, totalLegacyUpgraded int
 

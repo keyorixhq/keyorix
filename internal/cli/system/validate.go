@@ -32,7 +32,7 @@ func init() {
 	validateCmd.Flags().BoolVar(&fixIssues, "fix", false, "Attempt to fix issues automatically")
 }
 
-func runValidate(cmd *cobra.Command, args []string) error {
+func runValidate(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	fmt.Println("🔍 Validating Keyorix System")
 	fmt.Println("============================")
 

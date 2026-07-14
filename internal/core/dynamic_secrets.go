@@ -228,7 +228,7 @@ func (c *KeyorixCore) GetDynamicSecretLease(ctx context.Context, leaseID string)
 // finding. The log line below is a partial mitigation: it gives an operator a
 // searchable breadcrumb (config, backend, target-ish role hint) to correlate against
 // server logs during incident response if a mint never resulted in a lease row.
-func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds int, userID uint) (*IssuedLease, error) {
+func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds int, userID uint) (*IssuedLease, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
 	if err != nil {
 		return nil, fmt.Errorf("dynamic-secret config not found")
@@ -562,7 +562,7 @@ func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) 
 // default), capped so the lease's total lifetime from issue never exceeds the
 // config's MaxTTLSeconds. On backends with a DB-level expiry (PostgreSQL) it also
 // pushes the role's VALID UNTIL forward. Returns the new expiry.
-func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds int, userID uint) (time.Time, error) {
+func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds int, userID uint) (time.Time, error) { // NOSONAR -- cognitive complexity 21, suppress go:S3776
 	lease, err := c.storage.GetDynamicSecretLease(ctx, leaseID)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("lease not found")

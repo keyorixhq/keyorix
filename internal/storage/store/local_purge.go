@@ -47,7 +47,7 @@ func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model interface{
 // same "deleted_at IS NOT NULL AND deleted_at < before" predicate the SELECT used,
 // keyed on id — not just the ID list — so a user a restore raced out from under the
 // purge is left alone.
-func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) {
+func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint

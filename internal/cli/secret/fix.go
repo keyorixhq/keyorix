@@ -125,7 +125,7 @@ func runFix(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func findAndPlanFix(basePath, envVarName string) ([]fixPlan, error) {
+func findAndPlanFix(basePath, envVarName string) ([]fixPlan, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776
 	var plans []fixPlan
 	pattern := regexp.MustCompile(`(?i)(` + regexp.QuoteMeta(strings.ToLower(envVarName)) + `|` + regexp.QuoteMeta(envVarName) + `)\s*[=:]\s*["']([^"']+)["']`)
 

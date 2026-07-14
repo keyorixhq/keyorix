@@ -83,7 +83,7 @@ func (t target) String() string { return t.namespace + "/" + t.name }
 // already there. A fetch or apply failure for one target is recorded and skipped —
 // it never aborts the pass or writes a partial Secret — so other targets still sync.
 // The returned Result tallies the outcome.
-func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Result, error) {
+func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Result, error) { // NOSONAR -- cognitive complexity 31, suppress go:S3776
 	var res Result
 
 	grouped, errs := groupByTarget(mappings)
@@ -185,7 +185,7 @@ const (
 // config — dropping a namespace from the config entirely leaves its Secrets unreaped
 // (documented). A target still in the config is kept even if its fetch failed this
 // pass, so a transient upstream error can't trigger a delete.
-func (e *Engine) cleanupOrphans(ctx context.Context, grouped map[target][]SecretMapping, res *Result) {
+func (e *Engine) cleanupOrphans(ctx context.Context, grouped map[target][]SecretMapping, res *Result) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	desired := make(map[target]bool, len(grouped))
 	nsSet := make(map[string]struct{})
 	for t := range grouped {

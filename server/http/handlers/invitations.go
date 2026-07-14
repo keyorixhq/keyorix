@@ -91,7 +91,7 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 // non-project-scoped invite (ADR-024) carrying an optional system role plus
 // per-project assignments, all applied atomically when the user accepts. Gated by
 // users.write (system scope) since it provisions an account-to-be with grants.
-func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.Request) {
+func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

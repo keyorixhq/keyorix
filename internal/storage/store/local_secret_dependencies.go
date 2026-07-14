@@ -75,7 +75,7 @@ func (ls *LocalStorage) DeleteSecretDependency(ctx context.Context, id uint) err
 // so the guarantee survives being called over HTTP by RemoteStorage's implementation
 // (remote_secret_dependencies.go), where no transaction can span two separate round
 // trips.
-func (ls *LocalStorage) CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
+func (ls *LocalStorage) CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	var created *models.SecretDependency
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		q := tx

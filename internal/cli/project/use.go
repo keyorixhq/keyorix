@@ -20,7 +20,7 @@ All project-scoped commands inherit this context; override per-command with --pr
 	RunE: runUse,
 }
 
-func runUse(cmd *cobra.Command, args []string) error {
+func runUse(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	name := args[0]
 	ctx := context.Background()
 

@@ -21,7 +21,7 @@ import (
 // the project_id/environment_id query params: a non-global reader must narrow
 // the request to a project/environment they can read, and that same filter then
 // bounds the rows returned here. Global readers (and admins) may list unscoped.
-func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
+func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 41, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

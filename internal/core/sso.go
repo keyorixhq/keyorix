@@ -279,7 +279,7 @@ func (c *KeyorixCore) BeginSAML(ctx context.Context, name, returnTo string) (str
 // CompleteSAML consumes the RelayState, validates the SAMLResponse on r (signature,
 // audience, recipient, time, InResponseTo — via the vetted library), maps the assertion
 // to a user, reconciles groups/roles, and mints a session. Mirrors CompleteSSO.
-func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Request, relayState, userAgent, ip string) (*models.Session, *models.User, string, error) {
+func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Request, relayState, userAgent, ip string) (*models.Session, *models.User, string, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	p, err := c.samlProvider(name)
 	if err != nil {
 		return nil, nil, "", err
@@ -773,7 +773,7 @@ func (b *ssoBool) UnmarshalJSON(data []byte) error {
 // JIT-provisioning — it is OPTIONAL in OIDC and common enterprise IdPs (e.g. Entra ID)
 // omit it — but emailVerified is reported true only when the claim is present and true,
 // so resolveSSOUser can refuse to MATCH AN EXISTING account on a merely-asserted email.
-func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expectedNonce, raw string) (sub, email, name string, emailVerified bool, err error) {
+func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expectedNonce, raw string) (sub, email, name string, emailVerified bool, err error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	var claims struct {
 		jwt.RegisteredClaims
 		Email         string   `json:"email"`

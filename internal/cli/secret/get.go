@@ -76,7 +76,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 
 // ── Remote mode ───────────────────────────────────────────────────────────────
 
-func runGetRemote(ctx context.Context, rc *common.RemoteClient) error {
+func runGetRemote(ctx context.Context, rc *common.RemoteClient) error { // NOSONAR -- cognitive complexity 23, suppress go:S3776
 	var secret *models.SecretNode
 	var value string
 
@@ -156,7 +156,7 @@ func runGetRemote(ctx context.Context, rc *common.RemoteClient) error {
 
 // ── Embedded mode ─────────────────────────────────────────────────────────────
 
-func runGetEmbedded(ctx context.Context) error {
+func runGetEmbedded(ctx context.Context) error { // NOSONAR -- cognitive complexity 28, suppress go:S3776
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)

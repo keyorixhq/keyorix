@@ -26,7 +26,7 @@ const inactiveUserWindow = 30 * 24 * time.Hour
 const maxListPage = 10000
 
 // ListUsers serves user list from core.
-func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 23, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

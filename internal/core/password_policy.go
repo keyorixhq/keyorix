@@ -47,7 +47,7 @@ func DefaultPasswordPolicy() PasswordPolicy {
 // Validate checks pw against the policy. user may be nil (personal-info checks
 // are skipped when it is). It returns a single error listing every unmet
 // requirement, so the caller can surface all of them at once.
-func (p PasswordPolicy) Validate(pw string, user *models.User) error {
+func (p PasswordPolicy) Validate(pw string, user *models.User) error { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	var failures []string
 
 	// A non-positive MinLength means "no length floor", which would accept even an

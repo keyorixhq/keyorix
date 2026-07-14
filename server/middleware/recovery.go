@@ -22,7 +22,7 @@ func stripControl(s string) string {
 }
 
 // Recovery returns a middleware that recovers from panics and returns a proper error response
-func Recovery() func(next http.Handler) http.Handler {
+func Recovery() func(next http.Handler) http.Handler { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {

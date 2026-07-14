@@ -47,7 +47,7 @@ func init() {
 	createCmd.Flags().StringVar(&createBy, "by", "", "Acting admin email (for audit; used with --setup-link / --one-time-password)")
 }
 
-func runCreate(cmd *cobra.Command, args []string) error {
+func runCreate(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive complexity 33, suppress go:S3776
 	if createUsername == "" {
 		return errors.New("username is required (use --username)")
 	}

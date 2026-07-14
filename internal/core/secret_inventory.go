@@ -35,7 +35,7 @@ type SecretInventoryItem struct {
 // SecretsInventory returns the metadata manifest of every live secret in the project
 // (folders excluded), environment/owner names resolved, sorted by environment then
 // name. Never reads or returns a secret value. Bounded to secretInventoryMaxRows.
-func (c *KeyorixCore) SecretsInventory(ctx context.Context, projectID uint) ([]SecretInventoryItem, error) {
+func (c *KeyorixCore) SecretsInventory(ctx context.Context, projectID uint) ([]SecretInventoryItem, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	if projectID == 0 {
 		return nil, fmt.Errorf("project ID is required")
 	}

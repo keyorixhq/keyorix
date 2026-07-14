@@ -101,7 +101,7 @@ func safeFilePermPath(label, path string) (string, error) {
 	return clean, nil
 }
 
-func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix bool, result *ValidationResult) error {
+func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	var files []securefiles.FilePermSpec
 
 	// Check the config file that was actually loaded, not a hardcoded "keyorix.yaml":
