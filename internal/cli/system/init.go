@@ -155,14 +155,15 @@ func initializeDatabase(cfg *config.Config) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
 		return fmt.Errorf("failed to create database directory: %w", err)
 	}
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		file, err := os.OpenFile(dbPath, os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to create database file: %w", err)
-		}
+	// O_EXCL makes the create atomic: no TOCTOU window between stat and open.
+	// If the file already exists, OpenFile returns an error we treat as "ok".
+	file, err := os.OpenFile(dbPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err == nil {
 		if cerr := file.Close(); cerr != nil {
 			return fmt.Errorf("failed to close database file: %w", cerr)
 		}
+	} else if !os.IsExist(err) {
+		return fmt.Errorf("failed to create database file: %w", err)
 	}
 	return nil
 }
@@ -186,14 +187,13 @@ func initializeLogging() error {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0750); err != nil {
 		return fmt.Errorf("failed to create logging directory: %w", err)
 	}
-	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to create log file: %w", err)
-		}
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err == nil {
 		if cerr := file.Close(); cerr != nil {
 			return fmt.Errorf("failed to close log file: %w", cerr)
 		}
+	} else if !os.IsExist(err) {
+		return fmt.Errorf("failed to create log file: %w", err)
 	}
 	return nil
 }
