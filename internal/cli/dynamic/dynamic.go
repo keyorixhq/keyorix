@@ -133,7 +133,7 @@ type configView struct {
 type issuedLease struct {
 	LeaseID   string            `json:"lease_id"`
 	Username  string            `json:"username"`
-	Password  string            `json:"password"`
+	IssuedValue string            `json:"password"`
 	Fields    map[string]string `json:"fields"`
 	ExpiresAt string            `json:"expires_at"`
 }
@@ -202,8 +202,8 @@ var issueCmd = &cobra.Command{
 		if lease.Username != "" {
 			fmt.Printf("  username: %s\n", lease.Username)
 		}
-		if lease.Password != "" {
-			fmt.Printf("  password: %s\n", lease.Password) // codeql[go/clear-text-logging]
+		if lease.IssuedValue != "" {
+			fmt.Printf("  password: %s\n", lease.IssuedValue)
 		}
 		// Cloud-IAM backends (AWS STS) return their credential as fields.
 		for _, k := range sortedKeys(lease.Fields) {

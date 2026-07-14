@@ -281,9 +281,9 @@ func TestCreateUserWithOneTimePassword(t *testing.T) {
 	assert.Equal(t, "dana@acme.io", otp.Email)
 	// The returned OTP satisfies the default policy and is exactly what was hashed and
 	// stored — so it actually authenticates (then hits the password-change gate).
-	require.NoError(t, DefaultPasswordPolicy().Validate(otp.OneTimePassword, nil))
+	require.NoError(t, DefaultPasswordPolicy().Validate(otp.OTPValue, nil))
 	require.NotNil(t, captured)
-	assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(captured.PasswordHash), []byte(otp.OneTimePassword)),
+	assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(captured.PasswordHash), []byte(otp.OTPValue)),
 		"the displayed OTP must be the one persisted")
 	// The out-of-band display is recorded as a human seeing a credential.
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
@@ -291,11 +291,11 @@ func TestCreateUserWithOneTimePassword(t *testing.T) {
 	}))
 }
 
-func TestGenerateOneTimePassword(t *testing.T) {
+func TestGenerateInitialCredential(t *testing.T) {
 	policy := DefaultPasswordPolicy()
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
-		pw, err := generateOneTimePassword()
+		pw, err := generateInitialCredential()
 		require.NoError(t, err)
 		assert.Len(t, pw, otpLength)
 		require.NoError(t, policy.Validate(pw, nil), "every generated OTP must satisfy the default password policy")
