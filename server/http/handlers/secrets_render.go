@@ -39,27 +39,30 @@ func (h *SecretHandler) RenderTemplate(w http.ResponseWriter, r *http.Request) {
 
 	rendered, err := h.coreService.RenderSecretTemplate(r.Context(), reqBody.Template, uint(id), userCtx.UserID, userCtx.Username, r.RemoteAddr, r.Header.Get("User-Agent"))
 	if err != nil {
-		switch {
-		// core.ErrSecretRefNotFound is returned uniformly for BOTH "no such secret" and
-		// "secret exists but the caller can't read it" (see RenderSecretTemplate) — a
-		// project viewer must not be able to tell those apart via 404-vs-403 (#181), so
-		// this one case owns both and must be checked before the generic "not found" /
-		// "permission" substring branches below.
-		case errors.Is(err, core.ErrSecretRefNotFound):
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "not found"):
-			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
-			h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
-		case strings.Contains(err.Error(), "invalid reference"), strings.Contains(err.Error(), "unterminated"),
-			strings.Contains(err.Error(), "empty secret reference"),
-			strings.Contains(err.Error(), "cannot be safely substituted"):
-			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
-		default:
-			h.sendError(w, "InternalError", "Failed to render template", http.StatusInternalServerError, nil)
-		}
+		h.sendRenderTemplateError(w, err)
 		return
 	}
 
 	h.sendSuccess(w, map[string]interface{}{"rendered": rendered}, "")
+}
+
+// sendRenderTemplateError dispatches the correct HTTP error for a RenderSecretTemplate
+// failure. Extracted from RenderTemplate to reduce its cognitive complexity.
+func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, err error) {
+	switch {
+	// core.ErrSecretRefNotFound covers both "no such secret" and "exists but no read access"
+	// — must be checked before the generic "not found" / "permission" substring branches.
+	case errors.Is(err, core.ErrSecretRefNotFound):
+		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+	case strings.Contains(err.Error(), "not found"):
+		h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
+	case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
+		h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
+	case strings.Contains(err.Error(), "invalid reference"), strings.Contains(err.Error(), "unterminated"),
+		strings.Contains(err.Error(), "empty secret reference"),
+		strings.Contains(err.Error(), "cannot be safely substituted"):
+		h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+	default:
+		h.sendError(w, "InternalError", "Failed to render template", http.StatusInternalServerError, nil)
+	}
 }
