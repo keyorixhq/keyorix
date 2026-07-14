@@ -4192,7 +4192,7 @@ func TestCatalogHandler_DeleteOIDCBinding_BadProjectID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── webauthn.go (human-facing) ─────────────────────────────────────────────���──
+// ── webauthn.go (human-facing) ──────────────────────────────────────────────���──
 
 func TestBeginWebAuthnRegistration_Unauthorized(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
