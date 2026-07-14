@@ -12,6 +12,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -106,7 +107,7 @@ func (ls *LocalStorage) CreateUserWithRoleGrants(ctx context.Context, user *mode
 func (ls *LocalStorage) GetUser(ctx context.Context, id uint) (*models.User, error) {
 	var user models.User
 	if err := ls.db.WithContext(ctx).First(&user, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Wrap the typed sentinel so callers can distinguish "absent" from a
 			// transient failure (e.g. ownership-transfer recovery must fail closed).
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
@@ -128,7 +129,7 @@ func (ls *LocalStorage) LockUserForUpdate(ctx context.Context, id uint) (*models
 	}
 	var user models.User
 	if err := q.First(&user, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -143,7 +144,7 @@ func (ls *LocalStorage) GetUserByEmail(ctx context.Context, email string) (*mode
 	// evaded by case (Bob@x vs bob@x), minting a duplicate identity. LOWER() on both
 	// sides matches regardless of stored casing (covers legacy mixed-case rows).
 	if err := ls.db.WithContext(ctx).Where("LOWER(email) = LOWER(?)", email).First(&user).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Wrap the typed sentinel (matching GetUser/LockUserForUpdate, #504) so
 			// callers can detect "genuinely absent" via
 			// errors.Is/storage.IsUserNotFound instead of matching this i18n text,
@@ -158,7 +159,7 @@ func (ls *LocalStorage) GetUserByEmail(ctx context.Context, email string) (*mode
 func (ls *LocalStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	var user models.User
 	if err := ls.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -169,7 +170,7 @@ func (ls *LocalStorage) GetUserByUsername(ctx context.Context, username string) 
 func (ls *LocalStorage) GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
 	var user models.User
 	if err := ls.db.WithContext(ctx).Where("external_id = ?", externalID).First(&user).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -368,7 +369,7 @@ func (ls *LocalStorage) CreateGroup(ctx context.Context, group *models.Group) (*
 func (ls *LocalStorage) GetGroup(ctx context.Context, id uint) (*models.Group, error) {
 	var group models.Group
 	if err := ls.db.WithContext(ctx).First(&group, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorGroupNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

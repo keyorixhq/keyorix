@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,7 +110,7 @@ func (p *ExecKeyProvider) KEK() ([]byte, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("exec key provider: command %q timed out after %s", p.command[0], execKeyTimeout)
 		}
 		// stderr can carry the helper's own diagnostic, but may also echo the

@@ -12,6 +12,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -134,7 +135,7 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDelet
 func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
 	var project models.Project
 	if err := ls.db.WithContext(ctx).First(&project, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("project not found")
 		}
 		return nil, fmt.Errorf("failed to get project: %w", err)
@@ -339,7 +340,7 @@ func (ls *LocalStorage) ListEnvironmentsByProjectIncludingDeleted(ctx context.Co
 func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
 	var env models.Environment
 	if err := ls.db.WithContext(ctx).First(&env, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("environment not found")
 		}
 		return nil, fmt.Errorf("failed to get environment: %w", err)
@@ -408,7 +409,7 @@ func (ls *LocalStorage) CreateSecret(ctx context.Context, secret *models.SecretN
 func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	var secret models.SecretNode
 	if err := ls.db.WithContext(ctx).First(&secret, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -440,7 +441,7 @@ func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, projec
 		name, projectID, environmentID,
 	).First(&secret).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -804,7 +805,7 @@ func (ls *LocalStorage) GetSecretVersions(ctx context.Context, secretID uint) ([
 func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
 	var version models.SecretVersion
 	if err := ls.db.WithContext(ctx).Where("secret_node_id = ?", secretID).Order("version_number DESC").First(&version).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorVersionNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

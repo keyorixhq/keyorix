@@ -11,6 +11,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -50,7 +51,7 @@ func (ls *LocalStorage) CreateRole(ctx context.Context, role *models.Role) (*mod
 func (ls *LocalStorage) GetRole(ctx context.Context, id uint) (*models.Role, error) {
 	var role models.Role
 	if err := ls.db.WithContext(ctx).First(&role, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -61,7 +62,7 @@ func (ls *LocalStorage) GetRole(ctx context.Context, id uint) (*models.Role, err
 func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models.Role, error) {
 	var role models.Role
 	if err := ls.db.WithContext(ctx).Where("name = ?", name).First(&role).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -536,7 +537,7 @@ func (ls *LocalStorage) ListPermissions(ctx context.Context) ([]*models.Permissi
 func (ls *LocalStorage) GetPermission(ctx context.Context, id uint) (*models.Permission, error) {
 	var permission models.Permission
 	if err := ls.db.WithContext(ctx).First(&permission, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
