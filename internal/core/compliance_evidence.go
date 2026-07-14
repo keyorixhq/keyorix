@@ -142,14 +142,7 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 	// Overdue rotations (deployment-wide) — shared with the posture's own Rotation
 	// rollup, not a second GetRotationStatus scan.
 	if snap.rotationErr == nil {
-		for _, s := range snap.rotationStatuses {
-			if s.Status == RotationStatusOverdue {
-				ev.RotationOverdue = append(ev.RotationOverdue, EvidenceRotation{
-					SecretID: s.SecretID, SecretName: s.SecretName,
-					PolicyName: s.PolicyName, DaysOverdue: s.DaysOverdue,
-				})
-			}
-		}
+		appendEvidenceRotations(ev, snap.rotationStatuses)
 	} else {
 		posture.degrade("evidence:rotation_overdue", snap.rotationErr)
 	}
@@ -158,29 +151,43 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 	// AccessGovernance/EmergencyAccess per-project loop, not a second query per
 	// project.
 	for _, proj := range snap.projects {
-		pid := proj.ID
-		if camps, err := snap.campaignsByProject[pid], snap.campaignsErrByProject[pid]; err == nil {
-			for _, cw := range camps {
-				ev.Campaigns = append(ev.Campaigns, EvidenceCampaign{
-					ProjectID: pid, ID: cw.Campaign.ID, Name: cw.Campaign.Name,
-					State: cw.Campaign.State, CreatedAt: cw.Campaign.CreatedAt, ClosedAt: cw.Campaign.ClosedAt,
-					Total: cw.Progress.Total, Attested: cw.Progress.Attested,
-					Revoked: cw.Progress.Revoked, Pending: cw.Progress.Pending,
-				})
-			}
-		} else {
-			posture.degrade(fmt.Sprintf("evidence:campaigns:project=%d", pid), err)
-		}
-		if acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]; err == nil {
-			ev.BreakGlass = append(ev.BreakGlass, acts...)
-		} else {
-			posture.degrade(fmt.Sprintf("evidence:break_glass:project=%d", pid), err)
-		}
-		if reqs, err := snap.accessRequestsByProject[pid], snap.accessRequestsErrByProject[pid]; err == nil {
-			ev.AccessRequests = append(ev.AccessRequests, reqs...)
-		} else {
-			posture.degrade(fmt.Sprintf("evidence:access_requests:project=%d", pid), err)
-		}
+		appendEvidenceForProject(ev, posture, snap, proj.ID)
 	}
 	return ev, nil
+}
+
+func appendEvidenceRotations(ev *ComplianceEvidence, statuses []*RotationStatusEntry) {
+	for _, s := range statuses {
+		if s.Status == RotationStatusOverdue {
+			ev.RotationOverdue = append(ev.RotationOverdue, EvidenceRotation{
+				SecretID: s.SecretID, SecretName: s.SecretName,
+				PolicyName: s.PolicyName, DaysOverdue: s.DaysOverdue,
+			})
+		}
+	}
+}
+
+func appendEvidenceForProject(ev *ComplianceEvidence, posture *CompliancePosture, snap *complianceSnapshot, pid uint) {
+	if camps, err := snap.campaignsByProject[pid], snap.campaignsErrByProject[pid]; err == nil {
+		for _, cw := range camps {
+			ev.Campaigns = append(ev.Campaigns, EvidenceCampaign{
+				ProjectID: pid, ID: cw.Campaign.ID, Name: cw.Campaign.Name,
+				State: cw.Campaign.State, CreatedAt: cw.Campaign.CreatedAt, ClosedAt: cw.Campaign.ClosedAt,
+				Total: cw.Progress.Total, Attested: cw.Progress.Attested,
+				Revoked: cw.Progress.Revoked, Pending: cw.Progress.Pending,
+			})
+		}
+	} else {
+		posture.degrade(fmt.Sprintf("evidence:campaigns:project=%d", pid), err)
+	}
+	if acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]; err == nil {
+		ev.BreakGlass = append(ev.BreakGlass, acts...)
+	} else {
+		posture.degrade(fmt.Sprintf("evidence:break_glass:project=%d", pid), err)
+	}
+	if reqs, err := snap.accessRequestsByProject[pid], snap.accessRequestsErrByProject[pid]; err == nil {
+		ev.AccessRequests = append(ev.AccessRequests, reqs...)
+	} else {
+		posture.degrade(fmt.Sprintf("evidence:access_requests:project=%d", pid), err)
+	}
 }

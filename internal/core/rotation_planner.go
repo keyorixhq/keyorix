@@ -77,15 +77,7 @@ func (c *KeyorixCore) GenerateRotationPlan(ctx context.Context, projectID uint) 
 
 	// Candidates: secrets needing rotation, deduped per secret (a secret covered by
 	// several policies appears once, keeping the most urgent classification).
-	candidates := map[uint]*RotationStatusEntry{}
-	for _, e := range status {
-		if e.Status != RotationStatusOverdue && e.Status != RotationStatusDueSoon {
-			continue
-		}
-		if prev, ok := candidates[e.SecretID]; !ok || moreUrgentEntry(e, prev) {
-			candidates[e.SecretID] = e
-		}
-	}
+	candidates := collectRotationCandidates(status)
 
 	plan := &RotationPlan{ProjectID: projectID, Waves: []RotationWave{}}
 	if len(candidates) == 0 {
@@ -381,17 +373,34 @@ func rotationWaves(edges []*models.SecretDependency, candidates map[uint]bool) (
 	for len(current) > 0 {
 		waves = append(waves, current)
 		placed += len(current)
-		next := []uint{}
-		for _, id := range current {
-			for _, dep := range adj[id] {
-				indeg[dep]--
-				if indeg[dep] == 0 {
-					next = append(next, dep)
-				}
-			}
-		}
-		sort.Slice(next, func(i, j int) bool { return next[i] < next[j] })
-		current = next
+		current = bfsNextWave(adj, current, indeg)
 	}
 	return waves, placed == len(candidates) // false = a cycle prevented a complete ordering
+}
+
+func bfsNextWave(adj map[uint][]uint, current []uint, indeg map[uint]int) []uint {
+	next := []uint{}
+	for _, id := range current {
+		for _, dep := range adj[id] {
+			indeg[dep]--
+			if indeg[dep] == 0 {
+				next = append(next, dep)
+			}
+		}
+	}
+	sort.Slice(next, func(i, j int) bool { return next[i] < next[j] })
+	return next
+}
+
+func collectRotationCandidates(status []*RotationStatusEntry) map[uint]*RotationStatusEntry {
+	candidates := map[uint]*RotationStatusEntry{}
+	for _, e := range status {
+		if e.Status != RotationStatusOverdue && e.Status != RotationStatusDueSoon {
+			continue
+		}
+		if prev, ok := candidates[e.SecretID]; !ok || moreUrgentEntry(e, prev) {
+			candidates[e.SecretID] = e
+		}
+	}
+	return candidates
 }
