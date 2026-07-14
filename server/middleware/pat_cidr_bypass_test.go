@@ -45,7 +45,7 @@ func serveWithChain(clientIPMW func(http.Handler) http.Handler, remoteAddr strin
 // in-allowlist address (10.1.2.3) is INCORRECTLY authorized — concretely proving the
 // backlog's "very likely" claim for #302 was correct.
 func TestPATCIDRAllowlist_UnconditionalRealIP_WasBypassable(t *testing.T) {
-	status := serveWithChain(chimw.RealIP, "203.0.113.9:5555", map[string]string{
+	status := serveWithChain(chimw.RealIP, "203.0.113.9:5555", map[string]string{ //nolint:staticcheck // intentional: testing the pre-fix vulnerable behavior
 		"X-Forwarded-For": "10.1.2.3",
 	})
 	assert.Equal(t, http.StatusOK, status,
