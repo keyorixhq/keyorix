@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+
 // isSafeSSOError reports whether msg is one of the small set of deliberately-
 // crafted, safe messages core.CompleteSSO itself produces without wrapping a
 // lower-layer error. Everything else — an authorization-code exchange failure,
@@ -25,7 +26,7 @@ import (
 // (backlog #116), so anything not on this allowlist is sanitized.
 func isSafeSSOError(msg string) bool {
 	for _, safe := range []string{
-		"unknown SSO provider",
+		errUnknownSSOProvider,
 		"unknown SAML provider",
 		"invalid or expired login state",
 		"login state does not match the callback provider",
@@ -56,7 +57,7 @@ func (h *AuthHandler) BeginSSO(w http.ResponseWriter, r *http.Request) {
 	authURL, err := h.coreService.BeginSSO(r.Context(), provider, r.URL.Query().Get("return_to"))
 	if err != nil {
 		msg := err.Error()
-		if !strings.Contains(msg, "unknown SSO provider") {
+		if !strings.Contains(msg, errUnknownSSOProvider) {
 			log.Printf("Error beginning SSO login via provider %q: %v", provider, err)
 			msg = clientSafe(err)
 		}
@@ -74,7 +75,7 @@ func (h *AuthHandler) CompleteSSO(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	completeURL, ok := h.coreService.SSOCompleteURL(provider)
 	if !ok {
-		sendError(w, "SSOError", "unknown SSO provider", http.StatusBadRequest, nil)
+		sendError(w, "SSOError", errUnknownSSOProvider, http.StatusBadRequest, nil)
 		return
 	}
 

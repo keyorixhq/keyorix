@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
+
 // ListProjectMembers returns the users with a role at the project's scope.
 func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
 	return c.storage.ListProjectMembers(ctx, projectID)
@@ -129,14 +130,14 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 // nil/roles.assign-free targetRoleIDsBefore is a fast no-op (the target wasn't
 // an admin to begin with).
 func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targetID uint, targetRoleIDsBefore, targetRoleIDsAfter []uint) error { // NOSONAR -- cognitive complexity 18, suppress go:S3776
-	hadAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsBefore, "roles.assign")
+	hadAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsBefore, permRolesAssign)
 	if err != nil {
 		return err
 	}
 	if !hadAssign {
 		return nil // target wasn't a project admin — not the last-admin case
 	}
-	willHaveAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsAfter, "roles.assign")
+	willHaveAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsAfter, permRolesAssign)
 	if err != nil {
 		return err
 	}
@@ -159,7 +160,7 @@ func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targ
 		}
 		hasAssign, ok := checked[a.RoleID]
 		if !ok {
-			hasAssign, err = c.storage.RoleSetHasPermission(ctx, []uint{a.RoleID}, "roles.assign")
+			hasAssign, err = c.storage.RoleSetHasPermission(ctx, []uint{a.RoleID}, permRolesAssign)
 			if err != nil {
 				return err
 			}

@@ -17,6 +17,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // AuditHandler handles audit log HTTP requests.
 type AuditHandler struct {
 	coreService *core.KeyorixCore
@@ -52,7 +53,7 @@ type AuditLogEntry struct {
 func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 38, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -187,7 +188,7 @@ type AuditExportEntry struct {
 // next_cursor in the response is the id to use, or null when caught up.
 func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -288,7 +289,7 @@ func actorTypeOrDefault(s string) string {
 func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -338,7 +339,7 @@ func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) 
 // auditable rather than merely asserted.
 func (h *AuditHandler) GetAuditRetention(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -356,7 +357,7 @@ func (h *AuditHandler) GetAuditRetention(w http.ResponseWriter, r *http.Request)
 // intact, naming the first divergent event on failure.
 func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -408,7 +409,7 @@ func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) 
 // of the audit group's audit.read).
 func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 

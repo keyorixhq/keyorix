@@ -15,6 +15,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	descProjectRequired = "Project (required)"
+	flagCampaignID = "campaign-id"
+	flagProjectID = "project-id"
+)
+
 type campaignView struct {
 	ID        uint   `json:"id"`
 	ProjectID uint   `json:"project_id"`
@@ -253,22 +259,22 @@ var campaignCloseCmd = &cobra.Command{
 }
 
 func init() {
-	campaignOpenCmd.Flags().IntVar(&cProject, "project-id", 0, "Project to review (required)")
+	campaignOpenCmd.Flags().IntVar(&cProject, flagProjectID, 0, "Project to review (required)")
 	campaignOpenCmd.Flags().StringVar(&cName, "name", "", "Campaign name (e.g. \"Q4 2026 access recertification\")")
 
-	campaignListCmd.Flags().IntVar(&cProject, "project-id", 0, "Project (required)")
+	campaignListCmd.Flags().IntVar(&cProject, flagProjectID, 0, descProjectRequired)
 
-	campaignShowCmd.Flags().IntVar(&cProject, "project-id", 0, "Project (required)")
-	campaignShowCmd.Flags().IntVar(&cCampaign, "campaign-id", 0, "Campaign to show (required)")
+	campaignShowCmd.Flags().IntVar(&cProject, flagProjectID, 0, descProjectRequired)
+	campaignShowCmd.Flags().IntVar(&cCampaign, flagCampaignID, 0, "Campaign to show (required)")
 
-	campaignDecideCmd.Flags().IntVar(&cProject, "project-id", 0, "Project (required)")
-	campaignDecideCmd.Flags().IntVar(&cCampaign, "campaign-id", 0, "Campaign (required)")
+	campaignDecideCmd.Flags().IntVar(&cProject, flagProjectID, 0, descProjectRequired)
+	campaignDecideCmd.Flags().IntVar(&cCampaign, flagCampaignID, 0, "Campaign (required)")
 	campaignDecideCmd.Flags().IntVar(&cItem, "item-id", 0, "Item to decide (required)")
 	campaignDecideCmd.Flags().StringVar(&cAction, "action", "", "attest | revoke (required)")
 	campaignDecideCmd.Flags().StringVar(&cReason, "reason", "", "Optional reviewer note")
 
-	campaignCloseCmd.Flags().IntVar(&cProject, "project-id", 0, "Project (required)")
-	campaignCloseCmd.Flags().IntVar(&cCampaign, "campaign-id", 0, "Campaign to close (required)")
+	campaignCloseCmd.Flags().IntVar(&cProject, flagProjectID, 0, descProjectRequired)
+	campaignCloseCmd.Flags().IntVar(&cCampaign, flagCampaignID, 0, "Campaign to close (required)")
 	campaignCloseCmd.Flags().BoolVar(&cForce, "force", false, "Close even if items remain pending")
 
 	campaignCmd.AddCommand(campaignOpenCmd, campaignListCmd, campaignShowCmd, campaignDecideCmd, campaignCloseCmd)

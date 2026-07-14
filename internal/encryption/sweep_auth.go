@@ -21,6 +21,10 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	sqlWhereID = "id = ?"
+)
+
 // dryRun skips the final Updates() write only; every other step still runs.
 func sweepSessions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	var sessions []models.Session
@@ -54,7 +58,7 @@ func sweepSessions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSer
 			return swept, fmt.Errorf("failed to marshal session metadata id=%d: %w", session.ID, err)
 		}
 		if !dryRun {
-			if err := tx.Model(&models.Session{}).Where("id = ?", session.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&models.Session{}).Where(sqlWhereID, session.ID).Updates(map[string]interface{}{
 				"encrypted_session_token": newBytes,
 				"session_token_metadata":  models.JSON(metaBytes),
 			}).Error; err != nil {
@@ -99,7 +103,7 @@ func sweepAPITokens(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 			return swept, fmt.Errorf("failed to marshal api_token metadata id=%d: %w", token.ID, err)
 		}
 		if !dryRun {
-			if err := tx.Model(&models.APIToken{}).Where("id = ?", token.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&models.APIToken{}).Where(sqlWhereID, token.ID).Updates(map[string]interface{}{
 				"encrypted_token": newBytes,
 				"token_metadata":  models.JSON(metaBytes),
 			}).Error; err != nil {
@@ -144,7 +148,7 @@ func sweepAPIClients(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 			return swept, fmt.Errorf("failed to marshal api_client metadata id=%d: %w", client.ID, err)
 		}
 		if !dryRun {
-			if err := tx.Model(&models.APIClient{}).Where("id = ?", client.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&models.APIClient{}).Where(sqlWhereID, client.ID).Updates(map[string]interface{}{
 				"encrypted_client_secret": newBytes,
 				"client_secret_metadata":  models.JSON(metaBytes),
 			}).Error; err != nil {
@@ -203,7 +207,7 @@ func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 			return swept, legacyUpgraded, fmt.Errorf("failed to marshal mfa_secret metadata id=%d: %w", row.ID, err)
 		}
 		if !dryRun {
-			if err := tx.Model(&models.MFASecret{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&models.MFASecret{}).Where(sqlWhereID, row.ID).Updates(map[string]interface{}{
 				"secret_enc":  newBytes,
 				"secret_meta": metaBytes,
 			}).Error; err != nil {
@@ -265,7 +269,7 @@ func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *E
 			return swept, legacyUpgraded, fmt.Errorf("failed to marshal dynamic_secret_config metadata id=%d: %w", row.ID, err)
 		}
 		if !dryRun {
-			if err := tx.Model(&models.DynamicSecretConfig{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&models.DynamicSecretConfig{}).Where(sqlWhereID, row.ID).Updates(map[string]interface{}{
 				"admin_dsn_enc":  newBytes,
 				"admin_dsn_meta": metaBytes,
 			}).Error; err != nil {
@@ -326,7 +330,7 @@ func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *En
 			return swept, legacyUpgraded, fmt.Errorf("failed to marshal dynamic_secret_lease metadata id=%d: %w", row.ID, err)
 		}
 		if !dryRun {
-			if err := tx.Model(&models.DynamicSecretLease{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&models.DynamicSecretLease{}).Where(sqlWhereID, row.ID).Updates(map[string]interface{}{
 				"credential_enc":  newBytes,
 				"credential_meta": metaBytes,
 			}).Error; err != nil {
@@ -374,7 +378,7 @@ func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *Encrypt
 			return swept, fmt.Errorf("failed to marshal password_reset metadata id=%d: %w", reset.ID, err)
 		}
 		if !dryRun {
-			if err := tx.Model(&models.PasswordReset{}).Where("id = ?", reset.ID).Updates(map[string]interface{}{
+			if err := tx.Model(&models.PasswordReset{}).Where(sqlWhereID, reset.ID).Updates(map[string]interface{}{
 				"encrypted_token": newBytes,
 				"token_metadata":  models.JSON(metaBytes),
 			}).Error; err != nil {

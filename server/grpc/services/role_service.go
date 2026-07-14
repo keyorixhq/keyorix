@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+
 // Role Name/Description length bounds. gRPC has no shared internal/core
 // validation layer to inherit these from (unlike other resources), so they
 // are mirrored here exactly from the HTTP-side struct tags in
@@ -46,7 +47,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesWrite); err != nil {
 		return nil, err
 	}
 	if len(req.GetPermissions()) == 0 {
@@ -92,7 +93,7 @@ func (s *RoleGRPCService) GetRole(ctx context.Context, req *pb.GetRoleRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesRead); err != nil {
 		return nil, err
 	}
 	return s.roleByID(ctx, uint(req.GetId()))
@@ -104,7 +105,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesWrite); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -158,7 +159,7 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesWrite); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -190,7 +191,7 @@ func (s *RoleGRPCService) ListRoles(ctx context.Context, req *pb.ListRolesReques
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesRead); err != nil {
 		return nil, err
 	}
 
@@ -275,7 +276,7 @@ func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRoles
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "roles.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesRead); err != nil {
 		return nil, err
 	}
 	assignment, err := s.core.GetUserRoleAssignment(ctx, uint(req.GetUserId()))
@@ -309,7 +310,7 @@ func (s *RoleGRPCService) roleByID(ctx context.Context, id uint) (*pb.Role, erro
 
 // resolvePermissionIDs maps permission names to IDs, rejecting unknown names, and
 // requires actorID already hold every named permission (#169: CreateRole/UpdateRole
-// are gated only by the narrower "roles.write" — without this, a roles.write holder
+// are gated only by the narrower permRolesWrite — without this, a roles.write holder
 // could bundle an arbitrary admin-tier permission into a role's DEFINITION with no
 // check they hold it themselves, mirroring the same check the HTTP handler applies).
 // Checked at global scope, matching how roles.write itself is gated. Validating here

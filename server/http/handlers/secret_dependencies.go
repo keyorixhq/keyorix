@@ -22,6 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // dependencyErrorStatus maps a core dependency error to an HTTP status by its message,
 // matching the convention used across the secret handlers.
 func dependencyErrorStatus(msg string) int {
@@ -44,12 +45,12 @@ func dependencyErrorStatus(msg string) int {
 // ListSecretDependencies handles GET /api/v1/secrets/{id}/dependencies
 func (h *SecretHandler) ListSecretDependencies(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	deps, err := h.coreService.ListSecretDependencies(r.Context(), uint(id))
@@ -64,12 +65,12 @@ func (h *SecretHandler) ListSecretDependencies(w http.ResponseWriter, r *http.Re
 func (h *SecretHandler) AddSecretDependency(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	var reqBody struct {
@@ -96,12 +97,12 @@ func (h *SecretHandler) AddSecretDependency(w http.ResponseWriter, r *http.Reque
 func (h *SecretHandler) RemoveSecretDependency(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	depID, err := strconv.ParseUint(chi.URLParam(r, "depId"), 10, 32)
@@ -119,12 +120,12 @@ func (h *SecretHandler) RemoveSecretDependency(w http.ResponseWriter, r *http.Re
 // GetSecretImpact handles GET /api/v1/secrets/{id}/impact
 func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	impact, err := h.coreService.GetSecretImpact(r.Context(), uint(id))
@@ -138,7 +139,7 @@ func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) 
 // GetProjectRotationOrder handles GET /api/v1/projects/{id}/rotation-order
 func (h *SecretHandler) GetProjectRotationOrder(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -159,7 +160,7 @@ func (h *SecretHandler) GetProjectRotationOrder(w http.ResponseWriter, r *http.R
 // due soon, batched into parallel-safe waves and prioritised by urgency.
 func (h *SecretHandler) GetProjectRotationPlan(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -181,7 +182,7 @@ func (h *SecretHandler) GetProjectRotationPlan(w http.ResponseWriter, r *http.Re
 // as listing all projects), so it never reveals a project the caller cannot already see.
 func (h *SecretHandler) GetDeploymentRotationPlan(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	plan, err := h.coreService.GenerateDeploymentRotationPlan(r.Context())

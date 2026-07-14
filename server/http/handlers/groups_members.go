@@ -16,17 +16,18 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // GetGroupMembers handles GET /api/v1/groups/{id}/members
 func (h *GroupHandler) GetGroupMembers(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
 	members, err := h.coreService.GetGroupMembers(r.Context(), uint(id))
@@ -50,13 +51,13 @@ func (h *GroupHandler) GetGroupMembers(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	groupID, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
@@ -89,12 +90,12 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) RemoveGroupMember(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
 	userID, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)

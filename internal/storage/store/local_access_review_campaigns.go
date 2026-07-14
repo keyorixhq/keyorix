@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // --- Campaigns ---
 
 func (ls *LocalStorage) CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error) {
@@ -34,7 +35,7 @@ func (ls *LocalStorage) ListAccessReviewCampaigns(ctx context.Context, projectID
 	var rows []*models.AccessReviewCampaign
 	err := ls.db.WithContext(ctx).
 		Where("project_id = ?", projectID).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -54,7 +55,7 @@ func (ls *LocalStorage) GetOpenAccessReviewCampaign(ctx context.Context, project
 	var c models.AccessReviewCampaign
 	err := ls.db.WithContext(ctx).
 		Where("project_id = ? AND state = ?", projectID, accessReviewCampaignOpen).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		First(&c).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -74,7 +75,7 @@ func (ls *LocalStorage) GetLatestClosedAccessReviewCampaign(ctx context.Context,
 	var c models.AccessReviewCampaign
 	err := ls.db.WithContext(ctx).
 		Where("project_id = ? AND state <> ?", projectID, accessReviewCampaignOpen).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		First(&c).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

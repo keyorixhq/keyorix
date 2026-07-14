@@ -20,6 +20,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // --- Wire DTOs (#496) ---
 //
 // models.SecretNode carries no json tags at all, so marshaling it directly (as
@@ -119,7 +120,7 @@ func (rs *RemoteStorage) CreateSecret(ctx context.Context, secret *models.Secret
 	if len(plaintextValue) > 0 {
 		value = plaintextValue[0]
 	}
-	resp, err := rs.client.Post(ctx, "/api/v1/secrets", newSecretCreateWireRequest(secret, value))
+	resp, err := rs.client.Post(ctx, apiSecretsPath, newSecretCreateWireRequest(secret, value))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret: %w", err)
 	}
@@ -454,7 +455,7 @@ func (rs *RemoteStorage) SetSecretTags(_ context.Context, _ uint, _ []string) er
 // buildSecretFilterPath constructs the /api/v1/secrets query string from filter fields.
 func buildSecretFilterPath(filter *storage.SecretFilter) string {
 	if filter == nil {
-		return "/api/v1/secrets"
+		return apiSecretsPath
 	}
 	params := newQueryBuilder()
 	params.addUint("project_id", filter.ProjectID)
@@ -467,7 +468,7 @@ func buildSecretFilterPath(filter *storage.SecretFilter) string {
 	params.addTime("created_before", filter.CreatedBefore)
 	params.addTags("tags", filter.Tags)
 	params.addPage(filter.Page, filter.PageSize)
-	return "/api/v1/secrets" + params.String()
+	return apiSecretsPath + params.String()
 }
 
 // --- Version operations ---

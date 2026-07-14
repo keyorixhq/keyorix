@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // CreateAuditCheckpoint appends a signed checkpoint row (append-only).
 func (ls *LocalStorage) CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error {
 	return ls.db.WithContext(ctx).Create(cp).Error
@@ -28,7 +29,7 @@ func (ls *LocalStorage) CreateAuditCheckpoint(ctx context.Context, cp *models.Au
 func (ls *LocalStorage) UpdateAuditCheckpointAnchor(ctx context.Context, id uint, token []byte, anchoredAt time.Time, provider string) error {
 	return ls.db.WithContext(ctx).
 		Model(&models.AuditCheckpoint{}).
-		Where("id = ?", id).
+		Where(sqlWhereID, id).
 		Updates(map[string]interface{}{
 			"anchor_token":    token,
 			"anchored_at":     anchoredAt,
@@ -57,7 +58,7 @@ func (ls *LocalStorage) AuditEntryHashByID(ctx context.Context, id uint) (string
 	err := ls.db.WithContext(ctx).
 		Model(&models.AuditEvent{}).
 		Select("entry_hash").
-		Where("id = ?", id).
+		Where(sqlWhereID, id).
 		Limit(1).
 		Scan(&row).Error
 	if err != nil {
@@ -68,7 +69,7 @@ func (ls *LocalStorage) AuditEntryHashByID(ctx context.Context, id uint) (string
 	var n int64
 	if err := ls.db.WithContext(ctx).
 		Model(&models.AuditEvent{}).
-		Where("id = ?", id).
+		Where(sqlWhereID, id).
 		Count(&n).Error; err != nil {
 		return "", false, err
 	}

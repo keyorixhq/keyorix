@@ -12,6 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	descOverrideProject = "Override the active project"
+)
+
 // envCmd is the parent command: keyorix project env
 var envCmd = &cobra.Command{
 	Use:   "env",
@@ -73,9 +77,9 @@ var envCreateCmd = &cobra.Command{
 func init() {
 	envCreateCmd.Flags().StringVar(&envCreateName, "name", "", "Environment name (required)")
 	_ = envCreateCmd.MarkFlagRequired("name")
-	envListCmd.Flags().StringVar(&envProjectFlag, "project", "", "Override the active project")
-	envCreateCmd.Flags().StringVar(&envProjectFlag, "project", "", "Override the active project")
-	envDeleteCmd.Flags().StringVar(&envProjectFlag, "project", "", "Override the active project")
+	envListCmd.Flags().StringVar(&envProjectFlag, "project", "", descOverrideProject)
+	envCreateCmd.Flags().StringVar(&envProjectFlag, "project", "", descOverrideProject)
+	envDeleteCmd.Flags().StringVar(&envProjectFlag, "project", "", descOverrideProject)
 }
 
 func runEnvCreate(cmd *cobra.Command, args []string) error {

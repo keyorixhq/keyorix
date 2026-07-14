@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	configFilename = "keyorix.yaml"
+)
+
 // ConfigCmd represents the config command
 var ConfigCmd = &cobra.Command{
 	Use:   "config",
@@ -61,7 +65,7 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("keyorix.yaml")
+	cfg, err := config.Load(configFilename)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
@@ -101,7 +105,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	// optional here, so an unset value is left empty rather than prompted for.
 	apiKey := resolveAPIKey(cmd)
 
-	cfg, cerr := config.Load("keyorix.yaml")
+	cfg, cerr := config.Load(configFilename)
 	if cerr != nil {
 		// Create default config if it doesn't exist
 		cfg = &config.Config{}
@@ -117,7 +121,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Remote.TimeoutSeconds = timeout
 	cfg.Storage.Remote.TLSVerify = config.BoolPtr(true)
 
-	if err := config.Save("keyorix.yaml", cfg); err != nil {
+	if err := config.Save(configFilename, cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -131,7 +135,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 }
 
 func runUseLocal(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("keyorix.yaml")
+	cfg, err := config.Load(configFilename)
 	if err != nil {
 		// Create default config if it doesn't exist
 		cfg = &config.Config{}
@@ -143,7 +147,7 @@ func runUseLocal(cmd *cobra.Command, args []string) error {
 		cfg.Storage.Database.Path = "./secrets.db" //nolint:goconst
 	}
 
-	if err := config.Save("keyorix.yaml", cfg); err != nil {
+	if err := config.Save(configFilename, cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -154,7 +158,7 @@ func runUseLocal(cmd *cobra.Command, args []string) error {
 }
 
 func runTestConnection(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("keyorix.yaml")
+	cfg, err := config.Load(configFilename)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}

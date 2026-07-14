@@ -17,18 +17,19 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // ListSecretShares handles GET /api/v1/secrets/{id}/shares
 func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -41,7 +42,7 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		log.Printf("Error listing secret shares: %v", err)
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
 			h.sendError(w, "Forbidden", "Not authorized to view this secret's shares", http.StatusForbidden, nil)
@@ -62,7 +63,7 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -143,7 +144,7 @@ func atoiDefault(s string, def int) int {
 func (h *ShareHandler) ListSharedSecrets(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -164,7 +165,7 @@ func (h *ShareHandler) ListSharedSecrets(w http.ResponseWriter, r *http.Request)
 // secrets currently shared with a group (the "what can this group reach" view).
 func (h *ShareHandler) ListGroupSharedSecrets(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -191,21 +192,21 @@ func (h *ShareHandler) ListGroupSharedSecrets(w http.ResponseWriter, r *http.Req
 func (h *ShareHandler) GetSharingStatusWithIndicators(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
 	status, err := h.coreService.GetSecretSharingStatusWithIndicators(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error getting sharing status: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), "permission") {
 			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
@@ -222,20 +223,20 @@ func (h *ShareHandler) GetSharingStatusWithIndicators(w http.ResponseWriter, r *
 func (h *ShareHandler) RemoveSelfFromShare(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
 	if err := h.coreService.RemoveSelfFromShare(r.Context(), uint(id), userCtx.UserID); err != nil {
 		log.Printf("Error removing self from share: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to remove self from share", http.StatusInternalServerError, nil)

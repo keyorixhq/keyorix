@@ -17,6 +17,11 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+const (
+	sqlCreateUniqueIdx = "CREATE UNIQUE INDEX IF NOT EXISTS "
+	sqlWhereNotDeleted = "deleted_at IS NULL"
+)
+
 // migrationMu serializes migrateDatabase across goroutines IN THIS PROCESS (#266).
 // startHTTPServer and startGRPCServer each independently call CreateStorage →
 // migrateDatabase as separate goroutines when both HTTP and gRPC are enabled (a
@@ -322,7 +327,7 @@ func indexExists(db *gorm.DB, indexName string) bool {
 // error instead of letting the bare CREATE UNIQUE INDEX fail later with an
 // opaque driver-level "duplicate key"/"UNIQUE constraint failed" message
 // (#490). whereClause mirrors a partial index's own predicate (e.g.
-// "deleted_at IS NULL"); pass "" for a plain, non-partial index.
+// sqlWhereNotDeleted); pass "" for a plain, non-partial index.
 //
 // This never deletes or modifies any row. Every ensure*Index helper below uses
 // this rather than an auto-delete/dedup pass: a row that collides on the new
@@ -1130,12 +1135,12 @@ func ensureShareRecordUniqueIndex(db *gorm.DB) error {
 	// stale broader "write" share) in effect. Fail loud instead so an operator
 	// resolves the conflict deliberately.
 	if !indexExists(db, idxName) {
-		if err := warnIfDuplicatesExist(db, "share_records", "secret_id, recipient_id, is_group", "deleted_at IS NULL",
+		if err := warnIfDuplicatesExist(db, "share_records", "secret_id, recipient_id, is_group", sqlWhereNotDeleted,
 			"revoke or re-share the conflicting active share record(s) for the affected secret+recipient via the application's share revoke/create API before upgrading"); err != nil {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial share_records unique index: %w", err)
 	}
 	return nil
@@ -1165,7 +1170,7 @@ func ensureSecretVersionIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON secret_versions (secret_node_id, version_number)").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON secret_versions (secret_node_id, version_number)").Error; err != nil {
 		return fmt.Errorf("failed to create secret_versions unique index: %w", err)
 	}
 	return nil
@@ -1194,7 +1199,7 @@ func ensureDynamicSecretConfigNameIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON dynamic_secret_configs (project_id, environment_id, name)").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON dynamic_secret_configs (project_id, environment_id, name)").Error; err != nil {
 		return fmt.Errorf("failed to create dynamic_secret_configs unique index: %w", err)
 	}
 	return nil
@@ -1215,12 +1220,12 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	// any real memberships/role-grants tied to the deleted group's ID. Fail
 	// loud instead so an operator resolves the name collision deliberately.
 	if !indexExists(db, idxName) {
-		if err := warnIfDuplicatesExist(db, "groups", "name", "deleted_at IS NULL",
+		if err := warnIfDuplicatesExist(db, "groups", "name", sqlWhereNotDeleted,
 			"rename or delete one of the conflicting groups via the application's group-rename/delete API before upgrading"); err != nil {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial groups name index: %w", err)
 	}
 	return nil
@@ -1247,7 +1252,7 @@ func ensureProjectMembershipIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName +
+	if err := db.Exec(sqlCreateUniqueIdx + idxName +
 		" ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error; err != nil {
 		return fmt.Errorf("failed to create partial project_memberships index: %w", err)
 	}
@@ -1278,7 +1283,7 @@ func ensureBreakGlassActiveIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error; err != nil {
 		return fmt.Errorf("failed to create partial break_glass_activations active index: %w", err)
 	}
 	return nil
@@ -1304,12 +1309,12 @@ func ensureUserNameIndex(db *gorm.DB) error {
 	// auto-deleting one would silently delete a real account/credential and
 	// leave those references dangling. Fail loud instead.
 	if !indexExists(db, idxName) {
-		if err := warnIfDuplicatesExist(db, "users", "username", "deleted_at IS NULL",
+		if err := warnIfDuplicatesExist(db, "users", "username", sqlWhereNotDeleted,
 			"merge or rename the conflicting user accounts via the application's admin user API before upgrading"); err != nil {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial users username index: %w", err)
 	}
 	return nil
@@ -1343,7 +1348,7 @@ func ensureUserEmailIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial users email index: %w", err)
 	}
 	return nil
@@ -1371,7 +1376,7 @@ func ensureUserExternalIDIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON users (external_id) WHERE deleted_at IS NULL AND external_id != ''").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON users (external_id) WHERE deleted_at IS NULL AND external_id != ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial users external_id index: %w", err)
 	}
 	return nil
@@ -1413,7 +1418,7 @@ func ensureProjectNameIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON projects (LOWER(name)) WHERE deleted_at IS NULL AND name <> ''").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON projects (LOWER(name)) WHERE deleted_at IS NULL AND name <> ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial projects name index: %w", err)
 	}
 	return nil
@@ -1441,7 +1446,7 @@ func ensureLegalHoldActiveIndex(db *gorm.DB) error {
 			return err
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON legal_holds (released) WHERE released = false").Error; err != nil {
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON legal_holds (released) WHERE released = false").Error; err != nil {
 		return fmt.Errorf("failed to create partial legal_holds active index: %w", err)
 	}
 	return nil

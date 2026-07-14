@@ -18,6 +18,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	flagDeploymentID = "deployment-id"
+)
+
 // LicenseCmd is the `keyorix license` command group.
 var LicenseCmd = &cobra.Command{
 	Use:   "license",
@@ -191,7 +195,7 @@ func init() {
 	issueCmd.Flags().StringVar(&issuePlan, "plan", "", "plan name, e.g. enterprise-airgap")
 	issueCmd.Flags().StringVar(&issueFeatures, "features", "", "comma-separated commercial feature keys")
 	issueCmd.Flags().StringVar(&issueNotAfter, "not-after", "", "expiry, RFC3339 (required)")
-	issueCmd.Flags().StringVar(&issueDeployment, "deployment-id", "", "optional binding to a deployment id")
+	issueCmd.Flags().StringVar(&issueDeployment, flagDeploymentID, "", "optional binding to a deployment id")
 	issueCmd.Flags().IntVar(&issueMaxSeats, "max-seats", 0, "optional informational seat count")
 	issueCmd.Flags().StringVar(&issueKeyID, "key-id", "", "license signing key-id (required)")
 	issueCmd.Flags().StringVar(&issueSignKey, "sign-key", "", "PKCS#8 PEM ed25519 license signing key (required; keep offline)")
@@ -201,12 +205,12 @@ func init() {
 	_ = issueCmd.MarkFlagRequired("sign-key")
 
 	installCmd.Flags().StringVar(&installDest, "dest", "", "path to store the validated license token (required)")
-	installCmd.Flags().StringVar(&installDeployment, "deployment-id", "", "this deployment's id, to check a bound license")
+	installCmd.Flags().StringVar(&installDeployment, flagDeploymentID, "", "this deployment's id, to check a bound license")
 	installCmd.Flags().IntVar(&installGraceHours, "grace-hours", 0, "post-expiry grace window in hours (default 336 = 14d)")
 	_ = installCmd.MarkFlagRequired("dest")
 
 	statusCmd.Flags().StringVar(&statusFile, "license", "", "license token file to evaluate")
-	statusCmd.Flags().StringVar(&statusDeployment, "deployment-id", "", "this deployment's id, to check a bound license")
+	statusCmd.Flags().StringVar(&statusDeployment, flagDeploymentID, "", "this deployment's id, to check a bound license")
 	statusCmd.Flags().IntVar(&statusGraceHours, "grace-hours", 0, "post-expiry grace window in hours (default 336 = 14d)")
 
 	LicenseCmd.AddCommand(issueCmd)

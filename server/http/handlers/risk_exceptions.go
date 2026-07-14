@@ -17,6 +17,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // ListRiskExceptions handles GET /api/v1/risk-exceptions — the register. ?all=true
 // includes expired exceptions (history); default is active only.
 func (h *DashboardHandler) ListRiskExceptions(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +36,7 @@ func (h *DashboardHandler) ListRiskExceptions(w http.ResponseWriter, r *http.Req
 func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Request) {
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -79,7 +80,7 @@ func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Re
 func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.Request) {
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -108,7 +109,7 @@ func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.R
 func (h *DashboardHandler) RevokeRiskException(w http.ResponseWriter, r *http.Request) {
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

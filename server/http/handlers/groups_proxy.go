@@ -48,6 +48,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // groupProxyWire mirrors models.Group's fields exactly (snake_case) — the wire
 // shape internal/storage/store/remote_users.go's groupWire sends/expects. See
 // that type's comment for why every field is named explicitly rather than
@@ -85,7 +86,7 @@ func (w groupProxyWire) toModel() *models.Group {
 	}
 }
 
-// isGroupNotFound reports whether err is LocalStorage's "group not found"
+// isGroupNotFound reports whether err is LocalStorage's errGroupNotFoundLower
 // error (local_users.go wraps i18n.T("ErrorGroupNotFound", ...), which does
 // not necessarily contain the literal substring "not found" in every locale —
 // but LocalStorage always runs with the server's configured locale, and
@@ -99,7 +100,7 @@ func isGroupNotFound(err error) bool {
 func (h *GroupHandler) CreateGroupProxy(w http.ResponseWriter, r *http.Request) {
 	var body groupProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.Name == "" {
@@ -119,13 +120,13 @@ func (h *GroupHandler) CreateGroupProxy(w http.ResponseWriter, r *http.Request) 
 func (h *GroupHandler) GetGroupProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid group ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
 	g, err := h.coreService.Storage().GetGroup(r.Context(), uint(id))
 	if err != nil {
 		if isGroupNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "group not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errGroupNotFoundLower)
 			return
 		}
 		log.Printf("groups proxy: get failed: %v", err)
@@ -143,19 +144,19 @@ func (h *GroupHandler) GetGroupProxy(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) UpdateGroupProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid group ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
 	var body groupProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
 	updated, err := h.coreService.Storage().UpdateGroup(r.Context(), body.toModel())
 	if err != nil {
 		if isGroupNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "group not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errGroupNotFoundLower)
 			return
 		}
 		log.Printf("groups proxy: update failed: %v", err)
@@ -172,12 +173,12 @@ func (h *GroupHandler) UpdateGroupProxy(w http.ResponseWriter, r *http.Request) 
 func (h *GroupHandler) DeleteGroupProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid group ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
 	if err := h.coreService.Storage().DeleteGroup(r.Context(), uint(id)); err != nil {
 		if isGroupNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "group not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errGroupNotFoundLower)
 			return
 		}
 		log.Printf("groups proxy: delete failed: %v", err)
@@ -191,7 +192,7 @@ func (h *GroupHandler) DeleteGroupProxy(w http.ResponseWriter, r *http.Request) 
 func (h *GroupHandler) RestoreGroupProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid group ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
 	if err := h.coreService.Storage().RestoreGroup(r.Context(), uint(id)); err != nil {
@@ -255,12 +256,12 @@ type groupMemberBody struct {
 func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid group ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
 	var body groupMemberBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.UserID == 0 {
@@ -283,7 +284,7 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid group ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
 	userID, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)
@@ -303,13 +304,13 @@ func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Req
 func (h *GroupHandler) ListGroupMembersProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid group ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
 	members, err := h.coreService.Storage().ListGroupMembers(r.Context(), uint(groupID))
 	if err != nil {
 		if isGroupNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "group not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errGroupNotFoundLower)
 			return
 		}
 		log.Printf("groups proxy: list members failed: %v", err)

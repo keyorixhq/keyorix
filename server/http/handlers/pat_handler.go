@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // PATHandler handles personal-access-token HTTP requests.
 type PATHandler struct {
 	coreService *core.KeyorixCore
@@ -73,7 +74,7 @@ func toPATResponse(t *models.PersonalAccessToken) patResponse {
 func (h *PATHandler) ListPATs(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	tokens, err := h.coreService.ListOwnPATs(r.Context(), userCtx.UserID)
@@ -105,7 +106,7 @@ type patHygieneResponse struct {
 // days defaults to 90 and is capped at 3650.
 func (h *PATHandler) PATHygiene(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	days := 90
@@ -154,7 +155,7 @@ type createPATRequestBody struct {
 func (h *PATHandler) CreatePAT(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body createPATRequestBody
@@ -192,7 +193,7 @@ func (h *PATHandler) CreatePAT(w http.ResponseWriter, r *http.Request) {
 func (h *PATHandler) RevokePAT(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

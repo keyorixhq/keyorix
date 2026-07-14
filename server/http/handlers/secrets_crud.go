@@ -21,11 +21,12 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // CreateSecret handles POST /api/v1/secrets
 func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -42,7 +43,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&reqBody); err != nil {
@@ -84,7 +85,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error creating secret: %v", err)
 		if strings.Contains(err.Error(), "already exists") {
 			h.sendError(w, "ConflictError", "Secret with this name already exists", http.StatusConflict, nil)
-		} else if strings.Contains(err.Error(), "does not belong to project") || strings.Contains(err.Error(), "environment") && strings.Contains(err.Error(), "not found") {
+		} else if strings.Contains(err.Error(), "does not belong to project") || strings.Contains(err.Error(), "environment") && strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
 		} else if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
@@ -95,7 +96,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid, sID, uname, sname := userCtx.UserID, response.ID, userCtx.Username, response.Name
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretCreatedWithProject(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua)
@@ -111,19 +112,19 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	var reqBody struct {
 		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	secret, err := h.coreService.ClassifySecret(r.Context(), userCtx.UserID, userCtx.Username, uint(id), reqBody.Classification)
@@ -133,7 +134,7 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(msg, "classification must be"):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("Error classifying secret %d: %v", id, err)
@@ -150,12 +151,12 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	var reqBody struct {
@@ -166,7 +167,7 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		Ref     string `json:"ref"`     // upstream identifier (required iff backend set)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.SetSecretAutoRotate(r.Context(), uint(id), core.AutoRotateSpec{
@@ -176,7 +177,7 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "unknown rotation charset"),
 			strings.Contains(msg, "out of range"),
@@ -201,14 +202,14 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -225,10 +226,10 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), "permission denied") {
-			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
+		} else if strings.Contains(err.Error(), errPermissionDenied) {
+			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret", http.StatusInternalServerError, nil)
 		}
@@ -245,8 +246,8 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		}
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)
-			if strings.Contains(err.Error(), "permission denied") {
-				h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+			if strings.Contains(err.Error(), errPermissionDenied) {
+				h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 			} else {
 				h.sendError(w, "InternalError", "Failed to get secret value", http.StatusInternalServerError, nil)
 			}
@@ -256,7 +257,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
@@ -275,7 +276,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -308,10 +309,10 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		log.Printf("Error getting secret by name: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), "permission denied") {
-			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
+		} else if strings.Contains(err.Error(), errPermissionDenied) {
+			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret", http.StatusInternalServerError, nil)
 		}
@@ -319,7 +320,7 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 	}
 
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
@@ -337,7 +338,7 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -347,7 +348,7 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 		case errors.Is(err, core.ErrSecretRefInvalid):
 			h.sendError(w, "InvalidParameter", "ref must be \"project/environment/name\"", http.StatusBadRequest, nil)
 		case errors.Is(err, core.ErrSecretRefNotFound):
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to resolve secret", http.StatusInternalServerError, nil)
 		}
@@ -365,8 +366,8 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		log.Printf("Error getting secret value by ref: %v", err)
-		if strings.Contains(err.Error(), "permission denied") {
-			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		if strings.Contains(err.Error(), errPermissionDenied) {
+			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret value", http.StatusInternalServerError, nil)
 		}
@@ -374,7 +375,7 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 	}
 
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
@@ -389,18 +390,18 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.RestoreSecret(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error restoring secret %d: %v", id, err)
@@ -416,14 +417,14 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -436,7 +437,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		ClearExpiration bool   `json:"clear_expiration,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&reqBody); err != nil {
@@ -479,7 +480,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, response.Name
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	diff := core.BuildSecretUpdateDiff(oldSecret, req, reqBody.Value != "")
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
@@ -493,14 +494,14 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -514,10 +515,10 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.coreService.DeleteSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID); err != nil {
 		log.Printf("Error deleting secret: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), "permission denied") {
-			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
+		} else if strings.Contains(err.Error(), errPermissionDenied) {
+			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to delete secret", http.StatusInternalServerError, nil)
 		}
@@ -525,7 +526,7 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid, sID, uname := userCtx.UserID, uint(id), userCtx.Username
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretDeletedWithProject(auditCtx, uid, sID, secretProjectID, uname, secretName, ip, ua)

@@ -19,13 +19,14 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // ── Invitations ────────────────────────────────────────────────────────────
 
 // ListInvitations handles GET /api/v1/projects/{id}/invitations.
 func (h *CatalogHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	invitations, err := h.coreService.ListProjectInvitations(r.Context(), uint(id))
@@ -41,12 +42,12 @@ func (h *CatalogHandler) ListInvitations(w http.ResponseWriter, r *http.Request)
 func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -54,7 +55,7 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		Role  string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Email == "" || body.Role == "" {
@@ -69,7 +70,7 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		if inv == nil {
 			status := http.StatusInternalServerError
 			msg := err.Error()
-			if strings.Contains(msg, "unknown role") || strings.Contains(msg, "required") {
+			if strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required") {
 				status = http.StatusBadRequest
 			} else {
 				log.Printf("Error inviting %q to project %d: %v", body.Email, id, err)
@@ -94,7 +95,7 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -106,7 +107,7 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		} `json:"project_assignments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Email == "" {
@@ -165,7 +166,7 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	invID, err := strconv.ParseUint(chi.URLParam(r, "invitationId"), 10, 32)
@@ -175,7 +176,7 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	prov, err := h.coreService.ResendInvitationLink(r.Context(), uint(projectID), uint(invID), actor.UserID)
@@ -183,9 +184,9 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "only a pending"):
+		case strings.Contains(msg, errOnlyPending):
 			status = http.StatusConflict
 		case strings.Contains(msg, "limit") || strings.Contains(msg, "wait"):
 			status = http.StatusTooManyRequests
@@ -205,7 +206,7 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 func (h *CatalogHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	invID, err := strconv.ParseUint(chi.URLParam(r, "invitationId"), 10, 32)
@@ -215,16 +216,16 @@ func (h *CatalogHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	if err := h.coreService.RevokeInvitation(r.Context(), uint(projectID), uint(invID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "only a pending"):
+		case strings.Contains(msg, errOnlyPending):
 			status = http.StatusConflict
 		default:
 			log.Printf("Error revoking invitation %d for project %d: %v", invID, projectID, err)
@@ -242,7 +243,7 @@ func (h *CatalogHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request
 func (h *CatalogHandler) ListAccessRequests(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	requests, err := h.coreService.ListAccessRequests(r.Context(), uint(id))
@@ -258,12 +259,12 @@ func (h *CatalogHandler) ListAccessRequests(w http.ResponseWriter, r *http.Reque
 func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -271,14 +272,14 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 		Reason        string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	req, err := h.coreService.RequestProjectAccess(r.Context(), uint(id), actor.UserID, body.SuggestedRole, body.Reason)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "unknown role") || strings.Contains(msg, "required") {
+		if strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required") {
 			status = http.StatusBadRequest
 		} else {
 			log.Printf("Error creating access request for project %d: %v", id, err)
@@ -296,7 +297,7 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	reqID, err := strconv.ParseUint(chi.URLParam(r, "requestId"), 10, 32)
@@ -306,7 +307,7 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -318,7 +319,7 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		GrantTTL string `json:"grant_ttl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	var resolveErr error
@@ -343,9 +344,9 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		status := http.StatusInternalServerError
 		msg := resolveErr.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "only a pending"), strings.Contains(msg, "unknown role"), strings.Contains(msg, "required"):
+		case strings.Contains(msg, errOnlyPending), strings.Contains(msg, errUnknownRole), strings.Contains(msg, "required"):
 			status = http.StatusConflict
 		default:
 			log.Printf("Error resolving access request %d for project %d: %v", reqID, projectID, resolveErr)
@@ -366,18 +367,18 @@ func (h *CatalogHandler) WithdrawAccessRequest(w http.ResponseWriter, r *http.Re
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	if err := h.coreService.WithdrawAccessRequest(r.Context(), uint(reqID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "not your"):
 			status = http.StatusForbidden
-		case strings.Contains(msg, "only a pending"):
+		case strings.Contains(msg, errOnlyPending):
 			status = http.StatusConflict
 		default:
 			log.Printf("Error withdrawing access request %d: %v", reqID, err)

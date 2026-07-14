@@ -12,6 +12,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
+
 // ProjectGRPCService implements pb.ProjectServiceServer, backing each RPC with the
 // shared core service. It enforces the SAME permissions as the HTTP routes:
 // list/get → secrets.read, create/update → secrets.write, delete → secrets.delete,
@@ -47,7 +48,7 @@ func (s *ProjectGRPCService) ListProjects(ctx context.Context, _ *emptypb.Empty)
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, user, "secrets.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, user, permSecretsRead); err != nil {
 		return nil, err
 	}
 	projects, err := s.core.ListProjects(ctx)
@@ -67,9 +68,9 @@ func (s *ProjectGRPCService) GetProject(ctx context.Context, req *pb.GetProjectR
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeScoped(ctx, s.core, user, "secrets.read", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
 	}
 	project, err := s.core.GetProject(ctx, uint(req.GetId()))
@@ -87,9 +88,9 @@ func (s *ProjectGRPCService) GetProjectRotationOrder(ctx context.Context, req *p
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeScoped(ctx, s.core, user, "secrets.read", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
 	}
 	order, err := s.core.GetProjectRotationOrder(ctx, uint(req.GetId()))
@@ -107,9 +108,9 @@ func (s *ProjectGRPCService) GetProjectRotationPlan(ctx context.Context, req *pb
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeScoped(ctx, s.core, user, "secrets.read", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
 	}
 	plan, err := s.core.GenerateRotationPlan(ctx, uint(req.GetId()))
@@ -143,7 +144,7 @@ func (s *ProjectGRPCService) UpdateProject(ctx context.Context, req *pb.UpdatePr
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
 	if err := authorizeScoped(ctx, s.core, user, "secrets.write", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
@@ -172,7 +173,7 @@ func (s *ProjectGRPCService) DeleteProject(ctx context.Context, req *pb.DeletePr
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
 	if err := authorizeScoped(ctx, s.core, user, "secrets.delete", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
 		return nil, err
@@ -191,7 +192,7 @@ func (s *ProjectGRPCService) ListEnvironments(ctx context.Context, req *pb.ListE
 	if req.GetProjectId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
-	if err := authorizeScoped(ctx, s.core, user, "secrets.read", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
 	envs, err := s.core.ListEnvironmentsByProject(ctx, uint(req.GetProjectId()))

@@ -17,6 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	flagProjectID = "project-id"
+)
+
 // RotationCmd is the root `keyorix rotation` command.
 var RotationCmd = &cobra.Command{
 	Use:     "rotation",
@@ -44,16 +48,16 @@ func init() {
 	createCmd.Flags().StringVar(&cName, "name", "", "Policy name (required)")
 	createCmd.Flags().StringVar(&cDesc, "description", "", "Policy description")
 	createCmd.Flags().StringVar(&cScope, "scope", "", "Scope: project | environment (required)")
-	createCmd.Flags().IntVar(&cProject, "project-id", 0, "Target project (required when --scope project)")
+	createCmd.Flags().IntVar(&cProject, flagProjectID, 0, "Target project (required when --scope project)")
 	createCmd.Flags().IntVar(&cEnv, "environment-id", 0, "Target environment (required when --scope environment)")
 	createCmd.Flags().IntVar(&cInterval, "interval-days", 0, "Rotation interval in days, 1–365 (required)")
 	createCmd.Flags().IntVar(&cAlert, "alert-days-before", 7, "Warn this many days before the deadline (0–90)")
 	createCmd.Flags().BoolVar(&cNotify, "notify-on-breach", true, "Notify when a covered secret goes overdue")
 
-	listCmd.Flags().IntVar(&lProject, "project-id", 0, "Filter by project")
+	listCmd.Flags().IntVar(&lProject, flagProjectID, 0, "Filter by project")
 	listCmd.Flags().IntVar(&lEnv, "environment-id", 0, "Filter by environment")
 
-	statusCmd.Flags().IntVar(&sProject, "project-id", 0, "Limit to a single project")
+	statusCmd.Flags().IntVar(&sProject, flagProjectID, 0, "Limit to a single project")
 
 	RotationCmd.AddCommand(listCmd, createCmd, showCmd, deleteCmd, statusCmd)
 }

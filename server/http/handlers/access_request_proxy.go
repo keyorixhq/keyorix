@@ -58,6 +58,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // accessRequestProxyWire mirrors models.AccessRequest's PERSISTED fields
 // exactly (snake_case) — the wire shape
 // internal/storage/store/remote_invitations.go's accessRequestWire
@@ -156,7 +157,7 @@ func validAccessRequestTargetState(s string) bool {
 func (h *CatalogHandler) CreateAccessRequestProxy(w http.ResponseWriter, r *http.Request) {
 	var body accessRequestProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.ProjectID == 0 || body.UserID == 0 {
@@ -180,7 +181,7 @@ func (h *CatalogHandler) CreateAccessRequestProxy(w http.ResponseWriter, r *http
 func (h *CatalogHandler) GetAccessRequestProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid access request ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidAccessRequestID)
 		return
 	}
 	req, err := h.coreService.Storage().GetAccessRequest(r.Context(), uint(id))
@@ -206,12 +207,12 @@ func (h *CatalogHandler) GetAccessRequestProxy(w http.ResponseWriter, r *http.Re
 func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid access request ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidAccessRequestID)
 		return
 	}
 	var body accessRequestProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if !validAccessRequestTargetState(body.State) {
@@ -263,12 +264,12 @@ func (h *CatalogHandler) ListAccessRequestsProxy(w http.ResponseWriter, r *http.
 func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid access request ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidAccessRequestID)
 		return
 	}
 	var body accessRequestApprovalProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.ApproverID == 0 {
@@ -293,7 +294,7 @@ func (h *CatalogHandler) CreateAccessRequestApprovalProxy(w http.ResponseWriter,
 func (h *CatalogHandler) ListAccessRequestApprovalsProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid access request ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidAccessRequestID)
 		return
 	}
 	rows, err := h.coreService.Storage().ListAccessRequestApprovals(r.Context(), uint(id))

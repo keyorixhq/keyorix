@@ -57,6 +57,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // webAuthnCredentialProxyWire mirrors models.WebAuthnCredential's fields exactly
 // (snake_case). models.WebAuthnCredential carries no json tags of its own, so
 // every field is named explicitly here rather than relying on encoding/json's
@@ -160,7 +161,7 @@ func parseWebAuthnUserIDQuery(w http.ResponseWriter, r *http.Request) (userID ui
 func (h *AuthHandler) CreateWebAuthnCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	var body webAuthnCredentialProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.UserID == 0 || len(body.CredentialID) == 0 {
@@ -221,7 +222,7 @@ func (h *AuthHandler) GetWebAuthnCredentialByCredIDProxy(w http.ResponseWriter, 
 	cred, err := h.coreService.Storage().GetWebAuthnCredentialByCredID(r.Context(), credID, userID)
 	if err != nil {
 		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "webauthn credential not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errWebAuthnCredNotFound)
 			return
 		}
 		log.Printf("webauthn proxy: get credential failed: %v", err)
@@ -245,7 +246,7 @@ func (h *AuthHandler) UpdateWebAuthnCredentialProxy(w http.ResponseWriter, r *ht
 	}
 	var body webAuthnCredentialProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -289,7 +290,7 @@ type advanceWebAuthnCounterProxyBody struct {
 func (h *AuthHandler) AdvanceWebAuthnCredentialCounterProxy(w http.ResponseWriter, r *http.Request) {
 	var body advanceWebAuthnCounterProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if len(body.CredentialID) == 0 || body.UserID == 0 || len(body.NewBlob) == 0 {
@@ -300,7 +301,7 @@ func (h *AuthHandler) AdvanceWebAuthnCredentialCounterProxy(w http.ResponseWrite
 		r.Context(), body.CredentialID, body.UserID, body.NewBlob, body.NewSignCount, body.LastUsedAt)
 	if err != nil {
 		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "webauthn credential not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errWebAuthnCredNotFound)
 			return
 		}
 		log.Printf("webauthn proxy: advance counter failed: %v", err)
@@ -327,7 +328,7 @@ func (h *AuthHandler) DeleteWebAuthnCredentialProxy(w http.ResponseWriter, r *ht
 	}
 	if err := h.coreService.Storage().DeleteWebAuthnCredential(r.Context(), uint(userID), uint(id)); err != nil {
 		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "webauthn credential not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errWebAuthnCredNotFound)
 			return
 		}
 		log.Printf("webauthn proxy: delete credential failed: %v", err)
@@ -368,7 +369,7 @@ func (h *AuthHandler) SetUserWebAuthnEnabledProxy(w http.ResponseWriter, r *http
 	}
 	var body setUserWebAuthnEnabledProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if err := h.coreService.Storage().SetUserWebAuthnEnabled(r.Context(), uint(userID), body.Enabled); err != nil {
@@ -383,7 +384,7 @@ func (h *AuthHandler) SetUserWebAuthnEnabledProxy(w http.ResponseWriter, r *http
 func (h *AuthHandler) CreateWebAuthnSessionProxy(w http.ResponseWriter, r *http.Request) {
 	var body webAuthnSessionProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.UserID == 0 || body.TokenHash == "" {
@@ -420,7 +421,7 @@ type webAuthnSessionConsumeProxyBody struct {
 func (h *AuthHandler) ConsumeWebAuthnSessionProxy(w http.ResponseWriter, r *http.Request) {
 	var body webAuthnSessionConsumeProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.TokenHash == "" || body.Now.IsZero() {

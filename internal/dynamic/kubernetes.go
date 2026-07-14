@@ -57,6 +57,11 @@ import (
 	"time"
 )
 
+const (
+	bearerPrefix = "Bearer "
+	mimeJSON = "application/json"
+)
+
 // k8sMinExpirationSeconds is the Kubernetes TokenRequest minimum (10 minutes); the
 // API server silently bumps anything lower, so we floor it for an honest lease TTL.
 const k8sMinExpirationSeconds = 600
@@ -320,9 +325,9 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+m.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+m.token)
+	req.Header.Set("Content-Type", mimeJSON)
+	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := m.hc.Do(req)
 	if err != nil {
@@ -381,9 +386,9 @@ func (m *realK8sMinter) createBoundSecret(ctx context.Context, namespace, name s
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+m.token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+m.token)
+	req.Header.Set("Content-Type", mimeJSON)
+	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := m.hc.Do(req)
 	if err != nil {
@@ -420,8 +425,8 @@ func (m *realK8sMinter) deleteBoundSecret(ctx context.Context, namespace, name s
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+m.token)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+m.token)
+	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := m.hc.Do(req)
 	if err != nil {

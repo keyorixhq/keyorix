@@ -17,6 +17,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // NotificationHandler serves the authenticated user's notifications.
 type NotificationHandler struct {
 	coreService *core.KeyorixCore
@@ -48,7 +49,7 @@ func notificationToAPI(n *models.Notification) map[string]interface{} {
 func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 	u := middleware.GetUserFromContext(r.Context())
 	if u == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	unreadOnly := r.URL.Query().Get("unread") == "true"
@@ -82,7 +83,7 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *NotificationHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 	u := middleware.GetUserFromContext(r.Context())
 	if u == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, ok := parseUintParam(w, r, "id")
@@ -105,7 +106,7 @@ func (h *NotificationHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 func (h *NotificationHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	u := middleware.GetUserFromContext(r.Context())
 	if u == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	if err := h.coreService.MarkAllNotificationsRead(r.Context(), u.UserID); err != nil {

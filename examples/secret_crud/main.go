@@ -15,6 +15,10 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	exampleUsername = "example-user"
+)
+
 func main() {
 	fmt.Println("🔐 Keyorix Secret CRUD Example")
 	fmt.Println("===============================")
@@ -48,7 +52,7 @@ func main() {
 		Type:          "api-key",
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		CreatedBy:     "example-user",
+		CreatedBy:     exampleUsername,
 	}
 
 	secret, err := service.CreateSecret(ctx, createReq)
@@ -91,7 +95,7 @@ func main() {
 	fmt.Println("\n🔄 Example 3: Update Secret")
 	updateReq := &core.UpdateSecretRequest{
 		ID:        secret.ID,
-		UpdatedBy: "example-user",
+		UpdatedBy: exampleUsername,
 	}
 	updated, err := service.UpdateSecret(ctx, updateReq)
 	if err != nil {
@@ -128,7 +132,7 @@ func main() {
 		EnvironmentID: environmentID,
 		MaxReads:      &maxReads,
 		Expiration:    &expiration,
-		CreatedBy:     "example-user",
+		CreatedBy:     exampleUsername,
 	}
 	tempSecret, err := service.CreateSecret(ctx, tempSecretReq)
 	if err != nil {

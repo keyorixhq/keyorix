@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+
 // Audit-stream tail tuning: a SAFETY-NET fallback interval (the common path is the
 // push signal from core.SubscribeAuditStream, not this) and the max events drained per
 // wake. The interval is a var so tests can shorten it. The SAME interval re-validates
@@ -88,7 +89,7 @@ func (s *AuditGRPCService) acquireStreamSlot(actor *interceptors.UserContext) (f
 // admin-action revocation paths (suspend, deprovision, delete, remove role) #108
 // describes.
 func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *interceptors.UserContext) error {
-	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return err
 	}
 	if actor.ActorKind() == core.ActorTypeMachine {
@@ -111,7 +112,7 @@ func (s *AuditGRPCService) GetAuditLogs(ctx context.Context, req *pb.GetAuditLog
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
@@ -152,7 +153,7 @@ func (s *AuditGRPCService) GetRBACAuditLogs(ctx context.Context, req *pb.GetRBAC
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
@@ -182,7 +183,7 @@ func (s *AuditGRPCService) VerifyAuditChain(ctx context.Context, _ *emptypb.Empt
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	v, err := s.core.VerifyAuditChain(ctx)
@@ -254,7 +255,7 @@ func (s *AuditGRPCService) GetAuditRetention(ctx context.Context, _ *emptypb.Emp
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	cov, err := s.core.AuditRetentionCoverage(ctx)
@@ -319,7 +320,7 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 	if actor == nil {
 		return status.Error(codes.Unauthenticated, "user not authenticated")
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return err
 	}
 	release, err := s.acquireStreamSlot(actor)

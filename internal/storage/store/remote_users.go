@@ -52,6 +52,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // --- Wire DTOs (#496) ---
 //
 // models.User carries no json tags of its own (it is a GORM model, and the local
@@ -222,7 +223,7 @@ func (rs *RemoteStorage) CreateUser(ctx context.Context, user *models.User, plai
 	if len(plaintextPassword) > 0 {
 		password = plaintextPassword[0]
 	}
-	resp, err := rs.client.Post(ctx, "/api/v1/users", newUserCreateWireRequest(user, password))
+	resp, err := rs.client.Post(ctx, apiUsersPath, newUserCreateWireRequest(user, password))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
@@ -668,7 +669,7 @@ func (rs *RemoteStorage) CreateUserWithRoleGrants(ctx context.Context, user *mod
 // buildUserFilterPath constructs the /api/v1/users query string.
 func buildUserFilterPath(filter *storage.UserFilter) string {
 	if filter == nil {
-		return "/api/v1/users"
+		return apiUsersPath
 	}
 	params := newQueryBuilder()
 	params.addString("search", filter.Search)
@@ -677,7 +678,7 @@ func buildUserFilterPath(filter *storage.UserFilter) string {
 	params.addBool("is_active", filter.IsActive)
 	params.addTime("created_after", filter.CreatedAfter)
 	params.addPage(filter.Page, filter.PageSize)
-	return "/api/v1/users" + params.String()
+	return apiUsersPath + params.String()
 }
 
 // --- Group wire DTOs ---

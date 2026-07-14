@@ -22,11 +22,12 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // CreateUser handles POST /api/v1/users
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -54,7 +55,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		ProjectAssignments []projectAssignmentBody `json:"project_assignments,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
@@ -177,8 +178,8 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		log.Printf("Error creating user: %v", err)
 		switch {
-		case strings.Contains(err.Error(), "already exists"):
-			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
+		case strings.Contains(err.Error(), errAlreadyExists):
+			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
 		case strings.Contains(err.Error(), "only an administrator can grant"):
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		case strings.Contains(err.Error(), "unknown role"), strings.Contains(err.Error(), "unknown project"),
@@ -186,7 +187,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 			strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
-			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
+			sendError(w, "InternalError", errFailedCreateUser, http.StatusInternalServerError, nil)
 		}
 		return
 	}
@@ -212,23 +213,23 @@ func (h *UserHandler) authorizeUserCreationAssignments(ctx context.Context, user
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	u, err := h.coreService.GetUser(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error getting user: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
-		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
+		sendError(w, "InternalError", errFailedGetUser, http.StatusInternalServerError, nil)
 		return
 	}
 	resp := userToAPIResponse(u)
@@ -251,7 +252,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	email := strings.TrimSpace(r.URL.Query().Get("email"))
@@ -262,11 +263,11 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	u, err := h.coreService.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		log.Printf("Error getting user by email: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
-		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
+		sendError(w, "InternalError", errFailedGetUser, http.StatusInternalServerError, nil)
 		return
 	}
 	resp := userToAPIResponse(u)
@@ -282,7 +283,7 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	username := strings.TrimSpace(r.URL.Query().Get("username"))
@@ -293,11 +294,11 @@ func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) 
 	u, err := h.coreService.GetUserByUsername(r.Context(), username)
 	if err != nil {
 		log.Printf("Error getting user by username: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
-		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
+		sendError(w, "InternalError", errFailedGetUser, http.StatusInternalServerError, nil)
 		return
 	}
 	resp := userToAPIResponse(u)
@@ -312,7 +313,7 @@ func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) 
 func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	externalID := strings.TrimSpace(r.URL.Query().Get("external_id"))
@@ -323,11 +324,11 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 	u, err := h.coreService.GetUserByExternalID(r.Context(), externalID)
 	if err != nil {
 		log.Printf("Error getting user by external id: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
-		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
+		sendError(w, "InternalError", errFailedGetUser, http.StatusInternalServerError, nil)
 		return
 	}
 	resp := userToAPIResponse(u)
@@ -381,7 +382,7 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -391,7 +392,7 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		IPAddress string `json:"ip_address"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Username == "" || body.Password == "" {
@@ -465,13 +466,13 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 func (h *UserHandler) IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	challenge, err := h.coreService.CreateMFAChallenge(r.Context(), uint(id))
@@ -506,7 +507,7 @@ func (h *UserHandler) IssueMFAChallenge(w http.ResponseWriter, r *http.Request) 
 func (h *UserHandler) VerifyMFACredentials(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -514,7 +515,7 @@ func (h *UserHandler) VerifyMFACredentials(w http.ResponseWriter, r *http.Reques
 		Code      string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Challenge == "" || body.Code == "" {
@@ -592,12 +593,12 @@ type mfaChallengeLookupBody struct {
 func (h *UserHandler) GetActiveMFAChallenge(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body mfaChallengeLookupBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if body.TokenHash == "" || body.Now.IsZero() {
@@ -631,12 +632,12 @@ func (h *UserHandler) GetActiveMFAChallenge(w http.ResponseWriter, r *http.Reque
 func (h *UserHandler) ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body mfaChallengeLookupBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if body.TokenHash == "" || body.Now.IsZero() {
@@ -655,13 +656,13 @@ func (h *UserHandler) ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -672,7 +673,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		Active      *bool   `json:"active,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
@@ -697,12 +698,12 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	updated, err := h.coreService.UpdateUser(r.Context(), req)
 	if err != nil {
 		log.Printf("Error updating user: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
-		if strings.Contains(err.Error(), "already exists") {
-			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
+		if strings.Contains(err.Error(), errAlreadyExists) {
+			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
 			return
 		}
 		sendError(w, "InternalError", "Failed to update user", http.StatusInternalServerError, nil)
@@ -715,20 +716,20 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.DeleteUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting user: %v", err)
 		switch {
-		case strings.Contains(err.Error(), "not found"):
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		case strings.Contains(err.Error(), errNotFound):
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "last install administrator"):
 			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
 		default:
@@ -743,18 +744,18 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.RestoreUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error restoring user: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", "User not found or not soft-deleted", http.StatusNotFound, nil)
 			return
 		}
@@ -769,18 +770,18 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) UnlockUser(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.UnlockUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
 		sendError(w, "InternalError", "Failed to unlock user", http.StatusInternalServerError, nil)
@@ -794,12 +795,12 @@ func (h *UserHandler) UnlockUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request, okMessage string, transition func(ctx context.Context, adminID, userID uint) error) {
 	admin := middleware.GetUserFromContext(r.Context())
 	if admin == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	// A global admin must not suspend / lock themselves out of admin access.
@@ -809,7 +810,7 @@ func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request,
 	}
 	if err := transition(r.Context(), admin.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			status = http.StatusNotFound
 		}
 		sendError(w, "Error", err.Error(), status, nil)
@@ -839,12 +840,12 @@ func (h *UserHandler) RequirePasswordReset(w http.ResponseWriter, r *http.Reques
 func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 	admin := middleware.GetUserFromContext(r.Context())
 	if admin == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	// Mirrors accountStateAction's self-action guard (line 367): an admin must not be
@@ -856,7 +857,7 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 	n, err := h.coreService.RevokeUserSessions(r.Context(), admin.UserID, uint(id))
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			status = http.StatusNotFound
 		}
 		sendError(w, "Error", err.Error(), status, nil)
@@ -871,12 +872,12 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) ResendSetupLink(w http.ResponseWriter, r *http.Request) {
 	admin := middleware.GetUserFromContext(r.Context())
 	if admin == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	res, err := h.coreService.ResendAccountSetupLink(r.Context(), uint(id), admin.UserID)
@@ -884,7 +885,7 @@ func (h *UserHandler) ResendSetupLink(w http.ResponseWriter, r *http.Request) {
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "limit") || strings.Contains(msg, "wait"):
 			status = http.StatusTooManyRequests

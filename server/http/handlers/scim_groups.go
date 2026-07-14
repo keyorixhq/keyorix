@@ -16,6 +16,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 const scimGroupSchema = "urn:ietf:params:scim:schemas:core:2.0:Group"
 
 // SCIM group-mutation bounds: a single request may not carry more than these many
@@ -173,7 +174,7 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(p.Members) > scimMaxMembersPerRequest {
-		scimError(w, http.StatusRequestEntityTooLarge, "too many members in one request")
+		scimError(w, http.StatusRequestEntityTooLarge, errTooManyMembers)
 		return
 	}
 	g, err := h.coreService.ProvisionSCIMGroup(r.Context(), 0, p.DisplayName, p.memberIDs())
@@ -200,7 +201,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(p.Members) > scimMaxMembersPerRequest {
-		scimError(w, http.StatusRequestEntityTooLarge, "too many members in one request")
+		scimError(w, http.StatusRequestEntityTooLarge, errTooManyMembers)
 		return
 	}
 	g, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
@@ -292,7 +293,7 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) { // NO
 	}
 
 	if len(addIDs)+len(removeIDs)+len(replaceMembers) > scimMaxMembersPerRequest {
-		scimError(w, http.StatusRequestEntityTooLarge, "too many members in one request")
+		scimError(w, http.StatusRequestEntityTooLarge, errTooManyMembers)
 		return
 	}
 

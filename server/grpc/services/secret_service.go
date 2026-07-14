@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+
 // SecretGRPCService implements pb.SecretServiceServer, backing each RPC with the
 // shared core service. Authentication/identity is established by the auth
 // interceptor (see interceptors.AuthInterceptor) and read from the context.
@@ -44,7 +45,7 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	// global permission set — a project-scoped writer must not create in another
 	// project. Mirrors the HTTP CreateSecret handler (scope from the body).
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
+	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), permSecretsWrite, scope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets in this project")
 	}
 	if err := enforceProjectMFA(ctx, s.core, user, scope.ProjectID); err != nil {
@@ -84,7 +85,7 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
 	secret, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
@@ -101,7 +102,7 @@ func (s *SecretGRPCService) ListSecretDependencies(ctx context.Context, req *pb.
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
 	deps, err := s.core.ListSecretDependencies(ctx, uint(req.GetId()))
@@ -118,7 +119,7 @@ func (s *SecretGRPCService) GetSecretImpact(ctx context.Context, req *pb.GetSecr
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
 	impact, err := s.core.GetSecretImpact(ctx, uint(req.GetId()))
@@ -136,7 +137,7 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
 	// Resolve the name first (metadata read, no read-count side effect).
@@ -174,9 +175,9 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.write"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 
@@ -219,7 +220,7 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.delete"); err != nil {
 		return nil, err
@@ -253,9 +254,9 @@ func (s *SecretGRPCService) SetSecretAutoRotate(ctx context.Context, req *pb.Set
 		return nil, err
 	}
 	if req.GetId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "id is required")
+		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.write"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 	if err := s.core.SetSecretAutoRotate(ctx, uint(req.GetId()), core.AutoRotateSpec{
@@ -277,7 +278,7 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 	// route's ScopeFromQuery); 0/0 means global. ListSecretsWithSharingInfo then
 	// filters the results to what the caller may actually see.
 	listScope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.read", listScope); err != nil || !allowed {
+	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), permSecretsRead, listScope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list secrets")
 	}
 	if err := enforceProjectMFA(ctx, s.core, user, listScope.ProjectID); err != nil {
@@ -331,7 +332,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
 	versions, err := s.core.GetSecretVersionsWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)

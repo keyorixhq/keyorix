@@ -12,6 +12,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
+
 type updateUserRolesRequest struct {
 	RoleIDs []uint `json:"role_ids" validate:"omitempty"`
 	// ProjectID/EnvironmentID scope the replacement (0 = global). Only the
@@ -42,7 +43,7 @@ func NewUsersRolesHandler(coreService *core.KeyorixCore) *UsersRolesHandler {
 // GetUserRolesForUser handles GET /api/v1/users/{id}/roles
 func (h *UsersRolesHandler) GetUserRolesForUser(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -54,8 +55,8 @@ func (h *UsersRolesHandler) GetUserRolesForUser(w http.ResponseWriter, r *http.R
 	roles, err := h.coreService.GetUserRolesByID(r.Context(), userID)
 	if err != nil {
 		log.Printf("Error getting roles for user %d: %v", userID, err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get user roles", http.StatusInternalServerError, nil)
 		}
@@ -82,7 +83,7 @@ type apiPermission struct {
 // "what can this user do" view for the dashboard and access reviews.
 func (h *UsersRolesHandler) GetUserPermissionsForUser(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -94,8 +95,8 @@ func (h *UsersRolesHandler) GetUserPermissionsForUser(w http.ResponseWriter, r *
 	perms, err := h.coreService.GetUserPermissionsByID(r.Context(), userID)
 	if err != nil {
 		log.Printf("Error getting permissions for user %d: %v", userID, err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get user permissions", http.StatusInternalServerError, nil)
 		}
@@ -122,7 +123,7 @@ type apiUserMembership struct {
 // powering the per-user assignments table on the detail page.
 func (h *UsersRolesHandler) GetUserMembershipsForUser(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -164,7 +165,7 @@ func (h *UsersRolesHandler) GetUserMembershipsForUser(w http.ResponseWriter, r *
 func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -205,8 +206,8 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
 	if err := h.coreService.SetUserRoles(r.Context(), actor.UserID, userID, req.RoleIDs, scope); err != nil {
 		log.Printf("Error setting roles for user %d: %v", userID, err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to update user roles", http.StatusInternalServerError, nil)
 		}

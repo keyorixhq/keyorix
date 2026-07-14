@@ -60,6 +60,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // mfaSecretProxyWire mirrors models.MFASecret's fields exactly (snake_case)
 // and mfaSecretWire in internal/storage/store/remote_mfa.go. SecretEnc/
 // SecretMeta/LastUsedStep are tagged json:"-" on the model (to keep them out
@@ -119,7 +120,7 @@ func parseMFAUserIDParam(w http.ResponseWriter, r *http.Request, name string) (u
 func (h *AuthHandler) UpsertMFASecretProxy(w http.ResponseWriter, r *http.Request) {
 	var body mfaSecretProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.UserID == 0 || len(body.SecretEnc) == 0 {
@@ -206,7 +207,7 @@ func (h *AuthHandler) SetUserMFAEnabledProxy(w http.ResponseWriter, r *http.Requ
 	}
 	var body setUserMFAEnabledProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if err := h.coreService.Storage().SetUserMFAEnabled(r.Context(), userID, body.Enabled); err != nil {
@@ -235,7 +236,7 @@ func (h *AuthHandler) CreateMFARecoveryCodesProxy(w http.ResponseWriter, r *http
 	}
 	var body createMFARecoveryCodesProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if err := h.coreService.Storage().CreateMFARecoveryCodes(r.Context(), userID, body.CodeHashes); err != nil {

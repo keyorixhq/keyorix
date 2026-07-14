@@ -18,9 +18,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model interface{}, before time.Time) (int64, error) {
 	result := ls.db.WithContext(ctx).Unscoped().
-		Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+		Where(sqlWhereDeletedBefore, before).
 		Delete(model)
 	if result.Error != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
@@ -52,7 +53,7 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
 		if e := tx.Unscoped().Model(&models.User{}).
-			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Where(sqlWhereDeletedBefore, before).
 			Pluck("id", &ids).Error; e != nil {
 			return e
 		}
@@ -67,12 +68,12 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 		stillEligible := func() *gorm.DB {
 			return tx.Unscoped().Model(&models.User{}).
 				Select("id").
-				Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before)
+				Where(sqlWhereIDsDeletedBefore, ids, before)
 		}
-		if e := tx.Where("user_id IN (?)", stillEligible()).Delete(&models.UserRole{}).Error; e != nil {
+		if e := tx.Where(sqlWhereUserIDIn, stillEligible()).Delete(&models.UserRole{}).Error; e != nil {
 			return e
 		}
-		if e := tx.Where("user_id IN (?)", stillEligible()).Delete(&models.UserGroup{}).Error; e != nil {
+		if e := tx.Where(sqlWhereUserIDIn, stillEligible()).Delete(&models.UserGroup{}).Error; e != nil {
 			return e
 		}
 		// ShareRecord carries its own DeletedAt (soft-delete) — Unscoped so this is a
@@ -80,14 +81,14 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 		if e := tx.Unscoped().Where("recipient_id IN (?) AND is_group = ?", stillEligible(), false).Delete(&models.ShareRecord{}).Error; e != nil {
 			return e
 		}
-		if e := tx.Where("user_id IN (?)", stillEligible()).Delete(&models.PersonalAccessToken{}).Error; e != nil {
+		if e := tx.Where(sqlWhereUserIDIn, stillEligible()).Delete(&models.PersonalAccessToken{}).Error; e != nil {
 			return e
 		}
 		if e := tx.Where("user_id IN (?) OR impersonated_by IN (?)", stillEligible(), stillEligible()).Delete(&models.Session{}).Error; e != nil {
 			return e
 		}
 		ru := tx.Unscoped().
-			Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before).
+			Where(sqlWhereIDsDeletedBefore, ids, before).
 			Delete(&models.User{})
 		if ru.Error != nil {
 			return ru.Error
@@ -126,7 +127,7 @@ func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before t
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
 		if e := tx.Unscoped().Model(&models.Project{}).
-			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Where(sqlWhereDeletedBefore, before).
 			Pluck("id", &ids).Error; e != nil {
 			return e
 		}
@@ -141,7 +142,7 @@ func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before t
 		stillEligible := func() *gorm.DB {
 			return tx.Unscoped().Model(&models.Project{}).
 				Select("id").
-				Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before)
+				Where(sqlWhereIDsDeletedBefore, ids, before)
 		}
 		if e := tx.Where("project_id IN (?)", stillEligible()).Delete(&models.UserRole{}).Error; e != nil {
 			return e
@@ -150,7 +151,7 @@ func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before t
 			return e
 		}
 		rp := tx.Unscoped().
-			Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before).
+			Where(sqlWhereIDsDeletedBefore, ids, before).
 			Delete(&models.Project{})
 		if rp.Error != nil {
 			return rp.Error
@@ -197,7 +198,7 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
 		if e := tx.Unscoped().Model(&models.SecretNode{}).
-			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Where(sqlWhereDeletedBefore, before).
 			Pluck("id", &ids).Error; e != nil {
 			return e
 		}
@@ -213,7 +214,7 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 		stillEligible := func() *gorm.DB {
 			return tx.Unscoped().Model(&models.SecretNode{}).
 				Select("id").
-				Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before)
+				Where(sqlWhereIDsDeletedBefore, ids, before)
 		}
 		if e := tx.Where("secret_node_id IN (?)", stillEligible()).Delete(&models.SecretVersion{}).Error; e != nil {
 			return e
@@ -223,7 +224,7 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 			return e
 		}
 		rn := tx.Unscoped().
-			Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before).
+			Where(sqlWhereIDsDeletedBefore, ids, before).
 			Delete(&models.SecretNode{})
 		if rn.Error != nil {
 			return rn.Error

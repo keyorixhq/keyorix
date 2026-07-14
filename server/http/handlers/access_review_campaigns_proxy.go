@@ -67,6 +67,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // accessReviewCampaignProxyWire mirrors models.AccessReviewCampaign's fields
 // exactly (snake_case). Unlike dynamicSecretConfigProxyWire/groupProxyWire,
 // models.AccessReviewCampaign already carries a complete, correct set of json
@@ -215,7 +216,7 @@ func parseRequiredProjectIDQuery(w http.ResponseWriter, r *http.Request) (projec
 func (h *CatalogHandler) CreateAccessReviewCampaignProxy(w http.ResponseWriter, r *http.Request) {
 	var body accessReviewCampaignProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.ProjectID == 0 || body.Name == "" {
@@ -235,7 +236,7 @@ func (h *CatalogHandler) CreateAccessReviewCampaignProxy(w http.ResponseWriter, 
 func (h *CatalogHandler) GetAccessReviewCampaignProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid campaign id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCampaignIDLower)
 		return
 	}
 	c, err := h.coreService.Storage().GetAccessReviewCampaign(r.Context(), uint(id))
@@ -326,12 +327,12 @@ func (h *CatalogHandler) GetLatestClosedAccessReviewCampaignProxy(w http.Respons
 func (h *CatalogHandler) UpdateAccessReviewCampaignProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid campaign id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCampaignIDLower)
 		return
 	}
 	var body accessReviewCampaignProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -352,14 +353,14 @@ func (h *CatalogHandler) UpdateAccessReviewCampaignProxy(w http.ResponseWriter, 
 func (h *CatalogHandler) CreateAccessReviewItemsProxy(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid campaign id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCampaignIDLower)
 		return
 	}
 	var body struct {
 		Items []accessReviewItemProxyWire `json:"items"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	items := make([]*models.AccessReviewItem, 0, len(body.Items))
@@ -380,7 +381,7 @@ func (h *CatalogHandler) CreateAccessReviewItemsProxy(w http.ResponseWriter, r *
 func (h *CatalogHandler) ListAccessReviewItemsProxy(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid campaign id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCampaignIDLower)
 		return
 	}
 	rows, err := h.coreService.Storage().ListAccessReviewItems(r.Context(), uint(campaignID))
@@ -404,7 +405,7 @@ func (h *CatalogHandler) ListAccessReviewItemsProxy(w http.ResponseWriter, r *ht
 func (h *CatalogHandler) CountPendingAccessReviewItemsProxy(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid campaign id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCampaignIDLower)
 		return
 	}
 	n, err := h.coreService.Storage().CountPendingAccessReviewItems(r.Context(), uint(campaignID))
@@ -460,7 +461,7 @@ func (h *CatalogHandler) UpdateAccessReviewItemProxy(w http.ResponseWriter, r *h
 	}
 	var body accessReviewItemProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)

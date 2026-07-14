@@ -14,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // AdminJobsHandler exposes the scheduled jobs as manual triggers.
 type AdminJobsHandler struct {
 	coreService *core.KeyorixCore
@@ -28,7 +29,7 @@ func NewAdminJobsHandler(coreService *core.KeyorixCore) *AdminJobsHandler {
 // for any new (unalerted) anomaly findings now. Returns {alerted}.
 func (h *AdminJobsHandler) RunAnomalyAlerts(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	n, err := h.coreService.AlertNewAnomalies(r.Context())
@@ -44,7 +45,7 @@ func (h *AdminJobsHandler) RunAnomalyAlerts(w http.ResponseWriter, r *http.Reque
 // rotation-due reminders now. Returns {sent}.
 func (h *AdminJobsHandler) RunRotationReminders(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	n, err := h.coreService.SendRotationReminders(r.Context())
@@ -61,7 +62,7 @@ func (h *AdminJobsHandler) RunRotationReminders(w http.ResponseWriter, r *http.R
 // lead_days is omitted or non-positive). Returns {sent}.
 func (h *AdminJobsHandler) RunExpiryReminders(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	leadDays := 0 // core applies the default when <= 0
@@ -83,7 +84,7 @@ func (h *AdminJobsHandler) RunExpiryReminders(w http.ResponseWriter, r *http.Req
 // compliance digest now. Returns {sent} (false when there were no recipients/changes).
 func (h *AdminJobsHandler) RunComplianceDigest(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	sent, err := h.coreService.SendComplianceDigest(r.Context())

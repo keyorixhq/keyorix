@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // BootstrapRequest holds credentials and display name for the initial bootstrap.
 // Token is the caller-supplied bootstrap token, matched against the server's
 // configured token (see KeyorixCore.SetBootstrapToken) to authorize the first-admin
@@ -45,17 +46,17 @@ type bootstrapPermissionDef struct {
 
 // defaultPermissions is the canonical set of permissions seeded on first boot.
 var defaultPermissions = []bootstrapPermissionDef{
-	{"secrets.read", "Read secrets", "secrets", "read"},
-	{"secrets.write", "Create and update secrets", "secrets", "write"},
-	{"secrets.delete", "Delete secrets", "secrets", "delete"},
-	{"users.read", "View user information", "users", "read"},
+	{permSecretsRead, "Read secrets", "secrets", "read"},
+	{permSecretsWrite, "Create and update secrets", "secrets", "write"},
+	{permSecretsDelete, "Delete secrets", "secrets", "delete"},
+	{permUsersRead, "View user information", "users", "read"},
 	{"users.write", "Create and update users", "users", "write"},
 	{"users.delete", "Delete users", "users", "delete"},
-	{"roles.read", "View roles", "roles", "read"},
+	{permRolesRead, "View roles", "roles", "read"},
 	{"roles.write", "Create and update roles", "roles", "write"},
-	{"roles.assign", "Assign roles to users", "roles", "assign"},
-	{"audit.read", "View audit logs", "audit", "read"},
-	{"system.read", "View system information", "system", "read"},
+	{permRolesAssign, "Assign roles to users", "roles", "assign"},
+	{permAuditRead, "View audit logs", "audit", "read"},
+	{permSystemRead, "View system information", "system", "read"},
 	// #227: this permission's blast radius is much broader than "system.write"
 	// sounds — it gates every deployment-wide admin-tier action that isn't a
 	// dedicated resource permission of its own: audit-checkpoint writes and
@@ -72,20 +73,20 @@ var defaultPermissions = []bootstrapPermissionDef{
 
 // adminPermissions lists the permission names granted to the admin role.
 var adminPermissions = []string{
-	"secrets.read", "secrets.write", "secrets.delete",
-	"users.read", "users.write", "users.delete",
-	"roles.read", "roles.write", "roles.assign",
-	"audit.read", "system.read", "system.write",
+	permSecretsRead, permSecretsWrite, permSecretsDelete,
+	permUsersRead, "users.write", "users.delete",
+	permRolesRead, "roles.write", permRolesAssign,
+	permAuditRead, permSystemRead, "system.write",
 	"connect.read",
 }
 
 // editorPermissions lists the permission names granted to the editor role.
 // Editor is the canonical "can change secrets, but not manage users/roles" role
 // and is meant to be granted at a project/environment scope (RBAC Phase 2).
-var editorPermissions = []string{"secrets.read", "secrets.write", "secrets.delete", "users.read"}
+var editorPermissions = []string{permSecretsRead, permSecretsWrite, permSecretsDelete, permUsersRead}
 
 // viewerPermissions lists the permission names granted to the viewer role.
-var viewerPermissions = []string{"secrets.read", "users.read", "audit.read"}
+var viewerPermissions = []string{permSecretsRead, permUsersRead, permAuditRead}
 
 // bootstrapRoleDef describes a role to seed on first boot and the permissions
 // it grants (by permission name, resolved against defaultPermissions).
@@ -114,19 +115,19 @@ var defaultRoles = []bootstrapRoleDef{
 	// ADR-021 system roles — assign at the global scope (project 0).
 	{"system_admin", "Install-wide administrator: manage projects, users, roles and settings", adminPermissions},
 	{"system_auditor", "Install-wide read-only access plus audit, for compliance personas",
-		[]string{"secrets.read", "users.read", "roles.read", "audit.read", "system.read"}},
+		[]string{permSecretsRead, permUsersRead, permRolesRead, permAuditRead, permSystemRead}},
 	{"system_viewer", "Minimal install baseline; project access comes from project roles",
-		[]string{"system.read"}},
+		[]string{permSystemRead}},
 
 	// ADR-021 project roles — assign at a project scope (project P).
 	{"project_admin", "Full control within a project, including members and settings",
-		[]string{"secrets.read", "secrets.write", "secrets.delete", "users.read", "roles.read", "roles.assign", "audit.read"}},
+		[]string{permSecretsRead, permSecretsWrite, permSecretsDelete, permUsersRead, permRolesRead, permRolesAssign, permAuditRead}},
 	{"project_developer", "Read, write and rotate secrets in all environments of a project",
-		[]string{"secrets.read", "secrets.write", "secrets.delete", "users.read"}},
+		[]string{permSecretsRead, permSecretsWrite, permSecretsDelete, permUsersRead}},
 	{"project_viewer", "Read-only access to a project's secrets",
-		[]string{"secrets.read", "users.read"}},
+		[]string{permSecretsRead, permUsersRead}},
 	{"project_auditor", "Read-only access to a project's secrets plus its audit log",
-		[]string{"secrets.read", "users.read", "audit.read"}},
+		[]string{permSecretsRead, permUsersRead, permAuditRead}},
 }
 
 // builtinRoleNames are the roles that ship with the product and must not be

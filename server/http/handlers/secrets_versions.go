@@ -18,25 +18,26 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // GetSecretVersions handles GET /api/v1/secrets/{id}/versions
 func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
 	versions, err := h.coreService.GetSecretVersionsWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error getting secret versions: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), "permission denied") {
 			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
@@ -63,14 +64,14 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "BadRequest", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "BadRequest", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -98,7 +99,7 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	secret, err := h.coreService.RotateSecretOnDemand(r.Context(), uint(id), []byte(reqBody.NewValue), userCtx.Username)
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "backend"):
 			// The upstream rotation failed or only partially completed — surfaced
@@ -130,12 +131,12 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "BadRequest", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "BadRequest", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	var reqBody struct {
@@ -155,7 +156,7 @@ func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 	secret, err := h.coreService.RollbackSecret(r.Context(), uint(id), reqBody.Version, userCtx.UserID, userCtx.Username)
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(err.Error(), errNotFound):
 			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "already the current version"), strings.Contains(err.Error(), "version number must be positive"):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)

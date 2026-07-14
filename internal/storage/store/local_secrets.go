@@ -23,6 +23,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // --- Project / Environment ---
 
 // maxEnvironmentListing caps how many environments a single ListEnvironmentsByProject
@@ -172,7 +173,7 @@ func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	deletedAt := time.Now()
 	// Soft-delete all currently-live secrets in the project.
 	if err := tx.Model(&models.SecretNode{}).
-		Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
+		Where(sqlWhereProjectID, id).Update("deleted_at", deletedAt).Error; err != nil {
 		return fmt.Errorf("failed to soft-delete project secrets: %w", err)
 	}
 	// Revoke every still-active share for every secret in this project (#119
@@ -207,7 +208,7 @@ func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	//
 	// Soft-delete all currently-live environments in the project.
 	if err := tx.Model(&models.Environment{}).
-		Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
+		Where(sqlWhereProjectID, id).Update("deleted_at", deletedAt).Error; err != nil {
 		return fmt.Errorf("failed to soft-delete project environments: %w", err)
 	}
 	// Disable every dynamic-secret config scoped to the project (#369): a
@@ -225,7 +226,7 @@ func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	}
 	// Soft-delete the project itself with the same timestamp.
 	result := tx.Model(&models.Project{}).
-		Where("id = ?", id).Update("deleted_at", deletedAt)
+		Where(sqlWhereID, id).Update("deleted_at", deletedAt)
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete project: %w", result.Error)
 	}
@@ -253,7 +254,7 @@ func (ls *LocalStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int,
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var secretCount int64
 		if err := tx.Model(&models.SecretNode{}).
-			Where("project_id = ?", id).Count(&secretCount).Error; err != nil {
+			Where(sqlWhereProjectID, id).Count(&secretCount).Error; err != nil {
 			return fmt.Errorf("failed to count project secrets: %w", err)
 		}
 		if secretCount > 0 {
@@ -307,7 +308,7 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEn
 
 		// Clear the project last.
 		if err := tx.Unscoped().Model(&models.Project{}).
-			Where("id = ?", id).Update("deleted_at", nil).Error; err != nil {
+			Where(sqlWhereID, id).Update("deleted_at", nil).Error; err != nil {
 			return fmt.Errorf("failed to restore project: %w", err)
 		}
 		return nil
@@ -325,7 +326,7 @@ func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environ
 
 func (ls *LocalStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	var environments []*models.Environment
-	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).
+	return environments, ls.db.WithContext(ctx).Where(sqlWhereProjectID, projectID).
 		Limit(maxEnvironmentListing).Find(&environments).Error
 }
 
@@ -333,7 +334,7 @@ func (ls *LocalStorage) ListEnvironmentsByProject(ctx context.Context, projectID
 // also returns soft-deleted environments (DeletedAt populated), for the restore UI.
 func (ls *LocalStorage) ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	var environments []*models.Environment
-	return environments, ls.db.WithContext(ctx).Unscoped().Where("project_id = ?", projectID).
+	return environments, ls.db.WithContext(ctx).Unscoped().Where(sqlWhereProjectID, projectID).
 		Limit(maxEnvironmentListing).Find(&environments).Error
 }
 
@@ -461,7 +462,7 @@ func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretN
 // targeted single-column update that touches nothing else (ADR-056).
 func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error {
 	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
-		Where("id = ?", secretID).Update("cert_not_after", notAfter).Error; err != nil {
+		Where(sqlWhereID, secretID).Update("cert_not_after", notAfter).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
@@ -759,7 +760,7 @@ func (ls *LocalStorage) GetSecretTags(ctx context.Context, secretID uint) ([]str
 // observes a partial tag set.
 func (ls *LocalStorage) SetSecretTags(ctx context.Context, secretID uint, tagNames []string) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("secret_node_id = ?", secretID).Delete(&models.SecretTag{}).Error; err != nil {
+		if err := tx.Where(sqlWhereSecretNodeID, secretID).Delete(&models.SecretTag{}).Error; err != nil {
 			return fmt.Errorf("clear tags: %w", err)
 		}
 		for _, name := range tagNames {
@@ -795,7 +796,7 @@ func (ls *LocalStorage) CreateSecretVersion(ctx context.Context, version *models
 // GetSecretVersions retrieves all versions of a secret ordered newest-first.
 func (ls *LocalStorage) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {
 	var versions []*models.SecretVersion
-	if err := ls.db.WithContext(ctx).Where("secret_node_id = ?", secretID).Order("version_number DESC").Find(&versions).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where(sqlWhereSecretNodeID, secretID).Order("version_number DESC").Find(&versions).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return versions, nil
@@ -804,7 +805,7 @@ func (ls *LocalStorage) GetSecretVersions(ctx context.Context, secretID uint) ([
 // GetLatestSecretVersion retrieves the most recent version of a secret.
 func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
 	var version models.SecretVersion
-	if err := ls.db.WithContext(ctx).Where("secret_node_id = ?", secretID).Order("version_number DESC").First(&version).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where(sqlWhereSecretNodeID, secretID).Order("version_number DESC").First(&version).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorVersionNotFound", nil))
 		}
@@ -816,8 +817,8 @@ func (ls *LocalStorage) GetLatestSecretVersion(ctx context.Context, secretID uin
 // IncrementSecretReadCount atomically increments the read counter for a secret version.
 func (ls *LocalStorage) IncrementSecretReadCount(ctx context.Context, versionID uint) error {
 	if err := ls.db.WithContext(ctx).Model(&models.SecretVersion{}).
-		Where("id = ?", versionID).
-		UpdateColumn("read_count", gorm.Expr("read_count + 1")).Error; err != nil {
+		Where(sqlWhereID, versionID).
+		UpdateColumn("read_count", gorm.Expr(sqlIncrReadCount)).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
@@ -830,7 +831,7 @@ func (ls *LocalStorage) IncrementSecretReadCount(ctx context.Context, versionID 
 func (ls *LocalStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.SecretVersion{}).
 		Where("id = ? AND read_count < ?", versionID, maxReads).
-		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
+		UpdateColumn("read_count", gorm.Expr(sqlIncrReadCount))
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
@@ -844,7 +845,7 @@ func (ls *LocalStorage) TryIncrementSecretReadCount(ctx context.Context, version
 func (ls *LocalStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
 		Where("id = ? AND read_count < ?", secretID, maxReads).
-		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
+		UpdateColumn("read_count", gorm.Expr(sqlIncrReadCount))
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}

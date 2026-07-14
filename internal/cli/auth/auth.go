@@ -8,6 +8,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	configFilename = "keyorix.yaml"
+)
+
 // AuthCmd represents the auth command
 var AuthCmd = &cobra.Command{
 	Use:   "auth",
@@ -53,7 +57,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	server, _ := cmd.Flags().GetString("server")
 
 	// Load current configuration
-	cfg, err := config.Load("keyorix.yaml")
+	cfg, err := config.Load(configFilename)
 	if err != nil {
 		// Create default config if it doesn't exist
 		cfg = &config.Config{
@@ -104,7 +108,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Remote.RetryAttempts = 3
 
 	// Save configuration
-	if err := config.Save("keyorix.yaml", cfg); err != nil {
+	if err := config.Save(configFilename, cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -116,7 +120,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 func runLogout(cmd *cobra.Command, args []string) error {
 	// Load current configuration
-	cfg, err := config.Load("keyorix.yaml")
+	cfg, err := config.Load(configFilename)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
@@ -129,7 +133,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Remote = nil
 
 	// Save configuration
-	if err := config.Save("keyorix.yaml", cfg); err != nil {
+	if err := config.Save(configFilename, cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -140,7 +144,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("keyorix.yaml")
+	cfg, err := config.Load(configFilename)
 	if err != nil {
 		fmt.Printf("❌ No configuration found\n")
 		return nil

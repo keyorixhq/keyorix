@@ -42,6 +42,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // environmentProxyWire mirrors models.Environment's fields exactly (snake_case) —
 // the wire shape RemoteStorage's environment methods
 // (internal/storage/store/remote_rbac.go) expect. See projectProxyWire's comment for
@@ -122,7 +123,7 @@ func (h *CatalogHandler) ListEnvironmentsByProjectProxy(w http.ResponseWriter, r
 func (h *CatalogHandler) GetEnvironmentProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid environment ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidEnvironmentID)
 		return
 	}
 	env, err := h.coreService.Storage().GetEnvironment(r.Context(), uint(id))
@@ -142,7 +143,7 @@ func (h *CatalogHandler) GetEnvironmentProxy(w http.ResponseWriter, r *http.Requ
 func (h *CatalogHandler) DeleteEnvironmentProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid environment ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidEnvironmentID)
 		return
 	}
 	if err := h.coreService.Storage().DeleteEnvironment(r.Context(), uint(id)); err != nil {
@@ -171,7 +172,7 @@ func (h *CatalogHandler) RestoreEnvironmentProxy(w http.ResponseWriter, r *http.
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid environment ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidEnvironmentID)
 		return
 	}
 	if err := h.coreService.Storage().RestoreEnvironment(r.Context(), uint(projectID), uint(id)); err != nil {

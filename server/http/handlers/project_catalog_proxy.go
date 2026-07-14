@@ -48,6 +48,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // projectProxyWire mirrors models.Project's fields exactly (snake_case) — the wire
 // shape RemoteStorage's project methods (internal/storage/store/remote_rbac.go)
 // send/expect. See groupProxyWire's comment for why every field is named explicitly
@@ -88,7 +89,7 @@ func (w projectProxyWire) toModel() *models.Project {
 	}
 }
 
-// isProjectNotFound reports whether err is a "project not found" error from
+// isProjectNotFound reports whether err is a errProjectNotFound error from
 // LocalStorage (local_secrets.go's GetProject/DeleteProject/DeleteProjectIfEmpty
 // cascade/RestoreProject all use this literal substring).
 func isProjectNotFound(err error) bool {
@@ -127,13 +128,13 @@ func (h *CatalogHandler) ListProjectsWithCountsProxy(w http.ResponseWriter, r *h
 func (h *CatalogHandler) GetProjectProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
 		return
 	}
 	p, err := h.coreService.Storage().GetProject(r.Context(), uint(id))
 	if err != nil {
 		if isProjectNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errProjectNotFound)
 			return
 		}
 		log.Printf("project catalog proxy: get failed: %v", err)
@@ -151,7 +152,7 @@ func (h *CatalogHandler) GetProjectProxy(w http.ResponseWriter, r *http.Request)
 func (h *CatalogHandler) UpdateProjectProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
 		return
 	}
 	var body projectProxyWire
@@ -163,7 +164,7 @@ func (h *CatalogHandler) UpdateProjectProxy(w http.ResponseWriter, r *http.Reque
 	updated, err := h.coreService.Storage().UpdateProject(r.Context(), body.toModel())
 	if err != nil {
 		if isProjectNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errProjectNotFound)
 			return
 		}
 		log.Printf("project catalog proxy: update failed: %v", err)
@@ -180,12 +181,12 @@ func (h *CatalogHandler) UpdateProjectProxy(w http.ResponseWriter, r *http.Reque
 func (h *CatalogHandler) DeleteProjectProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
 		return
 	}
 	if err := h.coreService.Storage().DeleteProject(r.Context(), uint(id)); err != nil {
 		if isProjectNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errProjectNotFound)
 			return
 		}
 		log.Printf("project catalog proxy: delete failed: %v", err)
@@ -205,13 +206,13 @@ func (h *CatalogHandler) DeleteProjectProxy(w http.ResponseWriter, r *http.Reque
 func (h *CatalogHandler) DeleteProjectIfEmptyProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
 		return
 	}
 	blocking, err := h.coreService.Storage().DeleteProjectIfEmpty(r.Context(), uint(id))
 	if err != nil {
 		if isProjectNotFound(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errProjectNotFound)
 			return
 		}
 		log.Printf("project catalog proxy: delete-if-empty failed: %v", err)
@@ -225,7 +226,7 @@ func (h *CatalogHandler) DeleteProjectIfEmptyProxy(w http.ResponseWriter, r *htt
 func (h *CatalogHandler) RestoreProjectProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
 		return
 	}
 	restoredEnvironments, restoredSecrets, err := h.coreService.Storage().RestoreProject(r.Context(), uint(id))
@@ -248,7 +249,7 @@ func (h *CatalogHandler) RestoreProjectProxy(w http.ResponseWriter, r *http.Requ
 func (h *CatalogHandler) ListProjectMembersProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project ID")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidProjectIDLower)
 		return
 	}
 	members, err := h.coreService.Storage().ListProjectMembers(r.Context(), uint(id))
