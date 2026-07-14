@@ -343,66 +343,68 @@ var logsCmd = &cobra.Command{
 compliance spot-checks (e.g. who deleted secrets last week). For bulk/machine
 consumption use 'keyorix audit export' (NDJSON) instead. Requires audit.read.`,
 	SilenceUsage: true,
-	RunE: func(_ *cobra.Command, _ []string) error {
-		if logLimit < 1 || logLimit > 100 {
-			return fmt.Errorf("--limit must be between 1 and 100")
-		}
-		for label, v := range map[string]string{"--since": flagSince, "--until": logUntil} {
-			if v != "" {
-				if _, err := time.Parse(time.RFC3339, v); err != nil {
-					return fmt.Errorf("invalid %s %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", label, v, err)
-				}
+	RunE: func(_ *cobra.Command, _ []string) error { return runLogsQuery() },
+}
+
+func runLogsQuery() error {
+	if logLimit < 1 || logLimit > 100 {
+		return fmt.Errorf("--limit must be between 1 and 100")
+	}
+	for label, v := range map[string]string{"--since": flagSince, "--until": logUntil} {
+		if v != "" {
+			if _, err := time.Parse(time.RFC3339, v); err != nil {
+				return fmt.Errorf("invalid %s %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", label, v, err)
 			}
 		}
-		if logActorType != "" && logActorType != "user" && logActorType != "machine_identity" && logActorType != "system" {
-			return fmt.Errorf("--actor-type must be user, machine_identity, or system")
-		}
+	}
+	if logActorType != "" && logActorType != "user" && logActorType != "machine_identity" && logActorType != "system" {
+		return fmt.Errorf("--actor-type must be user, machine_identity, or system")
+	}
 
-		q := url.Values{}
-		q.Set("page_size", strconv.Itoa(logLimit))
-		if logEventType != "" {
-			q.Set("action", logEventType)
-		}
-		if logUserID > 0 {
-			q.Set("user_id", strconv.FormatUint(uint64(logUserID), 10))
-		}
-		if logProjectID > 0 {
-			q.Set("project_id", strconv.FormatUint(uint64(logProjectID), 10))
-		}
-		if logActorType != "" {
-			q.Set("actor_type", logActorType)
-		}
-		if flagSince != "" {
-			q.Set("start_time", flagSince)
-		}
-		if logUntil != "" {
-			q.Set("end_time", logUntil)
-		}
+	q := url.Values{}
+	q.Set("page_size", strconv.Itoa(logLimit))
+	if logEventType != "" {
+		q.Set("action", logEventType)
+	}
+	if logUserID > 0 {
+		q.Set("user_id", strconv.FormatUint(uint64(logUserID), 10))
+	}
+	if logProjectID > 0 {
+		q.Set("project_id", strconv.FormatUint(uint64(logProjectID), 10))
+	}
+	if logActorType != "" {
+		q.Set("actor_type", logActorType)
+	}
+	if flagSince != "" {
+		q.Set("start_time", flagSince)
+	}
+	if logUntil != "" {
+		q.Set("end_time", logUntil)
+	}
 
-		c, err := client()
-		if err != nil {
-			return err
-		}
-		var page logsPage
-		if err := c.Get(context.Background(), "/api/v1/audit/logs?"+q.Encode(), &page); err != nil {
-			return err
-		}
-		if len(page.Logs) == 0 {
-			fmt.Println("No audit events match.")
-			return nil
-		}
-		fmt.Printf("%-6s %-20s %-16s %-9s %-22s %s\n", "ID", "TIME", "ACTOR", "KIND", "EVENT", "DESCRIPTION")
-		for _, e := range page.Logs {
-			actor := e.Actor
-			if e.Impersonation && e.ImpersonatedBy != "" {
-				actor = e.ImpersonatedBy + "→" + e.Actor
-			}
-			fmt.Printf("%-6d %-20s %-16s %-9s %-22s %s\n",
-				e.ID, shortTime(e.Timestamp), truncate(actor, 16), e.ActorType, truncate(e.EventType, 22), e.Description)
-		}
-		fmt.Printf("\nShowing %d of %d total event(s).\n", len(page.Logs), page.Total)
+	c, err := client()
+	if err != nil {
+		return err
+	}
+	var page logsPage
+	if err := c.Get(context.Background(), "/api/v1/audit/logs?"+q.Encode(), &page); err != nil {
+		return err
+	}
+	if len(page.Logs) == 0 {
+		fmt.Println("No audit events match.")
 		return nil
-	},
+	}
+	fmt.Printf("%-6s %-20s %-16s %-9s %-22s %s\n", "ID", "TIME", "ACTOR", "KIND", "EVENT", "DESCRIPTION")
+	for _, e := range page.Logs {
+		actor := e.Actor
+		if e.Impersonation && e.ImpersonatedBy != "" {
+			actor = e.ImpersonatedBy + "→" + e.Actor
+		}
+		fmt.Printf("%-6d %-20s %-16s %-9s %-22s %s\n",
+			e.ID, shortTime(e.Timestamp), truncate(actor, 16), e.ActorType, truncate(e.EventType, 22), e.Description)
+	}
+	fmt.Printf("\nShowing %d of %d total event(s).\n", len(page.Logs), page.Total)
+	return nil
 }
 
 // shortTime renders an RFC3339 timestamp as "2006-01-02 15:04:05" (UTC), or the
