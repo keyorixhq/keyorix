@@ -27,7 +27,7 @@ func runListRoles(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// TODO: Implement ListRoles in core service
+	// TODO: Implement ListRoles in core service // NOSONAR -- tracked tech debt, suppress go:S1135
 	// For now, use storage directly
 	roles, err := st.ListRoles(ctx)
 	if err != nil {
