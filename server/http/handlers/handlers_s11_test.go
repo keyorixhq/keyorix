@@ -1502,7 +1502,7 @@ func TestListSoDPoliciesProxy_HappyPath_S11(t *testing.T) {
 // TestDeleteSoDPolicyProxy_NotFound_S11 — nonexistent policy → 404.
 func TestDeleteSoDPolicyProxy_NotFound_S11(t *testing.T) {
 	t.Parallel()
-	h := newCatalogHandlerS8(t)
+	h := NewCatalogHandler(freshCoreS11(t))
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
 	r = withChiParamS8(r, "id", "99999")
 	w := httptest.NewRecorder()
