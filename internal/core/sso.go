@@ -195,18 +195,13 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", err
 	}
 
-	user, err := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified)
+	resolved, err := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if user == nil {
-		// No Keyorix account matches this verified identity.
-		if !p.AutoProvision {
-			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
-		}
-		if user, err = c.provisionSSOUser(ctx, p, sub, email, emailVerified, name); err != nil {
-			return nil, nil, "", err
-		}
+	user, err := c.ensureSSOUser(ctx, p, resolved, sub, email, emailVerified, name)
+	if err != nil {
+		return nil, nil, "", err
 	}
 	if AccountLoginBlocked(user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
@@ -421,6 +416,19 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 		}
 	}
 	return u, nil
+}
+
+// ensureSSOUser returns the resolved user if one exists; otherwise JIT-provisions one
+// via provisionSSOUser when p.AutoProvision is enabled. Extracted from CompleteSSO to
+// reduce its cognitive complexity.
+func (c *KeyorixCore) ensureSSOUser(ctx context.Context, p *SSOProvider, existing *models.User, sub, email string, emailVerified bool, name string) (*models.User, error) {
+	if existing != nil {
+		return existing, nil
+	}
+	if !p.AutoProvision {
+		return nil, fmt.Errorf("no Keyorix account matches this SSO identity")
+	}
+	return c.provisionSSOUser(ctx, p, sub, email, emailVerified, name)
 }
 
 // provisionSSOUser JIT-creates a Keyorix account for a verified SSO identity that
