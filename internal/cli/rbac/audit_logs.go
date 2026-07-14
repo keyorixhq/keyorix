@@ -98,7 +98,7 @@ func runAuditLogsEmbedded(ctx context.Context, page, pageSize int) error {
 
 // ── Shared formatting ───────────────────────────────────────────────────────
 
-func printAuditEntry(when, action string, actor, target, group, role, perm, project *uint, details string) {
+func printAuditEntry(when, action string, actor, target, group, role, perm, project *uint, details string) { // NOSONAR -- domain-driven parameter count
 	fmt.Printf("  [%s] %s", when, action)
 	if actor != nil {
 		fmt.Printf(" by user %d", *actor)

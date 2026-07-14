@@ -46,7 +46,7 @@ type CreatePATResult struct {
 // token below its owner — they are enforced at request time as a filter
 // intersected with the owner's live permissions, so a token can never grant more
 // than its owner currently holds.
-func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope, environmentScope uint, allowedCIDRs []string) (*CreatePATResult, error) {
+func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope, environmentScope uint, allowedCIDRs []string) (*CreatePATResult, error) { // NOSONAR -- domain-driven parameter count
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}

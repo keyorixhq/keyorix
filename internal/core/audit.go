@@ -184,7 +184,7 @@ func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string,
 // It also stamps impersonation attribution when the context carries an
 // impersonation tag (set by the auth middleware), so every action taken inside
 // an impersonation session is consistently marked with impersonation=true.
-func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) {
+func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
@@ -266,7 +266,7 @@ func (c *KeyorixCore) LogSecretRead(ctx context.Context, userID uint, secretID u
 }
 
 // LogSecretReadWithProject writes audit_events + secret_access_logs including project context.
-func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) {
+func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.read", &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s read secret %s", username, secretName))
@@ -282,7 +282,7 @@ func (c *KeyorixCore) LogSecretCreated(ctx context.Context, userID uint, secretI
 }
 
 // LogSecretCreatedWithProject writes audit_events + secret_access_logs including project context.
-func (c *KeyorixCore) LogSecretCreatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) {
+func (c *KeyorixCore) LogSecretCreatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.created", &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s created secret %s", username, secretName))
@@ -298,7 +298,7 @@ func (c *KeyorixCore) LogSecretUpdated(ctx context.Context, userID uint, secretI
 }
 
 // LogSecretUpdatedWithProject writes audit_events including project context.
-func (c *KeyorixCore) LogSecretUpdatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) {
+func (c *KeyorixCore) LogSecretUpdatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.updated", &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s updated secret %s", username, secretName))
@@ -308,7 +308,7 @@ func (c *KeyorixCore) LogSecretUpdatedWithProject(ctx context.Context, userID ui
 // LogSecretUpdatedWithDiff writes a secret.updated audit event carrying a
 // structured before/after diff (see audit_diff.go — never includes plaintext
 // values) plus the secret_access_logs row.
-func (c *KeyorixCore) LogSecretUpdatedWithDiff(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua, diff string) {
+func (c *KeyorixCore) LogSecretUpdatedWithDiff(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua, diff string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventDiff(ctx, "secret.updated", &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s updated secret %s", username, secretName), diff)
@@ -324,7 +324,7 @@ func (c *KeyorixCore) LogSecretRotated(ctx context.Context, userID uint, secretI
 }
 
 // LogSecretRotatedWithProject writes audit_events + secret_access_logs including project context.
-func (c *KeyorixCore) LogSecretRotatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) {
+func (c *KeyorixCore) LogSecretRotatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.rotated", &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s rotated secret %s", username, secretName))
@@ -340,7 +340,7 @@ func (c *KeyorixCore) LogSecretDeleted(ctx context.Context, userID uint, secretI
 }
 
 // LogSecretDeletedWithProject writes audit_events including project context.
-func (c *KeyorixCore) LogSecretDeletedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) {
+func (c *KeyorixCore) LogSecretDeletedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.deleted", &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s deleted secret %s", username, secretName))

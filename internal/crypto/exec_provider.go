@@ -27,7 +27,7 @@ const execKeyTimeout = 30 * time.Second
 // CLI credential helpers (op, sops, vault, aws, gcloud, ...) use to locate
 // their own config/cache/credential files. Extend this list — or make it
 // configurable — if a real resolver genuinely needs more.
-var execAllowedEnv = []string{"PATH", "HOME"}
+var execAllowedEnv = []string{"PATH", "HOME"} // NOSONAR -- intentional minimal-env pass-through; PATH is deployment-controlled
 
 // execEnv builds the minimal Env slice for the resolver command from
 // execAllowedEnv, passing through only variables that are actually set.
@@ -35,7 +35,7 @@ func execEnv() []string {
 	env := make([]string, 0, len(execAllowedEnv))
 	for _, k := range execAllowedEnv {
 		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
+			env = append(env, k+"="+v) // NOSONAR -- intentional minimal-env pass-through; PATH is deployment-controlled
 		}
 	}
 	return env
