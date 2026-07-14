@@ -432,7 +432,7 @@ func TestImpersonationHandler_End_NoAdminCookie_S9(t *testing.T) {
 // ── webauthn_proxy.go: success paths ─────────────────────────────────────────
 
 func TestCreateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"user_id":1,"credential_id":"dGVzdC1jcmVkLXM5","public_key":"cHVia2V5LXM5","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["internal"]}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -441,7 +441,7 @@ func TestCreateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 }
 
 func TestListWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 
 	// Create a credential first
 	body := `{"user_id":77,"credential_id":"dGVzdC1jcmVkLXM5Mg==","public_key":"cHVia2V5LXM5Mg==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["usb"]}`
@@ -458,7 +458,7 @@ func TestListWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 }
 
 func TestCountWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 
 	// Create a credential
 	body := `{"user_id":88,"credential_id":"dGVzdC1jcmVkLXM5Mw==","public_key":"cHVia2V5LXM5Mw==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["nfc"]}`
@@ -475,7 +475,7 @@ func TestCountWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 }
 
 func TestUpdateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 
 	// Create a credential
 	createBody := `{"user_id":99,"credential_id":"dGVzdC1jcmVkLXM5NA==","public_key":"cHVia2V5LXM5NA==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["ble"]}`
@@ -500,7 +500,7 @@ func TestUpdateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 }
 
 func TestDeleteWebAuthnCredentialProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 
 	// Create a credential to delete
 	createBody := `{"user_id":111,"credential_id":"dGVzdC1jcmVkLXM5NQ==","public_key":"cHVia2V5LXM5NQ==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["internal"]}`
@@ -525,7 +525,7 @@ func TestDeleteWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 }
 
 func TestSetUserWebAuthnEnabledProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"enabled":true}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "userId", "55")
 	w := httptest.NewRecorder()
@@ -535,7 +535,7 @@ func TestSetUserWebAuthnEnabledProxy_Success_S9(t *testing.T) {
 }
 
 func TestCreateWebAuthnSessionProxy_Success_S9(t *testing.T) {
-	h := newAuthHandlerS4(t)
+	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"user_id":66,"token_hash":"s9-test-token-hash-unique","expires_at":"2030-01-01T00:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()

@@ -21,7 +21,7 @@ set -euo pipefail
 mask_value() {
   local val="$1" line
   while IFS= read -r line; do
-    [ -n "$line" ] && echo "::add-mask::$line"
+    [[ -n "$line" ]] && echo "::add-mask::$line"
   done < <(printf '%s\n' "$val")
 }
 
@@ -67,7 +67,7 @@ install_cli() {
   # fixed, known-good hash to check an arbitrary on-PATH binary against, so
   # that path (the `else` branch) always fetches and verifies a fresh copy
   # instead of ever considering what's already on PATH.
-  if [ -n "$VERSION" ]; then
+  if [[ -n "$VERSION" ]]; then
     local os arch binary_name url checksums_url expected actual tmp_dir tmp_bin existing
     os="$(uname -s | tr '[:upper:]' '[:lower:]')"
     arch="$(uname -m)"
@@ -85,14 +85,14 @@ install_cli() {
     # or downloading a fresh one.
     echo "Verifying checksum..."
     expected="$(curl -fsSL "$checksums_url" | awk -v n="$binary_name" '$2==n {print $1}')"
-    if [ -z "$expected" ]; then
+    if [[ -z "$expected" ]]; then
       echo "error: no checksum published for ${binary_name} at ${VERSION}; refusing to install unverified binary" >&2
       exit 1
     fi
 
     existing="$(command -v keyorix 2>/dev/null || true)"
-    if [ -n "$existing" ]; then
-      if actual="$(sha256_of "$existing" 2>/dev/null)" && [ -n "$actual" ] && [ "$actual" = "$expected" ]; then
+    if [[ -n "$existing" ]]; then
+      if actual="$(sha256_of "$existing" 2>/dev/null)" && [[ -n "$actual" ]] && [[ "$actual" = "$expected" ]]; then
         echo "Using existing keyorix at ${existing} (checksum verified against ${VERSION})"
         keyorix --version
         return
@@ -120,14 +120,14 @@ install_cli() {
       echo "error: no sha256sum/shasum tool found; cannot verify checksum" >&2
       exit 1
     fi
-    if [ "$actual" != "$expected" ]; then
+    if [[ "$actual" != "$expected" ]]; then
       echo "error: checksum mismatch for ${binary_name}: expected ${expected}, got ${actual}. Aborting." >&2
       exit 1
     fi
     echo "Checksum verified"
 
     chmod +x "$tmp_bin"
-    if [ -w "$install_dir" ]; then
+    if [[ -w "$install_dir" ]]; then
       mv "$tmp_bin" "${install_dir}/keyorix"
     else
       sudo mv "$tmp_bin" "${install_dir}/keyorix"
@@ -168,7 +168,7 @@ inject_env() {
   # `keys[]` is newline-delimited; read line-by-line so the loop is whitespace-safe.
   count=0
   while IFS= read -r key; do
-    [ -n "$key" ] || continue
+    [[ -n "$key" ]] || continue
     # Reject any secret name that isn't a safe identifier BEFORE it ever reaches
     # $GITHUB_ENV — see validate_secret_name above (#174).
     if ! validate_secret_name "$key"; then
@@ -179,7 +179,7 @@ inject_env() {
     # Mask the value everywhere it might appear in the logs, one line at a
     # time so multi-line secrets are fully covered (#466).
     mask_value "$val"
-    if [ "$EXPORT_TO_ENV" = "true" ]; then
+    if [[ "$EXPORT_TO_ENV" = "true" ]]; then
       # Heredoc form so multi-line values survive the GITHUB_ENV file format.
       # The delimiter must be unguessable: if it ever collided with (or were
       # predictable enough to be engineered to collide with) a line inside
@@ -208,11 +208,11 @@ inject_env() {
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
   install_cli
 
-  if [ "$EXPORT_TO_ENV" = "true" ]; then
+  if [[ "$EXPORT_TO_ENV" = "true" ]]; then
     inject_env
   fi
 
-  if [ -n "$OUTPUT_FILE" ]; then
+  if [[ -n "$OUTPUT_FILE" ]]; then
     # Mask every secret value before writing the dotenv file. This must happen
     # independently of inject_env's masking above, since inject_env (and its
     # ::add-mask:: calls) is skipped entirely when export-to-env=false, which
@@ -224,7 +224,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
       exit 1
     fi
     while IFS= read -r output_key; do
-      [ -n "$output_key" ] || continue
+      [[ -n "$output_key" ]] || continue
       output_val="$(printf '%s' "$output_json" | jq -r --arg k "$output_key" '.[$k]')"
       mask_value "$output_val"
     done < <(printf '%s' "$output_json" | jq -r 'keys[]')

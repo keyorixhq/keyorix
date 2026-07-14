@@ -34,7 +34,7 @@ mkdir -p "$FUZZ_CORPUS_WORKTREE/testdata/fuzz"
 # FIRST target instead of advancing to the next one. Confirmed live: the rig
 # had been stuck re-fuzzing target #1 in a 3-hour crash/restart loop since
 # deployment, having never once reached a second target or a corpus commit.
-[ -d "$KEYORIX_REPO/testdata/fuzz" ] || exit 0
+[[ -d "$KEYORIX_REPO/testdata/fuzz" ]] || exit 0
 
 rsync -a --update "$KEYORIX_REPO/testdata/fuzz/" "$FUZZ_CORPUS_WORKTREE/testdata/fuzz/"
 
@@ -46,7 +46,7 @@ if git diff --cached --quiet; then
 fi
 
 label="new corpus"
-[ "$STATUS" -ne 0 ] && label="CRASH found"
+[[ "$STATUS" -ne 0 ]] && label="CRASH found"
 
 git commit -m "fuzz($FUNC): $label $(date -u +%FT%TZ)" --quiet
 git push origin "$FUZZ_CORPUS_BRANCH" --quiet

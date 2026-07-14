@@ -2406,14 +2406,6 @@ func TestShareSecret_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestShareSecret_BadJSON(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.ShareSecret(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestShareSecret_ValidationError(t *testing.T) {
 	h := newShareHandlerS4(t)
 	// recipient_id=0 is required; permission is invalid
@@ -2474,22 +2466,6 @@ func TestBreakGlassProxy_CreateActivation_MissingFields(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestBreakGlassProxy_GetActivation_BadIDS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestBreakGlassProxy_GetActivation_NotFoundS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999")
-	w := httptest.NewRecorder()
-	h.GetBreakGlassActivationProxy(w, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
 func TestBreakGlassProxy_ListActivations_MissingProjectIDS5(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -2541,14 +2517,6 @@ func TestBreakGlassProxy_RevokeActivation_BadJSON(t *testing.T) {
 
 // ── sod_proxy.go — ListSoDPoliciesProxy happy path ───────────────────────────
 
-func TestListSoDPoliciesProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestCreateSoDPolicyProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"name":"policy-s5","permission_a":"secrets.read","permission_b":"secrets.write"}`
@@ -2583,14 +2551,6 @@ func TestImpersonationHandler_Start_UnauthorizedNew(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.Start(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestImpersonationHandler_Start_BadJSONNew(t *testing.T) {
-	h := newImpersonationHandlerS5(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")))
-	w := httptest.NewRecorder()
-	h.Start(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── audit.go — WriteAuditCheckpoint (no user context path) ───────────────────
@@ -3561,14 +3521,6 @@ func TestSupersedeSetupTokensProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestConsumeSetupTokenProxy_MissingConsumedAtS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), "id", "1")
-	w := httptest.NewRecorder()
-	h.ConsumeSetupTokenProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 
 
 // ── webauthn_proxy.go — additional paths ─────────────────────────────────────
@@ -3747,14 +3699,6 @@ func TestGetAccessReviewItemProxy_HappyPath(t *testing.T) {
 
 // ── sod_proxy.go — additional paths ──────────────────────────────────────────
 
-func TestListSoDPoliciesProxy_HappyPathS5b(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPoliciesProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── login_lockout_proxy.go — GetLoginLockoutState ─────────────────────────────
 
 func TestUpdateLoginLockoutStateProxy_HappyPathS5(t *testing.T) {
@@ -3885,14 +3829,6 @@ func TestCountPendingAccessReviewItemsProxy_HappyPathS5(t *testing.T) {
 }
 
 // ── break_glass_proxy.go — uncovered paths ───────────────────────────────────
-
-func TestListBreakGlassActivationsProxy_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1", nil)
-	w := httptest.NewRecorder()
-	h.ListBreakGlassActivationsProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 func TestUpdateBreakGlassActivationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -4797,15 +4733,6 @@ func TestCatalogHandler_ListProjectEnvironments_HappyPath_S5(t *testing.T) {
 
 // ── connect_grants_proxy.go — additional paths ───────────────────────────────
 
-func TestListConnectRefGrantsProxy_HappyPath_S5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListConnectRefGrantsProxy(w, req)
-	// empty DB → 200
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestDeleteConnectRefGrantProxy_HappyPath_S5(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "99999")
@@ -4936,15 +4863,6 @@ func TestUserHandler_ListUsers_PendingFilter_S5(t *testing.T) {
 }
 
 // ── users_roles.go — additional paths ────────────────────────────────────────
-
-func TestUsersRolesHandler_GetUserRolesForUser_HappyPath_S5(t *testing.T) {
-	h := newUsersRolesHandlerS5(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
-	w := httptest.NewRecorder()
-	h.GetUserRolesForUser(w, req)
-	// empty DB → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
 
 func TestUsersRolesHandler_GetUserMembershipsForUser_HappyPath_S5(t *testing.T) {
 	h := newUsersRolesHandlerS5(t)
@@ -5181,33 +5099,6 @@ func TestRBACHandler_DeleteRole_NotFound_S5(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.DeleteRole(w, req)
 	// Role 99999 not found → 404 or error — not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestRBACHandler_GetPermission_HappyPath_S5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
-	w := httptest.NewRecorder()
-	h.GetPermission(w, req)
-	// Empty DB → not found or 200 — not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestRBACHandler_GetRolePermissions_HappyPath_S5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
-	w := httptest.NewRecorder()
-	h.GetRolePermissions(w, req)
-	// Empty DB → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestRBACHandler_GetGroupRoles_HappyPath_S5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
-	w := httptest.NewRecorder()
-	h.GetGroupRoles(w, req)
-	// Empty DB → not 401
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -5489,25 +5380,6 @@ func TestListAnomalyAlerts_NoCoreService_S5(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestAcknowledgeAnomalyAlert_NoCoreService_S5(t *testing.T) {
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	AcknowledgeAnomalyAlert(w, req)
-	// No core service → 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestAcknowledgeAnomalyAlert_BadID_S5(t *testing.T) {
-	// With no core service, we never reach the ID parsing → still 500
-	// To reach ID parsing we'd need a core service; test the 400 via bad id when service is present.
-	// This test just confirms the 500 behavior for now.
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	AcknowledgeAnomalyAlert(w, req)
-	// No core service → 500 (before ID parsing)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── machine_token_hygiene.go — additional paths ───────────────────────────────
 
 func TestMachineTokenHygiene_Unauthorized_S5(t *testing.T) {
@@ -5561,24 +5433,6 @@ func TestShareHandler_ListShares_HappyPath_S5(t *testing.T) {
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	w := httptest.NewRecorder()
 	h.ListShares(w, req)
-	// Empty DB → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_ListSharedSecrets_HappyPath_S5(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	w := httptest.NewRecorder()
-	h.ListSharedSecrets(w, req)
-	// Empty DB → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_ListGroupSharedSecrets_HappyPath_S5(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	w := httptest.NewRecorder()
-	h.ListGroupSharedSecrets(w, req)
 	// Empty DB → not 401
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 }

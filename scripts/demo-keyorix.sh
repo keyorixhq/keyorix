@@ -34,11 +34,11 @@ SERVER="${KEYORIX_SERVER:-http://localhost:8080}"
 # visible to other local users) — it's read by curl via `-H @file` instead.
 DEMO_TMP_DIR=""
 cleanup_demo_tmp() {
-    [ -n "$DEMO_TMP_DIR" ] && rm -rf "$DEMO_TMP_DIR"
+    [[ -n "$DEMO_TMP_DIR" ]] && rm -rf "$DEMO_TMP_DIR"
 }
 trap cleanup_demo_tmp EXIT
 
-if [ -z "$KEYORIX_TOKEN" ]; then
+if [[ -z "$KEYORIX_TOKEN" ]]; then
     demo_warn "KEYORIX_TOKEN is not set. Secrets are created via the CLI's own"
     demo_warn "remote config (cli.yaml from 'keyorix connect'); the demo-user step"
     demo_warn "below needs KEYORIX_TOKEN to call the API. Run 'keyorix connect' and"
@@ -56,7 +56,7 @@ demo_step "2. Creating a limited-permission demo user (for the RBAC chapter)"
 # New users are auto-assigned the read-only 'viewer' role, so
 # 'keyorix rbac check-permission --user demo@keyorix.com --permission secrets.write'
 # returns ❌ — the contrast that makes the RBAC chapter land.
-if [ -n "$KEYORIX_TOKEN" ]; then
+if [[ -n "$KEYORIX_TOKEN" ]]; then
     DEMO_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/keyorix-demo.XXXXXX")
     RESPONSE_FILE="$DEMO_TMP_DIR/keyorix-demo-user.json"
     HEADER_FILE="$DEMO_TMP_DIR/auth.header"
@@ -67,9 +67,9 @@ if [ -n "$KEYORIX_TOKEN" ]; then
         -H "Content-Type: application/json" \
         -d '{"username":"demo","email":"demo@keyorix.com","password":"Demo#Pass!2026","display_name":"Demo User"}')
     rm -f "$HEADER_FILE"
-    if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+    if [[ "$HTTP_CODE" = "200" ]] || [[ "$HTTP_CODE" = "201" ]]; then
         demo_success "Created demo user demo@keyorix.com (viewer role)"
-    elif [ "$HTTP_CODE" = "409" ]; then
+    elif [[ "$HTTP_CODE" = "409" ]]; then
         demo_info "Demo user demo@keyorix.com already exists — skipping"
     else
         demo_warn "Demo user creation returned HTTP $HTTP_CODE (see $RESPONSE_FILE)"
@@ -86,7 +86,7 @@ demo_step "3. Listing all secrets"
 echo ""
 demo_step "4. RBAC: roles and a permission check"
 ./keyorix rbac list-roles
-if [ -n "$KEYORIX_TOKEN" ]; then
+if [[ -n "$KEYORIX_TOKEN" ]]; then
     echo ""
     demo_info "Limited user does NOT have secrets.write:"
     ./keyorix rbac check-permission --user "demo@keyorix.com" --permission "secrets.write" || true

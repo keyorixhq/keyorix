@@ -63,7 +63,7 @@ run_tests_with_coverage() {
         print_success "$test_name tests passed"
         
         # Generate coverage report
-        if [ -f "$coverage_file" ]; then
+        if [[ -f "$coverage_file" ]]; then
             coverage_percent=$(go tool cover -func="$coverage_file" | grep total | awk '{print $3}' | sed 's/%//')
             echo "Coverage: ${coverage_percent}%"
             
@@ -150,7 +150,7 @@ print_section "Performance Benchmarks"
 run_benchmarks "./test/integration" "sharing_performance"
 
 # Test 6: Storage Layer Tests (if sharing-specific tests exist)
-if [ -d "./internal/storage/local" ]; then
+if [[ -d "./internal/storage/local" ]]; then
     test_names+=("Storage Layer")
     if run_tests_with_coverage "./internal/storage/local" "storage_integration"; then
         test_results+=(0)
@@ -160,7 +160,7 @@ if [ -d "./internal/storage/local" ]; then
 fi
 
 # Test 7: Encryption Integration Tests (if sharing-specific tests exist)
-if [ -d "./internal/encryption" ]; then
+if [[ -d "./internal/encryption" ]]; then
     test_names+=("Encryption Integration")
     if run_tests_with_coverage "./internal/encryption" "encryption_integration"; then
         test_results+=(0)
@@ -172,7 +172,7 @@ fi
 # Generate comprehensive coverage report
 print_section "Generating Comprehensive Coverage Report"
 coverage_files=$(find "$REPORT_DIR" -name "*coverage*.out" -type f)
-if [ -n "$coverage_files" ]; then
+if [[ -n "$coverage_files" ]]; then
     combined_coverage="$REPORT_DIR/combined_coverage_${TIMESTAMP}.out"
     
     # Combine all coverage files
@@ -217,7 +217,7 @@ summary_file="$REPORT_DIR/test_summary_${TIMESTAMP}.txt"
         test_name="${test_names[$i]}"
         result="${test_results[$i]}"
         
-        if [ "$result" -eq 0 ]; then
+        if [[ "$result" -eq 0 ]]; then
             echo "✅ $test_name: PASSED"
             ((passed_count++))
         else
@@ -234,7 +234,7 @@ summary_file="$REPORT_DIR/test_summary_${TIMESTAMP}.txt"
     echo "Failed: $failed_count"
     echo "Success Rate: $(( passed_count * 100 / (passed_count + failed_count) ))%"
     
-    if [ -n "$overall_coverage" ]; then
+    if [[ -n "$overall_coverage" ]]; then
         echo "Overall Coverage: ${overall_coverage}%"
     fi
     
@@ -246,7 +246,7 @@ cat "$summary_file"
 # Final result
 echo ""
 echo "=================================================="
-if [ "$failed_count" -eq 0 ]; then
+if [[ "$failed_count" -eq 0 ]]; then
     print_success "🎉 All integration tests passed!"
     echo "Reports available in: $REPORT_DIR"
     exit 0
