@@ -311,31 +311,44 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 // path and a partial rollback is strictly better than leaving every grant live.
 func (c *KeyorixCore) revokeInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) {
 	if inv.SystemRole != "" || inv.AssignmentsJSON != "" {
-		if inv.SystemRole != "" {
-			if role, err := c.storage.GetRoleByName(ctx, inv.SystemRole); err == nil {
-				if err := c.RemoveUserRole(ctx, 0, userID, role.ID, Scope{ProjectID: 0}); err != nil {
-					c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, 0,
-						fmt.Sprintf("failed to revert system role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.SystemRole, userID, inv.ID, err))
-				}
-			}
-		}
-		if inv.AssignmentsJSON != "" {
-			var assignments []ProjectAssignment
-			if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &assignments); err == nil {
-				for _, a := range assignments {
-					if err := c.RemoveProjectMember(ctx, 0, a.ProjectID, userID); err != nil {
-						c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, a.ProjectID,
-							fmt.Sprintf("failed to revert project assignment %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", a.Role, userID, inv.ID, err))
-					}
-				}
-			}
-		}
+		c.revokeSystemRoleGrant(ctx, inv, userID)
+		c.revokeAssignmentGrants(ctx, inv, userID)
 		return
 	}
 	// Project-scoped invite: revert the single project membership/role.
 	if err := c.RemoveProjectMember(ctx, 0, inv.ProjectID, userID); err != nil {
 		c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, inv.ProjectID,
 			fmt.Sprintf("failed to revert project role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.Role, userID, inv.ID, err))
+	}
+}
+
+func (c *KeyorixCore) revokeSystemRoleGrant(ctx context.Context, inv *models.ProjectInvitation, userID uint) {
+	if inv.SystemRole == "" {
+		return
+	}
+	role, err := c.storage.GetRoleByName(ctx, inv.SystemRole)
+	if err != nil {
+		return
+	}
+	if err := c.RemoveUserRole(ctx, 0, userID, role.ID, Scope{ProjectID: 0}); err != nil {
+		c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, 0,
+			fmt.Sprintf("failed to revert system role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.SystemRole, userID, inv.ID, err))
+	}
+}
+
+func (c *KeyorixCore) revokeAssignmentGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) {
+	if inv.AssignmentsJSON == "" {
+		return
+	}
+	var assignments []ProjectAssignment
+	if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &assignments); err != nil {
+		return
+	}
+	for _, a := range assignments {
+		if err := c.RemoveProjectMember(ctx, 0, a.ProjectID, userID); err != nil {
+			c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, a.ProjectID,
+				fmt.Sprintf("failed to revert project assignment %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", a.Role, userID, inv.ID, err))
+		}
 	}
 }
 
@@ -580,65 +593,92 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	// (K=1) keeps the approve-with-a-different-role override, where one approver is the
 	// whole decision anyway.
 	required := c.requiredApprovals()
+	role, err := resolveApprovalRole(req, grantedRole, required)
+	if err != nil {
+		return nil, err
+	}
+	roleModel, err := c.storage.GetRoleByName(ctx, role)
+	if err != nil {
+		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+	// Privilege ceiling: an approver may not grant an admin role unless they themselves
+	// hold admin authority at this project (escalation-by-proxy guard).
+	if err := c.requireAuthorityForRole(ctx, approverID, req.ProjectID, role); err != nil {
+		return nil, err
+	}
+	// One sign-off per distinct approver.
+	approvals, err := c.storage.ListAccessRequestApprovals(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read approvals: %w", err)
+	}
+	if hasAlreadyApproved(approvals, approverID) {
+		return nil, fmt.Errorf("you have already approved this request")
+	}
+	received := len(approvals) + 1
+	// Below the threshold: record the approval, stay pending, notify, return progress.
+	if received < required {
+		return c.recordPartialApproval(ctx, req, requestID, approverID, received, required)
+	}
+	// Threshold reached — grant the role and finalize.
+	return c.finalizeAccessRequestApproval(ctx, req, requestID, approverID, role, roleModel, grantTTL, received, required)
+}
+
+// resolveApprovalRole determines the role string to grant for an approval, enforcing
+// the dual-control lock when required > 1.
+func resolveApprovalRole(req *models.AccessRequest, grantedRole string, required int) (string, error) {
 	role := grantedRole
 	if role == "" {
 		role = req.SuggestedRole
 	}
 	if required > 1 {
 		if req.SuggestedRole == "" {
-			return nil, fmt.Errorf("a %d-of-N access request must specify the role at request time", required)
+			return "", fmt.Errorf("a %d-of-N access request must specify the role at request time", required)
 		}
 		if grantedRole != "" && grantedRole != req.SuggestedRole {
-			return nil, fmt.Errorf("under %d-of-N approval the granted role is fixed to the requested role %q and cannot be changed by an approver", required, req.SuggestedRole)
+			return "", fmt.Errorf("under %d-of-N approval the granted role is fixed to the requested role %q and cannot be changed by an approver", required, req.SuggestedRole)
 		}
 		role = req.SuggestedRole
 	}
 	if role == "" {
-		return nil, fmt.Errorf("a role to grant is required")
+		return "", fmt.Errorf("a role to grant is required")
 	}
-	roleModel, err := c.storage.GetRoleByName(ctx, role)
-	if err != nil {
-		return nil, fmt.Errorf("unknown role %q: %w", role, err)
-	}
+	return role, nil
+}
 
-	// Privilege ceiling: an approver may not grant an admin role unless they themselves
-	// hold admin authority at this project (escalation-by-proxy guard).
-	if err := c.requireAuthorityForRole(ctx, approverID, req.ProjectID, role); err != nil {
-		return nil, err
-	}
-
-	// One sign-off per distinct approver.
-	approvals, err := c.storage.ListAccessRequestApprovals(ctx, requestID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read approvals: %w", err)
-	}
+// hasAlreadyApproved reports whether approverID appears in the existing approvals.
+func hasAlreadyApproved(approvals []*models.AccessRequestApproval, approverID uint) bool {
 	for _, a := range approvals {
 		if a.ApproverID == approverID {
-			return nil, fmt.Errorf("you have already approved this request")
+			return true
 		}
 	}
+	return false
+}
 
+// recordPartialApproval handles the below-threshold path: records the approval, stays
+// pending, notifies, and returns progress annotations on the request.
+func (c *KeyorixCore) recordPartialApproval(ctx context.Context, req *models.AccessRequest, requestID, approverID uint, received, required int) (*models.AccessRequest, error) {
+	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+		RequestID: requestID, ApproverID: approverID, CreatedAt: c.now(),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to record approval: %w", err)
+	}
+	c.auditProjectScoped(ctx, "access_request.approval_recorded", approverID, req.ProjectID,
+		fmt.Sprintf("approval %d of %d recorded for access request %d", received, required, req.ID))
+	c.notifyApprovalProgress(ctx, req, received, required)
+	req.ApprovalsReceived = received
+	req.RequiredApprovals = required
+	return req, nil
+}
+
+// finalizeAccessRequestApproval handles the threshold-reached path: grants the role,
+// records the approval, and updates the request state atomically. On a concurrent
+// write race (!ok) the grant is reverted and the caller receives an error.
+func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *models.AccessRequest, requestID, approverID uint, role string, roleModel *models.Role, grantTTL time.Duration, received, required int) (*models.AccessRequest, error) {
 	now := c.now()
-	received := len(approvals) + 1
-
-	// Below the threshold: record the approval, stay pending, notify, return progress.
-	if received < required {
-		if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
-			RequestID: requestID, ApproverID: approverID, CreatedAt: now,
-		}); err != nil {
-			return nil, fmt.Errorf("failed to record approval: %w", err)
-		}
-		c.auditProjectScoped(ctx, "access_request.approval_recorded", approverID, req.ProjectID,
-			fmt.Sprintf("approval %d of %d recorded for access request %d", received, required, req.ID))
-		c.notifyApprovalProgress(ctx, req, received, required)
-		req.ApprovalsReceived = received
-		req.RequiredApprovals = required
-		return req, nil
-	}
-
-	// Threshold reached. Grant the role FIRST so that a grant failure leaves the
-	// approval unrecorded (retryable) rather than stuck above-threshold-but-ungranted.
 	scope := storage.Scope{ProjectID: req.ProjectID}
+	// Grant the role FIRST so that a grant failure leaves the approval unrecorded
+	// (retryable) rather than stuck above-threshold-but-ungranted.
 	grantDesc := role
 	if grantTTL > 0 {
 		expiresAt := now.Add(grantTTL)
@@ -672,8 +712,7 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 		// most likely a concurrent WithdrawAccessRequest or RejectAccessRequest won
 		// the race after the role grant above already landed. The grant must not
 		// outlive a request that no longer reads as approved (#277): revoke it and
-		// fail closed rather than reporting success with a stale/contradictory
-		// request state.
+		// fail closed rather than reporting success with a stale/contradictory state.
 		if rerr := c.RemoveUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); rerr != nil {
 			c.auditProjectScoped(ctx, "access_request.approval_race_revoke_failed", approverID, req.ProjectID,
 				fmt.Sprintf("access request %d was concurrently withdrawn/rejected after granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, role, req.UserID, rerr))
