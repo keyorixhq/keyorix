@@ -12,6 +12,10 @@ on:
   push:
     tags: ['v*']
 
+# Lock down GITHUB_TOKEN defaults: no permissions at the top level; each job
+# below requests only what it needs (contents/packages/id-token for publish).
+permissions: {}
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
