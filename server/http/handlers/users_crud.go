@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -157,17 +158,9 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if hasAssignments {
-		if role != "" {
-			if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
-				sendError(w, "Forbidden", "You may not assign a system role", http.StatusForbidden, nil)
-				return
-			}
-		}
-		for _, a := range projAssignments {
-			if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
-				sendError(w, "Forbidden", "You may not assign roles in the target project", http.StatusForbidden, nil)
-				return
-			}
+		if err := h.authorizeUserCreationAssignments(r.Context(), userCtx, role, projAssignments); err != nil {
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+			return
 		}
 	}
 	var created *models.User
@@ -199,6 +192,20 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 	}
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, userToAPIResponse(created), i18n.T("SuccessUserCreated", nil))
+}
+
+func (h *UserHandler) authorizeUserCreationAssignments(ctx context.Context, userCtx *middleware.UserContext, role string, projAssignments []projectAssignmentBody) error {
+	if role != "" {
+		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
+			return fmt.Errorf("You may not assign a system role")
+		}
+	}
+	for _, a := range projAssignments {
+		if ok, aerr := h.coreService.AuthorizePrincipal(ctx, userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
+			return fmt.Errorf("You may not assign roles in the target project")
+		}
+	}
+	return nil
 }
 
 // GetUser handles GET /api/v1/users/{id}

@@ -331,22 +331,15 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	// skipped later, matching CreateRole's convention.
 	var toAssign []*models.Permission
 	if req.Permissions != nil {
-		toAssign = make([]*models.Permission, 0, len(*req.Permissions))
-		for _, permName := range *req.Permissions {
-			perm, err := h.findPermissionByName(r.Context(), permName)
-			if err != nil {
-				continue
+		var aerr error
+		toAssign, aerr = h.authorizeAndCollectPermissions(r.Context(), userCtx, *req.Permissions)
+		if aerr != nil {
+			if strings.Contains(aerr.Error(), "cannot bundle") {
+				sendError(w, "Forbidden", aerr.Error(), http.StatusForbidden, nil)
+			} else {
+				sendError(w, "InternalError", aerr.Error(), http.StatusInternalServerError, nil)
 			}
-			ok, aerr := h.coreService.Authorize(r.Context(), userCtx.UserID, perm.Name, core.Scope{})
-			if aerr != nil {
-				sendError(w, "InternalError", "Failed to resolve actor authority", http.StatusInternalServerError, nil)
-				return
-			}
-			if !ok {
-				sendError(w, "Forbidden", fmt.Sprintf("cannot bundle permission %q into a role: you do not hold it yourself", permName), http.StatusForbidden, nil)
-				return
-			}
-			toAssign = append(toAssign, perm)
+			return
 		}
 	}
 
@@ -362,19 +355,42 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 	// Replace permissions if provided.
 	if req.Permissions != nil {
-		existing, _ := h.coreService.Storage().GetRolePermissions(r.Context(), id)
-		for _, ep := range existing {
-			_ = h.coreService.RemovePermissionFromRole(r.Context(), userCtx.UserID, id, ep.ID)
-		}
-		for _, perm := range toAssign {
-			if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, id, perm.ID); err != nil {
-				log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, id, err)
-			}
-		}
+		h.replaceRolePermissions(r.Context(), userCtx.UserID, id, toAssign)
 	}
 
 	perms, _ := h.coreService.Storage().GetRolePermissions(r.Context(), id)
 	sendSuccess(w, map[string]interface{}{"role": role, "permissions": perms}, "Role updated successfully")
+}
+
+func (h *RBACHandler) authorizeAndCollectPermissions(ctx context.Context, userCtx *middleware.UserContext, permNames []string) ([]*models.Permission, error) {
+	toAssign := make([]*models.Permission, 0, len(permNames))
+	for _, permName := range permNames {
+		perm, err := h.findPermissionByName(ctx, permName)
+		if err != nil {
+			continue
+		}
+		ok, aerr := h.coreService.Authorize(ctx, userCtx.UserID, perm.Name, core.Scope{})
+		if aerr != nil {
+			return nil, fmt.Errorf("failed to resolve actor authority for %q: %w", permName, aerr)
+		}
+		if !ok {
+			return nil, fmt.Errorf("cannot bundle permission %q into a role: you do not hold it yourself", permName)
+		}
+		toAssign = append(toAssign, perm)
+	}
+	return toAssign, nil
+}
+
+func (h *RBACHandler) replaceRolePermissions(ctx context.Context, actorID, roleID uint, toAssign []*models.Permission) {
+	existing, _ := h.coreService.Storage().GetRolePermissions(ctx, roleID)
+	for _, ep := range existing {
+		_ = h.coreService.RemovePermissionFromRole(ctx, actorID, roleID, ep.ID)
+	}
+	for _, perm := range toAssign {
+		if err := h.coreService.AssignPermissionToRole(ctx, actorID, roleID, perm.ID); err != nil {
+			log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, roleID, err)
+		}
+	}
 }
 
 // DeleteRole handles DELETE /api/v1/roles/{id}
