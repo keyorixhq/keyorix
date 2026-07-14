@@ -23,7 +23,7 @@ func TestInviteToProject(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
-	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.State == InvitationPending && inv.Email == "a@b.com" && inv.ProjectID == 1 && inv.ExpiresAt != nil
 	})).Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
@@ -72,7 +72,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	}, nil)
 	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	// Admin upgrades the grant to developer.
-	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.MatchedBy(func(r *models.AccessRequest) bool {
 		return r.State == AccessRequestApproved && r.GrantedRole == "project_developer" && r.ResolvedBy == 9
@@ -365,7 +365,7 @@ func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	fixed := c.now()
 	anyAudit(store)
 
-	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
 		Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
 	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com").Return(nil)
