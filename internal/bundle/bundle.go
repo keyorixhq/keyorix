@@ -463,30 +463,34 @@ func streamComponent(tr io.Reader, comp Component, destDir string) error {
 	if tmp != nil {
 		_ = tmp.Close()
 	}
-	cleanup := func() {
-		if tmpPath != "" {
-			_ = os.Remove(tmpPath)
-		}
-	}
 	if copyErr != nil {
-		cleanup()
+		removeBundleTemp(tmpPath)
 		return fmt.Errorf("bundle: read %s: %w", comp.Path, copyErr)
 	}
 	if n != comp.Size {
-		cleanup()
+		removeBundleTemp(tmpPath)
 		return fmt.Errorf("%w: %s (size %d, want %d)", ErrDigestMismatch, comp.Path, n, comp.Size)
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != comp.SHA256 {
-		cleanup()
+		removeBundleTemp(tmpPath)
 		return fmt.Errorf("%w: %s", ErrDigestMismatch, comp.Path)
 	}
 	if tmpPath != "" {
 		if err := os.Rename(tmpPath, finalPath); err != nil {
-			cleanup()
+			removeBundleTemp(tmpPath)
 			return fmt.Errorf("bundle: stage %s: %w", comp.Path, err)
 		}
 	}
 	return nil
+}
+
+// removeBundleTemp silently removes a temporary bundle extraction file if the path is
+// non-empty. Used by streamComponent on any failure after the temp file is created so
+// partial writes never linger on disk.
+func removeBundleTemp(tmpPath string) {
+	if tmpPath != "" {
+		_ = os.Remove(tmpPath)
+	}
 }
 
 // mkdirAllNoSymlink creates dir (and any missing parents, down to and including root

@@ -423,29 +423,7 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	if err := c.rejectIfCloned(ctx, resolved.ID, cred, ip); err != nil {
 		return nil, nil, err
 	}
-	// A passwordless login is still a login: a deactivated or suspended/blocked account
-	// is refused. IsActive is an independent gate from AccountState — an admin
-	// deactivation (is_active=false) leaves AccountState="active", so checking only
-	// AccountLoginBlocked would let a disabled account in. Mirrors the 2FA and password
-	// gates.
-	if !resolved.IsActive || AccountLoginBlocked(resolved.AccountState) {
-		return nil, nil, fmt.Errorf("account is not active")
-	}
-	// Honor an active per-account lockout even for a valid passkey (defense in depth —
-	// e.g. the account was locked via the password path). We deliberately do NOT feed
-	// failures into the lockout here: a discoverable login resolves the user from an
-	// attacker-chosen user handle, so counting failed assertions would let an attacker
-	// lock out an arbitrary victim. The unforgeable assertion signature is the real
-	// throttle, backed by the per-IP limiter.
-	if c.loginLocked(resolved) {
-		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
-	}
-	// Re-check the lock state under the same serialization recordFailedLogin uses
-	// before minting a session — the passwordless path does not feed failures into
-	// the lockout itself (see above), but the account could still have been locked
-	// concurrently via the password/2FA path between the snapshot check above and
-	// here (TOCTOU).
-	if err := c.checkLockAndClearLoginFailures(ctx, resolved); err != nil {
+	if err := c.checkPasswordlessAccountState(ctx, resolved); err != nil {
 		return nil, nil, err
 	}
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
@@ -458,6 +436,25 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s logged in passwordlessly via WebAuthn", resolved.Username))
 	return session, resolved, nil
+}
+
+// checkPasswordlessAccountState enforces account-state and lockout gates for a
+// passwordless WebAuthn login. Extracted from FinishWebAuthnPasswordlessLogin to
+// reduce its cognitive complexity.
+func (c *KeyorixCore) checkPasswordlessAccountState(ctx context.Context, user *models.User) error {
+	// IsActive is an independent gate from AccountState — an admin deactivation
+	// (is_active=false) leaves AccountState="active", so both must be checked.
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+		return fmt.Errorf("account is not active")
+	}
+	// Honor an active per-account lockout even for a valid passkey (defense in depth).
+	// We deliberately do NOT feed failures into the lockout here — see the calling
+	// comment in FinishWebAuthnPasswordlessLogin for the reasoning.
+	if c.loginLocked(user) {
+		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
+	// Re-check under serialization before minting a session (TOCTOU guard).
+	return c.checkLockAndClearLoginFailures(ctx, user)
 }
 
 // rejectIfCloned inspects a just-verified assertion's credential for a signature-

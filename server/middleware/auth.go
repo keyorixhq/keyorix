@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -694,13 +695,11 @@ func RequireRole(role string) func(next http.Handler) http.Handler {
 				forbiddenResponse(w, "A machine identity cannot satisfy an unscoped role requirement")
 				return
 			}
-			for _, userRole := range userCtx.Roles {
-				if userRole == role {
-					next.ServeHTTP(w, r)
-					return
-				}
+			if !slices.Contains(userCtx.Roles, role) {
+				forbiddenResponse(w, "Insufficient role")
+				return
 			}
-			forbiddenResponse(w, "Insufficient role")
+			next.ServeHTTP(w, r)
 		})
 	}
 }
