@@ -387,21 +387,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	p := &CompliancePosture{GeneratedAt: c.now()}
 
 	// Audit-trail integrity.
-	if v, err := snap.auditChain, snap.auditChainErr; err == nil && v != nil {
-		p.AuditIntegrity = AuditIntegrityPosture{
-			ChainVerified: v.Valid,
-			ChainedEvents: v.ChainedEvents,
-			Checkpointed:  v.Checkpointed,
-		}
-		if !v.Valid {
-			p.AuditIntegrity.Reason = v.Reason
-		} else if v.CheckpointReason != "" {
-			p.AuditIntegrity.Reason = v.CheckpointReason
-		}
-	} else if err != nil {
-		p.AuditIntegrity.Reason = err.Error()
-		p.degrade("audit_integrity", err)
-	}
+	applyAuditIntegrityPosture(p, snap)
 
 	// Second-factor coverage across active users.
 	if id, err := c.identityPosture(ctx); err == nil {
@@ -411,19 +397,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	}
 
 	// Rotation hygiene (deployment-wide).
-	if statuses, err := snap.rotationStatuses, snap.rotationErr; err == nil {
-		p.Rotation.CoveredSecrets = len(statuses)
-		for _, s := range statuses {
-			switch s.Status {
-			case RotationStatusOverdue:
-				p.Rotation.Overdue++
-			case RotationStatusDueSoon:
-				p.Rotation.DueSoon++
-			}
-		}
-	} else {
-		p.degrade("rotation", err)
-	}
+	applyRotationPosture(p, snap)
 
 	// Access governance + emergency access — per project.
 	c.accessGovernancePostureFromSnapshot(ctx, p, snap)
@@ -447,17 +421,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	p.Classification = c.classificationPosture(ctx, p)
 
 	// Open access anomalies (NIS2 detection).
-	unack := false
-	if alerts, err := c.storage.ListAnomalyAlerts(ctx, &unack); err == nil {
-		p.Anomalies.Unacknowledged = len(alerts)
-		for _, a := range alerts {
-			if a.Severity == "high" {
-				p.Anomalies.HighSeverityOpen++
-			}
-		}
-	} else {
-		p.degrade("anomalies", err)
-	}
+	c.applyAnomalyPosture(ctx, p)
 
 	// Legal hold (A.5.34).
 	if hold, err := c.storage.GetActiveLegalHold(ctx); err == nil {
@@ -476,19 +440,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	// means the risk it accepted is unmitigated again, so it must stay visible to the
 	// control matrix rather than silently reading as "no exceptions" the moment
 	// expiry passes.
-	if snap.riskExceptionsErr == nil {
-		active, soon := 0, 0
-		cutoff := c.now().Add(riskExpiringSoonWindow)
-		for _, e := range snap.riskExceptionsActive {
-			active++
-			if e.ExpiresAt.Before(cutoff) {
-				soon++
-			}
-		}
-		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon, Expired: snap.riskExceptionsExpired}
-	} else {
-		p.degrade("risk", snap.riskExceptionsErr)
-	}
+	c.applyRiskExceptionPosture(p, snap)
 
 	// Certificate hygiene from the cached cert expiry (ADR-056).
 	p.Certificates = c.certificatePosture(ctx, p)
@@ -524,6 +476,76 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	p.SupplyChain = sc
 
 	return p
+}
+
+func applyAuditIntegrityPosture(p *CompliancePosture, snap *complianceSnapshot) {
+	v, err := snap.auditChain, snap.auditChainErr
+	if err != nil {
+		p.AuditIntegrity.Reason = err.Error()
+		p.degrade("audit_integrity", err)
+		return
+	}
+	if v == nil {
+		return
+	}
+	p.AuditIntegrity = AuditIntegrityPosture{
+		ChainVerified: v.Valid,
+		ChainedEvents: v.ChainedEvents,
+		Checkpointed:  v.Checkpointed,
+	}
+	if !v.Valid {
+		p.AuditIntegrity.Reason = v.Reason
+	} else if v.CheckpointReason != "" {
+		p.AuditIntegrity.Reason = v.CheckpointReason
+	}
+}
+
+func applyRotationPosture(p *CompliancePosture, snap *complianceSnapshot) {
+	statuses, err := snap.rotationStatuses, snap.rotationErr
+	if err != nil {
+		p.degrade("rotation", err)
+		return
+	}
+	p.Rotation.CoveredSecrets = len(statuses)
+	for _, s := range statuses {
+		switch s.Status {
+		case RotationStatusOverdue:
+			p.Rotation.Overdue++
+		case RotationStatusDueSoon:
+			p.Rotation.DueSoon++
+		}
+	}
+}
+
+func (c *KeyorixCore) applyAnomalyPosture(ctx context.Context, p *CompliancePosture) {
+	unack := false
+	alerts, err := c.storage.ListAnomalyAlerts(ctx, &unack)
+	if err != nil {
+		p.degrade("anomalies", err)
+		return
+	}
+	p.Anomalies.Unacknowledged = len(alerts)
+	for _, a := range alerts {
+		if a.Severity == "high" {
+			p.Anomalies.HighSeverityOpen++
+		}
+	}
+}
+
+func (c *KeyorixCore) applyRiskExceptionPosture(p *CompliancePosture, snap *complianceSnapshot) {
+	if snap.riskExceptionsErr != nil {
+		p.degrade("risk", snap.riskExceptionsErr)
+		return
+	}
+	active, soon := 0, 0
+	cutoff := c.now().Add(riskExpiringSoonWindow)
+	for _, e := range snap.riskExceptionsActive {
+		active++
+		if e.ExpiresAt.Before(cutoff) {
+			soon++
+		}
+	}
+	p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon, Expired: snap.riskExceptionsExpired}
 }
 
 // suppressExceptedSoDViolations drops any violation covered by an active, APPROVED

@@ -158,14 +158,6 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	// repeated assignment can't trip the unique constraint inside the transaction.
 	grants := make([]storage.RoleGrant, 0, len(assignments)+1)
 	seen := map[[2]uint]bool{}
-	addGrant := func(roleID, projectID uint) {
-		key := [2]uint{roleID, projectID}
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		grants = append(grants, storage.RoleGrant{RoleID: roleID, Scope: storage.Scope{ProjectID: projectID}})
-	}
 
 	sysRole := systemRole
 	if sysRole == "" {
@@ -181,26 +173,14 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	if err := c.requireAuthorityForRole(ctx, actorID, 0, sysRole); err != nil {
 		return nil, err
 	}
-	addGrant(sr.ID, 0)
+	addRoleGrant(&grants, seen, sr.ID, 0)
 
 	for _, a := range assignments {
-		if a.ProjectID == 0 || a.Role == "" {
-			return nil, fmt.Errorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
-		}
-		if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
-			return nil, fmt.Errorf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID)
-		}
-		r, err := c.storage.GetRoleByName(ctx, a.Role)
+		g, err := c.resolveProjectRoleGrant(ctx, actorID, a)
 		if err != nil {
-			return nil, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
-		}
-		// Same ceiling check InviteGlobal applies to each of its own project
-		// assignments — without this, a non-admin roles.assign holder could bundle
-		// an admin-conferring project assignment into an otherwise-innocuous create.
-		if err := c.requireAuthorityForRole(ctx, actorID, a.ProjectID, a.Role); err != nil {
 			return nil, err
 		}
-		addGrant(r.ID, a.ProjectID)
+		addRoleGrant(&grants, seen, g.RoleID, g.Scope.ProjectID)
 	}
 
 	// #419: the separation-of-duties preventive gate. A brand-new user has no
@@ -233,6 +213,36 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	}
 
 	return created, nil
+}
+
+// addRoleGrant deduplicates and appends a role grant. It is a package-level helper
+// rather than a closure so it does not increase cognitive complexity of callers.
+func addRoleGrant(grants *[]storage.RoleGrant, seen map[[2]uint]bool, roleID, projectID uint) {
+	key := [2]uint{roleID, projectID}
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+	*grants = append(*grants, storage.RoleGrant{RoleID: roleID, Scope: storage.Scope{ProjectID: projectID}})
+}
+
+// resolveProjectRoleGrant validates and resolves a single ProjectAssignment into a
+// storage.RoleGrant, enforcing the same authority-ceiling check as InviteGlobal.
+func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint, a ProjectAssignment) (storage.RoleGrant, error) {
+	if a.ProjectID == 0 || a.Role == "" {
+		return storage.RoleGrant{}, fmt.Errorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
+	}
+	if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
+		return storage.RoleGrant{}, fmt.Errorf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID)
+	}
+	r, err := c.storage.GetRoleByName(ctx, a.Role)
+	if err != nil {
+		return storage.RoleGrant{}, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, a.ProjectID, a.Role); err != nil {
+		return storage.RoleGrant{}, err
+	}
+	return storage.RoleGrant{RoleID: r.ID, Scope: storage.Scope{ProjectID: a.ProjectID}}, nil
 }
 
 // GetUser retrieves a user by ID.
