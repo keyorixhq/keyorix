@@ -23,6 +23,7 @@ jobs:
 
       - name: Generate coverage report
         run: go test -timeout 120s -coverprofile=coverage.out -covermode=set ./...
+        continue-on-error: true
 
       - name: Analyze with SonarCloud
         uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8

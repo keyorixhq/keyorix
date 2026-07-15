@@ -24,7 +24,7 @@ jobs:
           cache: false
 
       - name: Install osv-scanner
-        run: go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+        run: go install github.com/google/osv-scanner/cmd/osv-scanner@latest # NOSONAR -- go:S8545: osv-scanner tracks its own releases
 
       - name: Run osv-scanner
         run: osv-scanner scan --recursive --skip-git --format sarif --output osv-results.sarif . || true
