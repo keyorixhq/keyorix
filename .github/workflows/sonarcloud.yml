@@ -34,4 +34,5 @@ jobs:
             -Dsonar.projectKey=keyorixhq_keyorix
             -Dsonar.organization=keyorixhq
             -Dsonar.go.coverage.reportPaths=coverage.out
+            -Dsonar.sourceEncoding=UTF-8
           projectBaseDir: .
