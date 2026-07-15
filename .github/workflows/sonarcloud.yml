@@ -17,6 +17,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26.5'
+
+      - name: Generate coverage report
+        run: go test -timeout 120s -coverprofile=coverage.out -covermode=set ./...
+
       - name: Analyze with SonarCloud
         uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8
         env:
@@ -25,4 +32,5 @@ jobs:
           args: >
             -Dsonar.projectKey=keyorixhq_keyorix
             -Dsonar.organization=keyorixhq
+            -Dsonar.go.coverage.reportPaths=coverage.out
           projectBaseDir: .
