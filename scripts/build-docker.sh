@@ -142,9 +142,10 @@ fi
 
 # Build CLI Docker image
 log_info "Building CLI Docker image..."
-cat > Dockerfile.cli << 'EOF'
+CLI_GO_BUILDER_IMAGE="${CLI_GO_BUILDER_IMAGE:-golang:1.21-alpine}"
+cat > Dockerfile.cli << EOF
 # Multi-stage build for CLI
-FROM golang:1.21-alpine AS builder
+FROM ${CLI_GO_BUILDER_IMAGE} AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -154,7 +155,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/keyorix ./cmd/keyorix
 
 # Production image
-FROM alpine:latest
+FROM alpine:3.24
 
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/

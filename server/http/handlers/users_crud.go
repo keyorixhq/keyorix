@@ -108,7 +108,7 @@ func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, 
 	created, otp, err := h.coreService.CreateUserWithOneTimePassword(r.Context(), req, actorID)
 	if err != nil {
 		log.Printf("Error creating user with one-time password: %v", err)
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, core.ErrUserAlreadyExists) {
 			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
 			return
 		}
@@ -119,8 +119,7 @@ func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, 
 		sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{
+	sendCreated(w, map[string]interface{}{
 		"user":              userToAPIResponse(created),
 		"one_time_password": otp,
 	}, i18n.T("SuccessUserCreated", nil))
@@ -130,7 +129,7 @@ func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Req
 	created, prov, err := h.coreService.CreateUserWithSetupLink(r.Context(), req, actorID)
 	if err != nil {
 		log.Printf("Error creating user with setup link: %v", err)
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, core.ErrUserAlreadyExists) {
 			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
 			return
 		}
@@ -145,8 +144,7 @@ func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Req
 		sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{
+	sendCreated(w, map[string]interface{}{
 		"user":       userToAPIResponse(created),
 		"setup_link": prov,
 	}, i18n.T("SuccessUserCreated", nil))
@@ -177,7 +175,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		log.Printf("Error creating user: %v", err)
 		switch {
-		case strings.Contains(err.Error(), errAlreadyExists):
+		case errors.Is(err, core.ErrUserAlreadyExists):
 			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
 		case strings.Contains(err.Error(), "only an administrator can grant"):
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
@@ -190,8 +188,7 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		}
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, userToAPIResponse(created), i18n.T("SuccessUserCreated", nil))
+	sendCreated(w, userToAPIResponse(created), i18n.T("SuccessUserCreated", nil))
 }
 
 func (h *UserHandler) authorizeUserCreationAssignments(ctx context.Context, userCtx *middleware.UserContext, role string, projAssignments []projectAssignmentBody) error {
@@ -691,7 +688,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
-		if strings.Contains(err.Error(), errAlreadyExists) {
+		if errors.Is(err, core.ErrUserAlreadyExists) {
 			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
 			return
 		}
@@ -832,7 +829,7 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
-	// Mirrors accountStateAction's self-action guard (line 367): an admin must not be
+	// Mirrors accountStateAction's self-action guard: an admin must not be
 	// able to revoke their own active sessions out from under themselves mid-request.
 	if uint(id) == admin.UserID {
 		sendError(w, "BadRequest", "Cannot revoke your own sessions", http.StatusBadRequest, nil)

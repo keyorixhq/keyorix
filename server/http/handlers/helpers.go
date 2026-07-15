@@ -40,6 +40,26 @@ func sendSuccess(w http.ResponseWriter, data interface{}, message string) {
 	}
 }
 
+// sendCreated writes a 201 Created JSON success response with correctly ordered
+// headers. Unlike calling w.WriteHeader(201) before sendSuccess (which causes
+// sendSuccess's Header().Set() calls to be silently ignored), this function sets
+// Content-Type and X-Content-Type-Options before WriteHeader.
+func sendCreated(w http.ResponseWriter, data interface{}, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusCreated)
+	response := map[string]interface{}{
+		"success": true,
+		"data":    data,
+	}
+	if message != "" {
+		response["message"] = message
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding JSON response: %v", err)
+	}
+}
+
 // clientSafe returns a generic, client-safe message in place of err's raw
 // Error() text. Use it at the fallback/default branch of an error path once
 // the caller has already carved out the small set of deliberately-crafted,

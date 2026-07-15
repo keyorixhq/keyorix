@@ -39,7 +39,7 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 		}
 		if email != user.Email {
 			if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
-				return nil, fmt.Errorf("%s: current password is incorrect", i18n.T("ErrorValidation", nil))
+				return nil, fmt.Errorf("%w: current password is incorrect", ErrIncorrectCurrentPassword)
 			}
 		}
 	}
@@ -65,7 +65,7 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(current)); err != nil {
-		return fmt.Errorf("%s: current password is incorrect", i18n.T("ErrorValidation", nil))
+		return fmt.Errorf("%w: current password is incorrect", ErrIncorrectCurrentPassword)
 	}
 	// Enforce policy + history after the current-password check so an attacker can't
 	// probe the policy without already holding valid credentials (ADR-025).
