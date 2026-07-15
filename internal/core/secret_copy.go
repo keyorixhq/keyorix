@@ -26,7 +26,7 @@ import (
 // without this, a copy was a covert exfil channel invisible to the anomaly detector
 // (which keys off SecretAccessLog rows the Log* helpers write). ip/ua attribute the
 // events (pass-through from the request); empty is tolerated.
-func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint, newName, actorUsername string, actorID uint, ip, ua string) (*models.SecretNode, error) {
+func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint, newName, actorUsername string, actorID uint, ip, ua string) (*models.SecretNode, error) { // NOSONAR -- domain-driven parameter count
 	if sourceID == 0 || targetEnvID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source secret ID and target environment ID are required")
 	}

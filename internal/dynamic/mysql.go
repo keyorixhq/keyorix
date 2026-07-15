@@ -88,7 +88,7 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 	}
 
 	ref := mysqlAccountRef(user)
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE USER %s IDENTIFIED BY '%s'", ref, password)); err != nil {
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE USER %s IDENTIFIED BY '%s'", ref, password)); err != nil { // NOSONAR -- ref passes assertSafeUsername ([a-z0-9_]); password is from randString (quote-free alphabet)
 		return Credential{}, "", fmt.Errorf("create user: %w", err)
 	}
 
@@ -96,9 +96,9 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 		// {{name}} → the full account reference, e.g. 'kx_dyn_xxx'@'%', so templates
 		// read naturally: GRANT SELECT ON app.* TO {{name}};
 		grant := strings.ReplaceAll(tmpl, "{{name}}", ref)
-		if _, err := db.ExecContext(ctx, grant); err != nil {
+		if _, err := db.ExecContext(ctx, grant); err != nil { // NOSONAR -- grant is operator-authored (trusted config); ref passes assertSafeUsername
 			// Don't leak a half-provisioned account if the template fails.
-			_, _ = db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s", ref))
+			_, _ = db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s", ref)) // NOSONAR -- ref passes assertSafeUsername ([a-z0-9_]@%)
 			return Credential{}, "", fmt.Errorf("run creation template: %w", err)
 		}
 	}
@@ -118,7 +118,7 @@ func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	defer func() { _ = db.Close() }()
 
 	killUserConnections(ctx, db, roleName)
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s", mysqlAccountRef(roleName))); err != nil {
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s", mysqlAccountRef(roleName))); err != nil { // NOSONAR -- roleName passes assertSafeUsername guard above
 		return fmt.Errorf("drop user %s: %w", roleName, err)
 	}
 	return nil

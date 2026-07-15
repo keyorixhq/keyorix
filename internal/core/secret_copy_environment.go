@@ -22,7 +22,7 @@ const copyEnvPageSize = 500
 // the same project. Each per-secret copy is audited by CopySecret (a read on the
 // source, a create on the destination); ip/ua attribute those events (pass-through
 // from the request).
-func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sourceEnvID, targetEnvID uint, actorUsername string, actorID uint, ip, ua string) (copied, skipped int, err error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
+func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sourceEnvID, targetEnvID uint, actorUsername string, actorID uint, ip, ua string) (copied, skipped int, err error) { // NOSONAR -- domain-driven parameter count; cognitive complexity 18, suppress go:S3776
 	if projectID == 0 || sourceEnvID == 0 || targetEnvID == 0 {
 		return 0, 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project, source and target environment IDs are required")
 	}

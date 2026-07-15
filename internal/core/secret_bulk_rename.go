@@ -57,7 +57,7 @@ type BulkRenameReport struct {
 // check is skipped with a reason; the rest proceed (best-effort, like the other bulk
 // ops). With dryRun the checks run but nothing is persisted. Each applied rename is
 // audited as secret.updated with a name before/after diff. Never reads a secret value.
-func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, renames []SecretRename, dryRun bool, actor string, actorID uint, ip, ua string) (*BulkRenameReport, error) { // NOSONAR -- cognitive complexity 28, suppress go:S3776
+func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, renames []SecretRename, dryRun bool, actor string, actorID uint, ip, ua string) (*BulkRenameReport, error) { // NOSONAR -- domain-driven parameter count; cognitive complexity 28, suppress go:S3776
 	if projectID == 0 || actorID == 0 {
 		return nil, fmt.Errorf("project ID and actor ID are required")
 	}

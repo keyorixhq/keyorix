@@ -67,7 +67,7 @@ func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, mes
 // still fire an out-of-band delivery for a row that was never actually persisted,
 // or the race this index closes at the DB layer would still duplicate the
 // user-visible email/webhook. Mirrors upgradeReminder's identical guard (#482).
-func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string, severity models.NotificationSeverity) {
+func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string, severity models.NotificationSeverity) { // NOSONAR -- domain-driven parameter count
 	if userID == 0 {
 		return
 	}

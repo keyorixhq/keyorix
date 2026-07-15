@@ -389,7 +389,7 @@ func buildChildEnv(extraEnv map[string]string, cleanEnv bool) []string {
 	if cleanEnv {
 		for _, k := range []string{"PATH", "HOME"} {
 			if v, ok := os.LookupEnv(k); ok {
-				childEnv = append(childEnv, k+"="+v)
+				childEnv = append(childEnv, k+"="+v) // NOSONAR -- intentional minimal PATH/HOME baseline for clean-env subprocess
 			}
 		}
 	} else {
