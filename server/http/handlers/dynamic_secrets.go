@@ -18,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // isSafeDynamicSecretError reports whether msg is one of the small set of
 // deliberately-crafted, safe messages core's dynamic-secret lease functions
 // (IssueLease/RevokeLease/RenewLease/RevokeLeasesForConfig) produce without
@@ -84,7 +85,7 @@ func (h *DynamicSecretHandler) denyAuthz(w http.ResponseWriter, mfaBlocked bool)
 func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -100,11 +101,11 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		Classification    string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	scope := core.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if ok, mfaBlocked := h.authorize(r, "secrets.write", scope); !ok {
+	if ok, mfaBlocked := h.authorize(r, permSecretsWrite, scope); !ok {
 		h.denyAuthz(w, mfaBlocked)
 		return
 	}
@@ -136,7 +137,7 @@ func (h *DynamicSecretHandler) ListConfigs(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if ok, mfaBlocked := h.authorize(r, "secrets.read", core.Scope{ProjectID: projectID, EnvironmentID: environmentID}); !ok {
+	if ok, mfaBlocked := h.authorize(r, permSecretsRead, core.Scope{ProjectID: projectID, EnvironmentID: environmentID}); !ok {
 		h.denyAuthz(w, mfaBlocked)
 		return
 	}
@@ -155,7 +156,7 @@ func (h *DynamicSecretHandler) ListConfigs(w http.ResponseWriter, r *http.Reques
 
 // GetConfig handles GET /api/v1/dynamic-secrets/configs/{id}
 func (h *DynamicSecretHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.read")
+	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsRead)
 	if !ok {
 		return
 	}
@@ -165,7 +166,7 @@ func (h *DynamicSecretHandler) GetConfig(w http.ResponseWriter, r *http.Request)
 // IssueLease handles POST /api/v1/dynamic-secrets/configs/{id}/issue
 func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.write")
+	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
 	if !ok {
 		return
 	}
@@ -190,7 +191,7 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 
 // ListLeases handles GET /api/v1/dynamic-secrets/configs/{id}/leases
 func (h *DynamicSecretHandler) ListLeases(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.read")
+	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsRead)
 	if !ok {
 		return
 	}
@@ -211,7 +212,7 @@ func (h *DynamicSecretHandler) ListLeases(w http.ResponseWriter, r *http.Request
 func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	leaseID := chi.URLParam(r, "leaseID")
@@ -220,7 +221,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
 		return
 	}
-	if ok, mfaBlocked := h.authorize(r, "secrets.write", core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
+	if ok, mfaBlocked := h.authorize(r, permSecretsWrite, core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
 		h.denyAuthz(w, mfaBlocked)
 		return
 	}
@@ -240,7 +241,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	leaseID := chi.URLParam(r, "leaseID")
@@ -249,7 +250,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
 		return
 	}
-	if ok, mfaBlocked := h.authorize(r, "secrets.write", core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
+	if ok, mfaBlocked := h.authorize(r, permSecretsWrite, core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
 		h.denyAuthz(w, mfaBlocked)
 		return
 	}
@@ -274,7 +275,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 // the incident kill switch: revoke every active lease from a config at once.
 func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.write")
+	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
 	if !ok {
 		return
 	}
@@ -297,7 +298,7 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 // sets (or clears) the config's data-classification label.
 func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.write")
+	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
 	if !ok {
 		return
 	}
@@ -305,7 +306,7 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	updated, err := h.coreService.ClassifyDynamicSecretConfig(r.Context(), userCtx.UserID, cfg.ID, body.Classification)
@@ -323,7 +324,7 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 // disables one directly outside of a project delete.
 func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
-	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.write")
+	cfg, ok := h.loadAuthorizedConfig(w, r, permSecretsWrite)
 	if !ok {
 		return
 	}
@@ -331,7 +332,7 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 		Enabled bool `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	updated, err := h.coreService.SetDynamicSecretConfigEnabled(r.Context(), userCtx.UserID, cfg.ID, body.Enabled)

@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // CreateShareRecord creates a share record, or updates the permission if one already exists.
 func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) { // NOSONAR -- cognitive complexity 25, suppress go:S3776
 	if err := models.ValidateShareRecord(share); err != nil {
@@ -55,7 +56,7 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 	}
 
 	var existing models.ShareRecord
-	result := ls.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
+	result := ls.db.Where(sqlWhereShareActive,
 		share.SecretID, share.RecipientID, share.IsGroup).First(&existing)
 
 	if result.Error == nil {
@@ -84,7 +85,7 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 		// updating the row that won the race, preserving CreateShareRecord's upsert
 		// contract instead of surfacing a raw constraint error to the caller.
 		if isUniqueConstraintErr(err) {
-			if ls.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
+			if ls.db.Where(sqlWhereShareActive,
 				share.SecretID, share.RecipientID, share.IsGroup).First(&existing).Error == nil {
 				existing.Permission = share.Permission
 				existing.UpdatedAt = time.Now()
@@ -143,7 +144,7 @@ func (ls *LocalStorage) DeleteShareRecord(ctx context.Context, shareID uint) err
 	if err != nil {
 		return err
 	}
-	if err := ls.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
+	if err := ls.db.Where(sqlWhereShareActive,
 		share.SecretID, share.RecipientID, share.IsGroup).Delete(&models.ShareRecord{}).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}

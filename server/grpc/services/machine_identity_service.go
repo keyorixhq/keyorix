@@ -13,6 +13,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
+
 // MachineIdentityGRPCService implements pb.MachineIdentityServiceServer (ADR-023/030).
 // Authz mirrors the HTTP routes: list → users.read, every mutation → roles.assign,
 // scoped to the target project.
@@ -89,7 +90,7 @@ func (s *MachineIdentityGRPCService) CreateMachineIdentity(ctx context.Context, 
 	if req.GetProjectId() == 0 || req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id and name are required")
 	}
-	if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
 	m, err := s.core.CreateMachineIdentity(ctx, uint(req.GetProjectId()), req.GetName(), req.GetIdentityType(), req.GetDescription(), req.GetClassification(), user.UserID)
@@ -105,13 +106,13 @@ func (s *MachineIdentityGRPCService) TransitionMachineIdentity(ctx context.Conte
 		return nil, err
 	}
 	if req.GetProjectId() == 0 || req.GetMachineId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "project_id and machine_id are required")
+		return nil, status.Error(codes.InvalidArgument, errProjectAndMachineRequired)
 	}
 	to, ok := machineActionToState(req.GetAction())
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "action must be activate, suspend, or revoke")
 	}
-	if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
 	m, err := s.core.TransitionMachineIdentity(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), to, user.UserID)
@@ -127,9 +128,9 @@ func (s *MachineIdentityGRPCService) ClassifyMachineIdentity(ctx context.Context
 		return nil, err
 	}
 	if req.GetProjectId() == 0 || req.GetMachineId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "project_id and machine_id are required")
+		return nil, status.Error(codes.InvalidArgument, errProjectAndMachineRequired)
 	}
-	if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
 	m, err := s.core.ClassifyMachineIdentity(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), req.GetClassification(), user.UserID)
@@ -145,9 +146,9 @@ func (s *MachineIdentityGRPCService) IssueMachineToken(ctx context.Context, req 
 		return nil, err
 	}
 	if req.GetProjectId() == 0 || req.GetMachineId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "project_id and machine_id are required")
+		return nil, status.Error(codes.InvalidArgument, errProjectAndMachineRequired)
 	}
-	if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
 	var expiresAt *time.Time
@@ -174,7 +175,7 @@ func (s *MachineIdentityGRPCService) ListMachineTokens(ctx context.Context, req 
 		return nil, err
 	}
 	if req.GetProjectId() == 0 || req.GetMachineId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "project_id and machine_id are required")
+		return nil, status.Error(codes.InvalidArgument, errProjectAndMachineRequired)
 	}
 	if err := authorizeScoped(ctx, s.core, user, "users.read", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
@@ -198,7 +199,7 @@ func (s *MachineIdentityGRPCService) RevokeMachineToken(ctx context.Context, req
 	if req.GetProjectId() == 0 || req.GetMachineId() == 0 || req.GetTokenId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "project_id, machine_id and token_id are required")
 	}
-	if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
 	// gRPC has no auth cache (the interceptor validates every request), so the returned
@@ -217,7 +218,7 @@ func (s *MachineIdentityGRPCService) ClassifyMachineToken(ctx context.Context, r
 	if req.GetProjectId() == 0 || req.GetMachineId() == 0 || req.GetTokenId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "project_id, machine_id and token_id are required")
 	}
-	if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permRolesAssign, core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
 	cred, err := s.core.ClassifyMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), uint(req.GetTokenId()), req.GetClassification(), user.UserID)

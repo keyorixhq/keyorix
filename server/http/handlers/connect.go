@@ -17,6 +17,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // isSafeConnectError reports whether msg is one of the small set of
 // deliberately-crafted, safe messages core.ReadFederatedSecret /
 // CreateConnectRefGrant / DeleteConnectRefGrant themselves produce (an
@@ -52,7 +53,7 @@ func NewConnectHandler(coreService *core.KeyorixCore) *ConnectHandler {
 // ListConnectors returns the configured connector names (discovery).
 func (h *ConnectHandler) ListConnectors(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"connectors": h.coreService.ConnectConnectorNames()}, "")
@@ -62,7 +63,7 @@ func (h *ConnectHandler) ListConnectors(w http.ResponseWriter, r *http.Request) 
 func (h *ConnectHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -97,7 +98,7 @@ func (h *ConnectHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 // ListRefGrants returns all per-reference grants (ADR-045) for management.
 func (h *ConnectHandler) ListRefGrants(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	grants, err := h.coreService.ListConnectRefGrants(r.Context())
@@ -127,7 +128,7 @@ func (h *ConnectHandler) ListRefGrants(w http.ResponseWriter, r *http.Request) {
 func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -165,7 +166,7 @@ func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) 
 func (h *ConnectHandler) DeleteRefGrant(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

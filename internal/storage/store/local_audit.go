@@ -20,6 +20,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 func (ls *LocalStorage) CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error {
 	return ls.db.WithContext(ctx).Create(log).Error
 }
@@ -175,7 +176,7 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 		Table("secret_access_logs AS l").
 		Select("l.secret_node_id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, COUNT(*) AS read_count, MAX(l.access_time) AS last_read").
 		Joins("JOIN secret_nodes s ON s.id = l.secret_node_id AND s.deleted_at IS NULL").
-		Where("s.is_secret = ?", true).
+		Where(sqlWhereIsSecret, true).
 		Where("l.action = ?", "read").
 		Where("l.access_time >= ?", since).
 		Group("l.secret_node_id, s.name, s.environment_id").
@@ -215,7 +216,7 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notR
 		Table("secret_nodes AS s").
 		Select("s.id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, MAX(l.access_time) AS last_read").
 		Joins("LEFT JOIN secret_access_logs l ON l.secret_node_id = s.id AND l.action = ?", "read").
-		Where("s.is_secret = ?", true).
+		Where(sqlWhereIsSecret, true).
 		Where("s.deleted_at IS NULL").
 		Group("s.id, s.name, s.environment_id").
 		Having("MAX(l.access_time) IS NULL OR MAX(l.access_time) < ?", notReadSince).
@@ -263,7 +264,7 @@ func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, project
 		Table("secret_nodes AS s").
 		Select("s.project_id AS project_id").
 		Joins("LEFT JOIN secret_access_logs l ON l.secret_node_id = s.id AND l.action = ?", "read").
-		Where("s.is_secret = ?", true).
+		Where(sqlWhereIsSecret, true).
 		Where("s.deleted_at IS NULL").
 		Where("s.project_id IN ?", projectIDs).
 		Group("s.id, s.project_id").

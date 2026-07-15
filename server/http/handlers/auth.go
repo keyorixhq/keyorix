@@ -16,6 +16,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // checkLoginRateLimit returns true if the IP has exceeded the login-attempt budget
 // within the window. Backed by the DB so the limit holds across HA replicas
 // (ADR-040). Fails open on a storage error — it's a backstop on top of the real
@@ -113,14 +114,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	var body loginRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 
 	session, user, err := h.coreService.Login(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
 		Password:  body.Password,
-		UserAgent: r.Header.Get("User-Agent"),
+		UserAgent: r.Header.Get(hdrUserAgent),
 		IPAddress: ip,
 	})
 	if err != nil {
@@ -152,7 +153,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.setSessionCookies(w, session)
 
 	// Audit log + last-login stamp (both non-blocking)
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	goSafe(func() { h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) }) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) })                     // #nosec G118
 
@@ -230,7 +231,7 @@ func (h *AuthHandler) GetSetupToken(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	var body consumeSetupRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Token == "" || body.Password == "" {
@@ -242,7 +243,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
 		ip = ip[:idx]
 	}
-	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get("User-Agent"), ip)
+	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip)
 	if err != nil {
 		// The new password was accepted, but the account has MFA (TOTP) or a passkey
 		// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
@@ -279,7 +280,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	resp := h.buildLoginResponse(r.Context(), result.Session, result.User)
 	h.setSessionCookies(w, result.Session)
 	goSafe(func() {
-		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get("User-Agent"))
+		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), result.User.ID) }) // #nosec G118
 
@@ -309,7 +310,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	middleware.ClearCSRFCookie(w, h.tlsEnabled)
 
 	// Audit log (non-blocking)
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	goSafe(func() { h.coreService.LogAuthLogout(context.Background(), logoutUserID, logoutUsername, ip, ua) }) // #nosec G118
 
 	sendSuccess(w, nil, "Logged out successfully")
@@ -356,7 +357,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -438,12 +439,12 @@ type updateProfileRequestBody struct {
 func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body updateProfileRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -474,12 +475,12 @@ type changePasswordRequestBody struct {
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body changePasswordRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -515,7 +516,7 @@ type sessionResponse struct {
 func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	sessions, err := h.coreService.ListOwnSessions(r.Context(), userCtx.UserID)
@@ -554,7 +555,7 @@ func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -595,7 +596,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 
 	var body passwordResetRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -617,7 +618,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 	var body initSystemRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 

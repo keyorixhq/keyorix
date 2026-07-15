@@ -11,12 +11,13 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // EnrollMFA begins TOTP enrolment for the authenticated caller and returns the
 // otpauth:// provisioning URI (for a QR code) plus the base32 secret.
 func (h *AuthHandler) EnrollMFA(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	uri, secret, err := h.coreService.BeginMFAEnrollment(r.Context(), userCtx.UserID)
@@ -38,7 +39,7 @@ func (h *AuthHandler) EnrollMFA(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -46,7 +47,7 @@ func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	codes, err := h.coreService.ActivateMFA(r.Context(), userCtx.UserID, body.Code, body.Password)
@@ -63,7 +64,7 @@ func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -71,7 +72,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	proof := body.Code
@@ -91,7 +92,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -99,7 +100,7 @@ func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Req
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	proof := body.Code
@@ -121,7 +122,7 @@ func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Req
 func (h *AuthHandler) RecoveryCodesStatus(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	remaining, total, err := h.coreService.MFARecoveryCodesRemaining(r.Context(), userCtx.UserID)
@@ -151,7 +152,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		Code      string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	session, user, err := h.coreService.VerifyMFALogin(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip)

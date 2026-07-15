@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+
 // GroupGRPCService implements pb.GroupServiceServer over the shared core. It enforces
 // the SAME global permissions as the HTTP routes: reads → users.read, group CRUD →
 // users.write, membership changes → roles.assign (adding a member confers every role
@@ -34,7 +35,7 @@ func (s *GroupGRPCService) ListGroups(ctx context.Context, _ *emptypb.Empty) (*p
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permUsersRead); err != nil {
 		return nil, err
 	}
 	groups, err := s.core.ListGroups(ctx)
@@ -53,7 +54,7 @@ func (s *GroupGRPCService) GetGroup(ctx context.Context, req *pb.GetGroupRequest
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permUsersRead); err != nil {
 		return nil, err
 	}
 	g, err := s.core.GetGroup(ctx, uint(req.GetId()))
@@ -68,7 +69,7 @@ func (s *GroupGRPCService) CreateGroup(ctx context.Context, req *pb.CreateGroupR
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
 		return nil, err
 	}
 	g, err := s.core.CreateGroup(ctx, actor.UserID, &core.CreateGroupRequest{
@@ -85,7 +86,7 @@ func (s *GroupGRPCService) UpdateGroup(ctx context.Context, req *pb.UpdateGroupR
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
 		return nil, err
 	}
 	g, err := s.core.UpdateGroup(ctx, actor.UserID, &core.UpdateGroupRequest{
@@ -102,7 +103,7 @@ func (s *GroupGRPCService) DeleteGroup(ctx context.Context, req *pb.DeleteGroupR
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
 		return nil, err
 	}
 	if err := s.core.DeleteGroup(ctx, actor.UserID, uint(req.GetId())); err != nil {
@@ -116,7 +117,7 @@ func (s *GroupGRPCService) RestoreGroup(ctx context.Context, req *pb.RestoreGrou
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
 		return nil, err
 	}
 	if err := s.core.RestoreGroup(ctx, actor.UserID, uint(req.GetId())); err != nil {
@@ -134,7 +135,7 @@ func (s *GroupGRPCService) GetGroupMembers(ctx context.Context, req *pb.GetGroup
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "users.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permUsersRead); err != nil {
 		return nil, err
 	}
 	users, err := s.core.GetGroupMembers(ctx, uint(req.GetId()))

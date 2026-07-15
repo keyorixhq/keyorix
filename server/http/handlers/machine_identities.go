@@ -17,11 +17,12 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // ListMachineIdentities handles GET /api/v1/projects/{id}/machine-identities.
 func (h *CatalogHandler) ListMachineIdentities(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	identities, err := h.coreService.ListMachineIdentities(r.Context(), uint(id))
@@ -38,7 +39,7 @@ func (h *CatalogHandler) ListMachineIdentities(w http.ResponseWriter, r *http.Re
 func (h *CatalogHandler) ListStaleMachineIdentities(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	days := 90
@@ -63,12 +64,12 @@ func (h *CatalogHandler) ListStaleMachineIdentities(w http.ResponseWriter, r *ht
 func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -78,7 +79,7 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Name == "" {
@@ -109,12 +110,12 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -126,7 +127,7 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 		KeepUser bool `json:"keep_user"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Username == "" {
@@ -139,7 +140,7 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "required") || strings.Contains(msg, "invalid identity_type"):
 			status = http.StatusBadRequest
@@ -159,24 +160,24 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidMachineID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
 		Action string `json:"action"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	to, ok := machineActionState(body.Action)
@@ -189,7 +190,7 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "cannot transition"):
 			status = http.StatusConflict
@@ -217,17 +218,17 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidMachineID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -236,7 +237,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	var expiresAt *time.Time
@@ -249,7 +250,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "must be active"):
 			status = http.StatusConflict
@@ -275,12 +276,12 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidMachineID, http.StatusBadRequest, nil)
 		return
 	}
 	creds, err := h.coreService.ListMachineTokens(r.Context(), uint(projectID), uint(machineID))
@@ -309,12 +310,12 @@ func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Reques
 func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidMachineID, http.StatusBadRequest, nil)
 		return
 	}
 	tokenID, err := strconv.ParseUint(chi.URLParam(r, "tokenId"), 10, 32)
@@ -324,14 +325,14 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	tokenHash, err := h.coreService.RevokeMachineToken(r.Context(), uint(projectID), uint(machineID), uint(tokenID), actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error revoking machine token %d for machine %d in project %d: %v", tokenID, machineID, projectID, err)
@@ -356,7 +357,7 @@ func (h *CatalogHandler) ClassifyMachineIdentity(w http.ResponseWriter, r *http.
 		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	m, err := h.coreService.ClassifyMachineIdentity(r.Context(), projectID, machineID, body.Classification, actor.UserID)
@@ -364,7 +365,7 @@ func (h *CatalogHandler) ClassifyMachineIdentity(w http.ResponseWriter, r *http.
 		status := http.StatusBadRequest
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "classification must be"):
 			// keep 400, msg is the deliberate validation message
@@ -395,7 +396,7 @@ func (h *CatalogHandler) ClassifyMachineToken(w http.ResponseWriter, r *http.Req
 		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	cred, err := h.coreService.ClassifyMachineToken(r.Context(), projectID, machineID, uint(tokenID), body.Classification, actor.UserID)
@@ -403,7 +404,7 @@ func (h *CatalogHandler) ClassifyMachineToken(w http.ResponseWriter, r *http.Req
 		status := http.StatusBadRequest
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "classification must be"):
 			// keep 400, msg is the deliberate validation message
@@ -434,17 +435,17 @@ func (h *CatalogHandler) RemoveMachineRole(w http.ResponseWriter, r *http.Reques
 func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Request, grant bool) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidMachineID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -477,7 +478,7 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "already") || strings.Contains(msg, "not assigned"):
 			status = http.StatusConflict
@@ -507,7 +508,7 @@ func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Reques
 		Subject string `json:"subject"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	b, err := h.coreService.CreateOIDCBinding(r.Context(), projectID, machineID, body.Issuer, body.Subject, actor.UserID)
@@ -515,7 +516,7 @@ func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Reques
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
@@ -542,7 +543,7 @@ func (h *CatalogHandler) ListOIDCBindings(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error listing OIDC bindings for machine %d in project %d: %v", machineID, projectID, err)
@@ -572,7 +573,7 @@ func (h *CatalogHandler) DeleteOIDCBinding(w http.ResponseWriter, r *http.Reques
 	if err := h.coreService.DeleteOIDCBinding(r.Context(), projectID, machineID, uint(bindingID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error deleting OIDC binding %d for machine %d in project %d: %v", bindingID, machineID, projectID, err)
@@ -589,17 +590,17 @@ func (h *CatalogHandler) DeleteOIDCBinding(w http.ResponseWriter, r *http.Reques
 func (h *CatalogHandler) machineRouteCtx(w http.ResponseWriter, r *http.Request) (projectID, machineID uint, actor *middleware.UserContext, ok bool) {
 	pid, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	mid, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidMachineID, http.StatusBadRequest, nil)
 		return
 	}
 	actor = middleware.GetUserFromContext(r.Context())
 	if actor == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	return uint(pid), uint(mid), actor, true

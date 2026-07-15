@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
+
 // actorID returns the acting user's ID from the request context (0 when absent).
 func actorID(r *http.Request) uint {
 	if u := middleware.GetUserFromContext(r.Context()); u != nil {
@@ -53,13 +54,13 @@ func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.RestoreProject(r.Context(), actorID(r), uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error restoring project %d: %v", id, err)
@@ -76,12 +77,12 @@ func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	project, err := h.coreService.GetProject(r.Context(), uint(id))
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 			return
 		}
@@ -99,7 +100,7 @@ func (h *CatalogHandler) GetProjectDrift(w http.ResponseWriter, r *http.Request)
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	report, err := h.coreService.DetectProjectDrift(r.Context(), uint(id))
@@ -128,7 +129,7 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Environments []string `json:"environments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
@@ -182,7 +183,7 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
@@ -192,7 +193,7 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		RequireMFA  *bool  `json:"require_mfa"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
@@ -238,7 +239,7 @@ func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
@@ -262,14 +263,14 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	if body.Name == "" {
@@ -312,7 +313,7 @@ func (h *CatalogHandler) DeleteEnvironment(w http.ResponseWriter, r *http.Reques
 		switch {
 		case strings.Contains(msg, "active secret"):
 			status = http.StatusConflict
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("Error deleting environment %d: %v", id, err)
@@ -330,7 +331,7 @@ func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	var environments []*models.Environment
@@ -353,7 +354,7 @@ func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.
 func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "projectId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -364,7 +365,7 @@ func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Reque
 	if err := h.coreService.RestoreEnvironment(r.Context(), actorID(r), uint(projectID), uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error restoring environment %d in project %d: %v", id, projectID, err)

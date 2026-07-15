@@ -12,6 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	apiLegalHoldPath = "/api/v1/legal-hold"
+)
+
 // LegalHoldCmd is the `keyorix legal-hold` command.
 var LegalHoldCmd = &cobra.Command{
 	Use:   "legal-hold",
@@ -41,7 +45,7 @@ var statusCmd = &cobra.Command{
 			Active bool     `json:"active"`
 			Hold   holdView `json:"hold"`
 		}
-		if err := c.Get(context.Background(), "/api/v1/legal-hold", &out); err != nil {
+		if err := c.Get(context.Background(), apiLegalHoldPath, &out); err != nil {
 			return err
 		}
 		if !out.Active {
@@ -71,7 +75,7 @@ var placeCmd = &cobra.Command{
 		var out struct {
 			Hold holdView `json:"hold"`
 		}
-		if err := c.Post(context.Background(), "/api/v1/legal-hold", map[string]string{"reason": placeReason}, &out); err != nil {
+		if err := c.Post(context.Background(), apiLegalHoldPath, map[string]string{"reason": placeReason}, &out); err != nil {
 			return err
 		}
 		fmt.Printf("Legal hold placed (id=%d). All purge jobs are now blocked until lifted.\n", out.Hold.ID)
@@ -103,7 +107,7 @@ var liftCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 		}
-		if err := c.DeleteWithBody(context.Background(), "/api/v1/legal-hold", map[string]string{"reason": liftReason}); err != nil {
+		if err := c.DeleteWithBody(context.Background(), apiLegalHoldPath, map[string]string{"reason": liftReason}); err != nil {
 			return err
 		}
 		fmt.Println("Legal hold lifted. Purge jobs will resume on their next tick.")

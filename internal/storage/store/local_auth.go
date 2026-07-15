@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // --- Sessions ---
 
 // hashSessionToken is the at-rest representation of a session token. Sessions, like
@@ -144,7 +145,7 @@ func (ls *LocalStorage) ListSessionsByUser(ctx context.Context, userID uint) ([]
 	var sessions []*models.Session
 	if err := ls.db.WithContext(ctx).
 		Where("user_id = ? AND (expires_at IS NULL OR expires_at > ?)", userID, time.Now()).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		Find(&sessions).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -169,7 +170,7 @@ func (ls *LocalStorage) EnforceSessionLimit(ctx context.Context, userID uint, ke
 	var keepIDs []uint
 	if err := ls.db.WithContext(ctx).Model(&models.Session{}).
 		Where("user_id = ?", userID).
-		Order("created_at DESC").Limit(keep).Pluck("id", &keepIDs).Error; err != nil {
+		Order(sqlOrderCreatedAtDesc).Limit(keep).Pluck("id", &keepIDs).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if len(keepIDs) < keep {
@@ -237,7 +238,7 @@ func (ls *LocalStorage) ListPersonalAccessTokensByUser(ctx context.Context, user
 	var tokens []*models.PersonalAccessToken
 	if err := ls.db.WithContext(ctx).
 		Where("user_id = ?", userID).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		Find(&tokens).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -250,7 +251,7 @@ func (ls *LocalStorage) ListActivePersonalAccessTokens(ctx context.Context) ([]*
 	var tokens []*models.PersonalAccessToken
 	if err := ls.db.WithContext(ctx).
 		Where("revoked = ?", false).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		Find(&tokens).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

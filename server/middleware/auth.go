@@ -21,6 +21,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+const (
+	hdrContentType = "Content-Type"
+	mimeJSON = "application/json"
+)
+
 // sessionValidator is the subset of *core.KeyorixCore that the auth middleware
 // needs. Defined here (not in core) so tests can supply a fake validator without
 // constructing a full core service. *core.KeyorixCore satisfies this implicitly.
@@ -422,7 +427,7 @@ func EnforceAccountRestriction(next http.Handler) http.Handler {
 				return
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(hdrContentType, mimeJSON)
 		w.WriteHeader(http.StatusForbidden)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":   "PasswordChangeRequired",
@@ -859,7 +864,7 @@ func clientIP(r *http.Request) string {
 
 // unauthorizedResponse sends a 401 Unauthorized response
 func unauthorizedResponse(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(hdrContentType, mimeJSON)
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "Unauthorized", "message": message, "code": http.StatusUnauthorized,
@@ -884,7 +889,7 @@ func BlockWhenImpersonating(next http.Handler) http.Handler {
 
 // forbiddenResponse sends a 403 Forbidden response
 func forbiddenResponse(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(hdrContentType, mimeJSON)
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "Forbidden", "message": message, "code": http.StatusForbidden,
@@ -918,7 +923,7 @@ func WriteProjectMFARequired(w http.ResponseWriter) { projectMFARequiredResponse
 // projectMFARequiredResponse sends a 403 with a distinct code so the client can
 // prompt the user to enrol a second factor (ADR-037 per-project MFA policy).
 func projectMFARequiredResponse(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(hdrContentType, mimeJSON)
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error":   "ProjectMFARequired",
@@ -929,7 +934,7 @@ func projectMFARequiredResponse(w http.ResponseWriter) {
 
 // notFoundResponse sends a 404 Not Found response.
 func notFoundResponse(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(hdrContentType, mimeJSON)
 	w.WriteHeader(http.StatusNotFound)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "NotFound", "message": message, "code": http.StatusNotFound,
@@ -938,7 +943,7 @@ func notFoundResponse(w http.ResponseWriter, message string) {
 
 // badRequestResponse sends a 400 Bad Request response.
 func badRequestResponse(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(hdrContentType, mimeJSON)
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "BadRequest", "message": message, "code": http.StatusBadRequest,

@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // maxWebAuthnBody caps the ceremony request body (attestation/assertion blobs are
 // small; this bounds parsing of untrusted input).
 const maxWebAuthnBody = 64 * 1024
@@ -27,7 +28,7 @@ const maxWebAuthnBody = 64 * 1024
 func (h *AuthHandler) BeginWebAuthnRegistration(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	creation, sessionToken, err := h.coreService.BeginWebAuthnRegistration(r.Context(), userCtx.UserID)
@@ -49,7 +50,7 @@ func (h *AuthHandler) BeginWebAuthnRegistration(w http.ResponseWriter, r *http.R
 func (h *AuthHandler) FinishWebAuthnRegistration(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -60,7 +61,7 @@ func (h *AuthHandler) FinishWebAuthnRegistration(w http.ResponseWriter, r *http.
 		Credential      json.RawMessage `json:"credential"`
 	}
 	if err := decodeJSON(r, &body); err != nil || len(body.Credential) == 0 {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(body.Credential)
@@ -88,7 +89,7 @@ func (h *AuthHandler) FinishWebAuthnRegistration(w http.ResponseWriter, r *http.
 func (h *AuthHandler) ListWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	creds, err := h.coreService.ListWebAuthnCredentials(r.Context(), userCtx.UserID)
@@ -116,7 +117,7 @@ func (h *AuthHandler) ListWebAuthnCredentials(w http.ResponseWriter, r *http.Req
 func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -131,7 +132,7 @@ func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Re
 	// An empty body simply fails the re-auth check below; only malformed JSON is a
 	// bad request.
 	if err := decodeJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	proof := body.Code
@@ -150,14 +151,14 @@ func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Re
 func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if h.checkLoginRateLimit(r.Context(), ip) {
-		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
+		sendError(w, "TooManyRequests", errTooManyAttempts, http.StatusTooManyRequests, nil)
 		return
 	}
 	var body struct {
 		Challenge string `json:"mfa_challenge"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	assertion, sessionToken, err := h.coreService.BeginWebAuthnLogin(r.Context(), body.Challenge)
@@ -177,7 +178,7 @@ func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request)
 func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if h.checkLoginRateLimit(r.Context(), ip) {
-		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
+		sendError(w, "TooManyRequests", errTooManyAttempts, http.StatusTooManyRequests, nil)
 		return
 	}
 	var body struct {
@@ -186,7 +187,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 		Credential      json.RawMessage `json:"credential"`
 	}
 	if err := decodeJSON(r, &body); err != nil || len(body.Credential) == 0 {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(body.Credential)
@@ -194,7 +195,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 		sendError(w, "BadRequest", "Invalid assertion", http.StatusBadRequest, nil)
 		return
 	}
-	session, user, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get("User-Agent"), ip, parsed)
+	session, user, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
 		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
@@ -202,7 +203,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	}
 	resp := h.buildLoginResponse(r.Context(), session, user)
 	goSafe(func() {
-		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent"))
+		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }) // #nosec G118
 	sendSuccess(w, resp, "Login successful")
@@ -213,7 +214,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if h.checkLoginRateLimit(r.Context(), ip) {
-		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
+		sendError(w, "TooManyRequests", errTooManyAttempts, http.StatusTooManyRequests, nil)
 		return
 	}
 	assertion, sessionToken, err := h.coreService.BeginWebAuthnPasswordlessLogin(r.Context())
@@ -232,7 +233,7 @@ func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *h
 func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if h.checkLoginRateLimit(r.Context(), ip) {
-		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
+		sendError(w, "TooManyRequests", errTooManyAttempts, http.StatusTooManyRequests, nil)
 		return
 	}
 	var body struct {
@@ -240,7 +241,7 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 		Credential      json.RawMessage `json:"credential"`
 	}
 	if err := decodeJSON(r, &body); err != nil || len(body.Credential) == 0 {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(body.Credential)
@@ -248,7 +249,7 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 		sendError(w, "BadRequest", "Invalid assertion", http.StatusBadRequest, nil)
 		return
 	}
-	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get("User-Agent"), ip, parsed)
+	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
 		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
@@ -256,7 +257,7 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 	}
 	resp := h.buildLoginResponse(r.Context(), session, user)
 	goSafe(func() {
-		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent"))
+		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }) // #nosec G118
 	sendSuccess(w, resp, "Login successful")

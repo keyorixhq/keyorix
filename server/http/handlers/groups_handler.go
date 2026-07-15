@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
+
 // GroupHandler handles group HTTP requests.
 type GroupHandler struct {
 	coreService *core.KeyorixCore
@@ -45,7 +46,7 @@ func groupToAPIResponse(g *models.Group) map[string]interface{} {
 func (h *GroupHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	groups, err := h.coreService.ListGroups(r.Context())
@@ -65,7 +66,7 @@ func (h *GroupHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -110,20 +111,20 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
 	g, err := h.coreService.GetGroup(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error getting group: %v", err)
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
-			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
+			sendError(w, "NotFound", errGroupNotFound, http.StatusNotFound, nil)
 			return
 		}
 		sendError(w, "InternalError", "Failed to get group", http.StatusInternalServerError, nil)
@@ -136,13 +137,13 @@ func (h *GroupHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
@@ -165,8 +166,8 @@ func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("Error updating group: %v", err)
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
-			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
+			sendError(w, "NotFound", errGroupNotFound, http.StatusNotFound, nil)
 			return
 		}
 		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
@@ -183,19 +184,19 @@ func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.DeleteGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting group: %v", err)
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
-			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
+			sendError(w, "NotFound", errGroupNotFound, http.StatusNotFound, nil)
 			return
 		}
 		sendError(w, "InternalError", "Failed to delete group", http.StatusInternalServerError, nil)
@@ -209,17 +210,17 @@ func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 func (h *GroupHandler) RestoreGroup(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidGroupID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.RestoreGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error restoring group: %v", err)
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not deleted") {
+		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), "not deleted") {
 			sendError(w, "NotFound", "Group not found or not deleted", http.StatusNotFound, nil)
 			return
 		}

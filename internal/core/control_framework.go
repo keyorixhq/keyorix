@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+
 // ControlStatus is a control's evaluated state.
 type ControlStatus string
 
@@ -35,7 +36,7 @@ type FrameworkRefs struct {
 	NIS2     []string `json:"nis2,omitempty"`      // article refs, e.g. "Art.21(2)(i)"
 	DORA     []string `json:"dora,omitempty"`      // article refs, e.g. "Art.9"
 	// ENS maps to the security measures of Spain's Esquema Nacional de Seguridad
-	// (Real Decreto 311/2022, Anexo II), e.g. "op.acc.4". Codes name the measure in
+	// (Real Decreto 311/2022, Anexo II), e.g. ctrlOpAcc4. Codes name the measure in
 	// the org.* (organisational) / op.* (operational) / mp.* (protection) frameworks.
 	ENS []string `json:"ens,omitempty"`
 }
@@ -124,19 +125,19 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.28", "A.8.15"}, SOC2: []string{"CC7.2", "CC4.1"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}, ENS: []string{"op.exp.8", "op.exp.10"}},
 		},
 		{
-			ID: "access-recertification", Name: "Access recertification at planned intervals", Area: "Access governance",
+			ID: "access-recertification", Name: "Access recertification at planned intervals", Area: ctrlAccessGovernance,
 			Status:     controlStatus(p.DegradedArea("access_governance:campaigns:"), ag.ProjectsOverdue > 0 || ag.ProjectsNeverReviewed > 0),
 			Detail:     fmt.Sprintf("%d overdue, %d never reviewed, %d pending items", ag.ProjectsOverdue, ag.ProjectsNeverReviewed, ag.PendingItems),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18"}, SOC2: []string{"CC6.2", "CC6.3"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.4"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18"}, SOC2: []string{"CC6.2", "CC6.3"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4}},
 		},
 		{
-			ID: "dormant-access", Name: "No dormant standing access", Area: "Access governance",
+			ID: "dormant-access", Name: "No dormant standing access", Area: ctrlAccessGovernance,
 			Status:     controlStatus(p.DegradedArea("dormant_role_grants:"), ag.DormantRoleGrants > 0),
 			Detail:     fmt.Sprintf("%d dormant role grant(s)", ag.DormantRoleGrants),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18", "A.8.2"}, SOC2: []string{"CC6.1"}, ENS: []string{"op.acc.2", "op.acc.4"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18", "A.8.2"}, SOC2: []string{"CC6.1"}, ENS: []string{"op.acc.2", ctrlOpAcc4}},
 		},
 		{
-			ID: "separation-of-duties", Name: "Separation of duties (no toxic combinations)", Area: "Access governance",
+			ID: "separation-of-duties", Name: "Separation of duties (no toxic combinations)", Area: ctrlAccessGovernance,
 			Status:     controlStatus(p.DegradedArea("sod_violations", "evidence:sod_violations"), ag.SoDViolations > 0),
 			Detail:     fmt.Sprintf("%d SoD violation(s)", ag.SoDViolations),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.3"}, SOC2: []string{"CC5.1"}, DORA: []string{"Art.5"}, ENS: []string{"op.acc.3"}},
@@ -151,13 +152,13 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			ID: "secret-rotation", Name: "Secret-rotation hygiene", Area: "Cryptography",
 			Status:     controlStatus(p.DegradedArea("rotation", "evidence:rotation_overdue"), p.Rotation.Overdue > 0),
 			Detail:     fmt.Sprintf("%d overdue, %d due soon of %d covered", p.Rotation.Overdue, p.Rotation.DueSoon, p.Rotation.CoveredSecrets),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515, "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
 			ID: "certificate-hygiene", Name: "Certificate expiry hygiene", Area: "Cryptography",
 			Status:     certificateHygieneStatus(p),
 			Detail:     certificateHygieneDetail(p),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515, "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
 			ID: "data-classification", Name: "Secret data classification", Area: "Asset management",
@@ -172,15 +173,15 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.8.16"}, SOC2: []string{"CC7.2", "CC7.3"}, NIS2: []string{"Art.21(2)(b)"}, DORA: []string{"Art.10"}, ENS: []string{"op.mon.1", "op.exp.7"}},
 		},
 		{
-			ID: "emergency-access", Name: "Governed emergency (break-glass) access", Area: "Access governance",
+			ID: "emergency-access", Name: "Governed emergency (break-glass) access", Area: ctrlAccessGovernance,
 			// presence of the register is the control; usage is informational — but a
 			// failed collection still needs to surface as unknown, not a default Pass.
 			Status:     controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), false),
 			Detail:     fmt.Sprintf("%d active, %d total activations (all audited)", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15"}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.4", "op.exp.7"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4, "op.exp.7"}},
 		},
 		{
-			ID: "access-request-hygiene", Name: "Access-request approval hygiene (no stale, unresolved lapses)", Area: "Access governance",
+			ID: "access-request-hygiene", Name: "Access-request approval hygiene (no stale, unresolved lapses)", Area: ctrlAccessGovernance,
 			// A pending access request (ADR-024's dual-control workflow, #257) that
 			// lapses with no explicit approve/reject/withdraw decision is the same
 			// shape of gap as #395's stale risk exceptions: an access decision that was

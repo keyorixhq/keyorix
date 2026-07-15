@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // staleInviteThreshold is when an unaccepted invite is surfaced as stale (ADR-022).
 const staleInviteThreshold = 7 * 24 * time.Hour
 
@@ -27,7 +28,7 @@ const staleInviteThreshold = 7 * 24 * time.Hour
 func (h *CatalogHandler) ListProjectMemberships(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	if r.URL.Query().Get("stale") == "true" {
@@ -60,7 +61,7 @@ func (h *CatalogHandler) ListProjectMemberships(w http.ResponseWriter, r *http.R
 func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
@@ -106,7 +107,7 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	membershipID, err := strconv.ParseUint(chi.URLParam(r, "membershipId"), 10, 32)

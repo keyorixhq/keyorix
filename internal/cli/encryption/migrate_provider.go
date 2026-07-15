@@ -25,6 +25,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	azureKMSProvider = "azure-kms"
+)
+
 // newMasterPasswordEnv holds the new master passphrase when migrating TO the
 // password provider (kept distinct from KEYORIX_MASTER_PASSWORD, which is the
 // current one).
@@ -275,7 +279,7 @@ func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (con
 		}
 		kp.TPMDevice = opts.toTPMDevice
 		kp.WrappedKeyPath = opts.toWrappedKeyPath
-	case "aws-kms", "gcp-kms", "azure-kms":
+	case "aws-kms", "gcp-kms", azureKMSProvider:
 		if opts.toKMSKeyID == "" {
 			return tgt, fmt.Errorf("--to-kms-key-id is required for --to-type %s", opts.toType)
 		}
@@ -288,7 +292,7 @@ func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (con
 		// #123: azure-kms (RSA-OAEP wrap) has no AAD input — matches
 		// NewKeyProviderFromConfig's hard rejection, checked here too so this fails
 		// before any DEK backup/re-wrap work rather than after.
-		if opts.toType == "azure-kms" && len(opts.toKMSEncryptionContext) > 0 {
+		if opts.toType == azureKMSProvider && len(opts.toKMSEncryptionContext) > 0 {
 			return tgt, fmt.Errorf("--to-kms-encryption-context is not supported for --to-type azure-kms (RSA-OAEP key wrap has no AAD input)")
 		}
 		// KMSKeyProvider.KEK() only re-wraps (and so only applies a NEW encryption
@@ -499,7 +503,7 @@ func printMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 			fmt.Printf("      tpm_device: %s\n", kp.TPMDevice)
 		}
 		fmt.Printf("      wrapped_key_path: %s\n", kp.WrappedKeyPath)
-	case "aws-kms", "gcp-kms", "azure-kms":
+	case "aws-kms", "gcp-kms", azureKMSProvider:
 		fmt.Printf("      kms_key_id: %s\n", kp.KMSKeyID)
 		fmt.Printf("      wrapped_key_path: %s\n", kp.WrappedKeyPath)
 	case "password":

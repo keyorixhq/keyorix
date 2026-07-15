@@ -14,6 +14,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	flagProjectID = "project-id"
+)
+
 var (
 	bgProject    int
 	bgJustify    string
@@ -138,13 +142,13 @@ func truncate(s string, n int) string {
 }
 
 func init() {
-	activateCmd.Flags().IntVar(&bgProject, "project-id", 0, "Project to activate emergency access for (required)")
+	activateCmd.Flags().IntVar(&bgProject, flagProjectID, 0, "Project to activate emergency access for (required)")
 	activateCmd.Flags().StringVar(&bgJustify, "justification", "", "Written reason for emergency access (required)")
 	activateCmd.Flags().StringVar(&bgTTL, "ttl", "", "Grant lifetime override, e.g. 2h (default + capped by server config)")
 
-	listCmd.Flags().IntVar(&bgProject, "project-id", 0, "Project (required)")
+	listCmd.Flags().IntVar(&bgProject, flagProjectID, 0, "Project (required)")
 
-	revokeCmd.Flags().IntVar(&bgProject, "project-id", 0, "Project (required)")
+	revokeCmd.Flags().IntVar(&bgProject, flagProjectID, 0, "Project (required)")
 	revokeCmd.Flags().IntVar(&bgActivation, "activation-id", 0, "Activation to revoke (required)")
 
 	BreakGlassCmd.AddCommand(activateCmd, listCmd, revokeCmd)

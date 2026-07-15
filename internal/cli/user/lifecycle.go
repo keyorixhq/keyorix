@@ -17,6 +17,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	descActingAdminEmail = "Acting admin email (required, for audit)"
+	descTargetUserID = "Target user ID (required)"
+)
+
 var (
 	suspendUserID            uint
 	suspendBy                string
@@ -100,23 +105,23 @@ var revokeSessionsCmd = &cobra.Command{
 }
 
 func init() {
-	suspendCmd.Flags().UintVar(&suspendUserID, "id", 0, "Target user ID (required)")
-	suspendCmd.Flags().StringVar(&suspendBy, "by", "", "Acting admin email (required, for audit)")
+	suspendCmd.Flags().UintVar(&suspendUserID, "id", 0, descTargetUserID)
+	suspendCmd.Flags().StringVar(&suspendBy, "by", "", descActingAdminEmail)
 	_ = suspendCmd.MarkFlagRequired("id")
 	_ = suspendCmd.MarkFlagRequired("by")
 
-	reactivateCmd.Flags().UintVar(&reactivateUserID, "id", 0, "Target user ID (required)")
-	reactivateCmd.Flags().StringVar(&reactivateBy, "by", "", "Acting admin email (required, for audit)")
+	reactivateCmd.Flags().UintVar(&reactivateUserID, "id", 0, descTargetUserID)
+	reactivateCmd.Flags().StringVar(&reactivateBy, "by", "", descActingAdminEmail)
 	_ = reactivateCmd.MarkFlagRequired("id")
 	_ = reactivateCmd.MarkFlagRequired("by")
 
-	forcePasswordResetCmd.Flags().UintVar(&forcePasswordResetUserID, "id", 0, "Target user ID (required)")
-	forcePasswordResetCmd.Flags().StringVar(&forcePasswordResetBy, "by", "", "Acting admin email (required, for audit)")
+	forcePasswordResetCmd.Flags().UintVar(&forcePasswordResetUserID, "id", 0, descTargetUserID)
+	forcePasswordResetCmd.Flags().StringVar(&forcePasswordResetBy, "by", "", descActingAdminEmail)
 	_ = forcePasswordResetCmd.MarkFlagRequired("id")
 	_ = forcePasswordResetCmd.MarkFlagRequired("by")
 
-	revokeSessionsCmd.Flags().UintVar(&revokeSessionsUserID, "id", 0, "Target user ID (required)")
-	revokeSessionsCmd.Flags().StringVar(&revokeSessionsBy, "by", "", "Acting admin email (required, for audit)")
+	revokeSessionsCmd.Flags().UintVar(&revokeSessionsUserID, "id", 0, descTargetUserID)
+	revokeSessionsCmd.Flags().StringVar(&revokeSessionsBy, "by", "", descActingAdminEmail)
 	_ = revokeSessionsCmd.MarkFlagRequired("id")
 	_ = revokeSessionsCmd.MarkFlagRequired("by")
 }

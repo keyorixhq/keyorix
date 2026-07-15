@@ -20,9 +20,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // LogAuditEvent logs an audit event via remote API.
 func (rs *RemoteStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
-	resp, err := rs.client.Post(ctx, "/api/v1/audit/events", event)
+	resp, err := rs.client.Post(ctx, apiAuditEventsPath, event)
 	if err != nil {
 		return fmt.Errorf("failed to log audit event: %w", err)
 	}
@@ -67,7 +68,7 @@ func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.Audit
 // buildAuditFilterPath constructs the /api/v1/audit/events query string.
 func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	if filter == nil {
-		return "/api/v1/audit/events"
+		return apiAuditEventsPath
 	}
 	params := newQueryBuilder()
 	params.addUint("user_id", filter.UserID)
@@ -80,7 +81,7 @@ func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	params.addTime("end_time", filter.EndTime)
 	params.addUint("after_id", filter.AfterID)
 	params.addPage(filter.Page, filter.PageSize)
-	return "/api/v1/audit/events" + params.String()
+	return apiAuditEventsPath + params.String()
 }
 
 // GetRBACAuditLogs retrieves RBAC audit logs with optional filtering via remote API.

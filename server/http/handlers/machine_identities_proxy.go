@@ -83,6 +83,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // isAlreadyAssignedErr reports whether err is local_machine_credentials.go's
 // AssignMachineRole "already assigned" client error — a conflict, not a storage
 // failure. Classifying it as 409 (rather than a generic 500) matters beyond
@@ -273,7 +274,7 @@ func newRoleProxyWire(r *models.Role) roleProxyWire {
 func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.Name == "" || body.ProjectID == 0 {
@@ -297,7 +298,7 @@ func (h *CatalogHandler) CreateMachineIdentityProxy(w http.ResponseWriter, r *ht
 func (h *CatalogHandler) GetMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	m, err := h.coreService.Storage().GetMachineIdentity(r.Context(), uint(id))
@@ -322,12 +323,12 @@ func (h *CatalogHandler) GetMachineIdentityProxy(w http.ResponseWriter, r *http.
 func (h *CatalogHandler) UpdateMachineIdentityProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	var body machineIdentityProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -358,12 +359,12 @@ type transitionMachineIdentityStateBody struct {
 func (h *CatalogHandler) TransitionMachineIdentityStateProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	var body transitionMachineIdentityStateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.FromState == "" {
@@ -443,7 +444,7 @@ func (h *CatalogHandler) CountMachineIdentitiesByClassificationProxy(w http.Resp
 func (h *CatalogHandler) CreateMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityCredentialProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.MachineIdentityID == 0 || body.TokenHash == "" {
@@ -469,7 +470,7 @@ func (h *CatalogHandler) GetMachineIdentityCredentialByHashProxy(w http.Response
 	c, err := h.coreService.Storage().GetMachineIdentityCredentialByHash(r.Context(), hash)
 	if err != nil {
 		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "machine credential not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
 			return
 		}
 		log.Printf("machine-credentials proxy: get-by-hash failed: %v", err)
@@ -484,13 +485,13 @@ func (h *CatalogHandler) GetMachineIdentityCredentialByHashProxy(w http.Response
 func (h *CatalogHandler) GetMachineIdentityCredentialByIDProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid credential id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCredentialID)
 		return
 	}
 	c, err := h.coreService.Storage().GetMachineIdentityCredentialByID(r.Context(), uint(id))
 	if err != nil {
 		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "machine credential not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
 			return
 		}
 		log.Printf("machine-credentials proxy: get failed: %v", err)
@@ -505,7 +506,7 @@ func (h *CatalogHandler) GetMachineIdentityCredentialByIDProxy(w http.ResponseWr
 func (h *CatalogHandler) ListMachineIdentityCredentialsProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	rows, err := h.coreService.Storage().ListMachineIdentityCredentials(r.Context(), uint(machineID))
@@ -545,12 +546,12 @@ func (h *CatalogHandler) ListActiveMachineIdentityCredentialsProxy(w http.Respon
 func (h *CatalogHandler) UpdateMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid credential id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCredentialID)
 		return
 	}
 	var body machineIdentityCredentialProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -583,12 +584,12 @@ func (h *CatalogHandler) CountMachineIdentityCredentialsByClassificationProxy(w 
 func (h *CatalogHandler) RevokeMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid credential id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCredentialID)
 		return
 	}
 	if err := h.coreService.Storage().RevokeMachineIdentityCredential(r.Context(), uint(id)); err != nil {
 		if isNotFoundErr(err) {
-			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "machine credential not found")
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errMachineCredentialNotFound)
 			return
 		}
 		log.Printf("machine-credentials proxy: revoke failed: %v", err)
@@ -614,12 +615,12 @@ type touchMachineIdentityCredentialBody struct {
 func (h *CatalogHandler) TouchMachineIdentityCredentialProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid credential id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidCredentialID)
 		return
 	}
 	var body touchMachineIdentityCredentialBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	staleness := time.Duration(body.StalenessSeconds) * time.Second
@@ -661,7 +662,7 @@ func machineRoleScopeQuery(w http.ResponseWriter, r *http.Request) (storage.Scop
 func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	roleID, err := strconv.ParseUint(chi.URLParam(r, "roleId"), 10, 32)
@@ -690,7 +691,7 @@ func (h *CatalogHandler) AssignMachineRoleProxy(w http.ResponseWriter, r *http.R
 func (h *CatalogHandler) RemoveMachineRoleProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	roleID, err := strconv.ParseUint(chi.URLParam(r, "roleId"), 10, 32)
@@ -721,7 +722,7 @@ func (h *CatalogHandler) RemoveMachineRoleProxy(w http.ResponseWriter, r *http.R
 func (h *CatalogHandler) GetMachineRoleIDsAtProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	scope, ok := machineRoleScopeQuery(w, r)
@@ -741,7 +742,7 @@ func (h *CatalogHandler) GetMachineRoleIDsAtProxy(w http.ResponseWriter, r *http
 func (h *CatalogHandler) GetMachineRolesProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	roles, err := h.coreService.Storage().GetMachineRoles(r.Context(), uint(machineID))
@@ -763,7 +764,7 @@ func (h *CatalogHandler) GetMachineRolesProxy(w http.ResponseWriter, r *http.Req
 func (h *CatalogHandler) CreateOIDCBindingProxy(w http.ResponseWriter, r *http.Request) {
 	var body machineIdentityOIDCBindingProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.MachineIdentityID == 0 || body.Issuer == "" || body.Subject == "" {
@@ -811,7 +812,7 @@ func (h *CatalogHandler) GetMachineByOIDCSubjectProxy(w http.ResponseWriter, r *
 func (h *CatalogHandler) ListOIDCBindingsProxy(w http.ResponseWriter, r *http.Request) {
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid machine identity id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidMachineIDLower)
 		return
 	}
 	rows, err := h.coreService.Storage().ListOIDCBindings(r.Context(), uint(machineID))

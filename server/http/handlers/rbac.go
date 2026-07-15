@@ -25,6 +25,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
+
 // RBACHandler handles RBAC-related HTTP requests using real storage.
 type RBACHandler struct {
 	coreService *core.KeyorixCore
@@ -114,7 +115,7 @@ var validator = validation.NewValidator()
 func (h *RBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -132,17 +133,17 @@ func (h *RBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	var req CreateRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 
@@ -222,7 +223,7 @@ func (h *RBACHandler) resolveAndAuthorizePermissions(w http.ResponseWriter, r *h
 func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -234,10 +235,10 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 	role, perms, err := h.coreService.GetRoleWithPermissions(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting role: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
-			sendError(w, "InternalError", "Failed to get role", http.StatusInternalServerError, nil)
+			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
 		}
 		return
 	}
@@ -264,7 +265,7 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -277,10 +278,10 @@ func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 	role, err := h.coreService.Storage().GetRoleByName(r.Context(), name)
 	if err != nil {
 		log.Printf("Error getting role by name: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
-			sendError(w, "InternalError", "Failed to get role", http.StatusInternalServerError, nil)
+			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
 		}
 		return
 	}
@@ -292,7 +293,7 @@ func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -303,21 +304,21 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 
 	var req UpdateRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 
 	role, err := h.coreService.Storage().GetRole(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting role: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
-			sendError(w, "InternalError", "Failed to get role", http.StatusInternalServerError, nil)
+			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
 		}
 		return
 	}
@@ -397,7 +398,7 @@ func (h *RBACHandler) replaceRolePermissions(ctx context.Context, actorID, roleI
 func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -408,10 +409,10 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 
 	role, err := h.coreService.Storage().GetRole(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
-			sendError(w, "InternalError", "Failed to get role", http.StatusInternalServerError, nil)
+			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
 		}
 		return
 	}
@@ -422,8 +423,8 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.coreService.Storage().DeleteRole(r.Context(), id); err != nil {
 		log.Printf("Error deleting role: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to delete role", http.StatusInternalServerError, nil)
 		}
@@ -450,17 +451,17 @@ func roleExpiryValid(w http.ResponseWriter, expiresAt *time.Time) bool {
 func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	var req AssignRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 
@@ -496,17 +497,17 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	var req RemoveRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 
@@ -529,7 +530,7 @@ func (h *RBACHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -541,7 +542,7 @@ func (h *RBACHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 	assignment, err := h.coreService.GetUserRoleAssignment(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting user role assignment: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get user roles", http.StatusInternalServerError, nil)
@@ -556,7 +557,7 @@ func (h *RBACHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -594,7 +595,7 @@ func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -606,7 +607,7 @@ func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
 	perm, err := h.coreService.Storage().GetPermission(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting permission: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", "Permission not found", http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get permission", http.StatusInternalServerError, nil)
@@ -621,7 +622,7 @@ func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -633,8 +634,8 @@ func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request)
 	role, perms, err := h.coreService.GetRoleWithPermissions(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting role permissions: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get role permissions", http.StatusInternalServerError, nil)
 		}
@@ -648,7 +649,7 @@ func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request)
 func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -661,18 +662,18 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		PermissionID uint `json:"permission_id" validate:"required"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 
 	if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, roleID, body.PermissionID); err != nil {
 		log.Printf("Error assigning permission to role: %v", err)
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(err.Error(), errNotFound):
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "do not hold it yourself"):
 			// #169: the actor doesn't hold the permission being bundled — 403, not 500.
@@ -691,7 +692,7 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 func (h *RBACHandler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -706,7 +707,7 @@ func (h *RBACHandler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Re
 
 	if err := h.coreService.RemovePermissionFromRole(r.Context(), userCtx.UserID, roleID, permID); err != nil {
 		log.Printf("Error removing permission from role: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to remove permission", http.StatusInternalServerError, nil)
@@ -721,7 +722,7 @@ func (h *RBACHandler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Re
 func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -735,7 +736,7 @@ func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
 	roles, err := h.coreService.GetGroupRoleGrants(r.Context(), groupID)
 	if err != nil {
 		log.Printf("Error getting group roles: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get group roles", http.StatusInternalServerError, nil)
@@ -750,7 +751,7 @@ func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
 func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -766,11 +767,11 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 		ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 	if !roleExpiryValid(w, body.ExpiresAt) {
@@ -787,7 +788,7 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		log.Printf("Error assigning role to group: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), "already assigned") {
 			sendError(w, "ConflictError", "Role already assigned to group", http.StatusConflict, nil)
@@ -805,7 +806,7 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -824,7 +825,7 @@ func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request
 
 	if err := h.coreService.RemoveRoleFromGroup(r.Context(), userCtx.UserID, groupID, roleID, scope); err != nil {
 		log.Printf("Error removing role from group: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to remove role from group", http.StatusInternalServerError, nil)
@@ -843,7 +844,7 @@ func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request
 
 func ListRoles(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"roles": []interface{}{}, "total": 0}, "")
@@ -851,16 +852,16 @@ func ListRoles(w http.ResponseWriter, r *http.Request) {
 
 func CreateRole(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var req CreateRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -871,38 +872,38 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 // IDs 1-10 are treated as existing mock roles to satisfy legacy test contracts.
 func GetRole(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid role ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidRoleID, http.StatusBadRequest, nil)
 		return
 	}
 	if id >= 1 && id <= 10 {
 		sendSuccess(w, map[string]interface{}{"id": id, "name": "mock-role", "permissions": []interface{}{}}, "")
 		return
 	}
-	sendError(w, "NotFound", "Role not found", http.StatusNotFound, nil)
+	sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 }
 
 func UpdateRole(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	if _, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32); err != nil {
-		sendError(w, "InvalidParameter", "Invalid role ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidRoleID, http.StatusBadRequest, nil)
 		return
 	}
 	var req UpdateRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{}, "Role updated successfully")
@@ -910,11 +911,11 @@ func UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 func DeleteRole(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	if _, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32); err != nil {
-		sendError(w, "InvalidParameter", "Invalid role ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidRoleID, http.StatusBadRequest, nil)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -922,16 +923,16 @@ func DeleteRole(w http.ResponseWriter, r *http.Request) {
 
 func AssignRole(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var req AssignRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -940,16 +941,16 @@ func AssignRole(w http.ResponseWriter, r *http.Request) {
 
 func RemoveRole(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var req RemoveRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		sendError(w, "InvalidJSON", errInvalidJSON, http.StatusBadRequest, nil)
 		return
 	}
 	if err := validator.Validate(&req); err != nil {
-		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
+		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -957,7 +958,7 @@ func RemoveRole(w http.ResponseWriter, r *http.Request) {
 
 func GetUserRoles(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	if _, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32); err != nil {

@@ -16,11 +16,12 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // ActivateBreakGlass handles POST /api/v1/projects/{id}/break-glass (self-service).
 func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	actor := middleware.GetUserFromContext(r.Context())
@@ -65,7 +66,7 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 func (h *CatalogHandler) ListBreakGlassActivations(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	activations, err := h.coreService.ListBreakGlassActivations(r.Context(), uint(id))
@@ -81,7 +82,7 @@ func (h *CatalogHandler) ListBreakGlassActivations(w http.ResponseWriter, r *htt
 func (h *CatalogHandler) RevokeBreakGlass(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	activationID, err := strconv.ParseUint(chi.URLParam(r, "activationId"), 10, 32)

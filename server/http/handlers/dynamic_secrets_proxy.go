@@ -68,6 +68,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // dynamicSecretConfigProxyWire mirrors models.DynamicSecretConfig's fields
 // exactly (snake_case), INCLUDING the encrypted admin-DSN ciphertext + metadata —
 // see the package doc for why sending that ciphertext (never plaintext) across
@@ -213,7 +214,7 @@ func isNotFoundErr(err error) bool {
 func (h *DynamicSecretHandler) CreateDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {
 	var body dynamicSecretConfigProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.Name == "" || body.ProjectID == 0 {
@@ -282,7 +283,7 @@ func (h *DynamicSecretHandler) UpdateDynamicSecretConfigProxy(w http.ResponseWri
 	}
 	var body dynamicSecretConfigProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -314,7 +315,7 @@ func (h *DynamicSecretHandler) CountDynamicSecretConfigsByClassificationProxy(w 
 func (h *DynamicSecretHandler) CreateDynamicSecretLeaseProxy(w http.ResponseWriter, r *http.Request) {
 	var body dynamicSecretLeaseProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.ConfigID == 0 || body.LeaseID == "" {
@@ -394,7 +395,7 @@ func (h *DynamicSecretHandler) UpdateDynamicSecretLeaseProxy(w http.ResponseWrit
 	leaseID := chi.URLParam(r, "leaseID")
 	var body dynamicSecretLeaseProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.LeaseID = leaseID

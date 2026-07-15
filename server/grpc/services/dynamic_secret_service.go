@@ -15,6 +15,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
+
 // DynamicSecretGRPCService implements pb.DynamicSecretServiceServer (ADR-035).
 // Authz mirrors the HTTP handlers: reads use secrets.read, mutations secrets.write,
 // each scoped to the owning config's (or lease's) project/environment. The admin
@@ -66,7 +67,7 @@ func (s *DynamicSecretGRPCService) ListConfigs(ctx context.Context, req *pb.List
 	if req.GetProjectId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
-	if err := authorizeScoped(ctx, s.core, user, "secrets.read", core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permSecretsRead, core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}); err != nil {
 		return nil, err
 	}
 	cfgs, err := s.core.ListDynamicSecretConfigs(ctx, uint(req.GetProjectId()), uint(req.GetEnvironmentId()))
@@ -88,7 +89,7 @@ func (s *DynamicSecretGRPCService) GetConfig(ctx context.Context, req *pb.GetDyn
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	cfg, err := s.loadConfigScoped(ctx, user, uint(req.GetId()), "secrets.read")
+	cfg, err := s.loadConfigScoped(ctx, user, uint(req.GetId()), permSecretsRead)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +104,7 @@ func (s *DynamicSecretGRPCService) CreateConfig(ctx context.Context, req *pb.Cre
 	if req.GetName() == "" || req.GetProjectId() == 0 || req.GetAdminDsn() == "" {
 		return nil, status.Error(codes.InvalidArgument, "name, project_id and admin_dsn are required")
 	}
-	if err := authorizeScoped(ctx, s.core, user, "secrets.write", core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}); err != nil {
+	if err := authorizeScoped(ctx, s.core, user, permSecretsWrite, core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}); err != nil {
 		return nil, err
 	}
 	cfg, err := s.core.CreateDynamicSecretConfig(ctx, &core.CreateDynamicSecretConfigRequest{
@@ -133,7 +134,7 @@ func (s *DynamicSecretGRPCService) ClassifyConfig(ctx context.Context, req *pb.C
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetId()), "secrets.write"); err != nil {
+	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 	cfg, err := s.core.ClassifyDynamicSecretConfig(ctx, user.UserID, uint(req.GetId()), req.GetClassification())
@@ -149,9 +150,9 @@ func (s *DynamicSecretGRPCService) IssueLease(ctx context.Context, req *pb.Issue
 		return nil, err
 	}
 	if req.GetConfigId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "config_id is required")
+		return nil, status.Error(codes.InvalidArgument, errConfigIDRequired)
 	}
-	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetConfigId()), "secrets.write"); err != nil {
+	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetConfigId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 	lease, err := s.core.IssueLease(ctx, uint(req.GetConfigId()), int(req.GetTtlSeconds()), user.UserID)
@@ -173,9 +174,9 @@ func (s *DynamicSecretGRPCService) ListLeases(ctx context.Context, req *pb.ListL
 		return nil, err
 	}
 	if req.GetConfigId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "config_id is required")
+		return nil, status.Error(codes.InvalidArgument, errConfigIDRequired)
 	}
-	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetConfigId()), "secrets.read"); err != nil {
+	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetConfigId()), permSecretsRead); err != nil {
 		return nil, err
 	}
 	leases, err := s.core.ListDynamicSecretLeases(ctx, uint(req.GetConfigId()))
@@ -209,7 +210,7 @@ func (s *DynamicSecretGRPCService) RevokeLease(ctx context.Context, req *pb.Revo
 	if req.GetLeaseId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "lease_id is required")
 	}
-	if _, err := s.loadLeaseScoped(ctx, user, req.GetLeaseId(), "secrets.write"); err != nil {
+	if _, err := s.loadLeaseScoped(ctx, user, req.GetLeaseId(), permSecretsWrite); err != nil {
 		return nil, err
 	}
 	if err := s.core.RevokeLease(ctx, req.GetLeaseId(), user.UserID, "manual"); err != nil {
@@ -226,7 +227,7 @@ func (s *DynamicSecretGRPCService) RenewLease(ctx context.Context, req *pb.Renew
 	if req.GetLeaseId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "lease_id is required")
 	}
-	if _, err := s.loadLeaseScoped(ctx, user, req.GetLeaseId(), "secrets.write"); err != nil {
+	if _, err := s.loadLeaseScoped(ctx, user, req.GetLeaseId(), permSecretsWrite); err != nil {
 		return nil, err
 	}
 	newExpiry, err := s.core.RenewLease(ctx, req.GetLeaseId(), int(req.GetTtlSeconds()), user.UserID)
@@ -242,9 +243,9 @@ func (s *DynamicSecretGRPCService) RevokeAllLeases(ctx context.Context, req *pb.
 		return nil, err
 	}
 	if req.GetConfigId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "config_id is required")
+		return nil, status.Error(codes.InvalidArgument, errConfigIDRequired)
 	}
-	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetConfigId()), "secrets.write"); err != nil {
+	if _, err := s.loadConfigScoped(ctx, user, uint(req.GetConfigId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 	revoked, failed, err := s.core.RevokeLeasesForConfig(ctx, uint(req.GetConfigId()), user.UserID, "bulk")

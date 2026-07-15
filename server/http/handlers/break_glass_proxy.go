@@ -65,6 +65,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // breakGlassActivationProxyWire mirrors models.BreakGlassActivation's fields
 // exactly (snake_case) — a GORM model with no json tags of its own beyond the
 // struct-literal defaults, so — matching membershipProxyWire's/
@@ -141,7 +142,7 @@ const breakGlassNotActiveCode = "BREAK_GLASS_NOT_ACTIVE"
 func (h *CatalogHandler) CreateBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
 	var body breakGlassActivationProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.ProjectID == 0 || body.UserID == 0 || body.State == "" {
@@ -165,7 +166,7 @@ func (h *CatalogHandler) CreateBreakGlassActivationProxy(w http.ResponseWriter, 
 func (h *CatalogHandler) GetBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid activation id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidActivationID)
 		return
 	}
 	a, err := h.coreService.Storage().GetBreakGlassActivation(r.Context(), uint(id))
@@ -216,12 +217,12 @@ func (h *CatalogHandler) ListBreakGlassActivationsProxy(w http.ResponseWriter, r
 func (h *CatalogHandler) UpdateBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid activation id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidActivationID)
 		return
 	}
 	var body breakGlassActivationProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -249,12 +250,12 @@ type breakGlassRevokeProxyRequest struct {
 func (h *CatalogHandler) RevokeBreakGlassActivationProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid activation id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidActivationID)
 		return
 	}
 	var body breakGlassRevokeProxyRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.RevokedBy == 0 {

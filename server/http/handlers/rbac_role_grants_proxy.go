@@ -61,6 +61,7 @@ import (
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
+
 // roleWithExpiryProxyWire mirrors internal/storage/store/remote_rbac.go's
 // roleWithExpiryWire exactly — the shared wire body for
 // AssignRoleWithExpiryProxy (UserID set, GroupID zero) and
@@ -96,7 +97,7 @@ func (h *RBACHandler) GetGroupRoleGrantsProxy(w http.ResponseWriter, r *http.Req
 func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.Request) {
 	var body roleWithExpiryProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.UserID == 0 || body.RoleID == 0 {
@@ -117,7 +118,7 @@ func (h *RBACHandler) AssignRoleWithExpiryProxy(w http.ResponseWriter, r *http.R
 func (h *RBACHandler) AssignRoleToGroupWithExpiryProxy(w http.ResponseWriter, r *http.Request) {
 	var body roleWithExpiryProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.GroupID == 0 || body.RoleID == 0 {
@@ -145,7 +146,7 @@ type removeAllProjectRoleGrantsProxyWire struct {
 func (h *RBACHandler) RemoveAllProjectRoleGrantsProxy(w http.ResponseWriter, r *http.Request) {
 	var body removeAllProjectRoleGrantsProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.UserID == 0 || body.ProjectID == 0 {
@@ -257,7 +258,7 @@ const (
 func (h *RBACHandler) RemoveGlobalAdminRoleGuardedProxy(w http.ResponseWriter, r *http.Request) {
 	var body removeGlobalAdminRoleGuardedProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.UserID == 0 || body.RoleID == 0 {

@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // campaignStatusForError maps a core error to an HTTP status (shared shape).
 func campaignStatusForError(msg string) int {
 	switch {
@@ -48,12 +49,12 @@ func sendCampaignError(w http.ResponseWriter, context string, err error) {
 func (h *CatalogHandler) OpenAccessReviewCampaign(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -74,7 +75,7 @@ func (h *CatalogHandler) OpenAccessReviewCampaign(w http.ResponseWriter, r *http
 func (h *CatalogHandler) ListAccessReviewCampaigns(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	campaigns, err := h.coreService.ListAccessReviewCampaigns(r.Context(), uint(projectID))
@@ -90,12 +91,12 @@ func (h *CatalogHandler) ListAccessReviewCampaigns(w http.ResponseWriter, r *htt
 func (h *CatalogHandler) GetAccessReviewCampaign(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	campaignID, err := strconv.ParseUint(chi.URLParam(r, "campaignId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid campaign ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidCampaignID, http.StatusBadRequest, nil)
 		return
 	}
 	detail, err := h.coreService.GetAccessReviewCampaign(r.Context(), uint(projectID), uint(campaignID))
@@ -113,12 +114,12 @@ func (h *CatalogHandler) GetAccessReviewCampaign(w http.ResponseWriter, r *http.
 func (h *CatalogHandler) DecideAccessReviewCampaignItem(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	campaignID, err := strconv.ParseUint(chi.URLParam(r, "campaignId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid campaign ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidCampaignID, http.StatusBadRequest, nil)
 		return
 	}
 	itemID, err := strconv.ParseUint(chi.URLParam(r, "itemId"), 10, 32)
@@ -128,7 +129,7 @@ func (h *CatalogHandler) DecideAccessReviewCampaignItem(w http.ResponseWriter, r
 	}
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {
@@ -155,17 +156,17 @@ func (h *CatalogHandler) DecideAccessReviewCampaignItem(w http.ResponseWriter, r
 func (h *CatalogHandler) CloseAccessReviewCampaign(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
 	campaignID, err := strconv.ParseUint(chi.URLParam(r, "campaignId"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid campaign ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidCampaignID, http.StatusBadRequest, nil)
 		return
 	}
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {

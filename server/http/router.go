@@ -20,6 +20,41 @@ import (
 	"github.com/keyorixhq/keyorix/server/webui"
 )
 
+const (
+	cacheNoCache = "no-cache" // NOSONAR -- cognitive complexity 20, suppress go:S3776
+	hdrCacheControl = "Cache-Control"
+	hdrContentType = "Content-Type"
+	pathEnvironmentsID = "/environments/{id}"
+	pathGroups = "/groups"
+	pathGroupsID = "/groups/{id}"
+	pathIDPermissions = "/{id}/permissions"
+	pathIDRestore = "/{id}/restore"
+	pathIDRoles = "/{id}/roles"
+	pathInvitations = "/invitations"
+	pathLegalHold = "/legal-hold"
+	pathMetrics = "/metrics"
+	pathProjectEnvs = "/projects/{id}/environments"
+	pathProjectMembers = "/projects/{id}/members"
+	pathProjects = "/projects"
+	pathProjectsID = "/projects/{id}"
+	pathRiskExceptions = "/risk-exceptions"
+	pathRiskExceptionsID = "/risk-exceptions/{id}"
+	pathSCIMGroupsID = "/Groups/{id}"
+	pathSCIMUsersID = "/Users/{id}"
+	pathStatus = "/status"
+	permAuditRead = "audit.read"
+	permRolesAssign = "roles.assign"
+	permRolesRead = "roles.read"
+	permRolesWrite = "roles.write"
+	permSecretsDelete = "secrets.delete"
+	permSecretsRead = "secrets.read"
+	permSecretsWrite = "secrets.write"
+	permSystemRead = "system.read"
+	permSystemWrite = "system.write"
+	permUsersRead = "users.read"
+	permUsersWrite = "users.write"
+)
+
 // NewRouter creates and configures the HTTP router
 func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	r := chi.NewRouter()
@@ -48,7 +83,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// the OpenAPI spec, swagger docs, the web UI shell) or any route added here later.
 	// Registered early (before per-route handlers/middleware further down the chain) so it
 	// merely sets the header first: a handler that deliberately wants different caching
-	// (the health/readiness checks' own "no-cache", the status pages' own "no-cache", and
+	// (the health/readiness checks' own cacheNoCache, the status pages' own cacheNoCache, and
 	// the web UI's hashed static assets via setCacheHeaders) calls w.Header().Set on the
 	// same key afterward and wins, since Set replaces rather than appends. Routes with no
 	// opinion of their own keep the safe no-store default instead of silently having none.
@@ -66,7 +101,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: getAllowedOrigins(cfg),
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
+		AllowedHeaders: []string{"Accept", "Authorization", hdrContentType, "X-CSRF-Token", "X-Requested-With"},
 		ExposedHeaders: []string{"Link", "X-Total-Count", "X-Page-Count"},
 		MaxAge:         300,
 	}))
@@ -155,16 +190,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	// Prometheus metrics — unauthenticated by design (standard for scraping); keep
 	// it inside your perimeter. Exposes HTTP request metrics + Go runtime/process.
-	r.Handle("/metrics", customMiddleware.MetricsHandler())
+	r.Handle(pathMetrics, customMiddleware.MetricsHandler())
 
 	// Status page endpoint - serves stylish status dashboard
-	r.Get("/status", func(w http.ResponseWriter, r *http.Request) {
+	r.Get(pathStatus, func(w http.ResponseWriter, r *http.Request) {
 		webDir := getWebAssetsPath(cfg)
 		if webDir != "" {
 			statusPath := filepath.Join(webDir, "status.html")
 			if _, err := os.Stat(statusPath); err == nil {
-				w.Header().Set("Content-Type", "text/html")
-				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set(hdrContentType, "text/html")
+				w.Header().Set(hdrCacheControl, cacheNoCache)
 				http.ServeFile(w, r, statusPath)
 				return
 			}
@@ -179,8 +214,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		if webDir != "" {
 			statusPath := filepath.Join(webDir, "status-es.html")
 			if _, err := os.Stat(statusPath); err == nil {
-				w.Header().Set("Content-Type", "text/html")
-				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set(hdrContentType, "text/html")
+				w.Header().Set(hdrCacheControl, cacheNoCache)
 				http.ServeFile(w, r, statusPath)
 				return
 			}
@@ -206,16 +241,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/ServiceProviderConfig", scimHandler.GetServiceProviderConfig)
 			r.Get("/Users", scimHandler.ListUsers)
 			r.Post("/Users", scimHandler.CreateUser)
-			r.Get("/Users/{id}", scimHandler.GetUser)
-			r.Put("/Users/{id}", scimHandler.ReplaceUser)
-			r.Patch("/Users/{id}", scimHandler.PatchUser)
-			r.Delete("/Users/{id}", scimHandler.DeleteUser)
+			r.Get(pathSCIMUsersID, scimHandler.GetUser)
+			r.Put(pathSCIMUsersID, scimHandler.ReplaceUser)
+			r.Patch(pathSCIMUsersID, scimHandler.PatchUser)
+			r.Delete(pathSCIMUsersID, scimHandler.DeleteUser)
 			r.Get("/Groups", scimHandler.ListGroups)
 			r.Post("/Groups", scimHandler.CreateGroup)
-			r.Get("/Groups/{id}", scimHandler.GetGroup)
-			r.Put("/Groups/{id}", scimHandler.ReplaceGroup)
-			r.Patch("/Groups/{id}", scimHandler.PatchGroup)
-			r.Delete("/Groups/{id}", scimHandler.DeleteGroup)
+			r.Get(pathSCIMGroupsID, scimHandler.GetGroup)
+			r.Put(pathSCIMGroupsID, scimHandler.ReplaceGroup)
+			r.Patch(pathSCIMGroupsID, scimHandler.PatchGroup)
+			r.Delete(pathSCIMGroupsID, scimHandler.DeleteGroup)
 		})
 	}
 
@@ -295,10 +330,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// mirroring the recent-activity scoping already there — a baseline caller gets
 		// their own numbers with the org-wide aggregates zeroed, not a 403 on their own
 		// home page.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/dashboard/stats", dashboardHandler.GetStats)
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/dashboard/stats", dashboardHandler.GetStats)
 		// The full activity feed is org-wide audit data — gate it behind audit.read.
 		// (Per-user dashboard stats scope their own recent-activity in core.)
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/dashboard/activity", dashboardHandler.GetActivity)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/dashboard/activity", dashboardHandler.GetActivity)
 
 		// Catalog endpoints (projects, environments).
 		// List endpoints need global read (browse everything); accessing a
@@ -313,117 +348,117 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Per-reference grant management (ADR-045) — scopes which refs which roles may
 		// read. Privileged role-authorization config, so gated by roles.read/roles.write
 		// rather than connect.read.
-		r.With(customMiddleware.RequirePermission("roles.read")).Get("/connect/ref-grants", connectHandler.ListRefGrants)
-		r.With(customMiddleware.RequirePermission("roles.write")).Post("/connect/ref-grants", connectHandler.CreateRefGrant)
-		r.With(customMiddleware.RequirePermission("roles.write")).Delete("/connect/ref-grants/{id}", connectHandler.DeleteRefGrant)
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects", catalogHandler.ListProjects)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}", catalogHandler.GetProject)
-		r.With(customMiddleware.RequirePermission("secrets.write")).Post("/projects", catalogHandler.CreateProject)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Put("/projects/{id}", catalogHandler.UpdateProject)
-		r.With(customMiddleware.RequireScopedPermission("secrets.delete", projectScope)).Delete("/projects/{id}", catalogHandler.DeleteProject)
+		r.With(customMiddleware.RequirePermission(permRolesRead)).Get("/connect/ref-grants", connectHandler.ListRefGrants)
+		r.With(customMiddleware.RequirePermission(permRolesWrite)).Post("/connect/ref-grants", connectHandler.CreateRefGrant)
+		r.With(customMiddleware.RequirePermission(permRolesWrite)).Delete("/connect/ref-grants/{id}", connectHandler.DeleteRefGrant)
+		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get(pathProjects, catalogHandler.ListProjects)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get(pathProjectsID, catalogHandler.GetProject)
+		r.With(customMiddleware.RequirePermission(permSecretsWrite)).Post(pathProjects, catalogHandler.CreateProject)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Put(pathProjectsID, catalogHandler.UpdateProject)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, projectScope)).Delete(pathProjectsID, catalogHandler.DeleteProject)
 		// Restore reinstates every role grant the project carried at deletion — the
 		// same blast radius as a role grant — so gate on roles.assign (#161), not
 		// secrets.write, mirroring the direct-grant paths (matching #147's group fix).
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/restore", catalogHandler.RestoreProject)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/drift", catalogHandler.GetProjectDrift)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/rotation-order", secretHandler.GetProjectRotationOrder)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/rotation-plan", secretHandler.GetProjectRotationPlan)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/restore", catalogHandler.RestoreProject)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/drift", catalogHandler.GetProjectDrift)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/rotation-order", secretHandler.GetProjectRotationOrder)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/rotation-plan", secretHandler.GetProjectRotationPlan)
 		// Deployment-wide rotation plan (ADR-053): aggregates every project. Gated by
 		// GLOBAL secrets.read — the same access level as listing all projects — so it
 		// reveals no project the caller cannot already see.
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/rotation-plan", secretHandler.GetDeploymentRotationPlan)
+		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/rotation-plan", secretHandler.GetDeploymentRotationPlan)
 		// Project membership (ADR-021 two-tier model). Read = project members may
 		// view the roster; mutations require roles.assign at the project scope, so
 		// a project_admin can manage their own project's members.
-		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/members", catalogHandler.ListProjectMembers)
-		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review", catalogHandler.GetProjectAccessReview)
+		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get(pathProjectMembers, catalogHandler.ListProjectMembers)
+		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/access-review", catalogHandler.GetProjectAccessReview)
 		// Recertification decisions (ISO 27001 A.5.18): attest is a reviewer action
 		// (roles.read); revoke removes the grant and needs roles.assign.
-		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Post("/projects/{id}/access-review/attest", catalogHandler.AttestProjectAccessReview)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/access-review/revoke", catalogHandler.RevokeProjectAccessReview)
+		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Post("/projects/{id}/access-review/attest", catalogHandler.AttestProjectAccessReview)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/revoke", catalogHandler.RevokeProjectAccessReview)
 		// Access-review campaigns (A.5.18 periodic recertification): reads roles.read,
 		// mutations roles.assign, at the project scope.
-		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review/campaigns", catalogHandler.ListAccessReviewCampaigns)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign)
-		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review/campaigns/{campaignId}", catalogHandler.GetAccessReviewCampaign)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide", catalogHandler.DecideAccessReviewCampaignItem)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/close", catalogHandler.CloseAccessReviewCampaign)
+		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/access-review/campaigns", catalogHandler.ListAccessReviewCampaigns)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns", catalogHandler.OpenAccessReviewCampaign)
+		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/access-review/campaigns/{campaignId}", catalogHandler.GetAccessReviewCampaign)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide", catalogHandler.DecideAccessReviewCampaignItem)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/close", catalogHandler.CloseAccessReviewCampaign)
 		// CSV export of a campaign's items + decisions — the auditor's signed-off
 		// recertification record (ISO 27001 A.5.18). Read-only, roles.read (project).
-		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review/campaigns/{campaignId}/export.csv", catalogHandler.ExportAccessReviewCampaignCSV)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/members", catalogHandler.AddProjectMember)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/members/{userId}", catalogHandler.UpdateProjectMember)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/members/{userId}", catalogHandler.RemoveProjectMember)
+		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/access-review/campaigns/{campaignId}/export.csv", catalogHandler.ExportAccessReviewCampaignCSV)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post(pathProjectMembers, catalogHandler.AddProjectMember)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Put("/projects/{id}/members/{userId}", catalogHandler.UpdateProjectMember)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Delete("/projects/{id}/members/{userId}", catalogHandler.RemoveProjectMember)
 		// Membership lifecycle (ADR-022): onboarding state machine, separate from
 		// the role grant above. List is project-read; mutations need roles.assign.
-		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/memberships", catalogHandler.ListProjectMemberships)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/memberships", catalogHandler.InviteMember)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/memberships/{membershipId}", catalogHandler.TransitionMembership)
+		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/memberships", catalogHandler.ListProjectMemberships)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/memberships", catalogHandler.InviteMember)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Put("/projects/{id}/memberships/{membershipId}", catalogHandler.TransitionMembership)
 		// Invitations (ADR-024): admin-driven (roles.assign at the project scope).
-		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/invitations", catalogHandler.ListInvitations)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/invitations", catalogHandler.CreateInvitation)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/invitations/{invitationId}", catalogHandler.RevokeInvitation)
+		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/invitations", catalogHandler.ListInvitations)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/invitations", catalogHandler.CreateInvitation)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Delete("/projects/{id}/invitations/{invitationId}", catalogHandler.RevokeInvitation)
 		// Resend the invitation's setup link (ADR-028).
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/invitations/{invitationId}/resend", catalogHandler.ResendInvitation)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/invitations/{invitationId}/resend", catalogHandler.ResendInvitation)
 		// Global (non-project-scoped) invitation (ADR-024): system role + multi-project
 		// assignments applied atomically on accept. A system-admin operation (users.write).
-		r.With(customMiddleware.RequirePermission("users.write")).Post("/invitations", catalogHandler.CreateGlobalInvitation)
+		r.With(customMiddleware.RequirePermission(permUsersWrite)).Post(pathInvitations, catalogHandler.CreateGlobalInvitation)
 		// Access requests (ADR-024): requesting + withdrawing are self-service (any
 		// authenticated user — they don't have project access yet); listing and
 		// approving/rejecting require roles.assign at the project scope.
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Get("/projects/{id}/access-requests", catalogHandler.ListAccessRequests)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Get("/projects/{id}/access-requests", catalogHandler.ListAccessRequests)
 		r.Post("/projects/{id}/access-requests", catalogHandler.CreateAccessRequest)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/access-requests/{requestId}", catalogHandler.ResolveAccessRequest)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Put("/projects/{id}/access-requests/{requestId}", catalogHandler.ResolveAccessRequest)
 		r.Post("/projects/{id}/access-requests/{requestId}/withdraw", catalogHandler.WithdrawAccessRequest)
 		// Break-glass emergency access: activation is self-service (un-gated — the
 		// point is access the caller lacks; controlled by config + justification +
 		// audit + auto-expiry). Listing/revoking are review actions (roles.read/assign).
 		r.Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
-		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
+		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
 		// Machine identities (ADR-023): non-human members, segmented from humans.
-		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
-		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/stale", catalogHandler.ListStaleMachineIdentities)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities", catalogHandler.CreateMachineIdentity)
+		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
+		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities/stale", catalogHandler.ListStaleMachineIdentities)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/machine-identities", catalogHandler.CreateMachineIdentity)
 		// User→machine migration creates a machine identity (roles.assign, project) AND
 		// suspends the source user (users.write, global) — require both.
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).
-			With(customMiddleware.RequirePermission("users.write")).
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).
+			With(customMiddleware.RequirePermission(permUsersWrite)).
 			Post("/projects/{id}/machine-identities/migrate-from-user", catalogHandler.MigrateUserToMachine)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/machine-identities/{machineId}", catalogHandler.TransitionMachineIdentity)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/classification", catalogHandler.ClassifyMachineIdentity)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification", catalogHandler.ClassifyMachineToken)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Put("/projects/{id}/machine-identities/{machineId}", catalogHandler.TransitionMachineIdentity)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/classification", catalogHandler.ClassifyMachineIdentity)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification", catalogHandler.ClassifyMachineToken)
 		// Machine-token credentials + role grants (ADR-030). Issuing a token is blocked
 		// while impersonating — like PAT creation — so an admin acting as another user
 		// cannot plant a durable (potentially non-expiring) credential that outlives the
 		// bounded, audited impersonation session.
-		r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.IssueMachineToken)
-		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.ListMachineTokens)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}", catalogHandler.RevokeMachineToken)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/roles", catalogHandler.GrantMachineRole)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/roles/{roleId}", catalogHandler.RemoveMachineRole)
+		r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.IssueMachineToken)
+		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.ListMachineTokens)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}", catalogHandler.RevokeMachineToken)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/machine-identities/{machineId}/roles", catalogHandler.GrantMachineRole)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/roles/{roleId}", catalogHandler.RemoveMachineRole)
 		// OIDC / Kubernetes-JWT federation bindings (ADR-031).
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/oidc-bindings", catalogHandler.CreateOIDCBinding)
-		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/{machineId}/oidc-bindings", catalogHandler.ListOIDCBindings)
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}", catalogHandler.DeleteOIDCBinding)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Post("/projects/{id}/secrets/render", secretHandler.RenderTemplate)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/deleted", secretHandler.DeletedSecrets)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/orphaned", secretHandler.OrphanedSecrets)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/hygiene", secretHandler.ProjectHygiene)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/expiring", secretHandler.ExpiringSecrets)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/machine-identities/{machineId}/oidc-bindings", catalogHandler.CreateOIDCBinding)
+		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities/{machineId}/oidc-bindings", catalogHandler.ListOIDCBindings)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}", catalogHandler.DeleteOIDCBinding)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Post("/projects/{id}/secrets/render", secretHandler.RenderTemplate)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/secrets/deleted", secretHandler.DeletedSecrets)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/secrets/orphaned", secretHandler.OrphanedSecrets)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/hygiene", secretHandler.ProjectHygiene)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/secrets/expiring", secretHandler.ExpiringSecrets)
 		// Asset inventory (ISO 27001 A.5.9) — CSV metadata manifest of the project's
 		// secrets (no values) for compliance hand-off.
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/inventory.csv", secretHandler.SecretsInventoryCSV)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/secrets/inventory.csv", secretHandler.SecretsInventoryCSV)
 		// Naming-policy conformance — live secrets whose names violate the current naming
 		// policy (enforced only at create, so a tightened policy leaves stragglers).
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/name-conformance", secretHandler.SecretNameConformance)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/suspend-all", secretHandler.SuspendProjectSecrets)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/resume-all", secretHandler.ResumeProjectSecrets)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/reassign-owner", secretHandler.ReassignOwner)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/secrets/name-conformance", secretHandler.SecretNameConformance)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/suspend-all", secretHandler.SuspendProjectSecrets)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/resume-all", secretHandler.ResumeProjectSecrets)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/reassign-owner", secretHandler.ReassignOwner)
 		// Bulk expiry renewal — push out the expiration of every expiring/expired secret.
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/extend-expiring", secretHandler.ExtendExpiringSecrets)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/extend-expiring", secretHandler.ExtendExpiringSecrets)
 		// Bulk rename toward naming-policy conformance — remediation for name-conformance.
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/bulk-rename", secretHandler.BulkRenameSecrets)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/bulk-rename", secretHandler.BulkRenameSecrets)
 		// Bulk copy also requires secrets.read on the SOURCE environment (resolved from
 		// the envId path param, not attacker-supplied input) — mirroring the single-secret
 		// copy route below, which gates secrets.read on the source in addition to
@@ -432,18 +467,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// were deliberately denied read access to, defeating the write-only RBAC role
 		// this product's custom-role system is designed to support.
 		r.With(
-			customMiddleware.RequireScopedPermission("secrets.write", projectScope),
-			customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromEnvParam("envId")),
+			customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope),
+			customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromEnvParam("envId")),
 		).Post("/projects/{id}/environments/{envId}/copy-secrets", secretHandler.CopyEnvironmentSecrets)
-		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/environments", catalogHandler.ListProjectEnvironments)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/environments", catalogHandler.CreateProjectEnvironment)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get(pathProjectEnvs, catalogHandler.ListProjectEnvironments)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post(pathProjectEnvs, catalogHandler.CreateProjectEnvironment)
 		// Environment restore is nested under the project so the scope resolves
 		// from the (live) project ID — the env row is soft-deleted and unloadable.
 		// Restore reinstates the environment's role grants, so gate on roles.assign
 		// (#161), not secrets.write — same shape as the project-restore fix above.
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", customMiddleware.ScopeFromProjectParam("projectId"))).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironment)
-		r.With(customMiddleware.RequireScopedPermission("secrets.delete", customMiddleware.ScopeFromEnvParam("id"))).Delete("/environments/{id}", catalogHandler.DeleteEnvironment)
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/environments", catalogHandler.ListEnvironments)
+		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, customMiddleware.ScopeFromProjectParam("projectId"))).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironment)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, customMiddleware.ScopeFromEnvParam("id"))).Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironment)
+		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/environments", catalogHandler.ListEnvironments)
 
 		// Secrets endpoints. Per-secret routes resolve scope from the secret's
 		// own project/environment. List authorizes against the project_id/
@@ -452,102 +487,102 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// authorizes in-handler against the project/environment in the body.
 		secretScope := customMiddleware.ScopeFromSecretParam("id")
 		r.Route("/secrets", func(r chi.Router) {
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/", secretHandler.ListSecrets)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/", secretHandler.ListSecrets)
 			// Active create-time policies (naming/value) — any authenticated caller.
 			r.Get("/policy", secretHandler.SecretPolicy)
 			// Usage analytics (static paths, before /{id}).
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/most-accessed", secretHandler.UsageMostAccessed)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/unused", secretHandler.UsageUnused)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/usage/most-accessed", secretHandler.UsageMostAccessed)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/usage/unused", secretHandler.UsageUnused)
 			// Org-wide secret asset inventory (ISO 27001 A.5.9) — CSV manifest of every
 			// project's secrets, metadata only (no values), but it DOES disclose every
 			// secret's real NAME/classification/owner deployment-wide, so it is gated on
 			// audit.read (global), NOT the universal system_viewer baseline system.read —
 			// same disclosure-family calibration as /compliance/evidence. Static path,
 			// before /{id}.
-			r.With(customMiddleware.RequirePermission("audit.read")).Get("/inventory.csv", secretHandler.DeploymentSecretsInventoryCSV)
+			r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/inventory.csv", secretHandler.DeploymentSecretsInventoryCSV)
 			// Org-wide naming-policy conformance — every project's secrets whose names
 			// violate the current (global) policy; discloses the violating secrets' real
 			// names deployment-wide, so audit.read (global), not the baseline. Static
 			// path, before /{id}.
-			r.With(customMiddleware.RequirePermission("audit.read")).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
+			r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
 			// By-reference value read (ESO etc.): resolve project/environment/name → the
 			// secret's value. Scoped to the resolved secret; static path, before /{id}.
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromRefQuery)).Get("/value", secretHandler.GetSecretValueByRef)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromRefQuery)).Get("/value", secretHandler.GetSecretValueByRef)
 			// By-name metadata lookup, scoped by project_id/environment_id query params
 			// (same gate/convention as ListSecrets above) — the server-side counterpart
 			// RemoteStorage.GetSecretByName (#497) needs; a caller with only a secret's
 			// name (not its numeric ID) resolves it here. Static path, before /{id}.
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/by-name", secretHandler.GetSecretByName)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}", secretHandler.GetSecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/risk", secretHandler.GetSecretRisk)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/shares", shareHandler.ListSecretShares)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/access", secretHandler.ListAccessors)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/access-log", secretHandler.AccessHistory)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/by-name", secretHandler.GetSecretByName)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}", secretHandler.GetSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/risk", secretHandler.GetSecretRisk)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/shares", shareHandler.ListSecretShares)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/access", secretHandler.ListAccessors)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/access-log", secretHandler.AccessHistory)
 			// Per-secret read statistics — lifetime total + recent-window summary.
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/stats", secretHandler.GetSecretAccessStats)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/audit", secretHandler.AuditTrail)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/tags", secretHandler.GetTags)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}/tags", secretHandler.SetTags)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/stats", secretHandler.GetSecretAccessStats)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/audit", secretHandler.AuditTrail)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/tags", secretHandler.GetTags)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Put("/{id}/tags", secretHandler.SetTags)
 
 			// Secret dependency graph (ADR-052).
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/dependencies", secretHandler.ListSecretDependencies)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/dependencies", secretHandler.ListSecretDependencies)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
 
 			// Certificate inspection (ADR-054) — public X.509 metadata, no value/key.
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
 
 			// Create: authorized inside the handler (scope comes from the body).
 			r.Post("/", secretHandler.CreateSecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}", secretHandler.UpdateSecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Patch("/{id}/classification", secretHandler.ClassifySecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Patch("/{id}/description", secretHandler.DescribeSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Put("/{id}", secretHandler.UpdateSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/classification", secretHandler.ClassifySecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/description", secretHandler.DescribeSecret)
 			// Copy into another environment: read the source ({id}); the handler also
 			// authorizes secrets.write at the target environment's scope.
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Post("/{id}/copy", secretHandler.CopySecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/suspend", secretHandler.SuspendSecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/resume", secretHandler.ResumeSecret)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/copy", secretHandler.CopySecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/suspend", secretHandler.SuspendSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/resume", secretHandler.ResumeSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
 			// Self-service: a recipient removes their OWN direct share. No scoped
 			// permission — the action is on the caller's own grant (core only removes a
 			// share whose RecipientID == the caller), so it needs just authentication.
 			r.Delete("/{id}/self-share", shareHandler.RemoveSelfFromShare)
 
-			r.With(customMiddleware.RequireScopedPermission("secrets.delete", secretScope)).Delete("/{id}", secretHandler.DeleteSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, secretScope)).Delete("/{id}", secretHandler.DeleteSecret)
 			// Restore resolves scope from the (soft-deleted) secret via the unscoped resolver.
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", customMiddleware.ScopeFromDeletedSecretParam("id"))).Post("/{id}/restore", secretHandler.RestoreSecret)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, customMiddleware.ScopeFromDeletedSecretParam("id"))).Post(pathIDRestore, secretHandler.RestoreSecret)
 		})
 
 		// Shares endpoints. The user's own share list stays a global-read op;
 		// mutating a specific share is scoped to the shared secret.
 		shareScope := customMiddleware.ScopeFromShareParam("id")
 		r.Route("/shares", func(r chi.Router) {
-			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/", shareHandler.ListShares)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", shareScope)).Put("/{id}", shareHandler.UpdateSharePermission)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", shareScope)).Delete("/{id}", shareHandler.RevokeShare)
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/", shareHandler.ListShares)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, shareScope)).Put("/{id}", shareHandler.UpdateSharePermission)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, shareScope)).Delete("/{id}", shareHandler.RevokeShare)
 		})
 
 		// Shared secrets endpoint (the caller's own shares)
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/shared-secrets", shareHandler.ListSharedSecrets)
+		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/shared-secrets", shareHandler.ListSharedSecrets)
 
 		// Rotation policies endpoints. List/evaluate take an optional scope
 		// filter; per-policy routes resolve scope from the policy; create
 		// authorizes in-handler against the body.
 		policyScope := customMiddleware.ScopeFromRotationPolicyParam("id")
 		r.Route("/rotation-policies", func(r chi.Router) {
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/", rotationPolicyHandler.List)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/evaluate", rotationPolicyHandler.Evaluate)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/status", rotationPolicyHandler.Status)
-			r.With(customMiddleware.RequireScopedPermission("secrets.read", policyScope)).Get("/{id}", rotationPolicyHandler.Get)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/", rotationPolicyHandler.List)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/evaluate", rotationPolicyHandler.Evaluate)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get(pathStatus, rotationPolicyHandler.Status)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, policyScope)).Get("/{id}", rotationPolicyHandler.Get)
 			r.Post("/", rotationPolicyHandler.Create)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", policyScope)).Put("/{id}", rotationPolicyHandler.Update)
-			r.With(customMiddleware.RequireScopedPermission("secrets.write", policyScope)).Delete("/{id}", rotationPolicyHandler.Delete)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, policyScope)).Put("/{id}", rotationPolicyHandler.Update)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, policyScope)).Delete("/{id}", rotationPolicyHandler.Delete)
 		})
 
 		// Dynamic secrets (ADR-035). Authorization is in-handler against each
@@ -568,13 +603,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Users endpoints (RBAC)
 		r.Route("/users", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("users.read"))
+			r.Use(customMiddleware.RequirePermission(permUsersRead))
 			r.Get("/", handlers.ListUsers)
 			// CreateUser mutates (and can grant roles via ADR-028 atomic provisioning),
 			// so it needs users.write — not just the group-level users.read. Without
 			// this gate a global read-only persona (system_auditor holds users.read)
 			// could POST a user with role:"system_admin" and escalate to global admin.
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/", handlers.CreateUser)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/", handlers.CreateUser)
 			r.Get("/search", handlers.SearchUsers)
 			// Stale-account warnings (ADR-025): static path before /{id}.
 			r.Get("/stale", handlers.StaleAccounts)
@@ -605,32 +640,32 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// CreateUser/UnlockUser — see the handler's doc for why this is
 			// deliberately not a new, separately-provisioned permission. Static path,
 			// before /{id}.
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/verify-credentials", handlers.VerifyCredentials)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/verify-credentials", handlers.VerifyCredentials)
 			// VerifyMFACredentials (#509) — the upstream half of the storage.type:
 			// remote second-factor login proxy (internal/core/mfa.go's
 			// RemoteMFAVerifier): checks a plaintext TOTP/recovery code against the
 			// real, decrypted TOTP secret this server holds and returns only a
 			// verdict, never the secret. Same gate and reasoning as
 			// verify-credentials above. Static path, before /{id}.
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/verify-mfa", handlers.VerifyMFACredentials)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/verify-mfa", handlers.VerifyMFACredentials)
 			r.Get("/{id}", handlers.GetUser)
 			// Mutations need users.write, not the group-wide users.read (which the
 			// read-only system_auditor persona holds) — these were the missed
 			// siblings of the suspend/reactivate transitions gated below.
-			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", handlers.UpdateUser)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Put("/{id}", handlers.UpdateUser)
 			// users.delete, not users.write — matches the gRPC UserService.DeleteUser
 			// gate (#141). A custom role granted users.write alone (update, not delete)
 			// could otherwise delete users via HTTP while gRPC correctly refused it.
 			r.With(customMiddleware.RequirePermission("users.delete")).Delete("/{id}", handlers.DeleteUser)
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", handlers.RestoreUser)
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/unlock", handlers.UnlockUser)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post(pathIDRestore, handlers.RestoreUser)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/unlock", handlers.UnlockUser)
 			// IssueMFAChallenge (#509) — the upstream half of the storage.type: remote
 			// second-factor login proxy (internal/core/mfa.go's RemoteMFAVerifier):
 			// mints and persists the short-lived, single-use MFA challenge on this
 			// (the hub's) LocalStorage on behalf of a RemoteStorage-backed "spoke"
 			// deployment, which has nowhere of its own to persist one. Same gate and
 			// reasoning as verify-credentials/verify-mfa above.
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/mfa-challenge", handlers.IssueMFAChallenge)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/mfa-challenge", handlers.IssueMFAChallenge)
 			// GetActiveMFAChallenge/ConsumeMFAChallenge (#522) — the upstream half of
 			// the storage.type: remote WebAuthn-as-second-factor login proxy
 			// (internal/core/webauthn.go's BeginWebAuthnLogin/FinishWebAuthnLogin):
@@ -641,16 +676,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// (spoke) server's own core.KeyorixCore, exactly as it does locally. Same
 			// gate and reasoning as verify-mfa/mfa-challenge above. Static paths,
 			// before /{id}.
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/mfa-challenge/active", handlers.GetActiveMFAChallenge)
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/mfa-challenge/consume", handlers.ConsumeMFAChallenge)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/mfa-challenge/active", handlers.GetActiveMFAChallenge)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/mfa-challenge/consume", handlers.ConsumeMFAChallenge)
 			// Admin force-logout: revoke all of a user's sessions (no state change).
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/revoke-sessions", handlers.RevokeSessions)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/revoke-sessions", handlers.RevokeSessions)
 			// Account state transitions (ADR-025).
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/suspend", handlers.SuspendUser)
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/reactivate", handlers.ReactivateUser)
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/require-password-reset", handlers.RequirePasswordReset)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/suspend", handlers.SuspendUser)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/reactivate", handlers.ReactivateUser)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/require-password-reset", handlers.RequirePasswordReset)
 			// Credential-delivery resend (ADR-028): reissue + redeliver a setup link.
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
 			// roles.read, not the group-wide users.read (#141) — matches the gRPC
 			// RoleService.GetUserRoles gate for the same data. users.read is held by
 			// nearly every seeded role (project_viewer, editor, …), so gating a user's
@@ -658,14 +693,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// enumerate an arbitrary OTHER user's roles — reconnaissance for targeted
 			// privilege-escalation attempts. roles.read is held by system_admin/
 			// system_auditor/project_admin, the personas that actually manage access.
-			r.With(customMiddleware.RequirePermission("roles.read")).Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
+			r.With(customMiddleware.RequirePermission(permRolesRead)).Get(pathIDRoles, usersRolesHandler.GetUserRolesForUser)
 			// Effective permission set (union across the user's roles) — a read, gated
 			// by the group-wide users.read like the roles view used to be. Not part of
 			// #141's scope; left as-is.
-			r.Get("/{id}/permissions", usersRolesHandler.GetUserPermissionsForUser)
+			r.Get(pathIDPermissions, usersRolesHandler.GetUserPermissionsForUser)
 			// Replacing a user's roles is a privilege grant — gate on roles.assign,
 			// not the group-wide users.read (which many non-admin roles hold).
-			r.With(customMiddleware.RequirePermission("roles.assign")).Put("/{id}/roles", usersRolesHandler.UpdateUserRoles)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Put(pathIDRoles, usersRolesHandler.UpdateUserRoles)
 			// Per-user project assignments for the detail page (ADR-025).
 			r.Get("/{id}/memberships", usersRolesHandler.GetUserMembershipsForUser)
 		})
@@ -684,33 +719,33 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// users.write, the SAME permission verify-credentials/CreateUser/UnlockUser
 		// already require of the RemoteStorage service credential.
 		r.Route("/sessions", func(r chi.Router) {
-			r.With(customMiddleware.RequirePermission("users.write")).Get("/{token}", handlers.GetSessionByToken)
-			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", handlers.DeleteSessionByID)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Get("/{token}", handlers.GetSessionByToken)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Delete("/{id}", handlers.DeleteSessionByID)
 		})
 
 		// Groups endpoints
-		r.Route("/groups", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("users.read"))
+		r.Route(pathGroups, func(r chi.Router) {
+			r.Use(customMiddleware.RequirePermission(permUsersRead))
 			r.Get("/", groupHandler.ListGroups)
 			// Group CRUD mutates identity/membership state — gate on users.write,
 			// not the group-wide users.read (held by the read-only system_auditor).
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/", groupHandler.CreateGroup)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/", groupHandler.CreateGroup)
 			r.Get("/{id}", groupHandler.GetGroup)
-			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", groupHandler.UpdateGroup)
-			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", groupHandler.DeleteGroup)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Put("/{id}", groupHandler.UpdateGroup)
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Delete("/{id}", groupHandler.DeleteGroup)
 			// Restore reinstates every role grant the group carried at deletion — the
 			// same blast radius as a role grant — so gate on roles.assign (#147), not
 			// users.write, mirroring the direct role-grant path below.
-			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/restore", groupHandler.RestoreGroup)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post(pathIDRestore, groupHandler.RestoreGroup)
 			r.Get("/{id}/members", groupHandler.GetGroupMembers)
 			// Secrets a group can reach via shares — reveals secret names, so it needs
 			// secrets.read on top of the group-level users.read above.
-			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/{id}/shared-secrets", shareHandler.ListGroupSharedSecrets)
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}/shared-secrets", shareHandler.ListGroupSharedSecrets)
 			// Adding/removing a group member confers (or revokes) every role the group
 			// holds — the same blast radius as a role grant, so gate on roles.assign
 			// (matching the group's role-grant routes below), not users.read.
-			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/members", groupHandler.AddGroupMember)
-			r.With(customMiddleware.RequirePermission("roles.assign")).Delete("/{id}/members/{userId}", groupHandler.RemoveGroupMember)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/{id}/members", groupHandler.AddGroupMember)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Delete("/{id}/members/{userId}", groupHandler.RemoveGroupMember)
 			// Viewing a group's role grants discloses the same privilege-escalation
 			// topology as a single user's role list, so gate on roles.read (#262) —
 			// not the group-wide users.read (held by nearly every seeded role,
@@ -718,16 +753,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// (#141) and the roles.read gate the /roles route group itself uses for
 			// GetRolePermissions; the mutating siblings (AssignRoleToGroup,
 			// RemoveRoleFromGroup) already require the more privileged roles.assign.
-			r.With(customMiddleware.RequirePermission("roles.read")).Get("/{id}/roles", rbacHandler.GetGroupRoles)
-			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/roles", rbacHandler.AssignRoleToGroup)
-			r.With(customMiddleware.RequirePermission("roles.assign")).Delete("/{id}/roles/{roleId}", rbacHandler.RemoveRoleFromGroup)
+			r.With(customMiddleware.RequirePermission(permRolesRead)).Get(pathIDRoles, rbacHandler.GetGroupRoles)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post(pathIDRoles, rbacHandler.AssignRoleToGroup)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Delete("/{id}/roles/{roleId}", rbacHandler.RemoveRoleFromGroup)
 		})
 
 		// Roles endpoints (RBAC)
 		r.Route("/roles", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("roles.read"))
+			r.Use(customMiddleware.RequirePermission(permRolesRead))
 			r.Get("/", rbacHandler.ListRoles)
-			r.With(customMiddleware.RequirePermission("roles.write")).Post("/", rbacHandler.CreateRole)
+			r.With(customMiddleware.RequirePermission(permRolesWrite)).Post("/", rbacHandler.CreateRole)
 			// By-name lookup, scoped by the group-wide roles.read gate above — the
 			// server-side counterpart RemoteStorage.GetRoleByName (#512) needs, for a
 			// caller (e.g. InviteToProject resolving an invited role by name) with
@@ -739,16 +774,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// GetSecretByName (#497)'s query-param "by-X" convention.
 			r.Get("/by-name", rbacHandler.GetRoleByName)
 			r.Get("/{id}", rbacHandler.GetRole)
-			r.With(customMiddleware.RequirePermission("roles.write")).Put("/{id}", rbacHandler.UpdateRole)
-			r.With(customMiddleware.RequirePermission("roles.write")).Delete("/{id}", rbacHandler.DeleteRole)
-			r.Get("/{id}/permissions", rbacHandler.GetRolePermissions)
-			r.With(customMiddleware.RequirePermission("roles.write")).Post("/{id}/permissions", rbacHandler.AssignPermissionToRole)
-			r.With(customMiddleware.RequirePermission("roles.write")).Delete("/{id}/permissions/{permissionId}", rbacHandler.RemovePermissionFromRole)
+			r.With(customMiddleware.RequirePermission(permRolesWrite)).Put("/{id}", rbacHandler.UpdateRole)
+			r.With(customMiddleware.RequirePermission(permRolesWrite)).Delete("/{id}", rbacHandler.DeleteRole)
+			r.Get(pathIDPermissions, rbacHandler.GetRolePermissions)
+			r.With(customMiddleware.RequirePermission(permRolesWrite)).Post(pathIDPermissions, rbacHandler.AssignPermissionToRole)
+			r.With(customMiddleware.RequirePermission(permRolesWrite)).Delete("/{id}/permissions/{permissionId}", rbacHandler.RemovePermissionFromRole)
 		})
 
 		// Permissions endpoints
 		r.Route("/permissions", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("roles.read"))
+			r.Use(customMiddleware.RequirePermission(permRolesRead))
 			r.Get("/", rbacHandler.ListPermissions)
 			// #526: RemoteStorage's storage.type: remote proxy for
 			// AssignPermissionToRole's permissionID -> name lookup had no route
@@ -776,17 +811,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// scope (project_id/environment_id, 0 = global) — mirroring
 			// RoleGRPCService.AssignRole/RemoveRole, which authorize at the target
 			// scope rather than a flat global permission. Before this (#342), these
-			// routes used the group-level RequirePermission("roles.assign"), which
+			// routes used the group-level RequirePermission(permRolesAssign), which
 			// always checked the GLOBAL scope regardless of the body's actual
 			// target, a parity gap with the gRPC path.
-			r.With(customMiddleware.RequireScopedPermission("roles.assign", customMiddleware.ScopeFromRoleAssignmentBody)).Post("/", rbacHandler.AssignRole)
-			r.With(customMiddleware.RequireScopedPermission("roles.assign", customMiddleware.ScopeFromRoleAssignmentBody)).Delete("/", rbacHandler.RemoveRole)
-			r.With(customMiddleware.RequirePermission("roles.assign")).Get("/user/{userId}", rbacHandler.GetUserRoles)
+			r.With(customMiddleware.RequireScopedPermission(permRolesAssign, customMiddleware.ScopeFromRoleAssignmentBody)).Post("/", rbacHandler.AssignRole)
+			r.With(customMiddleware.RequireScopedPermission(permRolesAssign, customMiddleware.ScopeFromRoleAssignmentBody)).Delete("/", rbacHandler.RemoveRole)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Get("/user/{userId}", rbacHandler.GetUserRoles)
 		})
 
 		// Audit logs endpoints
 		r.Route("/audit", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("audit.read"))
+			r.Use(customMiddleware.RequirePermission(permAuditRead))
 			r.Get("/logs", auditHandler.GetAuditLogs)
 			r.Get("/export", auditHandler.ExportAuditLogs)
 			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
@@ -795,19 +830,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/verify", auditHandler.VerifyAuditChain)
 			// Writing a checkpoint is a privileged integrity-control action — gate it
 			// above the group's audit.read with system.write (admin-level).
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/checkpoint", auditHandler.WriteAuditCheckpoint)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/checkpoint", auditHandler.WriteAuditCheckpoint)
 			r.Get("/anomalies", handlers.ListAnomalyAlerts)
 			// Acknowledging (dismissing) an alert mutates a security-detection record, so
 			// gate it above the group's audit.read with system.write — like /checkpoint —
 			// rather than letting any read-only auditor silently bury alerts.
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})
 
 		// System endpoints
 		r.Route("/system", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("system.read"))
+			r.Use(customMiddleware.RequirePermission(permSystemRead))
 			r.Get("/info", handlers.MakeSystemInfoHandler(cfg))
-			r.Get("/metrics", handlers.GetMetrics)
+			r.Get(pathMetrics, handlers.GetMetrics)
 			// Per-scheduler last-run/last-success timestamps (Prometheus exposition
 			// format), deliberately kept off the public, unauthenticated /metrics
 			// endpoint — see server/middleware/scheduler_metrics.go — since an exact
@@ -830,8 +865,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Read is baseline system.read; the two mutating operations require
 			// system.write, matching every other admin-level mutation in this group.
 			r.Get("/login-attempts/count", authHandler.CountLoginAttemptsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/login-attempts", authHandler.RecordLoginAttemptProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/login-attempts/prune", authHandler.PruneLoginAttemptsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/login-attempts", authHandler.RecordLoginAttemptProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/login-attempts/prune", authHandler.PruneLoginAttemptsProxy)
 
 			// Project-invitation storage-primitive proxy (#507). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -851,9 +886,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// system.read; create/update require system.write, matching every other
 			// admin-level mutation in this group.
 			r.Get("/invitations/{id}", catalogHandler.GetInvitationProxy)
-			r.Get("/invitations", catalogHandler.ListInvitationsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/invitations", catalogHandler.CreateInvitationProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
+			r.Get(pathInvitations, catalogHandler.ListInvitationsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathInvitations, catalogHandler.CreateInvitationProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
 
 			// Self-service access-request storage-primitive proxy (#523). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -890,10 +925,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// group.
 			r.Get("/access-requests/{id}", catalogHandler.GetAccessRequestProxy)
 			r.Get("/access-requests", catalogHandler.ListAccessRequestsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-requests", catalogHandler.CreateAccessRequestProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/access-requests/{id}", catalogHandler.UpdateAccessRequestProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-requests", catalogHandler.CreateAccessRequestProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/access-requests/{id}", catalogHandler.UpdateAccessRequestProxy)
 			r.Get("/access-requests/{id}/approvals", catalogHandler.ListAccessRequestApprovalsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-requests/{id}/approvals", catalogHandler.CreateAccessRequestApprovalProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-requests/{id}/approvals", catalogHandler.CreateAccessRequestApprovalProxy)
 
 			// Dynamic-secrets storage-primitive proxy (round-116 finding). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -921,14 +956,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/dynamic-secrets/configs/classification-counts", dynamicSecretHandler.CountDynamicSecretConfigsByClassificationProxy)
 			r.Get("/dynamic-secrets/configs/{id}", dynamicSecretHandler.GetDynamicSecretConfigProxy)
 			r.Get("/dynamic-secrets/configs", dynamicSecretHandler.ListDynamicSecretConfigsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/dynamic-secrets/configs/{id}", dynamicSecretHandler.UpdateDynamicSecretConfigProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/dynamic-secrets/configs/{id}", dynamicSecretHandler.UpdateDynamicSecretConfigProxy)
 			r.Get("/dynamic-secrets/leases/active-count", dynamicSecretHandler.CountActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/expired", dynamicSecretHandler.ListExpiredActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.GetDynamicSecretLeaseProxy)
 			r.Get("/dynamic-secrets/leases", dynamicSecretHandler.ListDynamicSecretLeasesProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/dynamic-secrets/leases", dynamicSecretHandler.CreateDynamicSecretLeaseProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.UpdateDynamicSecretLeaseProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/dynamic-secrets/leases", dynamicSecretHandler.CreateDynamicSecretLeaseProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.UpdateDynamicSecretLeaseProxy)
 
 			// Group CRUD/membership storage-primitive proxy (finding filed round 116).
 			// Lets a downstream Keyorix server booted with storage.type: remote
@@ -957,15 +992,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// same position) never mistakes either literal segment for a group ID.
 			r.Get("/groups/page", groupHandler.ListGroupsPageProxy)
 			r.Get("/groups/members-by-ids", groupHandler.ListGroupMembersByIDsProxy)
-			r.Get("/groups", groupHandler.ListGroupsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/groups", groupHandler.CreateGroupProxy)
-			r.Get("/groups/{id}", groupHandler.GetGroupProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/groups/{id}", groupHandler.UpdateGroupProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/groups/{id}", groupHandler.DeleteGroupProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/groups/{id}/restore", groupHandler.RestoreGroupProxy)
+			r.Get(pathGroups, groupHandler.ListGroupsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathGroups, groupHandler.CreateGroupProxy)
+			r.Get(pathGroupsID, groupHandler.GetGroupProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathGroupsID, groupHandler.UpdateGroupProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathGroupsID, groupHandler.DeleteGroupProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/groups/{id}/restore", groupHandler.RestoreGroupProxy)
 			r.Get("/groups/{id}/members", groupHandler.ListGroupMembersProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/groups/{id}/members", groupHandler.AddGroupMemberProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/groups/{id}/members", groupHandler.AddGroupMemberProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
 			r.Get("/users/{id}/groups", groupHandler.GetUserGroupsProxy)
 
 			// Machine-identity storage-primitive proxy (finding #518). Lets a
@@ -1013,30 +1048,30 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/machine-identities/classification-counts", catalogHandler.CountMachineIdentitiesByClassificationProxy)
 			r.Get("/machine-identities/all", catalogHandler.ListAllMachineIdentitiesProxy)
 			r.Get("/machine-identities", catalogHandler.ListMachineIdentitiesProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-identities", catalogHandler.CreateMachineIdentityProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-identities", catalogHandler.CreateMachineIdentityProxy)
 			r.Get("/machine-identities/{id}", catalogHandler.GetMachineIdentityProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-identities/{id}", catalogHandler.UpdateMachineIdentityProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-identities/{id}/transition", catalogHandler.TransitionMachineIdentityStateProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/machine-identities/{id}", catalogHandler.UpdateMachineIdentityProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/machine-identities/{id}/transition", catalogHandler.TransitionMachineIdentityStateProxy)
 			r.Get("/machine-identities/{id}/credentials", catalogHandler.ListMachineIdentityCredentialsProxy)
 			r.Get("/machine-identities/{id}/roles/ids", catalogHandler.GetMachineRoleIDsAtProxy)
 			r.Get("/machine-identities/{id}/roles", catalogHandler.GetMachineRolesProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-identities/{id}/roles/{roleId}", catalogHandler.AssignMachineRoleProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/machine-identities/{id}/roles/{roleId}", catalogHandler.RemoveMachineRoleProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-identities/{id}/roles/{roleId}", catalogHandler.AssignMachineRoleProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/machine-identities/{id}/roles/{roleId}", catalogHandler.RemoveMachineRoleProxy)
 			r.Get("/machine-identities/{id}/oidc-bindings", catalogHandler.ListOIDCBindingsProxy)
 
 			r.Get("/machine-credentials/classification-counts", catalogHandler.CountMachineIdentityCredentialsByClassificationProxy)
 			r.Get("/machine-credentials/active", catalogHandler.ListActiveMachineIdentityCredentialsProxy)
 			r.Get("/machine-credentials/by-hash/{hash}", catalogHandler.GetMachineIdentityCredentialByHashProxy)
 			r.Get("/machine-credentials/{id}", catalogHandler.GetMachineIdentityCredentialByIDProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials", catalogHandler.CreateMachineIdentityCredentialProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/machine-credentials/{id}", catalogHandler.UpdateMachineIdentityCredentialProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials/{id}/revoke", catalogHandler.RevokeMachineIdentityCredentialProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-credentials/{id}/touch", catalogHandler.TouchMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-credentials", catalogHandler.CreateMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/machine-credentials/{id}", catalogHandler.UpdateMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-credentials/{id}/revoke", catalogHandler.RevokeMachineIdentityCredentialProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-credentials/{id}/touch", catalogHandler.TouchMachineIdentityCredentialProxy)
 
 			r.Get("/machine-oidc-bindings/by-subject", catalogHandler.GetMachineByOIDCSubjectProxy)
 			r.Get("/machine-oidc-bindings/{id}", catalogHandler.GetOIDCBindingByIDProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/machine-oidc-bindings", catalogHandler.CreateOIDCBindingProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/machine-oidc-bindings/{id}", catalogHandler.DeleteOIDCBindingProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-oidc-bindings", catalogHandler.CreateOIDCBindingProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/machine-oidc-bindings/{id}", catalogHandler.DeleteOIDCBindingProxy)
 
 			// Setup-token storage-primitive proxy (#510). Lets a downstream Keyorix
 			// server booted with storage.type: remote (ADR-049) proxy
@@ -1056,10 +1091,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// mutation in this group.
 			r.Get("/setup-tokens/by-hash/{hash}", authHandler.GetSetupTokenByHashProxy)
 			r.Get("/setup-tokens/count", authHandler.CountSetupTokensSinceProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/supersede", authHandler.SupersedeSetupTokensProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens/supersede", authHandler.SupersedeSetupTokensProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
 
 			// Keyorix Connect per-reference-grant storage-primitive proxy (ADR-045;
 			// backlog #527). Lets a downstream Keyorix server booted with
@@ -1080,8 +1115,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// admin-level mutation in this group.
 			r.Get("/connect-grants/by-connector/{connector}", authHandler.ListConnectRefGrantsByConnectorProxy)
 			r.Get("/connect-grants", authHandler.ListConnectRefGrantsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
 
 			// SSO login-state storage-primitive proxy (#521). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1096,8 +1131,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// the SAME system.read/system.write tier — no new privilege class. Both
 			// create and the single-use consume are mutations and require
 			// system.write.
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
 
 			// Project-membership storage-primitive proxy (#511). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1126,8 +1161,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/project-memberships/by-user/{userID}", catalogHandler.ListUserMembershipsProxy)
 			r.Get("/project-memberships/{id}", catalogHandler.GetMembershipProxy)
 			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
 
 			// Secret-dependency storage-primitive proxy (finding #519). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1157,9 +1192,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/secret-dependencies/for-update", secretHandler.ListSecretDependenciesForProjectForUpdateProxy)
 			r.Get("/secret-dependencies/{id}", secretHandler.GetSecretDependencyProxy)
 			r.Get("/secret-dependencies", secretHandler.ListSecretDependenciesForProjectProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/secret-dependencies/{id}", secretHandler.DeleteSecretDependencyProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/secret-dependencies/{id}", secretHandler.DeleteSecretDependencyProxy)
 
 			// WebAuthn / passkey storage-primitive proxy (finding #517). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1189,13 +1224,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/webauthn/credentials/lookup", authHandler.GetWebAuthnCredentialByCredIDProxy)
 			r.Get("/webauthn/credentials/count", authHandler.CountWebAuthnCredentialsProxy)
 			r.Get("/webauthn/credentials", authHandler.ListWebAuthnCredentialsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/credentials", authHandler.CreateWebAuthnCredentialProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/credentials/{id}", authHandler.UpdateWebAuthnCredentialProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Patch("/webauthn/credentials/advance-counter", authHandler.AdvanceWebAuthnCredentialCounterProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/webauthn/users/{userId}/credentials/{id}", authHandler.DeleteWebAuthnCredentialProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/webauthn/credentials", authHandler.CreateWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/webauthn/credentials/{id}", authHandler.UpdateWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Patch("/webauthn/credentials/advance-counter", authHandler.AdvanceWebAuthnCredentialCounterProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/webauthn/users/{userId}/credentials/{id}", authHandler.DeleteWebAuthnCredentialProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
 
 			// Login-lockout accounting storage-primitive proxy (backlog #529). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1219,7 +1254,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// one proxied round trip preserves LocalStorage's own semantics unchanged —
 			// unlike AdvanceWebAuthnCredentialCounterProxy just above, no new atomic
 			// primitive is needed.
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
 
 			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1242,8 +1277,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// only ever one active row, looked up by "active" rather than by ID), so
 			// route registration order here is purely cosmetic.
 			r.Get("/legal-hold/active", dashboardHandler.GetActiveLegalHoldProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.CreateLegalHoldProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/legal-hold/{id}", dashboardHandler.UpdateLegalHoldProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathLegalHold, dashboardHandler.CreateLegalHoldProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/legal-hold/{id}", dashboardHandler.UpdateLegalHoldProxy)
 
 			// Access-review-campaign storage-primitive proxy (ISO 27001 A.5.18,
 			// finding #519). Lets a downstream Keyorix server booted with
@@ -1281,14 +1316,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/access-review-campaigns/open", catalogHandler.GetOpenAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/latest-closed", catalogHandler.GetLatestClosedAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/items/{itemID}", catalogHandler.GetAccessReviewItemProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/access-review-campaigns/items/{itemID}", catalogHandler.UpdateAccessReviewItemProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/access-review-campaigns/items/{itemID}", catalogHandler.UpdateAccessReviewItemProxy)
 			r.Get("/access-review-campaigns", catalogHandler.ListAccessReviewCampaignsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-review-campaigns", catalogHandler.CreateAccessReviewCampaignProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-review-campaigns", catalogHandler.CreateAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/{id}", catalogHandler.GetAccessReviewCampaignProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/access-review-campaigns/{id}", catalogHandler.UpdateAccessReviewCampaignProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/access-review-campaigns/{id}", catalogHandler.UpdateAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/{id}/items/pending-count", catalogHandler.CountPendingAccessReviewItemsProxy)
 			r.Get("/access-review-campaigns/{id}/items", catalogHandler.ListAccessReviewItemsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/access-review-campaigns/{id}/items", catalogHandler.CreateAccessReviewItemsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-review-campaigns/{id}/items", catalogHandler.CreateAccessReviewItemsProxy)
 
 			// Break-glass activation storage-primitive proxy (#519). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1314,9 +1349,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// system.write, matching every other admin-level mutation in this group.
 			r.Get("/break-glass/{id}", catalogHandler.GetBreakGlassActivationProxy)
 			r.Get("/break-glass", catalogHandler.ListBreakGlassActivationsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
 
 			// Risk-exception storage-primitive proxy (#519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1336,10 +1371,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// the audit.read the human-facing /risk-exceptions routes use, since a
 			// RemoteStorage credential already needs system.write for the
 			// project-memberships proxy above — no new privilege class.
-			r.Get("/risk-exceptions/{id}", dashboardHandler.GetRiskExceptionProxy)
-			r.Get("/risk-exceptions", dashboardHandler.ListRiskExceptionsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskExceptionProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/risk-exceptions/{id}", dashboardHandler.UpdateRiskExceptionProxy)
+			r.Get(pathRiskExceptionsID, dashboardHandler.GetRiskExceptionProxy)
+			r.Get(pathRiskExceptions, dashboardHandler.ListRiskExceptionsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskExceptionProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID, dashboardHandler.UpdateRiskExceptionProxy)
 
 			// Separation-of-duties (SoD) policy storage-primitive proxy (finding
 			// #519). Lets a downstream Keyorix server booted with storage.type:
@@ -1362,8 +1397,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// mutation in this group.
 			r.Get("/sod-policies/{id}", catalogHandler.GetSoDPolicyProxy)
 			r.Get("/sod-policies", catalogHandler.ListSoDPoliciesProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod-policies/{id}", catalogHandler.DeleteSoDPolicyProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/sod-policies/{id}", catalogHandler.DeleteSoDPolicyProxy)
 
 			// Data-retention/purge-sweep storage-primitive proxy (finding #520). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1393,16 +1428,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// is destructive except the one List, gated system.read; every mutating
 			// route requires system.write.
 			r.Get("/retention/users/stale", userHandler.ListUsersInStateBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/anomaly-alerts/purge", auditHandler.DeleteAnomalyAlertsBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/access-reviews/purge-closed", catalogHandler.DeleteClosedAccessReviewsBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/break-glass/purge-expired", catalogHandler.DeleteExpiredBreakGlassBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/access-requests/purge-resolved", catalogHandler.DeleteResolvedAccessRequestsBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/role-grants/purge-expired", rbacHandler.DeleteExpiredRoleGrantsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/share-records/purge-expired", shareHandler.DeleteExpiredShareRecordsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/anomaly-alerts/purge", auditHandler.DeleteAnomalyAlertsBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/access-reviews/purge-closed", catalogHandler.DeleteClosedAccessReviewsBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/break-glass/purge-expired", catalogHandler.DeleteExpiredBreakGlassBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/access-requests/purge-resolved", catalogHandler.DeleteResolvedAccessRequestsBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/role-grants/purge-expired", rbacHandler.DeleteExpiredRoleGrantsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/share-records/purge-expired", shareHandler.DeleteExpiredShareRecordsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
 
 			// Misc storage-primitive proxies (finding #531 — four independent,
 			// unrelated small gaps grouped by similar low-to-moderate severity;
@@ -1462,7 +1497,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// (atomic create-user+role-grants, backing POST /api/v1/users and
 			// gRPC CreateUser whenever role grants are included) hard-failed on
 			// this stub. A mutation, gated system.write.
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/users/with-role-grants", userHandler.CreateUserWithRoleGrantsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/users/with-role-grants", userHandler.CreateUserWithRoleGrantsProxy)
 
 			// RBAC role-grant primitive proxy (finding #525). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1504,10 +1539,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/rbac/project-role-assignments", rbacHandler.ListProjectRoleAssignmentsProxy)
 			r.Get("/rbac/project-machine-role-assignments", rbacHandler.ListProjectMachineRoleAssignmentsProxy)
 			r.Get("/rbac/global-admin-assignments", rbacHandler.ListGlobalAdminAssignmentsForUpdateProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/rbac/global-admin-role/remove-guarded", rbacHandler.RemoveGlobalAdminRoleGuardedProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/global-admin-role/remove-guarded", rbacHandler.RemoveGlobalAdminRoleGuardedProxy)
 
 			// MFA enrolment/management storage-primitive proxy (finding #524). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1535,13 +1570,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// above. Static sub-paths ("secrets", "recovery-codes/count") are registered
 			// before their sibling {userId} routes.
 			r.Get("/mfa/secrets", authHandler.GetMFASecretProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/mfa/secrets", authHandler.UpsertMFASecretProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/mfa/secrets/{userId}/activate", authHandler.ActivateMFASecretProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/mfa/users/{userId}", authHandler.DeleteMFAForUserProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/mfa/users/{userId}/mfa-enabled", authHandler.SetUserMFAEnabledProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/secrets", authHandler.UpsertMFASecretProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/secrets/{userId}/activate", authHandler.ActivateMFASecretProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/users/{userId}", authHandler.DeleteMFAForUserProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/mfa/users/{userId}/mfa-enabled", authHandler.SetUserMFAEnabledProxy)
 			r.Get("/mfa/recovery-codes/count", authHandler.CountUnusedMFARecoveryCodesProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/mfa/recovery-codes", authHandler.CreateMFARecoveryCodesProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/recovery-codes", authHandler.CreateMFARecoveryCodesProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
 
 			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
 			// Lets a downstream Keyorix server booted with storage.type: remote
@@ -1588,23 +1623,23 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// "{id}/members", "{id}/environments") are registered ahead of/alongside the
 			// "{id}" wildcard, matching the static-vs-wildcard precedence the proxies
 			// above already rely on; "/projects/{projectId}/environments/{id}/restore"
-			// reuses a DIFFERENT param name ("projectId") than "/projects/{id}" at the
+			// reuses a DIFFERENT param name ("projectId") than pathProjectsID at the
 			// same path depth, exactly like the existing human-facing
 			// "/projects/{id}/environments/{envId}/copy-secrets" vs
 			// "/projects/{projectId}/environments/{id}/restore" routes already do.
 			r.Get("/projects/with-counts", catalogHandler.ListProjectsWithCountsProxy)
-			r.Get("/projects", catalogHandler.ListProjectsProxy)
-			r.Get("/projects/{id}", catalogHandler.GetProjectProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Put("/projects/{id}", catalogHandler.UpdateProjectProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/projects/{id}", catalogHandler.DeleteProjectProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/projects/{id}/restore", catalogHandler.RestoreProjectProxy)
-			r.Get("/projects/{id}/members", catalogHandler.ListProjectMembersProxy)
-			r.Get("/projects/{id}/environments", catalogHandler.ListEnvironmentsByProjectProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironmentProxy)
+			r.Get(pathProjects, catalogHandler.ListProjectsProxy)
+			r.Get(pathProjectsID, catalogHandler.GetProjectProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathProjectsID, catalogHandler.UpdateProjectProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/projects/{id}/restore", catalogHandler.RestoreProjectProxy)
+			r.Get(pathProjectMembers, catalogHandler.ListProjectMembersProxy)
+			r.Get(pathProjectEnvs, catalogHandler.ListEnvironmentsByProjectProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironmentProxy)
 			r.Get("/environments", catalogHandler.ListEnvironmentsProxy)
-			r.Get("/environments/{id}", catalogHandler.GetEnvironmentProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Delete("/environments/{id}", catalogHandler.DeleteEnvironmentProxy)
+			r.Get(pathEnvironmentsID, catalogHandler.GetEnvironmentProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironmentProxy)
 
 			// Scheduler-lock storage-primitive proxy (#530). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1628,78 +1663,78 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// storage.Storage call, so no naive "check, then write" pair is ever
 			// exposed over this HTTP hop to reopen the exclusivity race the lock
 			// exists to prevent.
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/scheduler-lock/acquire", authHandler.AcquireSchedulerLockProxy)
-			r.With(customMiddleware.RequirePermission("system.write")).Post("/scheduler-lock/release", authHandler.ReleaseSchedulerLockProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/scheduler-lock/acquire", authHandler.AcquireSchedulerLockProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/scheduler-lock/release", authHandler.ReleaseSchedulerLockProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/license/status", licenseHandler.GetLicenseStatus)
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/license/status", licenseHandler.GetLicenseStatus)
 
 		// Personal-access-token hygiene — deployment-wide stale / expired-but-active
 		// tokens an admin should revoke (token sprawl). Discloses every user's PAT
 		// names/scopes/project-env-scope/AllowedCIDRs/owning user ID deployment-wide, so
 		// gated on audit.read (global), NOT the universal system_viewer baseline
 		// system.read — same disclosure-family calibration as /compliance/evidence.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/pat-hygiene", patHandler.PATHygiene)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/pat-hygiene", patHandler.PATHygiene)
 		// Machine-token hygiene — deployment-wide stale / expired-but-active machine
 		// credentials an admin should revoke (non-human token sprawl). Same calibration
 		// as /pat-hygiene: audit.read, not the baseline.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/machine-token-hygiene", catalogHandler.MachineTokenHygiene)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/machine-token-hygiene", catalogHandler.MachineTokenHygiene)
 		// Secret-hygiene rollup — deployment-wide totals of every project's posture
 		// (orphaned / unused / expiring / stale-MI / rotation-overdue) + per-project
 		// breakdown identified by project name. Same calibration: audit.read.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/hygiene", secretHandler.DeploymentHygiene)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/hygiene", secretHandler.DeploymentHygiene)
 
 		// Compliance posture — deployment-wide controls snapshot for auditors. Part of
 		// the same disclosure family as /compliance/evidence (SoD-violation counts,
 		// legal-hold reason, risk-register counts): gated on audit.read, not the
 		// universal system_viewer baseline.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
 		// Compliance control matrix — controls mapped to ISO/SOC2/NIS2/DORA + status.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/controls", dashboardHandler.GetComplianceControls)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/controls", dashboardHandler.GetComplianceControls)
 		// Control matrix as CSV — the same matrix for an auditor's spreadsheet; same gate
 		// as the JSON endpoint above (a lower-tier CSV export would just be a bypass).
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/controls.csv", dashboardHandler.ExportComplianceControlsCSV)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/controls.csv", dashboardHandler.ExportComplianceControlsCSV)
 		// Compliance digest — on-demand human-readable summary (the scheduled-broadcast
 		// text); restates the same posture data, same gate.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/digest", dashboardHandler.GetComplianceDigest)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/digest", dashboardHandler.GetComplianceDigest)
 		// Legal hold (ISO A.5.34): status discloses the free-text hold reason
 		// deployment-wide, so reads need audit.read; place/lift stay system.write
 		// (an admin action, not a read disclosure).
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/legal-hold", dashboardHandler.GetLegalHold)
-		r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.PlaceLegalHold)
-		r.With(customMiddleware.RequirePermission("system.write")).Delete("/legal-hold", dashboardHandler.LiftLegalHold)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get(pathLegalHold, dashboardHandler.GetLegalHold)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathLegalHold, dashboardHandler.PlaceLegalHold)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathLegalHold, dashboardHandler.LiftLegalHold)
 		// Compliance evidence pack — posture + supporting records, for archival. Gated on
 		// audit.read (global), NOT system.read: the deployment-wide pack enumerates
 		// cross-project secret NAMES and break-glass JUSTIFICATIONS, which the minimal
 		// system_viewer baseline (system.read only) must not be able to export. audit.read
 		// is the compliance/auditor persona (system_auditor/system_admin) at global scope;
 		// a project-scoped audit.read holder is correctly excluded from the org-wide pack.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
 		// Verify a previously-exported evidence pack against its detached signature.
-		r.With(customMiddleware.RequirePermission("audit.read")).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
 		// Risk register (ISO A.5.8): list discloses free-text Reference/Justification
 		// (which may itself name a secret) deployment-wide, so reads need audit.read;
 		// create/revoke stay system.write.
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
-		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskException)
-		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions/{id}/approve", dashboardHandler.ApproveRiskException)
-		r.With(customMiddleware.RequirePermission("system.write")).Delete("/risk-exceptions/{id}", dashboardHandler.RevokeRiskException)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get(pathRiskExceptions, dashboardHandler.ListRiskExceptions)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskException)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/risk-exceptions/{id}/approve", dashboardHandler.ApproveRiskException)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathRiskExceptionsID, dashboardHandler.RevokeRiskException)
 
 		// Separation of duties (ISO A.5.3): policy definitions (name/permission pair, no
 		// PII) stay at the baseline system.read; the violations list discloses
 		// deployment-wide violator names/emails, so it needs audit.read; create/delete
 		// policies need system.write.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/sod/policies", catalogHandler.ListSoDPolicies)
-		r.With(customMiddleware.RequirePermission("system.write")).Post("/sod/policies", catalogHandler.CreateSoDPolicy)
-		r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod/policies/{id}", catalogHandler.DeleteSoDPolicy)
-		r.With(customMiddleware.RequirePermission("audit.read")).Get("/sod/violations", catalogHandler.ListSoDViolations)
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/sod/policies", catalogHandler.ListSoDPolicies)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sod/policies", catalogHandler.CreateSoDPolicy)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/sod/policies/{id}", catalogHandler.DeleteSoDPolicy)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/sod/violations", catalogHandler.ListSoDViolations)
 
 		// On-demand triggers for the notification/alert jobs that otherwise run only on
 		// their background schedulers — dispatch immediately after an incident or config
 		// change. Deployment-wide admin actions, gated by system.write.
 		r.Route("/admin/jobs", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("system.write"))
+			r.Use(customMiddleware.RequirePermission(permSystemWrite))
 			r.Post("/anomaly-alerts", adminJobsHandler.RunAnomalyAlerts)
 			r.Post("/rotation-reminders", adminJobsHandler.RunRotationReminders)
 			r.Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
@@ -1744,7 +1779,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 // everyone gets at /), but noisy/incorrect status codes confuse health-check
 // tooling and WAF rules that expect a clean 404 on an unknown path.
 var backendRoutePrefixes = []string{
-	"/api/", "/auth/", "/scim/", "/system/init", "/health", "/readyz", "/metrics", "/status", "/swagger/", "/openapi.yaml",
+	"/api/", "/auth/", "/scim/", "/system/init", "/health", "/readyz", pathMetrics, pathStatus, "/swagger/", "/openapi.yaml",
 }
 
 func isBackendRoute(p string) bool {
@@ -1830,7 +1865,7 @@ func registerWebUI(r chi.Router, fsys http.FileSystem) {
 			http.NotFound(w, req)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set(hdrCacheControl, cacheNoCache)
 		http.ServeContent(w, req, "index.html", fi.ModTime(), f)
 	})
 }
@@ -1891,13 +1926,13 @@ func setCacheHeaders(next http.Handler) http.Handler {
 			switch ext {
 			case ".js", ".css", ".woff", ".woff2", ".ttf", ".eot":
 				// Cache for 1 year
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				w.Header().Set(hdrCacheControl, "public, max-age=31536000, immutable")
 			case ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico":
 				// Cache for 1 month
-				w.Header().Set("Cache-Control", "public, max-age=2592000")
+				w.Header().Set(hdrCacheControl, "public, max-age=2592000")
 			default:
 				// Cache for 1 day
-				w.Header().Set("Cache-Control", "public, max-age=86400")
+				w.Header().Set(hdrCacheControl, "public, max-age=86400")
 			}
 		}
 		next.ServeHTTP(w, r)

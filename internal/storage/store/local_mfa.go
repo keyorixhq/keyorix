@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+
 // UpsertMFASecret creates or replaces the user's TOTP secret row (one per user).
 func (ls *LocalStorage) UpsertMFASecret(ctx context.Context, s *models.MFASecret) error {
 	return ls.db.WithContext(ctx).Clauses(clause.OnConflict{
@@ -22,7 +23,7 @@ func (ls *LocalStorage) UpsertMFASecret(ctx context.Context, s *models.MFASecret
 
 func (ls *LocalStorage) GetMFASecret(ctx context.Context, userID uint) (*models.MFASecret, error) {
 	var s models.MFASecret
-	if err := ls.db.WithContext(ctx).Where("user_id = ?", userID).First(&s).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where(sqlWhereUserID, userID).First(&s).Error; err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -30,7 +31,7 @@ func (ls *LocalStorage) GetMFASecret(ctx context.Context, userID uint) (*models.
 
 func (ls *LocalStorage) ActivateMFASecret(ctx context.Context, userID uint) error {
 	return ls.db.WithContext(ctx).Model(&models.MFASecret{}).
-		Where("user_id = ?", userID).Update("activated", true).Error
+		Where(sqlWhereUserID, userID).Update("activated", true).Error
 }
 
 // MarkTOTPStepUsed atomically advances the user's last-used TOTP step. The single
@@ -50,10 +51,10 @@ func (ls *LocalStorage) MarkTOTPStepUsed(ctx context.Context, userID uint, step 
 // DeleteMFAForUser removes the secret and all recovery codes for a user.
 func (ls *LocalStorage) DeleteMFAForUser(ctx context.Context, userID uint) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("user_id = ?", userID).Delete(&models.MFASecret{}).Error; err != nil {
+		if err := tx.Where(sqlWhereUserID, userID).Delete(&models.MFASecret{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("user_id = ?", userID).Delete(&models.MFARecoveryCode{}).Error
+		return tx.Where(sqlWhereUserID, userID).Delete(&models.MFARecoveryCode{}).Error
 	})
 }
 
@@ -85,7 +86,7 @@ func (ls *LocalStorage) CountUnusedMFARecoveryCodes(ctx context.Context, userID 
 // DeleteMFARecoveryCodes removes ALL of the user's recovery codes (used + unused)
 // without touching the TOTP secret — the regenerate flow replaces them wholesale.
 func (ls *LocalStorage) DeleteMFARecoveryCodes(ctx context.Context, userID uint) error {
-	return ls.db.WithContext(ctx).Where("user_id = ?", userID).Delete(&models.MFARecoveryCode{}).Error
+	return ls.db.WithContext(ctx).Where(sqlWhereUserID, userID).Delete(&models.MFARecoveryCode{}).Error
 }
 
 // ConsumeMFARecoveryCode marks a matching unused code used; returns true if one

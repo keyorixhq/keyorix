@@ -15,6 +15,19 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	permAuditAdmin = "audit.admin"
+	permAuditRead = "audit.read"
+	permRolesAssign = "roles.assign"
+	permRolesRead = "roles.read"
+	permSecretsDelete = "secrets.delete"
+	permSecretsRead = "secrets.read"
+	permSecretsWrite = "secrets.write"
+	permSystemRead = "system.read"
+	permUsersRead = "users.read"
+	permUsersWrite = "users.write"
+)
+
 type testContextKey string
 
 const (
@@ -144,24 +157,24 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		Resource    string
 		Action      string
 	}{
-		{1, "secrets.read", "Read secrets", "secrets", "read"},
-		{2, "secrets.write", "Create and update secrets", "secrets", "write"},
-		{3, "secrets.delete", "Delete secrets", "secrets", "delete"},
+		{1, permSecretsRead, "Read secrets", "secrets", "read"},
+		{2, permSecretsWrite, "Create and update secrets", "secrets", "write"},
+		{3, permSecretsDelete, "Delete secrets", "secrets", "delete"},
 		{4, "secrets.admin", "Full administrative access to secrets", "secrets", "admin"},
-		{5, "users.read", "View user information", "users", "read"},
-		{6, "users.write", "Create and update users", "users", "write"},
+		{5, permUsersRead, "View user information", "users", "read"},
+		{6, permUsersWrite, "Create and update users", "users", "write"},
 		{7, "users.delete", "Delete users", "users", "delete"},
 		{8, "users.admin", "Full administrative access to users", "users", "admin"},
-		{9, "roles.read", "View roles", "roles", "read"},
+		{9, permRolesRead, "View roles", "roles", "read"},
 		{10, "roles.write", "Create and update roles", "roles", "write"},
 		{11, "roles.delete", "Delete roles", "roles", "delete"},
 		{12, "roles.admin", "Full administrative access to roles", "roles", "admin"},
-		{13, "roles.assign", "Assign and remove roles from users", "roles", "assign"},
-		{14, "system.read", "View system information", "system", "read"},
+		{13, permRolesAssign, "Assign and remove roles from users", "roles", "assign"},
+		{14, permSystemRead, "View system information", "system", "read"},
 		{15, "system.write", "Modify system settings", "system", "write"},
 		{16, "system.admin", "Full administrative access to system", "system", "admin"},
-		{17, "audit.read", "View audit logs", "audit", "read"},
-		{18, "audit.admin", "Full administrative access to audit system", "audit", "admin"},
+		{17, permAuditRead, "View audit logs", "audit", "read"},
+		{18, permAuditAdmin, "Full administrative access to audit system", "audit", "admin"},
 		{19, "connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 	}
 
@@ -189,19 +202,19 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 
 	// Assign permissions to roles
 	rolePermissions := map[string][]string{
-		"super_admin": {"secrets.read", "secrets.write", "secrets.delete", "secrets.admin",
-			"users.read", "users.write", "users.delete", "users.admin",
-			"roles.read", "roles.write", "roles.delete", "roles.admin", "roles.assign",
-			"system.read", "system.write", "system.admin",
-			"audit.read", "audit.admin", "connect.read"},
-		"admin": {"secrets.read", "secrets.write", "secrets.delete",
-			"users.read", "users.write",
-			"roles.read", "roles.assign",
-			"system.read", "audit.read"},
-		"editor":        {"secrets.read", "secrets.write", "users.read"},
-		"viewer":        {"secrets.read", "users.read"},
-		"auditor":       {"audit.read", "audit.admin", "system.read", "users.read", "roles.read"},
-		"system_viewer": {"system.read"},
+		"super_admin": {permSecretsRead, permSecretsWrite, permSecretsDelete, "secrets.admin",
+			permUsersRead, permUsersWrite, "users.delete", "users.admin",
+			permRolesRead, "roles.write", "roles.delete", "roles.admin", permRolesAssign,
+			permSystemRead, "system.write", "system.admin",
+			permAuditRead, permAuditAdmin, "connect.read"},
+		"admin": {permSecretsRead, permSecretsWrite, permSecretsDelete,
+			permUsersRead, permUsersWrite,
+			permRolesRead, permRolesAssign,
+			permSystemRead, permAuditRead},
+		"editor":        {permSecretsRead, permSecretsWrite, permUsersRead},
+		"viewer":        {permSecretsRead, permUsersRead},
+		"auditor":       {permAuditRead, permAuditAdmin, permSystemRead, permUsersRead, permRolesRead},
+		"system_viewer": {permSystemRead},
 	}
 
 	for roleName, permNames := range rolePermissions {

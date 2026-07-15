@@ -12,6 +12,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // RBAC audit event types. Role assignments/removals are written to the shared
 // audit_events table and surfaced together by ListRBACAuditLogs.
 const (
@@ -292,7 +293,7 @@ func (c *KeyorixCore) LogSecretCreatedWithProject(ctx context.Context, userID ui
 // LogSecretUpdated writes audit_events + secret_access_logs for a secret update.
 func (c *KeyorixCore) LogSecretUpdated(ctx context.Context, userID uint, secretID uint, username, secretName, ip, ua string) {
 	uid, sid := userID, secretID
-	c.writeAuditEvent(ctx, "secret.updated", &uid, &sid,
+	c.writeAuditEvent(ctx, evtSecretUpdated, &uid, &sid,
 		fmt.Sprintf("User %s updated secret %s", username, secretName))
 	c.writeAccessLog(ctx, secretID, username, "update", ip, ua)
 }
@@ -300,7 +301,7 @@ func (c *KeyorixCore) LogSecretUpdated(ctx context.Context, userID uint, secretI
 // LogSecretUpdatedWithProject writes audit_events including project context.
 func (c *KeyorixCore) LogSecretUpdatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) {
 	uid, sid, pid := userID, secretID, projectID
-	c.writeAuditEventFull(ctx, "secret.updated", &uid, &sid, &pid, ip,
+	c.writeAuditEventFull(ctx, evtSecretUpdated, &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s updated secret %s", username, secretName))
 	c.writeAccessLog(ctx, secretID, username, "update", ip, ua)
 }
@@ -310,7 +311,7 @@ func (c *KeyorixCore) LogSecretUpdatedWithProject(ctx context.Context, userID ui
 // values) plus the secret_access_logs row.
 func (c *KeyorixCore) LogSecretUpdatedWithDiff(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua, diff string) {
 	uid, sid, pid := userID, secretID, projectID
-	c.writeAuditEventDiff(ctx, "secret.updated", &uid, &sid, &pid, ip,
+	c.writeAuditEventDiff(ctx, evtSecretUpdated, &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s updated secret %s", username, secretName), diff)
 	c.writeAccessLog(ctx, secretID, username, "update", ip, ua)
 }

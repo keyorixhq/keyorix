@@ -23,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
+
 // RotationPolicyHandler handles rotation policy HTTP requests.
 type RotationPolicyHandler struct {
 	coreService *core.KeyorixCore
@@ -64,7 +65,7 @@ func (h *RotationPolicyHandler) sendError(w http.ResponseWriter, errorType, mess
 func (h *RotationPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -74,7 +75,7 @@ func (h *RotationPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("project_id"); v != "" {
 		id, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
-			h.sendError(w, "InvalidParameter", "Invalid project_id", http.StatusBadRequest, nil)
+			h.sendError(w, "InvalidParameter", errInvalidProjectIDField, http.StatusBadRequest, nil)
 			return
 		}
 		uid := uint(id)
@@ -83,7 +84,7 @@ func (h *RotationPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("environment_id"); v != "" {
 		id, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
-			h.sendError(w, "InvalidParameter", "Invalid environment_id", http.StatusBadRequest, nil)
+			h.sendError(w, "InvalidParameter", errInvalidEnvIDField, http.StatusBadRequest, nil)
 			return
 		}
 		uid := uint(id)
@@ -104,7 +105,7 @@ func (h *RotationPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -178,22 +179,22 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *RotationPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid rotation policy ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidRotationPolicyID, http.StatusBadRequest, nil)
 		return
 	}
 
 	policy, err := h.coreService.GetRotationPolicy(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error getting rotation policy: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			h.sendError(w, "NotFound", "Rotation policy not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get rotation policy", http.StatusInternalServerError, nil)
 		}
@@ -207,14 +208,14 @@ func (h *RotationPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *RotationPolicyHandler) Update(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid rotation policy ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidRotationPolicyID, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -249,8 +250,8 @@ func (h *RotationPolicyHandler) Update(w http.ResponseWriter, r *http.Request) {
 	policy, err := h.coreService.UpdateRotationPolicy(r.Context(), userCtx.UserID, req)
 	if err != nil {
 		log.Printf("Error updating rotation policy: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			h.sendError(w, "NotFound", "Rotation policy not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), "must be less than") {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
 		} else {
@@ -266,21 +267,21 @@ func (h *RotationPolicyHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *RotationPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid rotation policy ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidRotationPolicyID, http.StatusBadRequest, nil)
 		return
 	}
 
 	if err := h.coreService.DeleteRotationPolicy(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting rotation policy: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			h.sendError(w, "NotFound", "Rotation policy not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to delete rotation policy", http.StatusInternalServerError, nil)
 		}
@@ -309,7 +310,7 @@ func parseOptionalUintQuery(r *http.Request, key string) (*uint, error) {
 func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -317,7 +318,7 @@ func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request)
 	if v := r.URL.Query().Get("project_id"); v != "" {
 		id, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
-			h.sendError(w, "InvalidParameter", "Invalid project_id", http.StatusBadRequest, nil)
+			h.sendError(w, "InvalidParameter", errInvalidProjectIDField, http.StatusBadRequest, nil)
 			return
 		}
 		uid := uint(id)
@@ -329,7 +330,7 @@ func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request)
 	// but the core previously ignored the env and returned the whole project's posture).
 	environmentID, perr := parseOptionalUintQuery(r, "environment_id")
 	if perr != nil {
-		h.sendError(w, "InvalidParameter", "Invalid environment_id", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidEnvIDField, http.StatusBadRequest, nil)
 		return
 	}
 
@@ -350,7 +351,7 @@ func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request)
 func (h *RotationPolicyHandler) Status(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -358,7 +359,7 @@ func (h *RotationPolicyHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("project_id"); v != "" {
 		id, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
-			h.sendError(w, "InvalidParameter", "Invalid project_id", http.StatusBadRequest, nil)
+			h.sendError(w, "InvalidParameter", errInvalidProjectIDField, http.StatusBadRequest, nil)
 			return
 		}
 		uid := uint(id)
@@ -369,7 +370,7 @@ func (h *RotationPolicyHandler) Status(w http.ResponseWriter, r *http.Request) {
 	// environment (see Evaluate).
 	environmentID, perr := parseOptionalUintQuery(r, "environment_id")
 	if perr != nil {
-		h.sendError(w, "InvalidParameter", "Invalid environment_id", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidEnvIDField, http.StatusBadRequest, nil)
 		return
 	}
 

@@ -21,6 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
+
 // UserHandler handles user HTTP requests (wired to core when InitCoreHandlers runs).
 type UserHandler struct {
 	coreService *core.KeyorixCore
@@ -144,7 +145,7 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 func listUsersLegacy(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	page := 1
@@ -160,7 +161,7 @@ func listUsersLegacy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	users := []legacyAPIUser{
-		{ID: 1, Username: "admin", Email: "admin@keyorix.com", DisplayName: "System Administrator", Active: true, CreatedAt: "2024-01-01T00:00:00Z", UpdatedAt: "2024-01-01T00:00:00Z"},
+		{ID: 1, Username: "admin", Email: testAdminEmail, DisplayName: testSysAdminRole, Active: true, CreatedAt: testTimestamp1, UpdatedAt: testTimestamp1},
 		{ID: 2, Username: "user1", Email: "user1@keyorix.com", DisplayName: "Regular User", Active: true, CreatedAt: "2024-01-02T00:00:00Z", UpdatedAt: "2024-01-02T00:00:00Z"},
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -171,7 +172,7 @@ func listUsersLegacy(w http.ResponseWriter, r *http.Request) {
 func createUserLegacy(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	var req legacyCreateUserBody
@@ -183,7 +184,7 @@ func createUserLegacy(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
-	u := legacyAPIUser{ID: 3, Username: req.Username, Email: req.Email, DisplayName: req.DisplayName, Active: true, CreatedAt: "2024-01-03T00:00:00Z", UpdatedAt: "2024-01-03T00:00:00Z"}
+	u := legacyAPIUser{ID: 3, Username: req.Username, Email: req.Email, DisplayName: req.DisplayName, Active: true, CreatedAt: testTimestamp2, UpdatedAt: testTimestamp2}
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, u, "User created successfully")
 }
@@ -191,17 +192,17 @@ func createUserLegacy(w http.ResponseWriter, r *http.Request) {
 func getUserLegacy(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	if id == 1 {
-		sendSuccess(w, legacyAPIUser{ID: 1, Username: "admin", Email: "admin@keyorix.com", DisplayName: "System Administrator", Active: true, CreatedAt: "2024-01-01T00:00:00Z", UpdatedAt: "2024-01-01T00:00:00Z"}, "")
+		sendSuccess(w, legacyAPIUser{ID: 1, Username: "admin", Email: testAdminEmail, DisplayName: testSysAdminRole, Active: true, CreatedAt: testTimestamp1, UpdatedAt: testTimestamp1}, "")
 		return
 	}
 	sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
@@ -210,13 +211,13 @@ func getUserLegacy(w http.ResponseWriter, r *http.Request) {
 func updateUserLegacy(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	var req legacyUpdateUserBody
@@ -228,7 +229,7 @@ func updateUserLegacy(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
-	u := legacyAPIUser{ID: uint(id), Username: "admin", Email: "admin@keyorix.com", DisplayName: "System Administrator", Active: true, CreatedAt: "2024-01-01T00:00:00Z", UpdatedAt: "2024-01-03T00:00:00Z"}
+	u := legacyAPIUser{ID: uint(id), Username: "admin", Email: testAdminEmail, DisplayName: testSysAdminRole, Active: true, CreatedAt: testTimestamp1, UpdatedAt: testTimestamp2}
 	if req.Email != nil {
 		u.Email = *req.Email
 	}
@@ -244,12 +245,12 @@ func updateUserLegacy(w http.ResponseWriter, r *http.Request) {
 func deleteUserLegacy(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 	idStr := chi.URLParam(r, "id")
 	if _, err := strconv.ParseUint(idStr, 10, 32); err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -260,7 +261,7 @@ func deleteUserLegacy(w http.ResponseWriter, r *http.Request) {
 // SearchUsers handles GET /api/v1/users/search?q=<query>
 func SearchUsers(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.SearchUsers(w, r)
@@ -278,7 +279,7 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 // StaleAccounts handles GET /api/v1/users/stale (ADR-025).
 func StaleAccounts(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.StaleAccounts(w, r)
@@ -305,7 +306,7 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 // GetUserByEmail handles GET /api/v1/users/by-email?email=X (#503).
 func GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.GetUserByEmail(w, r)
@@ -314,7 +315,7 @@ func GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 // GetUserByUsername handles GET /api/v1/users/by-username?username=X (#505).
 func GetUserByUsername(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.GetUserByUsername(w, r)
@@ -323,7 +324,7 @@ func GetUserByUsername(w http.ResponseWriter, r *http.Request) {
 // GetUserByExternalID handles GET /api/v1/users/by-external-id?external_id=X (#505).
 func GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.GetUserByExternalID(w, r)
@@ -332,7 +333,7 @@ func GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
 // VerifyCredentials handles POST /api/v1/users/verify-credentials (#506).
 func VerifyCredentials(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.VerifyCredentials(w, r)
@@ -341,7 +342,7 @@ func VerifyCredentials(w http.ResponseWriter, r *http.Request) {
 // VerifyMFACredentials handles POST /api/v1/users/verify-mfa (#509).
 func VerifyMFACredentials(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.VerifyMFACredentials(w, r)
@@ -350,7 +351,7 @@ func VerifyMFACredentials(w http.ResponseWriter, r *http.Request) {
 // IssueMFAChallenge handles POST /api/v1/users/{id}/mfa-challenge (#509).
 func IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.IssueMFAChallenge(w, r)
@@ -359,7 +360,7 @@ func IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
 // GetActiveMFAChallenge handles POST /api/v1/users/mfa-challenge/active (#522).
 func GetActiveMFAChallenge(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.GetActiveMFAChallenge(w, r)
@@ -368,7 +369,7 @@ func GetActiveMFAChallenge(w http.ResponseWriter, r *http.Request) {
 // ConsumeMFAChallenge handles POST /api/v1/users/mfa-challenge/consume (#522).
 func ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.ConsumeMFAChallenge(w, r)
@@ -395,7 +396,7 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 // RestoreUser handles POST /api/v1/users/{id}/restore
 func RestoreUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.RestoreUser(w, r)
@@ -404,7 +405,7 @@ func RestoreUser(w http.ResponseWriter, r *http.Request) {
 // UnlockUser handles POST /api/v1/users/{id}/unlock — clears login lockout.
 func UnlockUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.UnlockUser(w, r)
@@ -413,7 +414,7 @@ func UnlockUser(w http.ResponseWriter, r *http.Request) {
 // SuspendUser handles POST /api/v1/users/{id}/suspend (ADR-025).
 func SuspendUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.SuspendUser(w, r)
@@ -422,7 +423,7 @@ func SuspendUser(w http.ResponseWriter, r *http.Request) {
 // RevokeSessions handles POST /api/v1/users/{id}/revoke-sessions — admin force-logout.
 func RevokeSessions(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.RevokeSessions(w, r)
@@ -431,7 +432,7 @@ func RevokeSessions(w http.ResponseWriter, r *http.Request) {
 // ReactivateUser handles POST /api/v1/users/{id}/reactivate (ADR-025).
 func ReactivateUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.ReactivateUser(w, r)
@@ -440,7 +441,7 @@ func ReactivateUser(w http.ResponseWriter, r *http.Request) {
 // RequirePasswordReset handles POST /api/v1/users/{id}/require-password-reset (ADR-025).
 func RequirePasswordReset(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.RequirePasswordReset(w, r)
@@ -449,7 +450,7 @@ func RequirePasswordReset(w http.ResponseWriter, r *http.Request) {
 // ResendSetupLink handles POST /api/v1/users/{id}/resend-setup-link (ADR-028).
 func ResendSetupLink(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
-		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		sendError(w, "ServiceUnavailable", errUserHandlerNotInit, http.StatusServiceUnavailable, nil)
 		return
 	}
 	defaultUserHandler.ResendSetupLink(w, r)

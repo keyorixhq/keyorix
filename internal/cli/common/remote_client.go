@@ -17,6 +17,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 )
 
+const (
+	bearerPrefix = "Bearer "
+	hdrContentType = "Content-Type"
+	mimeJSON = "application/json"
+)
+
 // ResolveRemote returns the server endpoint and Bearer token from all config sources.
 //
 // Priority: env vars > ~/.keyorix/cli.yaml (written by 'keyorix connect')
@@ -131,8 +137,8 @@ func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) er
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+c.Token)
+	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -154,7 +160,7 @@ func (c *RemoteClient) GetRaw(ctx context.Context, path string) ([]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", bearerPrefix+c.Token)
 	req.Header.Set("Accept", "text/csv, */*")
 
 	resp, err := c.hc.Do(req)
@@ -186,9 +192,9 @@ func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, 
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+c.Token)
+	req.Header.Set(hdrContentType, mimeJSON)
+	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -229,9 +235,9 @@ func (c *RemoteClient) Put(ctx context.Context, path string, body interface{}, o
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+c.Token)
+	req.Header.Set(hdrContentType, mimeJSON)
+	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -259,9 +265,9 @@ func (c *RemoteClient) Patch(ctx context.Context, path string, body interface{},
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+c.Token)
+	req.Header.Set(hdrContentType, mimeJSON)
+	req.Header.Set("Accept", mimeJSON)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -290,8 +296,8 @@ func (c *RemoteClient) DeleteWithBody(ctx context.Context, path string, body int
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", bearerPrefix+c.Token)
+	req.Header.Set(hdrContentType, mimeJSON)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -311,7 +317,7 @@ func (c *RemoteClient) Delete(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", bearerPrefix+c.Token)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {

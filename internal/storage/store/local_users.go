@@ -24,6 +24,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+
 // likeEscaper escapes the LIKE/ILIKE metacharacters so a user-supplied search term is
 // matched literally, not as a wildcard. Paired with an explicit ESCAPE '\' clause.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
@@ -197,7 +198,7 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 // only that column is written — no updated_at bump, no clobbering of other fields.
 func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
 	if err := ls.db.WithContext(ctx).Model(&models.User{}).
-		Where("id = ?", userID).
+		Where(sqlWhereID, userID).
 		UpdateColumn("last_login_at", loginAt).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -208,7 +209,7 @@ func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginA
 // update, rather than a full-row Save — see the storage.Storage interface doc comment
 // (#454) for why this narrower primitive exists alongside the generic UpdateUser.
 func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error {
-	result := ls.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", id).
+	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]interface{}{"account_state": state, "updated_at": updatedAt})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
@@ -224,7 +225,7 @@ func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state stri
 // comment (#484/#454) for why this narrower primitive exists alongside the generic
 // UpdateUser.
 func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
-	result := ls.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", id).
+	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]interface{}{
 			"password_hash":       hash,
 			"password_changed_at": changedAt,
@@ -242,7 +243,7 @@ func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash strin
 // UpdateLoginLockoutState persists ONLY the four login-lockout accounting columns via a
 // direct column update — see the storage.Storage interface doc comment (#454).
 func (ls *LocalStorage) UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error {
-	result := ls.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", id).
+	result := ls.db.WithContext(ctx).Model(&models.User{}).Where(sqlWhereID, id).
 		Updates(map[string]interface{}{
 			"failed_login_attempts": attempts,
 			"last_failed_login_at":  lastFailedAt,
@@ -535,7 +536,7 @@ func (ls *LocalStorage) RecentPasswordHashes(ctx context.Context, userID uint, l
 	}
 	var rows []models.PasswordHistory
 	err := ls.db.WithContext(ctx).
-		Where("user_id = ?", userID).
+		Where(sqlWhereUserID, userID).
 		Order("created_at DESC").Limit(limit).
 		Find(&rows).Error
 	if err != nil {
@@ -556,12 +557,12 @@ func (ls *LocalStorage) PrunePasswordHistory(ctx context.Context, userID uint, k
 	// Find the cutoff: the id of the keep-th newest row. Anything older is pruned.
 	var ids []uint
 	if err := ls.db.WithContext(ctx).Model(&models.PasswordHistory{}).
-		Where("user_id = ?", userID).
+		Where(sqlWhereUserID, userID).
 		Order("created_at DESC").Limit(keep).
 		Pluck("id", &ids).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	q := ls.db.WithContext(ctx).Where("user_id = ?", userID)
+	q := ls.db.WithContext(ctx).Where(sqlWhereUserID, userID)
 	if len(ids) > 0 {
 		q = q.Where("id NOT IN ?", ids)
 	}

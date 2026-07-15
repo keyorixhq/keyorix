@@ -17,6 +17,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+
 // inactiveUserWindow defines how long without a login marks a user "inactive".
 // Matches the dashboard's 30-day inactive-users signal.
 const inactiveUserWindow = 30 * 24 * time.Hour
@@ -29,7 +30,7 @@ const maxListPage = 10000
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 23, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -103,7 +104,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) { // NOS
 // SearchUsers handles GET /api/v1/users/search?q=<query>
 func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -165,7 +166,7 @@ var staleAccountStates = map[string]bool{
 // users that have sat in a restricted state longer than the window (ADR-025).
 func (h *UserHandler) StaleAccounts(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 

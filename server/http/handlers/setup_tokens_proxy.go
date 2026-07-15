@@ -39,6 +39,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+
 // setupTokenProxyWire mirrors models.SetupToken's fields exactly (snake_case) — the
 // wire shape internal/storage/store/remote_auth.go's setupTokenWire sends/expects.
 // See that type's comment for why every field is named explicitly rather than
@@ -99,7 +100,7 @@ func (w setupTokenProxyWire) toModel() *models.SetupToken {
 func (h *AuthHandler) CreateSetupTokenProxy(w http.ResponseWriter, r *http.Request) {
 	var body setupTokenProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.TokenHash == "" || body.Purpose == "" || body.SubjectEmail == "" {
@@ -151,7 +152,7 @@ type setupTokenSupersedeBody struct {
 func (h *AuthHandler) SupersedeSetupTokensProxy(w http.ResponseWriter, r *http.Request) {
 	var body setupTokenSupersedeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.Purpose == "" || body.SubjectEmail == "" {
@@ -188,7 +189,7 @@ func (h *AuthHandler) ConsumeSetupTokenProxy(w http.ResponseWriter, r *http.Requ
 	}
 	var body setupTokenConsumeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.ConsumedAt.IsZero() {

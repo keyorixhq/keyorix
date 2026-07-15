@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+
 // ShareGRPCService implements pb.ShareServiceServer, backing each RPC with the
 // shared core service. Identity is established by the auth interceptor and read
 // from the context.
@@ -44,7 +45,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 	}
 	// Scope secrets.write to the shared secret's project (mirrors the HTTP
 	// /secrets/{id}/share route), not the flat global permission set.
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), "secrets.write"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 
@@ -80,7 +81,7 @@ func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *pb.ListSec
 	if req.GetSecretId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsRead); err != nil {
 		return nil, err
 	}
 
@@ -102,7 +103,7 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserS
 	// restriction, so a project-scoped (or non-read) token could list shares over gRPC
 	// while HTTP correctly denied it — the #53/#54-class transport divergence, also the
 	// IP-allowlist divergence ADR-066 closed.
-	if err := authorizeGlobal(ctx, s.core, user, "secrets.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, user, permSecretsRead); err != nil {
 		return nil, err
 	}
 
@@ -123,7 +124,7 @@ func (s *ShareGRPCService) ListSharedSecrets(ctx context.Context, req *pb.ListSh
 	// Authorize through the scope/actor-aware primitive (global secrets.read), matching
 	// the HTTP GET /shared-secrets gate — a flat check let a PAT exceed its scope
 	// restriction over gRPC (transport divergence; see ListUserShares).
-	if err := authorizeGlobal(ctx, s.core, user, "secrets.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, user, permSecretsRead); err != nil {
 		return nil, err
 	}
 
@@ -158,7 +159,7 @@ func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.Up
 	if req.GetPermission() != "read" && req.GetPermission() != "write" {
 		return nil, status.Error(codes.InvalidArgument, "permission must be 'read' or 'write'")
 	}
-	if err := s.authorizeShareScoped(ctx, user, uint(req.GetShareId()), "secrets.write"); err != nil {
+	if err := s.authorizeShareScoped(ctx, user, uint(req.GetShareId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 
@@ -182,7 +183,7 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 	if req.GetShareId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "share_id is required")
 	}
-	if err := s.authorizeShareScoped(ctx, user, uint(req.GetShareId()), "secrets.write"); err != nil {
+	if err := s.authorizeShareScoped(ctx, user, uint(req.GetShareId()), permSecretsWrite); err != nil {
 		return nil, err
 	}
 	if err := s.core.RevokeShare(ctx, uint(req.GetShareId()), user.UserID); err != nil {

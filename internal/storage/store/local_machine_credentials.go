@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+
 // --- Machine-token credentials ---
 
 func (ls *LocalStorage) CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {
@@ -43,7 +44,7 @@ func (ls *LocalStorage) ListMachineIdentityCredentials(ctx context.Context, mach
 	var rows []*models.MachineIdentityCredential
 	err := ls.db.WithContext(ctx).
 		Where("machine_identity_id = ?", machineID).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -57,7 +58,7 @@ func (ls *LocalStorage) ListActiveMachineIdentityCredentials(ctx context.Context
 	var rows []*models.MachineIdentityCredential
 	err := ls.db.WithContext(ctx).
 		Where("revoked = ?", false).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -220,7 +221,7 @@ func (ls *LocalStorage) ListOIDCBindings(ctx context.Context, machineID uint) ([
 	var rows []*models.MachineIdentityOIDCBinding
 	err := ls.db.WithContext(ctx).
 		Where("machine_identity_id = ?", machineID).
-		Order("created_at DESC").
+		Order(sqlOrderCreatedAtDesc).
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+
 func (ls *LocalStorage) CreateSecretDependency(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
 	if err := ls.db.WithContext(ctx).Create(d).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -32,7 +33,7 @@ func (ls *LocalStorage) GetSecretDependency(ctx context.Context, id uint) (*mode
 
 func (ls *LocalStorage) ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
 	var rows []*models.SecretDependency
-	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Order("id ASC").Find(&rows).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where(sqlWhereProjectID, projectID).Order(sqlOrderIDAsc).Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil
@@ -50,7 +51,7 @@ func (ls *LocalStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Co
 		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
 	var rows []*models.SecretDependency
-	if err := q.Where("project_id = ?", projectID).Order("id ASC").Find(&rows).Error; err != nil {
+	if err := q.Where(sqlWhereProjectID, projectID).Order(sqlOrderIDAsc).Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil
@@ -83,7 +84,7 @@ func (ls *LocalStorage) CreateSecretDependencyExclusive(ctx context.Context, d *
 			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
 		var edges []*models.SecretDependency
-		if err := q.Where("project_id = ?", d.ProjectID).Order("id ASC").Find(&edges).Error; err != nil {
+		if err := q.Where(sqlWhereProjectID, d.ProjectID).Order(sqlOrderIDAsc).Find(&edges).Error; err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}
 		for _, e := range edges {

@@ -15,6 +15,10 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+const (
+	aesCipherSuite = "AES-256-GCM"
+)
+
 // EncryptionService handles all encryption/decryption operations
 type EncryptionService struct {
 	kek []byte // Key Encryption Key
@@ -104,7 +108,7 @@ func (es *EncryptionService) Encrypt(plaintext []byte, keyVersion string) (*Encr
 	ciphertext := es.gcm.Seal(nil, nonce, plaintext, nil)
 
 	metadata := EncryptionMetadata{
-		Algorithm:   "AES-256-GCM",
+		Algorithm:   aesCipherSuite,
 		KeyVersion:  keyVersion,
 		EncryptedAt: time.Now().UTC(),
 		Nonce:       base64.StdEncoding.EncodeToString(nonce),
@@ -118,7 +122,7 @@ func (es *EncryptionService) Encrypt(plaintext []byte, keyVersion string) (*Encr
 
 // Decrypt decrypts data using AES-GCM with the KEK
 func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, error) {
-	if encryptedData.Metadata.Algorithm != "AES-256-GCM" { //nolint:goconst
+	if encryptedData.Metadata.Algorithm != aesCipherSuite { //nolint:goconst
 		return nil, fmt.Errorf("unsupported algorithm: %s", encryptedData.Metadata.Algorithm)
 	}
 
@@ -191,7 +195,7 @@ func (es *EncryptionService) EncryptWithAAD(plaintext []byte, keyVersion string,
 	ciphertext := es.gcm.Seal(nil, nonce, plaintext, aad)
 
 	metadata := EncryptionMetadata{
-		Algorithm:   "AES-256-GCM",
+		Algorithm:   aesCipherSuite,
 		KeyVersion:  keyVersion,
 		EncryptedAt: time.Now().UTC(),
 		Nonce:       base64.StdEncoding.EncodeToString(nonce),
@@ -207,7 +211,7 @@ func (es *EncryptionService) EncryptWithAAD(plaintext []byte, keyVersion string,
 // DecryptWithAAD decrypts data encrypted with EncryptWithAAD.
 // Returns an error if the AAD does not match — this catches ciphertext transplants.
 func (es *EncryptionService) DecryptWithAAD(encryptedData *EncryptedData, aad []byte) ([]byte, error) {
-	if encryptedData.Metadata.Algorithm != "AES-256-GCM" {
+	if encryptedData.Metadata.Algorithm != aesCipherSuite {
 		return nil, fmt.Errorf("unsupported algorithm: %s", encryptedData.Metadata.Algorithm)
 	}
 

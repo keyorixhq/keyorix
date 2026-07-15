@@ -7,6 +7,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	helpInjectAtRuntime = "Inject at runtime: keyorix run --env production -- your-app"
+	helpStoreAndInject = "Store in Keyorix and inject at runtime"
+)
+
 var explainCmd = &cobra.Command{
 	Use:   "explain <key-name>",
 	Short: "Explain the risk of a discovered secret and how to fix it",
@@ -37,7 +42,7 @@ var explanations = []secretExplanation{
 			"Remove from source code immediately",
 			"Rotate the key in AWS IAM console",
 			"Store in Keyorix: keyorix secret create aws-access-key --value <new-key>",
-			"Inject at runtime: keyorix run --env production -- your-app",
+			helpInjectAtRuntime,
 			"Add to .gitignore if in a config file",
 		},
 		Example: "AWS_ACCESS_KEY_ID=os.getenv(\"AWS_ACCESS_KEY_ID\")",
@@ -49,7 +54,7 @@ var explanations = []secretExplanation{
 		Impact:      "Full AWS account access combined with Access Key. Immediate rotation required.",
 		Fix: []string{
 			"Rotate the key pair in AWS IAM console immediately",
-			"Store in Keyorix and inject at runtime",
+			helpStoreAndInject,
 			"Never commit AWS credentials to any repository",
 		},
 		Example: "AWS_SECRET_ACCESS_KEY=os.getenv(\"AWS_SECRET_ACCESS_KEY\")",
@@ -62,7 +67,7 @@ var explanations = []secretExplanation{
 		Fix: []string{
 			"Move to environment variable: DB_PASSWORD=os.getenv(\"DB_PASSWORD\")",
 			"Store in Keyorix: keyorix secret create db-password --value <password>",
-			"Inject at runtime: keyorix run --env production -- your-app",
+			helpInjectAtRuntime,
 			"Rotate the database password after removing from code",
 			"Check if same password is used in other environments",
 		},
@@ -75,7 +80,7 @@ var explanations = []secretExplanation{
 		Impact:      "Unauthorized API access. Visible in git history. May allow data access, quota abuse, or service disruption.",
 		Fix: []string{
 			"Move to environment variable",
-			"Store in Keyorix and inject at runtime",
+			helpStoreAndInject,
 			"Rotate the API key in the service dashboard",
 			"Check git history: git log --all -S '<key-value>'",
 		},
@@ -117,7 +122,7 @@ var explanations = []secretExplanation{
 			"Rotate the key in Stripe dashboard immediately",
 			"Use test keys (sk_test_) in development, never production keys",
 			"Store production key in Keyorix",
-			"Inject at runtime: keyorix run --env production -- your-app",
+			helpInjectAtRuntime,
 		},
 		Example: "STRIPE_SECRET_KEY = os.environ.get(\"STRIPE_SECRET_KEY\")",
 	},
@@ -128,7 +133,7 @@ var explanations = []secretExplanation{
 		Impact:      "Credential exposure. Risk depends on what system this password protects.",
 		Fix: []string{
 			"Move to environment variable",
-			"Store in Keyorix and inject at runtime",
+			helpStoreAndInject,
 			"Rotate the password on the target system",
 		},
 		Example: "PASSWORD = os.environ.get(\"PASSWORD\")",
