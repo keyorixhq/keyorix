@@ -120,7 +120,7 @@ func runBindingAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runBindingList(cmd *cobra.Command, args []string) error {
+func runBindingList(cmd *cobra.Command, args []string) error { // NOSONAR -- go:S3776 cognitive complexity 16, one over threshold; extracting a helper would split tightly-coupled remote/local paths
 	ctx := context.Background()
 	_, projectID, err := resolveProjectContext(bindingProjectName)
 	if err != nil {

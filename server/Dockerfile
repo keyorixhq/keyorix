@@ -10,7 +10,11 @@ COPY . .
 # docker-publish workflow passes the git tag + sha. Mirrors the Makefile LDFLAGS.
 ARG VERSION=dev
 ARG GIT_COMMIT=none
-RUN go build -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" \
+RUN set -- \
+    "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
+    "-X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION}" \
+    "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" && \
+    go build -ldflags "$*" \
     -o bin/keyorix-server ./server
 
 # Runtime stage

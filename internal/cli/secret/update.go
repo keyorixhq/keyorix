@@ -238,7 +238,7 @@ func buildUpdateRequest() (*core.UpdateSecretRequest, error) { // NOSONAR -- cog
 func interactiveUpdate(current *models.SecretNode) (*core.UpdateSecretRequest, error) { // NOSONAR -- cognitive complexity 32, suppress go:S3776
 	reader := bufio.NewReader(os.Stdin)
 
-	ask := func(prompt string, defaultVal string) string {
+	ask := func(prompt, defaultVal string) string {
 		if defaultVal != "" {
 			fmt.Printf("%s [%s]: ", prompt, defaultVal)
 		} else {
