@@ -45,7 +45,7 @@ CREATE INDEX idx_share_records_deleted_at ON share_records(deleted_at);
 -- created.
 UPDATE secret_nodes SET owner_id = (
     SELECT id FROM users WHERE users.username = secret_nodes.created_by
-) WHERE owner_id IS NULL AND created_by IS NOT NULL AND created_by != '';
+) WHERE owner_id IS NULL AND created_by IS NOT NULL AND created_by != ''; -- NOSONAR -- plsql:NullComparison false positive: IS NULL/IS NOT NULL is correct SQLite syntax
 
 -- Add a trigger to automatically set is_shared flag when shares are created
 CREATE TRIGGER update_secret_shared_status_insert

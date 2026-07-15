@@ -47,7 +47,7 @@ func TestWebhook_HTTPSDowngradeRedirect_Refused(t *testing.T) {
 	// We use a TLS test server for the primary so the scheme is https.
 	primary := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Redirect to http (downgrade).
-		http.Redirect(w, r, "http://"+r.Host+"/final", http.StatusFound)
+		http.Redirect(w, r, "http://"+r.Host+"/final", http.StatusFound) // NOSONAR -- test handler intentionally issues http redirect to verify refuseRedirect refuses https→http downgrades; gosecurity:S5146 false positive
 	}))
 	t.Cleanup(primary.Close)
 

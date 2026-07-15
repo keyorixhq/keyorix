@@ -61,12 +61,12 @@ jobs:
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 # NOSONAR -- go:S8545: version is pinned
           govulncheck ./...
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR -- go:S8545: version is pinned via GOSEC_VERSION env
           # -exclude-generated skips files with the "DO NOT EDIT" header
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
@@ -126,7 +126,7 @@ jobs:
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR -- go:S8545: version is pinned via GOSEC_VERSION env
           gosec -severity medium -exclude-generated ./...
 
   # scripts/fuzzing/targets.conf is a hand-maintained list consumed by the
@@ -250,7 +250,7 @@ jobs:
           go-version: '1.26.5'
 
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses@${GO_LICENSES_VERSION}
+        run: go install github.com/google/go-licenses@${GO_LICENSES_VERSION} # NOSONAR -- go:S8545: version is pinned via GO_LICENSES_VERSION env
 
       # `--ignore` excludes each module's OWN code from the license check --
       # this repo is itself AGPL-3.0, which is expected and not a dependency
@@ -293,7 +293,7 @@ jobs:
       # (or a MITM on the release CDN) served, with no integrity check.
       - name: gitleaks (full history)
         run: |
-          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_LINUX_X64_SHA256}  gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum -c -
           tar -xz -f "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
           # --log-opts="HEAD" restricts gitleaks to commits reachable from the
@@ -328,7 +328,7 @@ jobs:
           # Pinned version + checksum-verified before extraction (#115) — was
           # /releases/latest/download/ (floating) piped straight into tar with no
           # integrity check at all.
-          curl -fsSLO "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
           echo "${KUBECONFORM_LINUX_AMD64_SHA256}  kubeconform-linux-amd64.tar.gz" | sha256sum -c -
           tar -xz -f kubeconform-linux-amd64.tar.gz kubeconform
           # Render both the bundled-DB and external-DB paths and validate against
@@ -453,7 +453,7 @@ jobs:
         run: |
           # Pinned version + checksum-verified before extraction (#115) -- see the
           # CHECKOV_VERSION/CHECKOV_LINUX_X64_SHA256 comment in the env block above.
-          curl -fsSLO "https://github.com/bridgecrewio/checkov/releases/download/${CHECKOV_VERSION}/checkov_linux_X86_64.zip"
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/bridgecrewio/checkov/releases/download/${CHECKOV_VERSION}/checkov_linux_X86_64.zip"
           echo "${CHECKOV_LINUX_X64_SHA256}  checkov_linux_X86_64.zip" | sha256sum -c -
           unzip -q checkov_linux_X86_64.zip -d checkov_dist
           echo "$PWD/checkov_dist/dist" >> "$GITHUB_PATH"

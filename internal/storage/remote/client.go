@@ -73,7 +73,7 @@ func NewHTTPClient(config *Config) (*HTTPClient, error) {
 		// Production deployments must use tls_verify: true.
 		log.Println("WARNING: TLS verification disabled. Do not use in production.")
 		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- user-controlled via tls_verify: false; dev/air-gapped only
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- NOSONAR go:S4830 go:S5527: InsecureSkipVerify is user-controlled via tls_verify config
 		}
 	}
 

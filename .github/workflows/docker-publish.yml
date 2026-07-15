@@ -76,7 +76,7 @@ jobs:
       # ever attests to an image that's already cleared this gate.
       - name: Scan image for vulnerabilities (trivy)
         run: |
-          curl -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
           ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-server@${{ steps.build.outputs.digest }}"
@@ -142,7 +142,7 @@ jobs:
 
       - name: Scan image for vulnerabilities (trivy)
         run: |
-          curl -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
           ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-k8s-sync@${{ steps.build.outputs.digest }}"
@@ -202,7 +202,7 @@ jobs:
 
       - name: Scan image for vulnerabilities (trivy)
         run: |
-          curl -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
           ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-operator@${{ steps.build.outputs.digest }}"
@@ -264,7 +264,7 @@ jobs:
 
       - name: Scan image for vulnerabilities (trivy)
         run: |
-          curl -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
           ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-mcp@${{ steps.build.outputs.digest }}"

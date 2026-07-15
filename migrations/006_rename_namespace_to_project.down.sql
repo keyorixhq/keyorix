@@ -20,4 +20,4 @@ WHERE resource = 'projects';
 
 UPDATE roles
 SET description = REPLACE(description, 'projects', 'namespaces')
-WHERE description LIKE '%projects%';
+WHERE description LIKE '%projects%'; -- NOSONAR -- plsql:S1739 false positive: one-time migration LIKE scan on a small table is acceptable

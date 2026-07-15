@@ -15,7 +15,7 @@ on:
     branches: [ "main" ]
 
 # Declare default permissions as read only.
-permissions: read-all
+permissions: read-all # NOSONAR -- githubactions:S8234: Scorecard-recommended boilerplate requires read-all at workflow level
 
 jobs:
   analysis:
