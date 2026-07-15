@@ -10,8 +10,11 @@ COPY . .
 # passes the git tag + sha.
 ARG VERSION=dev
 ARG GIT_COMMIT=none
-RUN CGO_ENABLED=0 go build \
-    -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" \
+RUN set -- \
+    "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
+    "-X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION}" \
+    "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" && \
+    CGO_ENABLED=0 go build -ldflags "$*" \
     -trimpath -o /out/keyorix-k8s-sync ./cmd/keyorix-k8s-sync
 
 # Runtime stage — distroless static, non-root (no shell, no package manager). The agent

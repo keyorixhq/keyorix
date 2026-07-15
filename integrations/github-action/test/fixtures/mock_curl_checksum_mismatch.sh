@@ -19,6 +19,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   case "${args[$i]}" in
     -o) out="${args[$((i + 1))]}" ;;
     http*) url="${args[$i]}" ;;
+    *) ;;
   esac
 done
 

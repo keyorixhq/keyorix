@@ -27,8 +27,7 @@ func runListRoles(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// TODO: Implement ListRoles in core service // NOSONAR -- tracked tech debt, suppress go:S1135
-	// For now, use storage directly
+	// ListRoles is called via storage directly; a core-service wrapper is a tracked backlog item
 	roles, err := st.ListRoles(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list roles: %w", err)

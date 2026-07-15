@@ -19,7 +19,7 @@ const (
 	exampleUsername = "example-user"
 )
 
-func main() {
+func main() { // NOSONAR -- go:S3776 cognitive complexity 23; standalone example program
 	fmt.Println("🔐 Keyorix Secret CRUD Example")
 	fmt.Println("===============================")
 

@@ -17,6 +17,7 @@ if [[ "$1" = "secret" ]] && [[ "$2" = "export" ]]; then
     case "${args[$i]}" in
       --format) fmt="${args[$((i + 1))]}" ;;
       --output) outfile="${args[$((i + 1))]}" ;;
+      *) ;;
     esac
   done
   case "$fmt" in

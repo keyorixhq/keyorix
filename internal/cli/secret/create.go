@@ -186,7 +186,7 @@ func buildCreateRequest() (*core.CreateSecretRequest, error) { // NOSONAR -- cog
 func interactiveCreate() (*core.CreateSecretRequest, error) { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	reader := bufio.NewReader(os.Stdin)
 
-	ask := func(prompt string, defaultVal string) string {
+	ask := func(prompt, defaultVal string) string {
 		if defaultVal != "" {
 			fmt.Printf("%s [%s]: ", prompt, defaultVal)
 		} else {

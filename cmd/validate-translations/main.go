@@ -78,7 +78,7 @@ func printUsage() {
 	fmt.Println("  validate-translations /path/to/translations")
 }
 
-func validateTranslations(localesDir string) (*ValidationSummary, error) {
+func validateTranslations(localesDir string) (*ValidationSummary, error) { // NOSONAR -- go:S3776 cognitive complexity 17; developer tool, not production service
 	// #nosec G703 -- localesDir is a CLI argument for internal tooling only,
 	// not exposed to untrusted user input in production.
 	cleanDir := filepath.Clean(localesDir)
@@ -218,7 +218,7 @@ func findInconsistentKeys(translations map[string]TranslationFile, allMessageIDs
 	return inconsistentKeys
 }
 
-func printValidationSummary(summary *ValidationSummary) {
+func printValidationSummary(summary *ValidationSummary) { // NOSONAR -- go:S3776 cognitive complexity 39; developer tool, not production service
 	fmt.Printf("📊 Validation Summary\n")
 	fmt.Printf("Total Languages: %d\n", summary.TotalLanguages)
 	fmt.Printf("Valid Languages: %d\n", summary.ValidLanguages)

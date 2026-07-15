@@ -16,6 +16,7 @@ if [[ "$1" = "secret" ]] && [[ "$2" = "export" ]]; then
   for ((i = 0; i < ${#args[@]}; i++)); do
     case "${args[$i]}" in
       --format) fmt="${args[$((i + 1))]}" ;;
+      *) ;;
     esac
   done
   case "$fmt" in
