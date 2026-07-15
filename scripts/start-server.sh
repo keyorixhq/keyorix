@@ -14,9 +14,9 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+log_info() { local msg="$1"; echo -e "${BLUE}[INFO]${NC} ${msg}"; }
+log_success() { local msg="$1"; echo -e "${GREEN}[SUCCESS]${NC} ${msg}"; }
+log_warning() { local msg="$1"; echo -e "${YELLOW}[WARNING]${NC} ${msg}"; }
 
 # Go to project root
 cd ..

@@ -31,23 +31,27 @@ echo ""
 
 # Function to print section headers
 print_section() {
-    echo -e "\n${BLUE}📋 $1${NC}"
+    local msg="$1"
+    echo -e "\n${BLUE}📋 ${msg}${NC}"
     echo "----------------------------------------"
 }
 
 # Function to print success messages
 print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    local msg="$1"
+    echo -e "${GREEN}✅ ${msg}${NC}"
 }
 
 # Function to print warning messages
 print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    local msg="$1"
+    echo -e "${YELLOW}⚠️  ${msg}${NC}"
 }
 
 # Function to print error messages
 print_error() {
-    echo -e "${RED}❌ $1${NC}"
+    local msg="$1"
+    echo -e "${RED}❌ ${msg}${NC}"
 }
 
 # Function to run tests with coverage
