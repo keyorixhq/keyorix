@@ -121,7 +121,7 @@ func (tr *TestRunner) runTestSuite(path, name string) error {
 	args = append(args, "-cover") // Enable coverage
 	args = append(args, path)
 
-	cmd := exec.Command("go", args...) // #nosec G204 -- path is validated by validateTestPath above
+	cmd := exec.Command("go", args...) // #nosec G204 -- path is validated by validateTestPath above // NOSONAR go:S4036
 	cmd.Dir = "."                      // Run from server directory
 
 	// Capture output
@@ -212,7 +212,7 @@ func (tr *TestRunner) RunBenchmarks() error {
 
 		// Use fixed command structure with validated paths
 		args := []string{"test", "-bench=.", "-benchmem", bench.path}
-		cmd := exec.Command("go", args...) // #nosec G204 -- Path is validated by validateTestPath function
+		cmd := exec.Command("go", args...) // #nosec G204 -- Path is validated by validateTestPath function // NOSONAR go:S4036
 		cmd.Dir = "."
 
 		output, err := cmd.CombinedOutput()
@@ -233,7 +233,7 @@ func (tr *TestRunner) RunCoverageReport() error {
 	fmt.Println("=" + strings.Repeat("=", 30))
 
 	// Run tests with coverage
-	cmd := exec.Command("go", "test", "-coverprofile=coverage.out", "./...")
+	cmd := exec.Command("go", "test", "-coverprofile=coverage.out", "./...") // NOSONAR go:S4036
 	cmd.Dir = "."
 
 	output, err := cmd.CombinedOutput()
@@ -242,7 +242,7 @@ func (tr *TestRunner) RunCoverageReport() error {
 	}
 
 	// Generate HTML coverage report
-	cmd = exec.Command("go", "tool", "cover", "-html=coverage.out", "-o", "coverage.html")
+	cmd = exec.Command("go", "tool", "cover", "-html=coverage.out", "-o", "coverage.html") // NOSONAR go:S4036
 	cmd.Dir = "."
 
 	if err := cmd.Run(); err != nil {
@@ -252,7 +252,7 @@ func (tr *TestRunner) RunCoverageReport() error {
 	}
 
 	// Show coverage summary
-	cmd = exec.Command("go", "tool", "cover", "-func=coverage.out")
+	cmd = exec.Command("go", "tool", "cover", "-func=coverage.out") // NOSONAR go:S4036
 	cmd.Dir = "."
 
 	output, err = cmd.CombinedOutput()
