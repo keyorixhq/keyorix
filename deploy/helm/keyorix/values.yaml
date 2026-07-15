@@ -49,9 +49,11 @@ server:
     requests:
       cpu: 100m
       memory: 128Mi
+      ephemeral-storage: 64Mi
     limits:
       cpu: 1
       memory: 512Mi
+      ephemeral-storage: 256Mi
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -121,9 +123,11 @@ postgresql:
     requests:
       cpu: 100m
       memory: 256Mi
+      ephemeral-storage: 64Mi
     limits:
       cpu: 1
       memory: 1Gi
+      ephemeral-storage: 512Mi
 
 # Used when postgresql.enabled is false.
 externalDatabase:

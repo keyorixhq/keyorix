@@ -112,7 +112,7 @@ func runScan(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive 
 
 	var stagedFiles map[string]bool
 	if scanStaged {
-		out, err := exec.Command("git", "-C", absPath, "diff", "--cached", "--name-only").Output() // #nosec G204
+		out, err := exec.Command("git", "-C", absPath, "diff", "--cached", "--name-only").Output() // #nosec G204 // NOSONAR go:S4036
 		if err == nil && len(out) > 0 {
 			stagedFiles = map[string]bool{}
 			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -137,7 +137,7 @@ func runScan(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive 
 		if strings.HasPrefix(scanCommit, "-") {
 			return fmt.Errorf("invalid --commit value %q: must not start with '-'", scanCommit)
 		}
-		out, err := exec.Command("git", "-C", absPath, "diff-tree", "--no-commit-id", "-r", "--name-only", scanCommit).Output() // #nosec G204
+		out, err := exec.Command("git", "-C", absPath, "diff-tree", "--no-commit-id", "-r", "--name-only", scanCommit).Output() // #nosec G204 // NOSONAR go:S4036
 		if err == nil && len(out) > 0 {
 			stagedFiles = map[string]bool{}
 			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {

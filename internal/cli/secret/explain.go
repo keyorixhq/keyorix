@@ -65,7 +65,7 @@ var explanations = []secretExplanation{
 		RiskSummary: "Database password hardcoded in source code or config file",
 		Impact:      "Direct database access. An attacker can read, modify, or delete all data. Often reused across environments.",
 		Fix: []string{
-			"Move to environment variable: DB_PASSWORD=os.getenv(\"DB_PASSWORD\")",
+			"Move to environment variable: DB_PASSWORD=os.getenv(\"DB_PASSWORD\")", // NOSONAR go:S2068 -- user-facing fix-suggestion string, not a credential
 			"Store in Keyorix: keyorix secret create db-password --value <password>",
 			helpInjectAtRuntime,
 			"Rotate the database password after removing from code",

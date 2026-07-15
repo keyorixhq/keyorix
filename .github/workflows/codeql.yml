@@ -13,8 +13,8 @@ on:
 # Workflow-level default: read-only, except the one permission CodeQL's own
 # upload step needs (security-events: write, to publish SARIF results to the
 # repo's Security tab). Mirrors ci.yml's least-privilege convention (#115).
-permissions: # NOSONAR -- githubactions:S8264: workflow-level permissions are intentional; job-level permissions refine further
-  contents: read
+permissions:
+  contents: read # NOSONAR githubactions:S8264 -- workflow-level read is intentional; job-level permissions further restrict (security-events:write only for the upload step)
 
 env:
   GO_VERSION: '1.26.5'

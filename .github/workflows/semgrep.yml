@@ -20,7 +20,7 @@ jobs:
 
       - name: Run Semgrep (community rules, no account required)
         run: |
-          pip install semgrep --quiet --only-binary :all: # NOSONAR -- githubactions:S8544: version unpinned intentionally to track latest community rules
+          pip install semgrep --quiet --only-binary :all: # NOSONAR githubactions:S8544 -- intentionally unpinned to track latest community rules
           semgrep scan --config=auto --sarif --output=semgrep.sarif . || true
 
       - name: Upload results

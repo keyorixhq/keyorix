@@ -61,12 +61,12 @@ jobs:
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 # NOSONAR -- go:S8545: version is pinned
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 # NOSONAR githubactions:S8545 -- version is pinned to v1.1.4
           govulncheck ./...
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR -- go:S8545: version is pinned via GOSEC_VERSION env
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           # -exclude-generated skips files with the "DO NOT EDIT" header
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
@@ -126,7 +126,7 @@ jobs:
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR -- go:S8545: version is pinned via GOSEC_VERSION env
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           gosec -severity medium -exclude-generated ./...
 
   # scripts/fuzzing/targets.conf is a hand-maintained list consumed by the
