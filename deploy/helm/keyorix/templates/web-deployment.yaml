@@ -69,10 +69,17 @@ spec:
               port: http
             initialDelaySeconds: 3
             periodSeconds: 10
-          {{- with .Values.web.resources }}
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- if .Values.web.resources }}
+            {{- toYaml .Values.web.resources | nindent 12 }}
+            {{- else }}
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            {{- end }}
       volumes:
         - name: nginx-config
           configMap:

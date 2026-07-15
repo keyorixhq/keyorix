@@ -26,8 +26,8 @@ export KEYORIX_ADMIN_USERNAME="admin"
 export KEYORIX_ADMIN_PASSWORD="Admin123!"
 export KEYORIX_ADMIN_EMAIL="admin@keyorix.local"
 
-c()  { printf '\n\033[1;34m▶ %s\033[0m\n' "$1"; }
-ok() { printf '\033[0;32m✓ %s\033[0m\n' "$1"; }
+c()  { local msg="$1"; printf '\n\033[1;34m▶ %s\033[0m\n' "$msg"; }
+ok() { local msg="$1"; printf '\033[0;32m✓ %s\033[0m\n' "$msg"; }
 
 cleanup() {
   c "Cleaning up"
@@ -65,7 +65,7 @@ docker run -d --name keyorix-demo-vault -p "${VAULT_PORT}:8200" \
 set +e
 for _ in $(seq 1 30); do curl -sf "${VAULT_ADDR}/v1/sys/health" >/dev/null 2>&1 && break; sleep 1; done
 set -e
-vault_put() { curl -s -H "X-Vault-Token: ${VAULT_TOKEN}" -X POST "${VAULT_ADDR}/v1/secret/data/$1" -d "$2" >/dev/null; }
+vault_put() { local path="$1"; local data="$2"; curl -s -H "X-Vault-Token: ${VAULT_TOKEN}" -X POST "${VAULT_ADDR}/v1/secret/data/$path" -d "$data" >/dev/null; }
 vault_put demo/prod/database '{"data":{"username":"app_user","password":"REPLACE_WITH_YOUR_DB_PASSWORD"}}'
 vault_put demo/prod/stripe   '{"data":{"value":"REPLACE_WITH_YOUR_STRIPE_KEY"}}'
 vault_put demo/prod/redis    '{"data":{"url":"redis://cache.prod.internal:6379"}}'

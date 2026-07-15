@@ -11,6 +11,7 @@ arch="$(uname -m)"
 case "$arch" in
   x86_64) arch="amd64" ;;
   aarch64 | arm64) arch="arm64" ;;
+  *) ;;
 esac
 binary_name="keyorix_${os}_${arch}"
 
@@ -28,5 +29,6 @@ for arg in "$@"; do
       echo "mock_curl_checksum_match: unexpected download URL ${arg} (existing binary should have been reused, not downloaded)" >&2
       exit 1
       ;;
+    *) ;;
   esac
 done

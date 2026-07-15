@@ -90,7 +90,7 @@ for dir in "$BASE_DIR"/*/; do
     echo -e "  repo ${BOLD}$repo${NC} — ${GREEN}✓ PUSHED   $ahead commit(s)${NC}"
     ((pushed++))
   else
-    echo -e "  repo ${BOLD}$repo${NC} — ${RED}✗ FAILED   push error${NC}"
+    echo -e "  repo ${BOLD}$repo${NC} — ${RED}✗ FAILED   push error${NC}" >&2
     ((failed++))
   fi
 

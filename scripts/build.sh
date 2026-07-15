@@ -14,19 +14,23 @@ NC='\033[0m' # No Color
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    local msg="$1"
+    echo -e "${BLUE}[INFO]${NC} $msg"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    local msg="$1"
+    echo -e "${GREEN}[SUCCESS]${NC} $msg"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    local msg="$1"
+    echo -e "${YELLOW}[WARNING]${NC} $msg"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    local msg="$1"
+    echo -e "${RED}[ERROR]${NC} $msg" >&2
 }
 
 # Build configuration

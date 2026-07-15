@@ -21,8 +21,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 entrypoint="$script_dir/entrypoint.sh"
 
 fail=0
-note() { echo "ok   - $1"; }
-bad() { echo "FAIL - $1"; fail=1; }
+note() { local msg="$1"; echo "ok   - $msg"; }
+bad() { local msg="$1"; echo "FAIL - $msg"; fail=1; }
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/entrypoint-test.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT

@@ -31,7 +31,7 @@ cd "$KEYORIX_REPO"
 while true; do
   while IFS='|' read -r pkg func duration; do
     [[ -z "$pkg" ]] && continue
-    case "$pkg" in \#*) continue ;; esac
+    case "$pkg" in \#*) continue ;; *) ;; esac
 
     echo "=== $(date -u +%FT%TZ) pulling latest main ==="
     git fetch origin main --quiet

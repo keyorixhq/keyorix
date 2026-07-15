@@ -14,9 +14,9 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-info()    { printf "${BLUE}→${NC} %s\n" "$1"; }
-success() { printf "${GREEN}✓${NC} %s\n" "$1"; }
-error()   { printf "${RED}✗${NC} %s\n" "$1" >&2; exit 1; }
+info()    { local msg="$1"; printf "${BLUE}→${NC} %s\n" "$msg"; }
+success() { local msg="$1"; printf "${GREEN}✓${NC} %s\n" "$msg"; }
+error()   { local msg="$1"; printf "${RED}✗${NC} %s\n" "$msg" >&2; exit 1; }
 
 # Detect OS
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"

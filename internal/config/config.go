@@ -1542,7 +1542,7 @@ func (c PurgeConfig) GetInterval() time.Duration {
 }
 
 // resolveSecret returns the value of envVar if set and non-empty, otherwise fallback.
-func resolveSecret(envVar string, fallback string) string {
+func resolveSecret(envVar, fallback string) string {
 	if v := os.Getenv(envVar); v != "" {
 		return v
 	}
