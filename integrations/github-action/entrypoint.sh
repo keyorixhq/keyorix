@@ -47,10 +47,11 @@ install_dir="/usr/local/bin"
 # sha256_of prints the SHA-256 of the given file using whichever of
 # sha256sum/shasum is available, or fails if neither is.
 sha256_of() {
+  local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
+    sha256sum "${file}" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
+    shasum -a 256 "${file}" | awk '{print $1}'
   else
     return 1
   fi
