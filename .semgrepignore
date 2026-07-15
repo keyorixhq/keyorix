@@ -7,6 +7,13 @@
 # co-located gosec `// #nosec` directives that these same lines require, because
 # both tools require their own directive to appear first in the comment.
 
+# All Go test files — hardcoded test credentials (JWT keys, AWS key IDs, bcrypt
+# hashes, OAuth tokens), cookies without Secure/HttpOnly, raw ResponseWriter
+# writes, and exec/SQL calls in test helpers are intentional test fixtures, not
+# production vulnerabilities. Real security coverage for these patterns is
+# provided by CodeQL and gosec on the production code paths.
+*_test.go
+
 # InsecureSkipVerify=true — an explicit operator opt-in, guarded by a config
 # flag (insecure_skip_verify: true) and a loud WARNING log at startup.
 # Suppressed by // #nosec G402 for gosec; covered by CodeQL + SonarCloud.
