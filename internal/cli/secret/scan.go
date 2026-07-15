@@ -110,6 +110,10 @@ func runScan(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive 
 		return fmt.Errorf("invalid path: %w", err)
 	}
 
+	if scanSeverity != "" && scanSeverity != "low" && scanSeverity != "medium" && scanSeverity != "high" {
+		return fmt.Errorf("invalid --severity value %q (expected one of: low, medium, high)", scanSeverity)
+	}
+
 	var stagedFiles map[string]bool
 	if scanStaged {
 		out, err := exec.Command("git", "-C", absPath, "diff", "--cached", "--name-only").Output() // #nosec G204 -- NOSONAR go:S4036
@@ -156,16 +160,15 @@ func runScan(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive 
 		if err != nil {
 			return nil
 		}
-		// Never follow symlinks (#153). filepath.Walk reports a symlink's own Lstat
-		// info (info.Mode()&os.ModeSymlink is set) and doesn't itself descend into a
-		// symlinked directory — but a symlinked *file* still reaches this callback,
-		// and the per-type scanners below open the path with os.ReadFile, which DOES
-		// follow symlinks. A malicious repo could commit one pointing outside the
-		// scanned tree (e.g. at the scanning user's own ~/.aws/credentials or
-		// /etc/shadow); reading through it would leak the SCANNING USER's own files
-		// into the report. Skip every symlink encountered rather than trying to
-		// validate where it resolves to.
-		if info.Mode()&os.ModeSymlink != 0 {
+		// Never follow symlinks — a malicious repo could commit a symlink pointing
+		// outside the scanned tree (e.g. ~/.aws/credentials); reading through it
+		// would leak the scanning user's own files into the report. Use os.Lstat
+		// explicitly rather than relying on the info parameter from filepath.Walk.
+		lstatInfo, lerr := os.Lstat(path)
+		if lerr != nil {
+			return nil
+		}
+		if lstatInfo.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
 		if info.IsDir() {
@@ -247,7 +250,10 @@ func runScan(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive 
 	}
 
 	if scanReport != "" {
-		data, _ := json.MarshalIndent(report, "", "  ")
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal report: %w", err)
+		}
 		if err := os.WriteFile(scanReport, data, 0600); err != nil {
 			return fmt.Errorf("failed to save report: %w", err)
 		}

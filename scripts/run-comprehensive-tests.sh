@@ -82,8 +82,6 @@ if [[ -d "web" ]] && [[ -f "web/package.json" ]]; then
             npm ci > /dev/null 2>&1 # NOSONAR -- npm ci installs strictly from package-lock.json; postinstall hooks run for the frontend build pipeline
         else
             log_warning "npm not found - skipping web tests"
-            cd ..
-            continue
         fi
     fi
     
@@ -205,7 +203,7 @@ run_test "Production Config Exists" "[[ -f server/config/production.yaml ]]"
 # 11. Build Tests
 log_info "=== Running Build Tests ==="
 if command -v go &> /dev/null; then
-    run_test "Go Build Test" "go build -o test-binary ./cm./bin/keyorix && rm -f test-binary"
+    run_test "Go Build Test" "go build -o test-binary ./cmd/keyorix && rm -f test-binary"
 fi
 
 if [[ -d "web" ]] && command -v npm &> /dev/null; then

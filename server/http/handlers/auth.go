@@ -153,7 +153,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.setSessionCookies(w, session)
 
 	// Audit log + last-login stamp (both non-blocking)
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ua := r.Header.Get(hdrUserAgent)
 	goSafe(func() { h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) }) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) })                     // #nosec G118
 
@@ -452,11 +452,11 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.coreService.UpdateOwnProfile(r.Context(), userCtx.UserID, body.DisplayName, body.Email, body.CurrentPassword)
 	if err != nil {
-		if strings.Contains(err.Error(), "incorrect") {
+		if errors.Is(err, core.ErrIncorrectCurrentPassword) {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
 			return
 		}
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, core.ErrUserAlreadyExists) {
 			sendError(w, "Conflict", "That email is already in use", http.StatusConflict, nil)
 			return
 		}
@@ -489,7 +489,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	token := extractBearerToken(r)
 	err := h.coreService.ChangePassword(r.Context(), userCtx.UserID, body.CurrentPassword, body.NewPassword, token)
 	if err != nil {
-		if strings.Contains(err.Error(), "incorrect") {
+		if errors.Is(err, core.ErrIncorrectCurrentPassword) {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
 			return
 		}
@@ -640,7 +640,7 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A bad/missing token or a weak password is a client error, not a 500.
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "bootstrap token") || strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+		if errors.Is(err, core.ErrInvalidBootstrapToken) || strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 			status = http.StatusForbidden
 		}
 		sendError(w, "Error", err.Error(), status, nil)

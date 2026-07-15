@@ -216,10 +216,10 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 	// unauthenticated, first-caller-wins admin seizure on any fresh, network-reachable
 	// instance. An unset server token disables API bootstrap entirely (fail closed).
 	if c.bootstrapToken == "" {
-		return nil, fmt.Errorf("system initialisation over the API is disabled: no bootstrap token is configured")
+		return nil, fmt.Errorf("system initialisation over the API is disabled: %w", ErrInvalidBootstrapToken)
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(c.bootstrapToken)) != 1 {
-		return nil, fmt.Errorf("invalid bootstrap token")
+		return nil, ErrInvalidBootstrapToken
 	}
 	// The initial admin is the most privileged account; enforce the password policy
 	// here too (plain CreateUser does not), so it can't be seeded with a weak password.

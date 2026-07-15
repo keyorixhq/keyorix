@@ -50,7 +50,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	}
 
 	if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
-		return nil, "", fmt.Errorf("%s: username already exists", i18n.T("ErrorValidation", nil))
+		return nil, "", fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 	} else if !errors.Is(err, storage.ErrUnsupportedByBackend) && !storage.IsUserNotFound(err) {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -64,7 +64,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 
 	existing, err := c.storage.GetUserByEmail(ctx, req.Email)
 	if err == nil && existing != nil {
-		return nil, "", fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
+		return nil, "", fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 	}
 	if err != nil && !storage.IsUserNotFound(err) {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -115,7 +115,7 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		// produced, instead of a raw constraint-violation message or an ambiguous
 		// duplicate-email row.
 		if errors.Is(err, storage.ErrDuplicateEmail) {
-			return nil, fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
+			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -202,7 +202,7 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	if err != nil {
 		// #117: same race/translation as CreateUser above — see its comment.
 		if errors.Is(err, storage.ErrDuplicateEmail) {
-			return nil, fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
+			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -268,7 +268,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	}
 	if req.Username != "" && req.Username != user.Username {
 		if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
-			return nil, fmt.Errorf("%s: username already exists", i18n.T("ErrorValidation", nil))
+			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
 		} else if err != nil && !storage.IsUserNotFound(err) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}
@@ -277,7 +277,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if req.Email != "" && req.Email != user.Email {
 		existing, err := c.storage.GetUserByEmail(ctx, req.Email)
 		if err == nil && existing != nil && existing.ID != user.ID {
-			return nil, fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
+			return nil, fmt.Errorf("%w: user with email already exists", ErrUserAlreadyExists)
 		}
 		if err != nil && !storage.IsUserNotFound(err) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
