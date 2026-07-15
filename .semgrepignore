@@ -22,6 +22,14 @@ internal/evidencesink/webhook.go
 internal/notifychan/webhook.go
 internal/storage/remote/client.go
 
+# MySQL dynamic-credential DDL (CREATE USER, DROP USER) — MySQL DDL cannot use
+# parameterized query placeholders; values are validated by assertSafeUsername
+# ([a-z0-9_]@%) before interpolation, and passwords come from randString (no
+# quoting-sensitive characters). Suppressed by //nolint:gosec for gosec;
+# covered by CodeQL + SonarCloud NOSONAR. nosemgrep inline comments present
+# but ineffective (tool-compatibility constraint documented in the file header).
+internal/dynamic/mysql.go
+
 # Cookie Secure/HttpOnly attributes — Secure is threaded from the runtime TLS
 # config (cfg.Server.HTTP.TLS.Enabled), not statically false; HttpOnly:false
 # is intentional for the CSRF double-submit cookie pattern.
