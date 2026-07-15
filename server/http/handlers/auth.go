@@ -243,7 +243,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
 		ip = ip[:idx]
 	}
-	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip)
+	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip) // nosemgrep: trailofbits.go.invalid-usage-of-modified-variable.invalid-usage-of-modified-variable -- ErrMFARequired is a sentinel that carries a valid result.User
 	if err != nil {
 		// The new password was accepted, but the account has MFA (TOTP) or a passkey
 		// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
