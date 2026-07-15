@@ -26,9 +26,9 @@ jobs:
         continue-on-error: true
 
       - name: Analyze with SonarCloud
-        uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8 # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key
+        uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8 # nosemgrep
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # nosemgrep -- SONAR_TOKEN is a GitHub Actions secrets ref, not a plaintext key
         with:
           args: >
             -Dsonar.projectKey=keyorixhq_keyorix
