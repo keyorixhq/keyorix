@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // sendSuccess sends a successful JSON response
@@ -74,6 +78,47 @@ func goSafe(fn func()) {
 		}()
 		fn()
 	}()
+}
+
+// mustParseUintParam parses a named URL parameter as a uint, sending a 400 error on failure.
+// On failure it writes a 400 response and returns (0, false); the caller should return immediately.
+// Eliminates repeated ParseUint+sendError blocks across handler files.
+func mustParseUintParam(w http.ResponseWriter, r *http.Request, param, errKey, errMsg string) (uint, bool) {
+	v, err := strconv.ParseUint(chi.URLParam(r, param), 10, 32)
+	if err != nil {
+		sendError(w, errKey, errMsg, http.StatusBadRequest, nil)
+		return 0, false
+	}
+	return uint(v), true
+}
+
+// mustParseProjectID extracts and validates the "id" URL parameter as a uint project ID.
+// On failure it writes a 400 response and returns (0, false); the caller should return immediately.
+func mustParseProjectID(w http.ResponseWriter, r *http.Request) (uint, bool) {
+	return mustParseUintParam(w, r, "id", "InvalidParameter", errInvalidProjectID)
+}
+
+// mustGetUser retrieves the authenticated user from the request context.
+// On failure it writes a 401 response and returns (nil, false); the caller should return immediately.
+// Eliminates the repeated 4-line GetUserFromContext+sendError block across handler files.
+func mustGetUser(w http.ResponseWriter, r *http.Request) (*middleware.UserContext, bool) {
+	user := middleware.GetUserFromContext(r.Context())
+	if user == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return nil, false
+	}
+	return user, true
+}
+
+// mustDecodeBody decodes the JSON request body into v.
+// On failure it writes a 400 response and returns false; the caller should return immediately.
+// Eliminates the repeated 4-line json.NewDecoder+sendError block across handler files.
+func mustDecodeBody(w http.ResponseWriter, r *http.Request, v interface{}) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
+		return false
+	}
+	return true
 }
 
 // sendError sends an error JSON response

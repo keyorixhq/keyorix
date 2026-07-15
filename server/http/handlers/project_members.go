@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -10,18 +9,16 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 
 // ListProjectMembers handles GET /api/v1/projects/{id}/members
 func (h *CatalogHandler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
-	members, err := h.coreService.ListProjectMembers(r.Context(), uint(id))
+	members, err := h.coreService.ListProjectMembers(r.Context(), id)
 	if err != nil {
 		log.Printf("Error listing project %d members: %v", id, err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
@@ -34,12 +31,11 @@ func (h *CatalogHandler) ListProjectMembers(w http.ResponseWriter, r *http.Reque
 // role-based access recertification report (ISO 27001 A.5.18): every project-scoped
 // role grant whose role confers a secrets.* permission, with the highest action.
 func (h *CatalogHandler) GetProjectAccessReview(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
-	report, err := h.coreService.GenerateProjectAccessReview(r.Context(), uint(id))
+	report, err := h.coreService.GenerateProjectAccessReview(r.Context(), id)
 	if err != nil {
 		log.Printf("Error generating access review for project %d: %v", id, err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
@@ -72,26 +68,23 @@ type accessReviewDecisionBody struct {
 // body shared by the revoke and attest handlers. It writes the error response and
 // returns ok=false on any failure.
 func (h *CatalogHandler) decodeAccessReviewDecision(w http.ResponseWriter, r *http.Request) (uint, uint, core.AccessReviewDecision, bool) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return 0, 0, core.AccessReviewDecision{}, false
 	}
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return 0, 0, core.AccessReviewDecision{}, false
 	}
 	var body accessReviewDecisionBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
+	if !mustDecodeBody(w, r, &body) {
 		return 0, 0, core.AccessReviewDecision{}, false
 	}
 	if body.Source == "" {
 		sendError(w, "ValidationError", "source is required", http.StatusBadRequest, nil)
 		return 0, 0, core.AccessReviewDecision{}, false
 	}
-	return uint(id), userCtx.UserID, core.AccessReviewDecision{
+	return id, userCtx.UserID, core.AccessReviewDecision{
 		Source:        body.Source,
 		PrincipalType: body.PrincipalType,
 		PrincipalID:   body.PrincipalID,
@@ -144,29 +137,26 @@ func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *htt
 
 // AddProjectMember handles POST /api/v1/projects/{id}/members
 func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
 		UserID uint   `json:"user_id"`
 		Role   string `json:"role"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
+	if !mustDecodeBody(w, r, &body) {
 		return
 	}
 	if body.UserID == 0 || body.Role == "" {
 		sendError(w, "ValidationError", "user_id and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, uint(id), body.UserID, body.Role); err != nil {
+	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, id, body.UserID, body.Role); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -187,14 +177,12 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 
 // UpdateProjectMember handles PUT /api/v1/projects/{id}/members/{userId}
 func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
 	userID, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)
@@ -205,15 +193,14 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 	var body struct {
 		Role string `json:"role"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
+	if !mustDecodeBody(w, r, &body) {
 		return
 	}
 	if body.Role == "" {
 		sendError(w, "ValidationError", "role is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, uint(id), uint(userID), body.Role); err != nil {
+	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, id, uint(userID), body.Role); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -233,9 +220,8 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 
 // RemoveProjectMember handles DELETE /api/v1/projects/{id}/members/{userId}
 func (h *CatalogHandler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
 	userID, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)
@@ -243,12 +229,11 @@ func (h *CatalogHandler) RemoveProjectMember(w http.ResponseWriter, r *http.Requ
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
-	if err := h.coreService.RemoveProjectMember(r.Context(), userCtx.UserID, uint(id), uint(userID)); err != nil {
+	if err := h.coreService.RemoveProjectMember(r.Context(), userCtx.UserID, id, uint(userID)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
