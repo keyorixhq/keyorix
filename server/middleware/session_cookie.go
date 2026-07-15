@@ -58,7 +58,7 @@ func SetSessionCookie(w http.ResponseWriter, token string, expiresAt *time.Time,
 // ClearSessionCookie expires the session cookie immediately (logout, or the
 // gone-original-session case when ending impersonation).
 func ClearSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- NOSONAR go:S2092 false positive: Secure flag threaded from runtime TLS config
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- NOSONAR go:S2092 false positive: Secure is threaded from runtime TLS config
 		Name:     SessionCookieName,
 		Value:    "",
 		Path:     "/",
@@ -120,7 +120,7 @@ func SetAdminSessionCookie(w http.ResponseWriter, token string, expiresAt *time.
 // ClearAdminSessionCookie removes the stashed admin session cookie once
 // impersonation ends (restored or not).
 func ClearAdminSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- NOSONAR go:S2092 false positive: Secure flag threaded from runtime TLS config
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- NOSONAR go:S2092 false positive: Secure is threaded from runtime TLS config
 		Name:     AdminSessionCookieName,
 		Value:    "",
 		Path:     "/",
