@@ -24,9 +24,8 @@ import (
 
 // CreateSecret handles POST /api/v1/secrets
 func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -110,9 +109,8 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 // the data-classification label (A.5.12). Gated by secrets.write at the secret's
 // scope (via the route middleware).
 func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -149,9 +147,8 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 // SetAutoRotate handles PATCH /api/v1/secrets/{id}/auto-rotate — toggles automated
 // rotation (ADR-046) for a secret. Enable only for secrets whose value Keyorix owns.
 func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -200,9 +197,8 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 
 // GetSecret handles GET /api/v1/secrets/{id}
 func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -274,9 +270,8 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 // per-user ownership/sharing check then runs against the resolved secret's own ID,
 // the same belt-and-suspenders pattern GetSecret (by id) uses.
 func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -336,9 +331,8 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 // (ScopeFromRefQuery) authorizes the caller against the resolved secret's scope, and the
 // value is read through the same max-reads / suspension / audit machinery as GetSecret.
 func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -388,9 +382,8 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 // soft-deleted secret's deleted_at (ADR-033). Authorized by the route's scoped
 // secrets.write gate at the secret's own project/environment.
 func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

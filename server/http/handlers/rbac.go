@@ -113,9 +113,8 @@ var validator = validation.NewValidator()
 
 // ListRoles handles GET /api/v1/roles
 func (h *RBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -131,9 +130,8 @@ func (h *RBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 
 // CreateRole handles POST /api/v1/roles
 func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -221,9 +219,8 @@ func (h *RBACHandler) resolveAndAuthorizePermissions(w http.ResponseWriter, r *h
 
 // GetRole handles GET /api/v1/roles/{id}
 func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -263,9 +260,8 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 // permissions payload), matching what RemoteStorage.GetRoleByName's remote-API
 // contract expects (models.Role).
 func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -291,9 +287,8 @@ func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRole handles PUT /api/v1/roles/{id}
 func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -396,9 +391,8 @@ func (h *RBACHandler) replaceRolePermissions(ctx context.Context, actorID, roleI
 
 // DeleteRole handles DELETE /api/v1/roles/{id}
 func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -449,9 +443,8 @@ func roleExpiryValid(w http.ResponseWriter, expiresAt *time.Time) bool {
 
 // AssignRole handles POST /api/v1/user-roles
 func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -495,9 +488,8 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 
 // RemoveRole handles DELETE /api/v1/user-roles
 func (h *RBACHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -528,9 +520,8 @@ func (h *RBACHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 
 // GetUserRoles handles GET /api/v1/user-roles/user/{userId}
 func (h *RBACHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -555,9 +546,8 @@ func (h *RBACHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 
 // ListPermissions handles GET /api/v1/permissions
 func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -593,9 +583,8 @@ func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 // capability from looking one up individually. Returns the bare permission
 // object (not wrapped), matching GetRoleByName's response shape.
 func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -620,9 +609,8 @@ func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
 
 // GetRolePermissions handles GET /api/v1/roles/{id}/permissions
 func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -647,9 +635,8 @@ func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request)
 
 // AssignPermissionToRole handles POST /api/v1/roles/{id}/permissions
 func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -690,9 +677,8 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 
 // RemovePermissionFromRole handles DELETE /api/v1/roles/{id}/permissions/{permissionId}
 func (h *RBACHandler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -720,9 +706,8 @@ func (h *RBACHandler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Re
 
 // GetGroupRoles handles GET /api/v1/groups/{id}/roles
 func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -749,9 +734,8 @@ func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
 
 // AssignRoleToGroup handles POST /api/v1/groups/{id}/roles
 func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -804,9 +788,8 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 
 // RemoveRoleFromGroup handles DELETE /api/v1/groups/{id}/roles/{roleId}
 func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -843,16 +826,14 @@ func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request
 // ────────────────────────────────────────────────────────────────────────────
 
 func ListRoles(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"roles": []interface{}{}, "total": 0}, "")
 }
 
 func CreateRole(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	var req CreateRoleRequest
@@ -871,8 +852,7 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 // GetRole returns a mock 200 for IDs in the predefined stub set, 404 otherwise.
 // IDs 1-10 are treated as existing mock roles to satisfy legacy test contracts.
 func GetRole(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
@@ -889,8 +869,7 @@ func GetRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func UpdateRole(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	if _, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32); err != nil {
@@ -910,8 +889,7 @@ func UpdateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func DeleteRole(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	if _, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32); err != nil {
@@ -922,8 +900,7 @@ func DeleteRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func AssignRole(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	var req AssignRoleRequest
@@ -940,8 +917,7 @@ func AssignRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func RemoveRole(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	var req RemoveRoleRequest
@@ -957,8 +933,7 @@ func RemoveRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetUserRoles(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
 	if _, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32); err != nil {

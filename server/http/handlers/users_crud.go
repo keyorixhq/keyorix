@@ -25,9 +25,8 @@ import (
 
 // CreateUser handles POST /api/v1/users
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -211,9 +210,8 @@ func (h *UserHandler) authorizeUserCreationAssignments(ctx context.Context, user
 
 // GetUser handles GET /api/v1/users/{id}
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
@@ -250,9 +248,8 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 // can already enumerate every user (including email) via GET /users, so this
 // route grants no new capability at that permission level.
 func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	email := strings.TrimSpace(r.URL.Query().Get("email"))
@@ -281,9 +278,8 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 // generic NotFound on a miss so the route adds no username-enumeration surface
 // beyond what GET /users already exposes to a users.read caller.
 func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	username := strings.TrimSpace(r.URL.Query().Get("username"))
@@ -311,9 +307,8 @@ func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) 
 // for SSO/SCIM identity resolution. Same gate and NotFound shape as
 // GetUserByEmail/GetUserByUsername: users.read, generic NotFound on a miss.
 func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	externalID := strings.TrimSpace(r.URL.Query().Get("external_id"))
@@ -380,9 +375,8 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 // the response reports mfa_enabled/webauthn_enabled with no session, so the
 // spoke's own Login can apply the identical MFA gate it always has.
 func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -464,9 +458,8 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 // challenge alone (with no valid TOTP/recovery code to redeem it) grants
 // nothing and so is not a new, weaker trust boundary.
 func (h *UserHandler) IssueMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
@@ -505,9 +498,8 @@ func (h *UserHandler) IssueMFAChallenge(w http.ResponseWriter, r *http.Request) 
 // to enumerate accounts or lockout state beyond "that attempt failed" — nor is
 // any of this logged with per-reason detail, for the same reason.
 func (h *UserHandler) VerifyMFACredentials(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -591,9 +583,8 @@ type mfaChallengeLookupBody struct {
 // local_mfa.go's own GetActiveMFAChallenge, which already returns one generic
 // error for all of those cases.
 func (h *UserHandler) GetActiveMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	var body mfaChallengeLookupBody
@@ -630,9 +621,8 @@ func (h *UserHandler) GetActiveMFAChallenge(w http.ResponseWriter, r *http.Reque
 // already require. Every failure collapses to the same generic 404, matching
 // GetActiveMFAChallenge above and local_mfa.go's own ConsumeMFAChallenge.
 func (h *UserHandler) ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	var body mfaChallengeLookupBody
@@ -654,9 +644,8 @@ func (h *UserHandler) ConsumeMFAChallenge(w http.ResponseWriter, r *http.Request
 
 // UpdateUser handles PUT /api/v1/users/{id}
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	_, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
@@ -714,9 +703,8 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 // DeleteUser handles DELETE /api/v1/users/{id}
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
@@ -742,9 +730,8 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 // RestoreUser handles POST /api/v1/users/{id}/restore
 func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
@@ -768,9 +755,8 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 // UnlockUser handles POST /api/v1/users/{id}/unlock — clears a user's login-lockout
 // state (failed-attempt counter + active lock) after repeated failed logins.
 func (h *UserHandler) UnlockUser(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	userCtx, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	idStr := chi.URLParam(r, "id")
@@ -793,9 +779,8 @@ func (h *UserHandler) UnlockUser(w http.ResponseWriter, r *http.Request) {
 // accountStateAction is the shared handler body for the admin account-state
 // transitions (ADR-025). transition performs the state change.
 func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request, okMessage string, transition func(ctx context.Context, adminID, userID uint) error) {
-	admin := middleware.GetUserFromContext(r.Context())
-	if admin == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	admin, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -838,9 +823,8 @@ func (h *UserHandler) RequirePasswordReset(w http.ResponseWriter, r *http.Reques
 // terminate all of the user's active sessions without changing their account state
 // (e.g. suspected token/session theft). Scoped users.write is enforced by the router.
 func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
-	admin := middleware.GetUserFromContext(r.Context())
-	if admin == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	admin, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -870,9 +854,8 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 // reissues the user's account_setup link (superseding any prior one) and re-delivers
 // it, returning the delivery outcome — including the link itself in out-of-band mode.
 func (h *UserHandler) ResendSetupLink(w http.ResponseWriter, r *http.Request) {
-	admin := middleware.GetUserFromContext(r.Context())
-	if admin == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+	admin, ok := mustGetUser(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

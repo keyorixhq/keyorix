@@ -51,13 +51,11 @@ func (h *CatalogHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 
 // RestoreProject handles POST /api/v1/projects/{id}/restore
 func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
-	if err := h.coreService.RestoreProject(r.Context(), actorID(r), uint(id)); err != nil {
+	if err := h.coreService.RestoreProject(r.Context(), actorID(r), id); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, errNotFound) {
@@ -74,13 +72,11 @@ func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) 
 
 // GetProject handles GET /api/v1/projects/:id
 func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
-	project, err := h.coreService.GetProject(r.Context(), uint(id))
+	project, err := h.coreService.GetProject(r.Context(), id)
 	if err != nil {
 		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
@@ -97,13 +93,11 @@ func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 // cross-environment drift report for the project (keys missing in some
 // environments, or present everywhere with diverging settings).
 func (h *CatalogHandler) GetProjectDrift(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
-	report, err := h.coreService.DetectProjectDrift(r.Context(), uint(id))
+	report, err := h.coreService.DetectProjectDrift(r.Context(), id)
 	if err != nil {
 		sendError(w, "InternalError", "Failed to compute drift", http.StatusInternalServerError, nil)
 		return
@@ -128,8 +122,7 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		// one call for infrastructure-as-code provisioning. Blank entries are dropped.
 		Environments []string `json:"environments"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
+	if !mustDecodeBody(w, r, &body) {
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
@@ -180,10 +173,8 @@ func (h *CatalogHandler) ListEnvironments(w http.ResponseWriter, r *http.Request
 
 // UpdateProject handles PUT /api/v1/projects/:id
 func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
+	id, ok := mustParseProjectID(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -192,8 +183,7 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 		RequireMFA  *bool  `json:"require_mfa"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "InvalidJSON", errInvalidRequestBody, http.StatusBadRequest, nil)
+	if !mustDecodeBody(w, r, &body) {
 		return
 	}
 	if err := h.validator.Validate(&body); err != nil {
@@ -206,17 +196,16 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	// tier), otherwise a developer could silently disable the project's MFA enforcement.
 	// name/description stay on the secrets.write gate.
 	if body.RequireMFA != nil {
-		actor := middleware.GetUserFromContext(r.Context())
-		if actor == nil {
-			sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		actor, ok := mustGetUser(w, r)
+		if !ok {
 			return
 		}
-		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: uint(id)}); aerr != nil || !ok {
+		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: id}); aerr != nil || !ok {
 			sendError(w, "Forbidden", "changing a project's MFA requirement requires the roles.assign permission", http.StatusForbidden, nil)
 			return
 		}
 	}
-	project, err := h.coreService.UpdateProject(r.Context(), uint(id), body.Name, body.Description, body.RequireMFA)
+	project, err := h.coreService.UpdateProject(r.Context(), id, body.Name, body.Description, body.RequireMFA)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
