@@ -77,9 +77,11 @@ web:
     requests:
       cpu: 50m
       memory: 64Mi
+      ephemeral-storage: 32Mi
     limits:
       cpu: 500m
       memory: 128Mi
+      ephemeral-storage: 128Mi
   # corsAllowedOrigins allowlists origins (exact scheme+host+port, e.g.
   # "https://app.example.com") the nginx-proxied /api, /auth, /system endpoints will
   # accept CREDENTIALED cross-origin requests from. The bundled web UI's own JS calls
