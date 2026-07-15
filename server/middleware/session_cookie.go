@@ -114,13 +114,13 @@ func SetAdminSessionCookie(w http.ResponseWriter, token string, expiresAt *time.
 	if expiresAt != nil {
 		cookie.Expires = *expiresAt
 	}
-	http.SetCookie(w, cookie)
+	http.SetCookie(w, cookie) // NOSONAR -- Secure flag comes from runtime TLS config; go:S2092 false positive
 }
 
 // ClearAdminSessionCookie removes the stashed admin session cookie once
 // impersonation ends (restored or not).
 func ClearAdminSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is threaded from cfg.Server.HTTP.TLS.Enabled; hardcoding true would break local HTTP dev
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is threaded from cfg.Server.HTTP.TLS.Enabled; hardcoding true would break local HTTP dev NOSONAR -- go:S2092 false positive
 		Name:     AdminSessionCookieName,
 		Value:    "",
 		Path:     "/",
