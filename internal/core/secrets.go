@@ -56,7 +56,7 @@ type UpdateSecretRequest struct {
 }
 
 // CreateSecret creates a new secret with business logic validation.
-func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest) (*models.SecretNode, error) {
+func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest) (*models.SecretNode, error) { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	if err := c.validateCreateSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}

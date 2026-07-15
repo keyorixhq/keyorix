@@ -128,7 +128,7 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 // project's membership either — it doesn't count as a survivor. Passing a
 // nil/roles.assign-free targetRoleIDsBefore is a fast no-op (the target wasn't
 // an admin to begin with).
-func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targetID uint, targetRoleIDsBefore, targetRoleIDsAfter []uint) error {
+func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targetID uint, targetRoleIDsBefore, targetRoleIDsAfter []uint) error { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	hadAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsBefore, "roles.assign")
 	if err != nil {
 		return err

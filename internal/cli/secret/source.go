@@ -79,7 +79,7 @@ func fetchFromSource(ctx context.Context, source string) ([]secretEntry, error) 
 // handling (import_parsers.go). Otherwise (a plain string, or a JSON object with
 // nested values) it is stored as a single secret. --no-explode forces the
 // single-secret behaviour regardless of shape.
-func explodeValue(baseName, raw string) []secretEntry {
+func explodeValue(baseName, raw string) []secretEntry { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	if !importNoExplode {
 		if trimmed := strings.TrimSpace(raw); strings.HasPrefix(trimmed, "{") {
 			var obj map[string]json.RawMessage

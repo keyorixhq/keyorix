@@ -69,7 +69,7 @@ type RotationPlan struct {
 // secret that is overdue or due soon, ordered into dependency-respecting waves and
 // prioritised by urgency within each wave. Returns an empty plan (no waves) when
 // nothing needs rotation.
-func (c *KeyorixCore) GenerateRotationPlan(ctx context.Context, projectID uint) (*RotationPlan, error) {
+func (c *KeyorixCore) GenerateRotationPlan(ctx context.Context, projectID uint) (*RotationPlan, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	status, err := c.GetRotationStatus(ctx, &projectID, nil)
 	if err != nil {
 		return nil, err

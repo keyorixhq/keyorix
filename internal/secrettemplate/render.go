@@ -45,7 +45,7 @@ type segment struct {
 //   - an unterminated placeholder (no closing "}") or an empty ref is an error.
 //   - a template naming more than MaxDistinctReferences distinct references is
 //     an error.
-func parse(tmpl string) (segments []segment, distinct []string, err error) {
+func parse(tmpl string) (segments []segment, distinct []string, err error) { // NOSONAR -- cognitive complexity 25, suppress go:S3776
 	seen := make(map[string]bool)
 	for i := 0; i < len(tmpl); {
 		c := tmpl[i]

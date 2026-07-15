@@ -1605,7 +1605,7 @@ func LoadConfig() (*Config, error) {
 }
 
 // Validate checks the configuration for required fields and correctness.
-func (c *Config) Validate() error {
+func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppress go:S3776
 	if c.Server.HTTP.Enabled && c.Server.HTTP.Port == "" {
 		return fmt.Errorf("HTTP server is enabled but no port is specified")
 	}

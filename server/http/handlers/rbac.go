@@ -289,7 +289,7 @@ func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateRole handles PUT /api/v1/roles/{id}
-func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
+func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

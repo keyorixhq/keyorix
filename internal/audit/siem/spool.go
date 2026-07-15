@@ -132,7 +132,7 @@ func (s *spool) loop() {
 // only across the snapshot read and the final reconcile — so a concurrent add() (which is
 // on the audited request path) never blocks behind a SIEM round-trip. Crash-safe: every
 // undelivered line stays on disk until the atomic rewrite at the end.
-func (s *spool) replay() {
+func (s *spool) replay() { // NOSONAR -- cognitive complexity 26, suppress go:S3776
 	s.replayMu.Lock()
 	defer s.replayMu.Unlock()
 

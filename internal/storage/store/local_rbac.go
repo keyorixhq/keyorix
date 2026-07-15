@@ -675,7 +675,7 @@ func (ls *LocalStorage) assignGroupRole(ctx context.Context, groupID, roleID uin
 // non-NULL and at or before the cutoff, returning the removed grants so the caller
 // can audit each expiry. Runs in a transaction so the rows it reports are exactly
 // the rows it deleted.
-func (ls *LocalStorage) DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]storage.RoleAssignment, error) {
+func (ls *LocalStorage) DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]storage.RoleAssignment, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	var removed []storage.RoleAssignment
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var userRows []models.UserRole

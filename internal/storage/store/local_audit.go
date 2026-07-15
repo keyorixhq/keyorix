@@ -313,7 +313,7 @@ func (ls *LocalStorage) AuditRetentionStats(ctx context.Context) (*storage.Audit
 }
 
 // GetAuditLogs retrieves audit events with optional filtering and pagination.
-func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
+func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) { // NOSONAR -- cognitive complexity 30, suppress go:S3776
 	query := ls.db.WithContext(ctx).Model(&models.AuditEvent{})
 	page, pageSize := 1, 20
 

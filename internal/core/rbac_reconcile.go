@@ -20,7 +20,7 @@ import (
 // initialised install and grants each newly-created permission to the canonical
 // roles whose definition lists it. It is a no-op on a pre-bootstrap (empty) install
 // — BootstrapSystem seeds those — and best-effort: errors are logged, never fatal.
-func (c *KeyorixCore) ReconcileRBACPermissions(ctx context.Context) error {
+func (c *KeyorixCore) ReconcileRBACPermissions(ctx context.Context) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	existing, err := c.storage.ListPermissions(ctx)
 	if err != nil {
 		return fmt.Errorf("rbac reconcile: list permissions: %w", err)

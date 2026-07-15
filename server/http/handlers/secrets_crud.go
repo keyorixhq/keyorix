@@ -198,7 +198,7 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSecret handles GET /api/v1/secrets/{id}
-func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
+func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

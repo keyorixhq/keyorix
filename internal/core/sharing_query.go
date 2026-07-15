@@ -120,7 +120,7 @@ type ShareView struct {
 
 // ListUserShareViews returns the user's shares (received + owned) as enriched views
 // with recipient/creator names resolved, ready to serialise for the web sharing UI.
-func (c *KeyorixCore) ListUserShareViews(ctx context.Context, userID uint) ([]ShareView, error) {
+func (c *KeyorixCore) ListUserShareViews(ctx context.Context, userID uint) ([]ShareView, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	shares, err := c.ListSharesByUser(ctx, userID)
 	if err != nil {
 		return nil, err

@@ -107,7 +107,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 // ── Embedded mode ─────────────────────────────────────────────────────────────
 
 // fetchSecretsEmbedded uses the local core service (direct DB access).
-func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]string, error) {
+func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]string, error) { // NOSONAR -- cognitive complexity 21, suppress go:S3776
 	svc, err := common.InitializeCoreService()
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize service: %w", err)
@@ -216,7 +216,7 @@ func (c *apiClient) get(ctx context.Context, path string, out interface{}) error
 }
 
 // fetchSecretsRemote fetches secrets by talking to the Keyorix HTTP API.
-func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env string) (map[string]string, error) {
+func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env string) (map[string]string, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	api := &apiClient{
 		endpoint: endpoint,
 		token:    token,

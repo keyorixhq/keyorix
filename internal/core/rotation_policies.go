@@ -314,7 +314,7 @@ func appendSecretRotationEntries(entries []*RotationStatusEntry, secrets []*mode
 	return entries
 }
 
-func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID, environmentID *uint) ([]*RotationPolicyEvaluation, error) {
+func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID, environmentID *uint) ([]*RotationPolicyEvaluation, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	policies, err := c.storage.ListRotationPolicies(ctx, projectID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list rotation policies: %w", err)

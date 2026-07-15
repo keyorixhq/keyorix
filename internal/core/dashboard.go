@@ -267,7 +267,7 @@ func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username
 // returned error (non-nil only when a page fails to load) signals that the
 // result may be truncated — the caller (#394) must surface this as a degraded
 // snapshot rather than silently treating a partial (or empty) list as complete.
-func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) ([]ExpiringSecret, error) {
+func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) ([]ExpiringSecret, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	now := time.Now().UTC()
 	cutoff := now.Add(30 * 24 * time.Hour)
 

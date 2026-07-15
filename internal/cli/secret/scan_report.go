@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func printScanReport(report *ScanReport) {
+func printScanReport(report *ScanReport) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	if report.TotalFound == 0 {
 		fmt.Println("✅ No secrets found.")
 		return

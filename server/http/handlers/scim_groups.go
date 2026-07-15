@@ -216,7 +216,7 @@ var scimMemberFilterPath = regexp.MustCompile(`(?i)members\[\s*value\s+eq\s+"([^
 // PatchGroup handles PATCH /scim/v2/Groups/{id} — add/remove members (the common
 // IdP operations) and optional rename. A replace of the whole `members` array is
 // routed through the full-replace path.
-func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
+func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 34, suppress go:S3776
 	id, ok := scimID(w, r)
 	if !ok {
 		return

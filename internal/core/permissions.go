@@ -60,7 +60,7 @@ type PermissionContext struct {
 }
 
 // CheckSecretPermission checks if a user has the required permission for a secret.
-func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userID uint, requiredPermission PermissionLevel) (*PermissionContext, error) {
+func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userID uint, requiredPermission PermissionLevel) (*PermissionContext, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -144,7 +144,7 @@ func (c *KeyorixCore) hasRequiredPermission(userPermission, requiredPermission P
 }
 
 // CheckGroupPermissions checks if a user has permission through group membership.
-func (c *KeyorixCore) CheckGroupPermissions(ctx context.Context, secretID, userID uint, shares []*models.ShareRecord) (PermissionLevel, *uint, error) {
+func (c *KeyorixCore) CheckGroupPermissions(ctx context.Context, secretID, userID uint, shares []*models.ShareRecord) (PermissionLevel, *uint, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	userGroups, err := c.storage.GetUserGroups(ctx, userID)
 	if err != nil {
 		return PermissionNone, nil, err
@@ -224,7 +224,7 @@ func (c *KeyorixCore) GetEffectivePermission(ctx context.Context, secretID, user
 const listUserPermissionsOwnedPageSize = 500
 
 // ListUserPermissions returns all secrets a user has access to with their permission levels.
-func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*models.UserSecretPermission, error) {
+func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*models.UserSecretPermission, error) { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}

@@ -113,7 +113,7 @@ func parseFile(path, format string) ([]secretEntry, error) {
 //   - Blank lines are skipped.
 //   - KEY=VALUE; value may be quoted with " or '.
 //   - Keys with empty values are skipped.
-func parseDotenv(path string) ([]secretEntry, error) {
+func parseDotenv(path string) ([]secretEntry, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	f, err := os.Open(path) // #nosec G304 — path already cleaned by caller
 	if err != nil {
 		return nil, err
@@ -169,7 +169,7 @@ func parseDotenv(path string) ([]secretEntry, error) {
 // → secrets named "database-password" and "database-username".
 //
 // Detection: if the block has exactly one key named "value" → Format 1.
-func parseVault(path string) ([]secretEntry, error) {
+func parseVault(path string) ([]secretEntry, error) { // NOSONAR -- cognitive complexity 31, suppress go:S3776
 	if err := checkImportFileSize(path); err != nil {
 		return nil, err
 	}

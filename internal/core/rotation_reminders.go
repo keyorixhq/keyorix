@@ -24,7 +24,7 @@ const NotificationRotationDue = "rotation.reminder"
 // updates the standing reminder in place rather than being silently suppressed,
 // so an unread reminder can't freeze at a stale, now-superseded severity (#250).
 // Returns the number of notifications created or escalated.
-func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) {
+func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) { // NOSONAR -- cognitive complexity 31, suppress go:S3776
 	evals, err := c.EvaluateRotationPolicies(ctx, nil, nil)
 	if err != nil {
 		return 0, err

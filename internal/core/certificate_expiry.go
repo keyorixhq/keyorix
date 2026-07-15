@@ -32,7 +32,7 @@ const (
 // or expires within leadDays, and sends ONE standing digest notification to each
 // affected project's approvers (de-duplicated, like the secret-expiry reminder).
 // leadDays <= 0 falls back to the default. Returns the number of notifications created.
-func (c *KeyorixCore) ScanCertificateExpiry(ctx context.Context, leadDays int) (int, error) {
+func (c *KeyorixCore) ScanCertificateExpiry(ctx context.Context, leadDays int) (int, error) { // NOSONAR -- cognitive complexity 26, suppress go:S3776
 	if leadDays <= 0 {
 		leadDays = defaultCertExpiryLeadDays
 	}

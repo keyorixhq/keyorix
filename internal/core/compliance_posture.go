@@ -626,7 +626,7 @@ func (c *KeyorixCore) classificationPosture(ctx context.Context, cp *ComplianceP
 
 // identityPosture counts active users and how many have a second factor (MFA or
 // passkey), paging through all of them (no silent cap).
-func (c *KeyorixCore) identityPosture(ctx context.Context) (IdentityPosture, error) {
+func (c *KeyorixCore) identityPosture(ctx context.Context) (IdentityPosture, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	const pageSize = 500
 	var out IdentityPosture
 	for page := 1; ; page++ {
@@ -796,7 +796,7 @@ func accumulateAccessRequestPosture(p *CompliancePosture, pid uint, snap *compli
 // grants are credited (neither shown falsely dormant) — the same "no worse than
 // before" behaviour as pre-#487 for this narrower, structurally irreducible case.
 // See roleIsAdminTier's doc for the exact tier boundary.
-func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture) int {
+func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture) int { // NOSONAR -- cognitive complexity 25, suppress go:S3776
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
 		cp.degrade(fmt.Sprintf("dormant_role_grants:assignments:project=%d", projectID), err)

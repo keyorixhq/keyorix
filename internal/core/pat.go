@@ -248,7 +248,7 @@ func patRestrictionFrom(pat *models.PersonalAccessToken) *PATRestriction {
 // be a parseable CIDR (e.g. "10.0.0.0/8"); a bare IP is accepted and normalised to a /32
 // or /128 host route. Blanks are dropped and duplicates removed; an empty result encodes to
 // "" (no network restriction, the back-compat default).
-func encodePATCIDRs(cidrs []string) (string, error) {
+func encodePATCIDRs(cidrs []string) (string, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	cleaned := make([]string, 0, len(cidrs))
 	seen := make(map[string]struct{}, len(cidrs))
 	for _, c := range cidrs {

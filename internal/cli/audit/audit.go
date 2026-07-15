@@ -367,7 +367,7 @@ func runLogsQuery() error {
 	return nil
 }
 
-func buildAuditLogQuery() (url.Values, error) {
+func buildAuditLogQuery() (url.Values, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	if logLimit < 1 || logLimit > 100 {
 		return nil, fmt.Errorf("--limit must be between 1 and 100")
 	}

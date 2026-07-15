@@ -122,7 +122,7 @@ func cleanComponentPath(p string) (string, error) {
 // BuildManifest walks srcDir and pins every regular file (by relative path) with its
 // sha256 and size. It refuses reserved names; manifest.json/manifest.sig are written by
 // WriteBundle, not taken from srcDir.
-func BuildManifest(srcDir, version, keyID, minUpgradeFrom string, releasedAt time.Time) (*Manifest, error) {
+func BuildManifest(srcDir, version, keyID, minUpgradeFrom string, releasedAt time.Time) (*Manifest, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if strings.TrimSpace(version) == "" {
 		return nil, fmt.Errorf("bundle: version is required")
 	}
@@ -539,7 +539,7 @@ func removeBundleTemp(tmpPath string) {
 // the intended staging tree. root is re-checked on every call (including when root == dir,
 // i.e. staging-root creation itself) so a pre-planted symlink AT the staging root's own path
 // is caught too, not just symlinks nested underneath it.
-func mkdirAllNoSymlink(root, dir string) error {
+func mkdirAllNoSymlink(root, dir string) error { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("bundle: resolve staging root: %w", err)

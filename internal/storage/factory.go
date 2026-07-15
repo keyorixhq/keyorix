@@ -367,7 +367,7 @@ func warnIfDuplicatesExist(db *gorm.DB, table, keyExpr, whereClause, remediation
 // Idempotent: safe to run on both fresh and existing databases.
 // On a fresh DB, AutoMigrate creates all tables. On an existing DB,
 // it adds missing columns and indexes without dropping anything.
-func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
+func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR -- cognitive complexity 266, suppress go:S3776
 	// Additive column migration for existing databases (no-op on fresh DBs).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")

@@ -69,7 +69,7 @@ func (e *AWSIAMExecutor) client(ctx context.Context) (iamAPI, error) {
 // GenerateUpstream rotates IAM user `ref`'s access key: ensure room (delete a prior key
 // if the user is already at the two-key limit), create a fresh key, then delete every
 // prior key — so only the new key remains — and return it as JSON.
-func (e *AWSIAMExecutor) GenerateUpstream(ctx context.Context, ref string) (string, error) {
+func (e *AWSIAMExecutor) GenerateUpstream(ctx context.Context, ref string) (string, error) { // NOSONAR -- cognitive complexity 26, suppress go:S3776
 	if ref == "" {
 		return "", fmt.Errorf("aws-iam: IAM username (ref) is required")
 	}

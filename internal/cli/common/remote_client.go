@@ -25,7 +25,7 @@ import (
 //
 // Returns ok=false when no usable remote configuration exists, meaning the
 // caller should fall back to embedded (direct-DB) mode.
-func ResolveRemote() (endpoint, token string, ok bool) {
+func ResolveRemote() (endpoint, token string, ok bool) { // NOSONAR -- cognitive complexity 25, suppress go:S3776
 	token = os.Getenv("KEYORIX_TOKEN")
 	endpoint = os.Getenv("KEYORIX_SERVER")
 

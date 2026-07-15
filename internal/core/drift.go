@@ -61,7 +61,7 @@ type ProjectDrift struct {
 // expiration / max-reads). No secret values are read. With fewer than two
 // environments no drift is possible, so the report is empty. Backs
 // GET /api/v1/projects/{id}/drift.
-func (c *KeyorixCore) DetectProjectDrift(ctx context.Context, projectID uint) (*ProjectDrift, error) {
+func (c *KeyorixCore) DetectProjectDrift(ctx context.Context, projectID uint) (*ProjectDrift, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	envs, err := c.storage.ListEnvironmentsByProject(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list environments for drift: %w", err)

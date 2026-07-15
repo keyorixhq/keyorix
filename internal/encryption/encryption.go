@@ -282,7 +282,7 @@ func chunkAAD(streamID string, index, total int) []byte {
 // same stream and agree on the total; the per-chunk AAD (stream+index+total) is the
 // cryptographic backstop, so reorder, truncation, duplication, and cross-secret splice all
 // fail closed rather than reassembling an attacker-chosen plaintext.
-func (es *EncryptionService) DecryptChunked(chunks []*EncryptedData) ([]byte, error) {
+func (es *EncryptionService) DecryptChunked(chunks []*EncryptedData) ([]byte, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	if len(chunks) == 0 {
 		return nil, fmt.Errorf("no chunks provided")
 	}

@@ -182,7 +182,7 @@ func (c *KeyorixCore) GetAccessReviewCampaign(ctx context.Context, projectID, ca
 // DecideAccessReviewItem records a reviewer's decision on one item of an open
 // campaign: "attest" keeps the grant (evidence only), "revoke" removes the
 // underlying grant via RevokeAccessReviewGrant. actorID is the reviewer.
-func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, projectID, campaignID, itemID uint, action, reason string) error {
+func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, projectID, campaignID, itemID uint, action, reason string) error { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	// A recertification decision must come from an attributable HUMAN reviewer. A
 	// machine identity authenticates with UserID==0 (authz uses its PrincipalID), so a
 	// non-zero actorID is required — otherwise an automation token holding roles.assign

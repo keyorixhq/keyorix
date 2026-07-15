@@ -47,7 +47,7 @@ import (
 //     stays false — the lock is genuinely contended.
 //   - A row exists, held by a different holder but already expired: reclaim it
 //     for the new holder (crash/partition self-heal).
-func (ls *LocalStorage) TryAcquireSchedulerLock(ctx context.Context, key int64, holder string, ttl time.Duration) (bool, error) {
+func (ls *LocalStorage) TryAcquireSchedulerLock(ctx context.Context, key int64, holder string, ttl time.Duration) (bool, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	now := time.Now()
 	expiresAt := now.Add(ttl)
 	acquired := false

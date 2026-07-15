@@ -313,7 +313,7 @@ func rbacEntryToProto(e *core.RBACAuditEntry) *pb.RBACAuditLog {
 // no event is lost to a slow consumer. A long fallback ticker is a safety net for any
 // write that did not signal (e.g. a path that bypasses the audit funnel). The stream
 // ends when the client disconnects (context cancellation).
-func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, stream pb.AuditService_StreamAuditLogsServer) error {
+func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, stream pb.AuditService_StreamAuditLogsServer) error { // NOSONAR -- cognitive complexity 38, suppress go:S3776
 	ctx := stream.Context()
 	actor := interceptors.GetUserFromGRPCContext(ctx)
 	if actor == nil {

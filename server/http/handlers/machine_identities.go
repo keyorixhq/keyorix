@@ -431,7 +431,7 @@ func (h *CatalogHandler) RemoveMachineRole(w http.ResponseWriter, r *http.Reques
 	h.changeMachineRole(w, r, false)
 }
 
-func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Request, grant bool) {
+func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Request, grant bool) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)

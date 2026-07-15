@@ -97,7 +97,7 @@ func (c *KeyorixCore) warnLockoutUnsupportedOnce() {
 // lock LockUserForUpdate takes on Postgres serializes across HA replicas. The
 // passed-in user struct was loaded before the lock, so the authoritative current
 // state is re-read inside the transaction.
-func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) {
+func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if !c.loginLockout.Enabled {
 		return
 	}

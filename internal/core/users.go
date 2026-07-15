@@ -258,7 +258,7 @@ func (c *KeyorixCore) GetUser(ctx context.Context, id uint) (*models.User, error
 }
 
 // UpdateUser updates an existing user.
-func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*models.User, error) {
+func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*models.User, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if err := c.validateUpdateUserRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}

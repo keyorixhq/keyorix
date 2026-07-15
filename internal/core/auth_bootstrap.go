@@ -181,7 +181,7 @@ const systemInitializedKey = "system_initialized" // #nosec G101 -- metadata key
 // with AlreadyInitialized=true and performs no writes. bootstrapMu serializes the
 // whole check-then-create sequence so two concurrent first calls can't both pass
 // the check and double-seed (the storage layer alone doesn't make this atomic).
-func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest) (*BootstrapResult, error) {
+func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest) (*BootstrapResult, error) { // NOSONAR -- cognitive complexity 28, suppress go:S3776
 	// Serialize the whole "is this a fresh install" check through admin creation
 	// (#339): without this, two concurrent callers who both already hold the valid
 	// bootstrap token (different usernames) could each observe total==0 before

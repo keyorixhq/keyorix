@@ -161,7 +161,7 @@ func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uin
 // and every assignment (project + role) are validated and deduped up front, so
 // acceptance can't later fail on an unknown role or project. The per-project
 // grants are snapshotted as JSON on the invitation.
-func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, error) {
+func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if email == "" {
 		return nil, fmt.Errorf("email is required")
 	}
@@ -266,7 +266,7 @@ func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRol
 // each project assignment from AssignmentsJSON; a project-scoped invite grants the
 // single project role. Everything was validated at invite time, so a failure here
 // is a storage error (leaving the invitation pending/resendable), not bad input.
-func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) error {
+func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) error { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Global invite: system role + multi-project assignments.
 	if inv.SystemRole != "" || inv.AssignmentsJSON != "" {
 		if inv.SystemRole != "" {

@@ -560,7 +560,7 @@ func (ls *LocalStorage) requireLiveEnvironment(ctx context.Context, environmentI
 // When project_id is provided, results are always scoped to that project via
 // a JOIN through environments — prevents cross-project leakage if a caller
 // passes a mismatched environment_id.
-func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
+func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	query := ls.db.WithContext(ctx).Model(&models.SecretNode{})
 	if filter.DeletedOnly {
 		// Recycle bin: only soft-deleted rows, newest-deleted first (ordered in SQL

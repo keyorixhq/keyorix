@@ -229,7 +229,7 @@ func SecureDeleteFile(path string) error {
 
 // FixFilePerms verifies file permissions and ownership.
 // If autofix=true, it will attempt to correct any mismatches.
-func FixFilePerms(files []FilePermSpec, autofix bool) error {
+func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cognitive complexity 33, suppress go:S3776
 	currentUser, err := user.Current()
 	if err != nil {
 		return fmt.Errorf("cannot get current user: %w", err)

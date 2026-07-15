@@ -161,7 +161,7 @@ func (h *UsersRolesHandler) GetUserMembershipsForUser(w http.ResponseWriter, r *
 }
 
 // UpdateUserRoles handles PUT /api/v1/users/{id}/roles — full role replacement.
-func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Request) {
+func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Request) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

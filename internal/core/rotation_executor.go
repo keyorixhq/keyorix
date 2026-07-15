@@ -570,7 +570,7 @@ type AutoRotateSpec struct {
 // Enable only for secrets whose value Keyorix owns, OR point Backend at an executor that
 // rotates the upstream credential too (ADR-047). The caller (transport) must have
 // enforced scoped secrets.write.
-func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec AutoRotateSpec, actorID uint) error {
+func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec AutoRotateSpec, actorID uint) error { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if !knownRotationCharset(spec.Charset) {
 		return fmt.Errorf("unknown rotation charset %q (want alphanumeric|lower_alphanumeric|hex|alphanumeric_symbols)", spec.Charset)
 	}

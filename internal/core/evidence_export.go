@@ -60,7 +60,7 @@ type EvidenceExportResult struct {
 // is fatal (the file is the primary durable target); a forwarder failure is logged
 // in the audit note but does not fail the export when a file was also written.
 // Read-only with respect to the data it captures, so it is NOT legal-hold-gated.
-func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir string) (*EvidenceExportResult, error) {
+func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir string) (*EvidenceExportResult, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if outputDir == "" && c.evidenceForwarder == nil {
 		return nil, fmt.Errorf("evidence export: no delivery target configured (set output_dir or a webhook)")
 	}

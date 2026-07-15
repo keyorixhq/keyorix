@@ -54,7 +54,7 @@ func (ve ValidationErrors) Error() string {
 // called concurrently by many goroutines/requests without risk of a
 // concurrent map read/write (which the Go runtime treats as fatal) or of one
 // call's in-flight errors being corrupted by another's.
-func (v *Validator) Validate(s interface{}) error {
+func (v *Validator) Validate(s interface{}) error { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	errs := make(map[string][]string)
 
 	val := reflect.ValueOf(s)

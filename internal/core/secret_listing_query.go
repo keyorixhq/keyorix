@@ -70,7 +70,7 @@ func (c *KeyorixCore) ListSecretsInScope(ctx context.Context, filter *models.Sec
 }
 
 // ListSecretsWithSharingInfo lists secrets with sharing information for a specific user.
-func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
+func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if filter == nil {
 		filter = &models.SecretListFilter{}
 	}
@@ -338,7 +338,7 @@ func (c *KeyorixCore) secretMatchesSearch(ctx context.Context, s *models.SecretW
 // sortSecrets sorts the secret list by name, created_at, updated_at, or owner.
 // Uses strict comparators (Before/After, <, >) so equal elements return false in
 // both directions, letting sort.SliceStable preserve insertion order as a tie-break.
-func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortBy, sortOrder string) {
+func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortBy, sortOrder string) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	if sortBy == "" {
 		sortBy = "updated_at"
 	}

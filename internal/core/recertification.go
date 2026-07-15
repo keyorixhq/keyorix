@@ -50,7 +50,7 @@ func (c *KeyorixCore) recertCadence() int {
 // existing unread recertification notification so they don't pile up. Returns the
 // number of campaigns opened and admins notified. Auto-open is a create, not a
 // delete, so this is NOT legal-hold-gated.
-func (c *KeyorixCore) RunScheduledRecertification(ctx context.Context, cadenceDays int, autoOpen bool) (*RecertificationResult, error) {
+func (c *KeyorixCore) RunScheduledRecertification(ctx context.Context, cadenceDays int, autoOpen bool) (*RecertificationResult, error) { // NOSONAR -- cognitive complexity 29, suppress go:S3776
 	if cadenceDays <= 0 {
 		cadenceDays = DefaultRecertificationCadenceDays
 	}

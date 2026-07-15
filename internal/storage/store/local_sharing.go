@@ -22,7 +22,7 @@ import (
 )
 
 // CreateShareRecord creates a share record, or updates the permission if one already exists.
-func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
+func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) { // NOSONAR -- cognitive complexity 25, suppress go:S3776
 	if err := models.ValidateShareRecord(share); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}

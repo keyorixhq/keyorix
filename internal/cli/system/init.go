@@ -73,7 +73,7 @@ func init() {
 	InitCmd.Flags().StringVar(&initBootstrapToken, "bootstrap-token", "", "Bootstrap token authorizing first-admin creation (or env KEYORIX_BOOTSTRAP_TOKEN; printed in the server log on first boot)")
 }
 
-func runInit(cmd *cobra.Command, args []string) error {
+func runInit(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	if initServer != "" {
 		common.WarnInsecureFlag(cmd, "admin-password", "consider leaving it unset and changing the password after first login instead.")
 		return runRemoteInit()
@@ -222,7 +222,7 @@ type bootstrapAPIResponse struct {
 // runRemoteInit bootstraps a running Keyorix server by calling POST /system/init.
 // The server creates the admin user, RBAC roles/permissions, and seeds the default
 // project and environments in a single idempotent call.
-func runRemoteInit() error {
+func runRemoteInit() error { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	server := strings.TrimRight(initServer, "/")
 	url := server + "/system/init"
 

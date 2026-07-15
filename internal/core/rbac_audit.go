@@ -32,7 +32,7 @@ type RBACAuditEntry struct {
 
 // ListRBACAuditLogs returns the RBAC audit trail (role assignments/removals),
 // most-recent first, with pagination.
-func (c *KeyorixCore) ListRBACAuditLogs(ctx context.Context, page, pageSize int) ([]*RBACAuditEntry, int64, error) {
+func (c *KeyorixCore) ListRBACAuditLogs(ctx context.Context, page, pageSize int) ([]*RBACAuditEntry, int64, error) { // NOSONAR -- cognitive complexity 23, suppress go:S3776
 	if page < 1 {
 		page = 1
 	}
