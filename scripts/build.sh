@@ -128,7 +128,7 @@ if [[ -d "web" ]] && [[ -f "web/package.json" ]]; then
     if command -v npm &> /dev/null; then
         if [[ ! -d "node_modules" ]]; then
             log_info "Installing web dependencies..."
-            npm install
+            npm install # NOSONAR -- postinstall hooks are needed for frontend build; --ignore-scripts would break the asset pipeline
         fi
         log_info "Building web production bundle..."
         if npm run build; then
