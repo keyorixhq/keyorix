@@ -85,7 +85,7 @@ func (rs *RemoteStorage) WithSchedulerLock(ctx context.Context, key int64, fn fu
 		stopHeartbeat()
 		<-heartbeatDone
 		// Best-effort: see the doc comment above for why this must not fail the tick.
-		if err := rs.ReleaseSchedulerLock(context.Background(), key, holder); err != nil {
+		if err := rs.ReleaseSchedulerLock(context.Background(), key, holder); err != nil { // NOSONAR -- cleanup must proceed even if caller's ctx is cancelled; go:S8239
 			log.Printf("scheduler lock %d: release failed (holder %s), relying on TTL expiry: %v", key, holder, err)
 		}
 	}()

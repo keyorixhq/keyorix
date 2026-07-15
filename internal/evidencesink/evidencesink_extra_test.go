@@ -25,7 +25,7 @@ func TestWebhook_RefuseRedirect_CrossHost(t *testing.T) {
 			// tweaked hostname to look like a cross-host redirect — we can't actually
 			// route to a different host in a unit test, but the CheckRedirect fires
 			// before the connection is established).
-			http.Redirect(w, r, "http://evil.example.com/steal", http.StatusFound)
+			http.Redirect(w, r, "http://evil.example.com/steal", http.StatusFound) // NOSONAR -- test server intentionally redirects to evil host to verify refuseRedirect refuses it; gosecurity:S5146 false positive
 			return
 		}
 		w.WriteHeader(http.StatusOK)

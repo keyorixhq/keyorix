@@ -126,7 +126,7 @@ func TestPrincipalID_User(t *testing.T) {
 }
 
 // fakeStream is a minimal grpc.ServerStream for stream-interceptor tests.
-type fakeStream struct {
+type fakeStream struct { // NOSONAR -- test-only struct; storing context.Context in a field is intentional here; godre:S8242
 	grpc.ServerStream
 	ctx context.Context
 }
