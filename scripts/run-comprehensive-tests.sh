@@ -75,7 +75,7 @@ if [[ -d "web" ]] && [[ -f "web/package.json" ]]; then
     if [[ ! -d "node_modules" ]]; then
         log_info "Installing web dependencies..."
         if command -v npm &> /dev/null; then
-            npm install > /dev/null 2>&1 # NOSONAR -- postinstall hooks are needed for frontend build; --ignore-scripts would break the asset pipeline
+            npm ci > /dev/null 2>&1 # NOSONAR -- npm ci installs strictly from package-lock.json; postinstall hooks run for the frontend build pipeline
         else
             log_warning "npm not found - skipping web tests"
             cd ..

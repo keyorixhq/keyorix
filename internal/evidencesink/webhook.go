@@ -66,7 +66,7 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 	transport := &http.Transport{}
 	if cfg.InsecureSkipVerify {
 		log.Printf("WARNING: evidencesink webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- NOSONAR go:S4830 go:S5527: InsecureSkipVerify is an explicit operator opt-in
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- nosemgrep: problem-based-packs.insecure-transport.go-stdlib.bypass-tls-verification.bypass-tls-verification,go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion -- NOSONAR go:S4830 go:S5527: InsecureSkipVerify is an explicit operator opt-in
 	}
 	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport, CheckRedirect: refuseRedirect}, baseBackoff: baseBackoff}, nil
 }
