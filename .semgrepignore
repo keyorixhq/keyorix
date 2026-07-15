@@ -1,0 +1,27 @@
+# Files excluded from Semgrep scanning.
+#
+# These files contain patterns that Semgrep flags as security issues but which
+# are intentional, operator-controlled, and already covered by gosec (#nosec),
+# CodeQL, and SonarCloud (NOSONAR) with proper per-tool suppressions.
+# Semgrep's inline `// nosemgrep` comment suppression is incompatible with the
+# co-located gosec `// #nosec` directives that these same lines require, because
+# both tools require their own directive to appear first in the comment.
+
+# InsecureSkipVerify=true — an explicit operator opt-in, guarded by a config
+# flag (insecure_skip_verify: true) and a loud WARNING log at startup.
+# Suppressed by // #nosec G402 for gosec; covered by CodeQL + SonarCloud.
+internal/audit/siem/forwarder.go
+internal/evidencesink/webhook.go
+internal/notifychan/webhook.go
+internal/storage/remote/client.go
+
+# Cookie Secure/HttpOnly attributes — Secure is threaded from the runtime TLS
+# config (cfg.Server.HTTP.TLS.Enabled), not statically false; HttpOnly:false
+# is intentional for the CSRF double-submit cookie pattern.
+# Suppressed by // #nosec G124 for gosec; covered by CodeQL + SonarCloud.
+server/middleware/session_cookie.go
+
+# SONAR_TOKEN — a GitHub Actions ${{ secrets.SONAR_TOKEN }} reference, not a
+# plaintext SonarQube API key. The detected-sonarqube-docs-api-key rule is a
+# false positive triggered by the env-var name pattern.
+.github/workflows/sonarcloud.yml
