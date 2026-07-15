@@ -10,6 +10,12 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+const (
+	hdrContentType           = "Content-Type"
+	hdrXContentTypeOptions   = "X-Content-Type-Options"
+	mimeApplicationJSON      = "application/json"
+)
+
 // sendSuccess sends a successful JSON response
 //
 // The envelope always carries "success": true (in addition to the implicit 2xx
@@ -23,8 +29,8 @@ import (
 // failure. This is a purely additive JSON key: existing consumers of the
 // "data"/"message" keys are unaffected.
 func sendSuccess(w http.ResponseWriter, data interface{}, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(hdrContentType, mimeApplicationJSON)
+	w.Header().Set(hdrXContentTypeOptions, "nosniff")
 
 	response := map[string]interface{}{
 		"success": true,
@@ -45,8 +51,8 @@ func sendSuccess(w http.ResponseWriter, data interface{}, message string) {
 // sendSuccess's Header().Set() calls to be silently ignored), this function sets
 // Content-Type and X-Content-Type-Options before WriteHeader.
 func sendCreated(w http.ResponseWriter, data interface{}, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(hdrContentType, mimeApplicationJSON)
+	w.Header().Set(hdrXContentTypeOptions, "nosniff")
 	w.WriteHeader(http.StatusCreated)
 	response := map[string]interface{}{
 		"success": true,
@@ -153,8 +159,8 @@ func mustDecodeBody(w http.ResponseWriter, r *http.Request, v interface{}) bool 
 // match APIError) — writing the field explicitly here means the error path no
 // longer depends on that coincidence.
 func sendError(w http.ResponseWriter, errorType, message string, statusCode int, details interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(hdrContentType, mimeApplicationJSON)
+	w.Header().Set(hdrXContentTypeOptions, "nosniff")
 	w.WriteHeader(statusCode)
 
 	response := map[string]interface{}{
