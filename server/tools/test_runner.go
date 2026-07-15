@@ -121,7 +121,7 @@ func (tr *TestRunner) runTestSuite(path, name string) error {
 	args = append(args, "-cover") // Enable coverage
 	args = append(args, path)
 
-	cmd := exec.Command("go", args...) // #nosec G204 -- path is validated by validateTestPath above // NOSONAR go:S4036
+	cmd := exec.Command("go", args...) // #nosec G204 -- path is validated by validateTestPath above -- NOSONAR go:S4036
 	cmd.Dir = "."                      // Run from server directory
 
 	// Capture output
@@ -212,7 +212,7 @@ func (tr *TestRunner) RunBenchmarks() error {
 
 		// Use fixed command structure with validated paths
 		args := []string{"test", "-bench=.", "-benchmem", bench.path}
-		cmd := exec.Command("go", args...) // #nosec G204 -- Path is validated by validateTestPath function // NOSONAR go:S4036
+		cmd := exec.Command("go", args...) // #nosec G204 -- Path is validated by validateTestPath function -- NOSONAR go:S4036
 		cmd.Dir = "."
 
 		output, err := cmd.CombinedOutput()
