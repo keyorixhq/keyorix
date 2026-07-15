@@ -243,27 +243,29 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
 		ip = ip[:idx]
 	}
-	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip) // nosemgrep: trailofbits.go.invalid-usage-of-modified-variable.invalid-usage-of-modified-variable -- ErrMFARequired is a sentinel that carries a valid result.User
-	if err != nil {
-		// The new password was accepted, but the account has MFA (TOTP) or a passkey
-		// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
-		// so a password reset cannot be used to silently bypass the second factor.
-		// Issue a short-lived challenge instead of a session; the client completes
-		// VerifyMFALogin (or the WebAuthn ceremony) to get a real session.
-		if errors.Is(err, core.ErrMFARequired) {
-			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
-			if cerr != nil {
-				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
-				return
-			}
-			sendSuccess(w, map[string]interface{}{
-				"mfa_required":       true,
-				"mfa_challenge":      challenge,
-				"totp_available":     result.User.MFAEnabled,
-				"webauthn_available": result.User.WebAuthnEnabled,
-			}, "MFA required")
+	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip)
+	// The new password was accepted, but the account has MFA (TOTP) or a passkey
+	// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
+	// so a password reset cannot be used to silently bypass the second factor.
+	// Issue a short-lived challenge instead of a session; the client completes
+	// VerifyMFALogin (or the WebAuthn ceremony) to get a real session.
+	// ErrMFARequired is checked before the generic err != nil block because
+	// CompleteSetup returns a valid result.User alongside this sentinel.
+	if errors.Is(err, core.ErrMFARequired) {
+		challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
+		if cerr != nil {
+			sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
 			return
 		}
+		sendSuccess(w, map[string]interface{}{
+			"mfa_required":       true,
+			"mfa_challenge":      challenge,
+			"totp_available":     result.User.MFAEnabled,
+			"webauthn_available": result.User.WebAuthnEnabled,
+		}, "MFA required")
+		return
+	}
+	if err != nil {
 		// Only a password-policy failure surfaces its reason (the link is still live,
 		// so the user can fix the password and retry). Every other failure — dead/used
 		// token, missing or already-existing account, internal error — is reported
