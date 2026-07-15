@@ -23,6 +23,7 @@ if [[ "$1" = "secret" ]] && [[ "$2" = "export" ]]; then
       printf '{"MULTI_LINE_SECRET":"line-one-secret\\nline-two-secret\\nline-three-secret"}'
       exit 0
       ;;
+    *) ;;
   esac
 fi
 echo "mock keyorix: unhandled args: $*" >&2

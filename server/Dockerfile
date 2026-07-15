@@ -27,14 +27,14 @@ RUN go build -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=${VE
 # are installed, so RCE inside this container can no longer `apk add` extra tooling.
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 RUN apk add --no-cache ca-certificates tzdata && \
-    rm -rf /sbin/apk /etc/apk /lib/apk /usr/share/apk /var/cache/apk
-RUN addgroup -g 1001 keyorix && \
+    rm -rf /sbin/apk /etc/apk /lib/apk /usr/share/apk /var/cache/apk && \
+    addgroup -g 1001 keyorix && \
     adduser -D -s /bin/sh -u 1001 -G keyorix keyorix
 WORKDIR /app
 COPY --from=builder /app/bin/keyorix-server .
 COPY --from=builder /app/server/entrypoint.sh .
-RUN chmod +x entrypoint.sh
-RUN mkdir -p data keys && chown -R keyorix:keyorix /app
+RUN chmod +x entrypoint.sh && \
+    mkdir -p data keys && chown -R keyorix:keyorix /app
 USER keyorix
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

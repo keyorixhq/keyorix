@@ -34,13 +34,15 @@ pass=0
 fail=0
 
 ok() {
+  local msg="$1"
   pass=$((pass + 1))
-  echo "ok - $1"
+  echo "ok - $msg"
 }
 
 bad() {
+  local msg="$1"
   fail=$((fail + 1))
-  echo "not ok - $1"
+  echo "not ok - $msg"
 }
 
 # Use $TMPDIR explicitly (rather than a bare `mktemp -d`) since some

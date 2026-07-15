@@ -27,20 +27,22 @@ source "${script_dir}/entrypoint.sh"
 fail=0
 
 assert_valid() {
-  if validate_secret_name "$1"; then
-    echo "ok   - accepted: '$1'"
+  local name="$1"
+  if validate_secret_name "$name"; then
+    echo "ok   - accepted: '$name'"
   else
-    echo "FAIL - should have been accepted: '$1'"
+    echo "FAIL - should have been accepted: '$name'"
     fail=1
   fi
 }
 
 assert_invalid() {
-  if validate_secret_name "$1"; then
-    echo "FAIL - should have been rejected: '$1'"
+  local name="$1"
+  if validate_secret_name "$name"; then
+    echo "FAIL - should have been rejected: '$name'"
     fail=1
   else
-    echo "ok   - rejected: '$1'"
+    echo "ok   - rejected: '$name'"
   fi
 }
 

@@ -217,7 +217,7 @@ func (s *Service) EncryptSecret(plaintext []byte) ([]byte, []byte, error) {
 
 // EncryptSecretWithAAD encrypts plaintext bound to the given AAD.
 // Use SecretAAD(secretID, projectID, versionNumber) to construct the AAD.
-func (s *Service) EncryptSecretWithAAD(plaintext []byte, aad []byte) ([]byte, []byte, error) {
+func (s *Service) EncryptSecretWithAAD(plaintext, aad []byte) ([]byte, []byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -257,7 +257,7 @@ func (s *Service) DecryptSecret(encryptedData []byte) ([]byte, error) {
 // DecryptSecretWithAAD decrypts a secret, using AAD for v1 rows and falling
 // back to legacy nil-AAD for rows encrypted before the AAD migration.
 // Logs a warning on the legacy path — schedule re-encryption in the M2 sweep.
-func (s *Service) DecryptSecretWithAAD(encryptedData []byte, aad []byte) ([]byte, error) {
+func (s *Service) DecryptSecretWithAAD(encryptedData, aad []byte) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

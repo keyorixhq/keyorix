@@ -74,6 +74,7 @@ install_cli() {
     case "$arch" in
       x86_64) arch="amd64" ;;
       aarch64 | arm64) arch="arm64" ;;
+      *) ;;
     esac
     binary_name="keyorix_${os}_${arch}"
     url="https://github.com/keyorixhq/keyorix/releases/download/${VERSION}/${binary_name}"
@@ -154,7 +155,8 @@ install_cli() {
 # identifier closes this off entirely: no newline, `=`, or other special character
 # can ever reach the file.
 validate_secret_name() {
-  [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+  local name="$1"
+  [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 }
 
 inject_env() {

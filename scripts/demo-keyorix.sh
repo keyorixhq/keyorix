@@ -21,10 +21,10 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-demo_step() { echo -e "${CYAN}➤${NC} $1"; }
-demo_success() { echo -e "${GREEN}✅${NC} $1"; }
-demo_info() { echo -e "${BLUE}ℹ️${NC}  $1"; }
-demo_warn() { echo -e "${YELLOW}⚠️${NC}  $1"; }
+demo_step() { local msg="$1"; echo -e "${CYAN}➤${NC} $msg"; }
+demo_success() { local msg="$1"; echo -e "${GREEN}✅${NC} $msg"; }
+demo_info() { local msg="$1"; echo -e "${BLUE}ℹ️${NC}  $msg"; }
+demo_warn() { local msg="$1"; echo -e "${YELLOW}⚠️${NC}  $msg"; }
 
 SERVER="${KEYORIX_SERVER:-http://localhost:8080}"
 

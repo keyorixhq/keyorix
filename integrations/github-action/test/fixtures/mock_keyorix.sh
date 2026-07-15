@@ -28,6 +28,7 @@ if [[ "$1" = "secret" ]] && [[ "$2" = "export" ]]; then
       printf 'SUPER_SECRET=topsecretvalue123\n' >"$outfile"
       exit 0
       ;;
+    *) ;;
   esac
 fi
 echo "mock keyorix: unhandled args: $*" >&2

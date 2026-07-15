@@ -91,10 +91,17 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
-          {{- with .Values.server.resources }}
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- if .Values.server.resources }}
+            {{- toYaml .Values.server.resources | nindent 12 }}
+            {{- else }}
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+            {{- end }}
       volumes:
         - name: config
           configMap:
