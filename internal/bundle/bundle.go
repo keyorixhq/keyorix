@@ -367,7 +367,7 @@ func streamBundleComponents(tr *tar.Reader, pinned map[string]Component, dest st
 	seen := make(map[string]bool, len(pinned))
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

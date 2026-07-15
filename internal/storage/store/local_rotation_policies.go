@@ -9,6 +9,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -22,7 +23,7 @@ func (ls *LocalStorage) CreateRotationPolicy(ctx context.Context, p *models.Rota
 func (ls *LocalStorage) GetRotationPolicy(ctx context.Context, id uint) (*models.RotationPolicy, error) {
 	var policy models.RotationPolicy
 	if err := ls.db.WithContext(ctx).First(&policy, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("rotation policy not found")
 		}
 		return nil, fmt.Errorf("failed to get rotation policy: %w", err)
