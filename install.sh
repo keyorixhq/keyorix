@@ -40,9 +40,9 @@ info "Detected platform: ${OS}/${ARCH}"
 # Get latest version from GitHub
 info "Fetching latest release..."
 if command -v curl >/dev/null 2>&1; then
-    LATEST=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    LATEST=$(curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
 elif command -v wget >/dev/null 2>&1; then
-    LATEST=$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    LATEST=$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/') # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
 else
     error "curl or wget is required to install Keyorix."
 fi
@@ -63,18 +63,18 @@ TMP_BIN="${TMP_DIR}/${BINARY}"
 
 info "Downloading ${BINARY_NAME}..."
 if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}"
+    curl --proto '=https' --tlsv1.2 -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}"
 else
-    wget -qO "$TMP_BIN" "$DOWNLOAD_URL" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}"
+    wget -qO "$TMP_BIN" "$DOWNLOAD_URL" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
 fi
 
 # Verify SHA-256 checksum against the release's published checksums.txt.
 info "Verifying checksum..."
 CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${LATEST}/checksums.txt"
 if command -v curl >/dev/null 2>&1; then
-    EXPECTED=$(curl -fsSL "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}')
+    EXPECTED=$(curl --proto '=https' --tlsv1.2 -fsSL "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}')
 else
-    EXPECTED=$(wget -qO- "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}')
+    EXPECTED=$(wget -qO- "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}') # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
 fi
 
 if [ -n "$EXPECTED" ]; then
@@ -118,7 +118,7 @@ rm -rf "$TMP_DIR"
 success "Keyorix ${LATEST} installed to ${INSTALL_DIR}/${BINARY}"
 echo ""
 echo "  Get started:"
-echo "  keyorix connect http://your-server --username admin --password your-password"
+echo "  keyorix connect http://your-server --username admin --password your-password" # NOSONAR -- documentation string, not a network connection
 echo "  keyorix secret list"
 echo ""
 echo "  Docs: https://github.com/${REPO}"

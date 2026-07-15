@@ -75,7 +75,7 @@ if [[ -d "web" ]] && [[ -f "web/package.json" ]]; then
     if [[ ! -d "node_modules" ]]; then
         log_info "Installing web dependencies..."
         if command -v npm &> /dev/null; then
-            npm install > /dev/null 2>&1
+            npm install > /dev/null 2>&1 # NOSONAR -- postinstall hooks are needed for frontend build; --ignore-scripts would break the asset pipeline
         else
             log_warning "npm not found - skipping web tests"
             cd ..
@@ -217,6 +217,7 @@ run_test "Docker Files Exist" "[[ -f server/Dockerfile ]] || [[ -f Dockerfile ]]
 
 # Generate test report
 log_info "=== Generating Test Report ==="
+SUCCESS_RATE=$(( TOTAL_TESTS > 0 ? PASSED_TESTS * 100 / TOTAL_TESTS : 0 ))
 cat > TEST_REPORT.md << EOF
 # Comprehensive Test Report
 
@@ -224,7 +225,7 @@ cat > TEST_REPORT.md << EOF
 **Total Tests**: $TOTAL_TESTS
 **Passed**: $PASSED_TESTS
 **Failed**: $FAILED_TESTS
-**Success Rate**: $(( PASSED_TESTS * 100 / TOTAL_TESTS ))%
+**Success Rate**: ${SUCCESS_RATE}%
 
 ## Test Categories
 

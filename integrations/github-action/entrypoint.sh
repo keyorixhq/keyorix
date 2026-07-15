@@ -84,7 +84,7 @@ install_cli() {
     # signal — this is required whether we end up reusing an existing binary
     # or downloading a fresh one.
     echo "Verifying checksum..."
-    expected="$(curl -fsSL "$checksums_url" | awk -v n="$binary_name" '$2==n {print $1}')"
+    expected="$(curl --proto '=https' --tlsv1.2 -fsSL "$checksums_url" | awk -v n="$binary_name" '$2==n {print $1}')"
     if [[ -z "$expected" ]]; then
       echo "error: no checksum published for ${binary_name} at ${VERSION}; refusing to install unverified binary" >&2
       exit 1
@@ -114,7 +114,7 @@ install_cli() {
     tmp_bin="${tmp_dir}/keyorix"
 
     echo "Downloading keyorix ${VERSION} (${os}/${arch})..."
-    curl -fsSL "$url" -o "$tmp_bin"
+    curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$tmp_bin"
 
     if ! actual="$(sha256_of "$tmp_bin")"; then
       echo "error: no sha256sum/shasum tool found; cannot verify checksum" >&2
@@ -138,7 +138,7 @@ install_cli() {
     # SHA (not the mutable `main` branch, and not a movable tag ref) so a
     # future main-branch or tag compromise can't alter the code piped into
     # `sh` here. Bump deliberately when install.sh's logic needs to change.
-    curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/6dd9e555125500e76b4e2035a867621e416585a3/install.sh | sh
+    curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/6dd9e555125500e76b4e2035a867621e416585a3/install.sh | sh
   fi
   keyorix --version
 }

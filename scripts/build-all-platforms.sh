@@ -157,9 +157,9 @@ done
 log_info "Creating checksums..."
 cd "$DIST_DIR"
 if command -v sha256sum &> /dev/null; then
-    sha256sum *.zip *.tar.gz > checksums.txt 2>/dev/null || true
+    sha256sum ./*.zip ./*.tar.gz > checksums.txt 2>/dev/null || true
 elif command -v shasum &> /dev/null; then
-    shasum -a 256 *.zip *.tar.gz > checksums.txt 2>/dev/null || true
+    shasum -a 256 ./*.zip ./*.tar.gz > checksums.txt 2>/dev/null || true
 fi
 cd ..
 
