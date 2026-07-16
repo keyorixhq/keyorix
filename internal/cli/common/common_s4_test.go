@@ -40,12 +40,12 @@ func newDropClient(t *testing.T) (*RemoteClient, func()) {
 			if err != nil {
 				return
 			}
-			c.Close()
+			_ = c.Close()
 		}
 	}()
 	addr := "http://" + ln.Addr().String()
 	rc := &RemoteClient{Endpoint: addr, Token: "tok", hc: &http.Client{}}
-	return rc, func() { ln.Close() }
+	return rc, func() { _ = ln.Close() }
 }
 
 // newBadEndpointClient returns a RemoteClient whose Endpoint is syntactically
@@ -278,7 +278,7 @@ func badBodyHandler(w http.ResponseWriter, r *http.Request) {
 	if hj, ok := w.(http.Hijacker); ok {
 		conn, _, err := hj.Hijack()
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 	}
 }

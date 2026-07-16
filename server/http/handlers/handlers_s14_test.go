@@ -97,18 +97,6 @@ func freshSecretHandlerS14(t *testing.T) (*SecretHandler, uint) {
 	return handler, secret.ID
 }
 
-// freshSecretHandlerS13 builds a SecretHandler backed by a fresh admin-seeded
-// core (UserID=1 has system_admin role). Returns the handler and the raw DB so
-// tests can seed additional rows. Defined here (not in handlers_s13_test.go
-// which was repurposed for SAML tests) so handlers_s15_test.go can use it.
-func freshSecretHandlerS13(t *testing.T) (*SecretHandler, *gorm.DB) {
-	t.Helper()
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-	return h, db
-}
-
 // withUserCtxS14 injects UserID=1 context into a request.
 func withUserCtxS14(r *http.Request) *http.Request {
 	uctx := &customMiddleware.UserContext{UserID: 1, Username: "owner_s14", Email: "owner_s14@test.com"}

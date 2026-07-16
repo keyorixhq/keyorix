@@ -53,7 +53,7 @@ jobs:
 
       - name: go test
         run: |
-          go test -race -timeout 120s -coverprofile=coverage.out -covermode=set \
+          go test -race -timeout 120s -coverprofile=coverage.out -covermode=atomic \
             $(go list ./... | grep -v \
               -e 'internal/cli$' \
               -e 'internal/core$' \

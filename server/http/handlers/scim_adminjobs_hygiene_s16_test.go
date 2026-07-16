@@ -287,7 +287,7 @@ func TestSCIMGroups_CreateGroup_TooManyMembers_S16(t *testing.T) {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
-		sb.WriteString(fmt.Sprintf(`{"value":"%d"}`, i+1))
+		fmt.Fprintf(&sb, `{"value":"%d"}`, i+1)
 	}
 	sb.WriteString(`]}`)
 	w := httptest.NewRecorder()
@@ -318,7 +318,7 @@ func TestSCIMGroups_ReplaceGroup_TooManyMembers_S16(t *testing.T) {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
-		sb.WriteString(fmt.Sprintf(`{"value":"%d"}`, i+1))
+		fmt.Fprintf(&sb, `{"value":"%d"}`, i+1)
 	}
 	sb.WriteString(`]}`)
 	w := httptest.NewRecorder()

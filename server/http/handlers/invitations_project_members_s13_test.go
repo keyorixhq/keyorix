@@ -26,21 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── helper: CatalogHandler backed by freshCoreS12WithAdmin ───────────────────
-
-func newCatalogHandlerInvS13(t *testing.T) *CatalogHandler {
-	t.Helper()
-	cs, _ := freshCoreS12WithAdmin(t)
-	return NewCatalogHandler(cs)
-}
-
-// newCatalogS13 returns handler + DB so tests can seed data.
-func newCatalogS13WithDB(t *testing.T) (*CatalogHandler, interface{}) {
-	t.Helper()
-	cs, db := freshCoreS12WithAdmin(t)
-	return NewCatalogHandler(cs), db
-}
-
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func jsonReq(t *testing.T, method, url, body string) *http.Request {

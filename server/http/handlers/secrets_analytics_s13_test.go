@@ -21,18 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
-
-// helper: build a SecretHandler backed by a fresh admin-seeded core and return
-// the handler + DB so tests can seed rows.
-func newSecretHandlerS13(t *testing.T) (*SecretHandler, *gorm.DB) {
-	t.Helper()
-	cs, db := freshCoreS12WithAdmin(t)
-	h, err := NewSecretHandler(cs)
-	require.NoError(t, err)
-	return h, db
-}
 
 // newSecretHandlerForS13 returns a SecretHandler only (no DB needed by some tests).
 func newSecretHandlerForS13(t *testing.T) *SecretHandler {
@@ -41,38 +30,6 @@ func newSecretHandlerForS13(t *testing.T) *SecretHandler {
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 	return h
-}
-
-// ── helpers to seed a minimal project + environment + secret ─────────────────
-
-type seededSecretS13 struct {
-	projID uint
-	envID  uint
-	secID  uint
-}
-
-// seedSecretS13 creates project → environment → secret rows and returns their IDs.
-func seedSecretS13(t *testing.T, h *SecretHandler, name string) seededSecretS13 {
-	t.Helper()
-	// Reach into the handler's coreService to get the DB via freshCoreS12WithAdmin.
-	// We can't easily re-use the DB handle, so seed via the model test helper
-	// from freshCoreS12WithAdmin which is exposed as freshUserHandlerS12.
-	//
-	// Use a separate fresh core+DB so we can seed directly.
-	_, db := freshCoreS12WithAdmin(t)
-	proj := &models.Project{Name: "s13-proj-" + name}
-	require.NoError(t, db.Create(proj).Error)
-	env := &models.Environment{Name: "s13-env-" + name, ProjectID: proj.ID}
-	require.NoError(t, db.Create(env).Error)
-	sec := &models.SecretNode{
-		Name:          "s13-sec-" + name,
-		ProjectID:     proj.ID,
-		EnvironmentID: env.ID,
-		OwnerID:       1,
-		Type:          "static",
-	}
-	require.NoError(t, db.Create(sec).Error)
-	return seededSecretS13{projID: proj.ID, envID: env.ID, secID: sec.ID}
 }
 
 // newSecretHandlerWithDB returns a handler whose core shares the same DB as
