@@ -29,6 +29,11 @@
         "one": "Accès interdit",
         "other": "Accès interdit"
     },
+    "ErrorPermissionDenied": {
+        "description": "Error message when a user lacks the required permission",
+        "one": "permission denied",
+        "other": "permission denied"
+    },
     "ErrorInternalServer": {
         "description": "Error message for internal server error",
         "one": "Erreur interne du serveur",

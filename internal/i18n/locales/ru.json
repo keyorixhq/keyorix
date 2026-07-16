@@ -29,6 +29,11 @@
         "one": "Доступ запрещен",
         "other": "Доступ запрещен"
     },
+    "ErrorPermissionDenied": {
+        "description": "Error message when a user lacks the required permission",
+        "one": "permission denied",
+        "other": "permission denied"
+    },
     "ErrorInternalServer": {
         "description": "Error message for internal server error",
         "one": "Внутренняя ошибка сервера",
