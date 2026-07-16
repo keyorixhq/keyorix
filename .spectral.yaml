@@ -1,0 +1,8 @@
+extends: ["spectral:oas"]
+rules:
+  # info-contact is WARN in spectral:oas; disable it — Keyorix is self-hosted
+  # OSS with no formal support channel to advertise in the spec.
+  info-contact: off
+  # info-license is WARN in spectral:oas; disable it — the project license is
+  # documented in the repo root LICENSING.md, not in the API spec.
+  info-license: off
