@@ -36,7 +36,7 @@ func TestIsBlank_S22_ControlChars(t *testing.T) {
 // soft-hyphen, etc.) are treated as blank.
 func TestIsBlank_S22_FormatChars(t *testing.T) {
 	// U+200C ZERO WIDTH NON-JOINER and U+00AD SOFT HYPHEN are both Cf.
-	assert.True(t, isBlank("‌­"))
+	assert.True(t, isBlank("\u200c\u00ad"))
 }
 
 // TestIsBlank_S22_NonBlankLetterFalse verifies that a string with a real letter is not blank.
