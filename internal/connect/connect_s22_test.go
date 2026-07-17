@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
-	gax "github.com/googleapis/gax-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -156,15 +155,6 @@ func TestAzureKV_GetSecret_ClientError_S22(t *testing.T) {
 }
 
 // ── gcpsm.go: client-builder error and empty-payload branches ───────────────
-
-// fakeGCPSMErr is a gcpSMAccessAPI whose factory itself returns an error,
-// enabling the client-build-failure branch in GCPSecretManagerConnector.
-type fakeGCPSMErr struct{}
-
-func (f *fakeGCPSMErr) AccessSecretVersion(_ context.Context, _ *secretmanagerpb.AccessSecretVersionRequest, _ ...gax.CallOption) (*secretmanagerpb.AccessSecretVersionResponse, error) {
-	return nil, errors.New("should not be called")
-}
-func (f *fakeGCPSMErr) Close() error { return nil }
 
 // TestGCPSM_GetSecret_ClientError_S22 exercises the branch in
 // GCPSecretManagerConnector.GetSecret where the client factory returns an

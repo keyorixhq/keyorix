@@ -104,17 +104,6 @@ func TestWithAuditAttribution_S22_PlainUserUnmodified(t *testing.T) {
 // empty-IP fail-closed
 // ---------------------------------------------------------------------------
 
-// buildEnforceCtx returns a context carrying a peer with the given IP (or no
-// peer if ip is "").
-func buildEnforceCtx(ip string) context.Context {
-	if ip == "" {
-		return context.Background()
-	}
-	return peer.NewContext(context.Background(), &peer.Peer{
-		Addr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 5555},
-	})
-}
-
 // TestEnforceGRPCAccessPolicy_S22_PendingFirstLoginDenied mirrors the
 // password_reset_required test but for pending_first_login, ensuring both
 // restricted account states are covered.

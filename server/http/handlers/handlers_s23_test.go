@@ -55,22 +55,6 @@ func uintStr(n uint) string {
 	return strconv.FormatUint(uint64(n), 10)
 }
 
-// seedGroupWithMember creates a group and a user and adds the user to the group.
-// Returns (groupID, userID).
-func seedGroupWithMember(t *testing.T, h *GroupHandler) (uint, uint) {
-	t.Helper()
-	grp := &models.Group{Name: fmt.Sprintf("s23-grp-%d", time.Now().UnixNano())}
-	created, err := h.coreService.Storage().CreateGroup(context.Background(), grp)
-	require.NoError(t, err)
-
-	user := &models.User{Username: fmt.Sprintf("s23u%d", time.Now().UnixNano()), Email: fmt.Sprintf("s23u%d@example.com", time.Now().UnixNano()), AccountState: "active"}
-	_, db := freshCoreS12WithAdmin(t)
-	require.NoError(t, db.Create(user).Error)
-	// Add via storage directly so no business-logic guard fires.
-	require.NoError(t, h.coreService.Storage().AddUserToGroup(context.Background(), user.ID, created.ID))
-	return created.ID, user.ID
-}
-
 // ── groups_proxy.go: AddGroupMemberProxy happy path ──────────────────────────
 
 // TestAddGroupMemberProxy_HappyPath_S23 verifies that a well-formed request
