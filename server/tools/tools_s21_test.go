@@ -195,7 +195,7 @@ func TestRunBenchmarks_S21_SuccessOutputBranch(t *testing.T) {
 	sDir := serverDir(t)
 	chdirTo(t, sDir)
 
-	tr := NewTestRunner(false, 60*time.Second)
+	tr := NewTestRunner(false, 5*time.Second)
 	// RunBenchmarks always returns nil regardless of per-bench subprocess outcome.
 	if err := tr.RunBenchmarks(); err != nil {
 		t.Errorf("RunBenchmarks() = %v, want nil", err)

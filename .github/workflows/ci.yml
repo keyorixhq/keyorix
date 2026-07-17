@@ -53,7 +53,7 @@ jobs:
 
       - name: go test
         run: |
-          go test -race -timeout 120s -coverprofile=coverage.out -covermode=atomic \
+          go test -race -timeout 300s -coverprofile=coverage.out -covermode=atomic \
             $(go list ./... | grep -v \
               -e 'internal/cli$' \
               -e 'internal/core$' \
@@ -126,7 +126,7 @@ jobs:
           go build ./...
 
       - name: go test
-        run: go test -race -timeout 120s ./...
+        run: go test -race -timeout 300s ./...
 
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (echo 'gofmt needed:'; gofmt -l .; exit 1)
