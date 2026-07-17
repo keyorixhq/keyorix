@@ -146,7 +146,10 @@ func TestRunAllTests_S21_AllPassedBranch(t *testing.T) {
 	sDir := serverDir(t)
 	chdirTo(t, sDir)
 
-	tr := NewTestRunner(false, 90*time.Second)
+	// Use a short per-suite timeout so the child go-test processes fail fast
+	// (either the packages don't exist from this dir, or they time out quickly).
+	// This prevents the outer 120s package timeout from being hit in CI.
+	tr := NewTestRunner(false, 5*time.Second)
 	err := tr.RunAllTests()
 	if err == nil {
 		// All suites passed — all-passed branch (83-86, 94) was exercised.

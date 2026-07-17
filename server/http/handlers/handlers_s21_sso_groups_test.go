@@ -10,6 +10,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -422,13 +423,13 @@ func TestCreateUserWithOTP_ConflictDuplicate_S21(t *testing.T) {
 	uh, cs := freshUserHandlerS21(t)
 
 	// Pre-seed the user via core so it exists in storage.
-	_, _, err := cs.CreateUserWithOneTimePassword(nil, &core.CreateUserRequest{ //nolint:staticcheck
+	_, _, err := cs.CreateUserWithOneTimePassword(context.Background(), &core.CreateUserRequest{
 		Username:    "otp-dup-s21",
 		Email:       "otp-dup-s21@example.com",
 		DisplayName: "OTP Dup S21",
 	}, 1)
-	// If the first create fails for any reason (e.g. nil context), just seed via a
-	// direct body call and accept any 409 or non-500.
+	// If pre-seeding fails for any reason, fall through to the body call below
+	// and accept either a 409 (user was seeded by a previous run) or a 201.
 	_ = err
 
 	body, _ := json.Marshal(map[string]interface{}{
