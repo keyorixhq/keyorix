@@ -304,7 +304,7 @@ func TestCreateGroup_ValidationErrorNameTooLong_S21(t *testing.T) {
 func TestCreateGroup_ValidationErrorInvalidIdentifier_S21(t *testing.T) {
 	gh, _ := freshGroupHandlerWithAdminS21(t)
 
-	body, _ := json.Marshal(map[string]string{"name": "invalid name with spaces"})
+	body, _ := json.Marshal(map[string]string{"name": "invalid.name@with#special"})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -587,7 +587,7 @@ func TestCreateUserClassic_Success_S21(t *testing.T) {
 		"username":     "classic-s21",
 		"email":        "classic-s21@example.com",
 		"display_name": "Classic S21",
-		"password":     "StrongPass1!",
+		"password":     "StrongPassword123!",
 	})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -608,7 +608,7 @@ func TestCreateUserClassic_ConflictError_S21(t *testing.T) {
 			"username":     "classic-dup-s21",
 			"email":        "classic-dup-s21@example.com",
 			"display_name": "Classic Dup S21",
-			"password":     "StrongPass1!",
+			"password":     "StrongPassword123!",
 		})
 		return bytes.NewReader(b)
 	}
@@ -638,7 +638,7 @@ func TestUpdateUser_ConflictError_S21(t *testing.T) {
 		"username":     "conflict-user-a-s21",
 		"email":        "conflict-a-s21@example.com",
 		"display_name": "Conflict A S21",
-		"password":     "StrongPass1!",
+		"password":     "StrongPassword123!",
 	})
 	reqA := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(bodyA)))
 	reqA.Header.Set("Content-Type", "application/json")
@@ -651,7 +651,7 @@ func TestUpdateUser_ConflictError_S21(t *testing.T) {
 		"username":     "conflict-user-b-s21",
 		"email":        "conflict-b-s21@example.com",
 		"display_name": "Conflict B S21",
-		"password":     "StrongPass1!",
+		"password":     "StrongPassword123!",
 	})
 	reqB := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(bodyB)))
 	reqB.Header.Set("Content-Type", "application/json")

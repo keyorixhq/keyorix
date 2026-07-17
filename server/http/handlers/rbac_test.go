@@ -175,6 +175,9 @@ func TestListUsers(t *testing.T) {
 
 func TestCreateUser(t *testing.T) {
 	_ = NewRBACTestHelper(t)
+	saved := defaultUserHandler
+	defaultUserHandler = nil
+	t.Cleanup(func() { defaultUserHandler = saved })
 
 	tests := []struct {
 		name           string
@@ -262,6 +265,9 @@ func TestCreateUser(t *testing.T) {
 
 func TestGetUser(t *testing.T) {
 	helper := NewRBACTestHelper(t)
+	saved := defaultUserHandler
+	defaultUserHandler = nil
+	t.Cleanup(func() { defaultUserHandler = saved })
 
 	// Create test user
 	helper.CreateTestUser(t, "admin", 1)
@@ -327,6 +333,9 @@ func TestGetUser(t *testing.T) {
 
 func TestUpdateUser(t *testing.T) {
 	helper := NewRBACTestHelper(t)
+	saved := defaultUserHandler
+	defaultUserHandler = nil
+	t.Cleanup(func() { defaultUserHandler = saved })
 
 	// Create test user
 	helper.CreateTestUser(t, "admin", 1)
@@ -401,6 +410,9 @@ func TestUpdateUser(t *testing.T) {
 
 func TestDeleteUser(t *testing.T) {
 	helper := NewRBACTestHelper(t)
+	saved := defaultUserHandler
+	defaultUserHandler = nil
+	t.Cleanup(func() { defaultUserHandler = saved })
 
 	// Create test user
 	helper.CreateTestUser(t, "admin", 1)

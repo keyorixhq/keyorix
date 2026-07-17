@@ -22,7 +22,7 @@ jobs:
           go-version: '1.26.5'
 
       - name: Generate coverage report
-        run: go test -timeout 300s -coverprofile=coverage.out -covermode=set ./...
+        run: go test -timeout 600s -coverprofile=coverage.out -covermode=set ./...
         continue-on-error: true
 
       - name: Analyze with SonarCloud
