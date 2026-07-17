@@ -529,5 +529,8 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Install Spectral (pinned, lifecycle scripts disabled)
+        run: npm install --ignore-scripts @stoplight/spectral-cli@${SPECTRAL_VERSION}
+
       - name: Lint OpenAPI spec
-        run: npx --yes @stoplight/spectral-cli@${SPECTRAL_VERSION} lint --ruleset .spectral.yaml server/http/handlers/openapi.yaml
+        run: ./node_modules/.bin/spectral lint --ruleset .spectral.yaml server/http/handlers/openapi.yaml
