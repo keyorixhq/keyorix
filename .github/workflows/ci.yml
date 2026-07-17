@@ -530,4 +530,4 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Lint OpenAPI spec
-        run: npx --yes @stoplight/spectral-cli@${SPECTRAL_VERSION} lint server/http/handlers/openapi.yaml
+        run: npx --yes @stoplight/spectral-cli@${SPECTRAL_VERSION} lint --ruleset .spectral.yaml server/http/handlers/openapi.yaml
