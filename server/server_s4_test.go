@@ -2065,6 +2065,15 @@ func TestStartHTTPServer_ShortLive(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+	// The evidence-delivery scheduler fires at 1ms and may write a new file
+	// after startHTTPServer returns but before t.TempDir() cleanup runs,
+	// causing "directory not empty". Use a separate dir with ignored cleanup.
+	evidenceDir, errMkdir := os.MkdirTemp("", "kx-evidence-test-*")
+	if errMkdir != nil {
+		t.Fatalf("MkdirTemp: %v", errMkdir)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(evidenceDir) })
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("get free port: %v", err)
@@ -2132,7 +2141,7 @@ func TestStartHTTPServer_ShortLive(t *testing.T) {
 		},
 		EvidenceDelivery: config.EvidenceDeliveryConfig{
 			Enabled:   true,
-			OutputDir: dir,
+			OutputDir: evidenceDir,
 			Schedule:  "1ms",
 		},
 		JITAccessExpiry: config.JITAccessExpiryConfig{
