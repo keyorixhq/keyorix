@@ -31,15 +31,15 @@ servers:
     description: Local development
 tags:
   - {name: Auth, description: Authentication & self-service account management}
-  - {name: System, description: Health, info, and metrics}
+  - {name: System, description: "Health, info, and metrics"}
   - {name: Projects, description: Projects and cross-environment drift}
   - {name: Environments, description: Project environments}
   - {name: Members, description: Project membership (role grants)}
   - {name: Memberships, description: Membership onboarding lifecycle (ADR-022)}
   - {name: Invitations, description: Invitations (ADR-024)}
   - {name: AccessRequests, description: Self-service access requests (ADR-024)}
-  - {name: MachineIdentities, description: Machine identities, tokens & RBAC (ADR-023/030)}
-  - {name: Secrets, description: Secret lifecycle, versions, usage, risk}
+  - {name: MachineIdentities, description: "Machine identities, tokens & RBAC (ADR-023/030)"}
+  - {name: Secrets, description: "Secret lifecycle, versions, usage, risk"}
   - {name: Shares, description: Secret sharing}
   - {name: RotationPolicies, description: Rotation policies & status}
   - {name: Users, description: User management & impersonation}
@@ -47,7 +47,7 @@ tags:
   - {name: Roles, description: Roles & permissions}
   - {name: Permissions, description: Permission catalog}
   - {name: UserRoles, description: Direct user-role assignment}
-  - {name: Audit, description: Audit logs, export, retention, tamper-evidence, anomalies}
+  - {name: Audit, description: "Audit logs, export, retention, tamper-evidence, anomalies"}
   - {name: Notifications, description: In-app notifications}
   - {name: Dashboard, description: Dashboard stats & activity}
 paths:
@@ -250,7 +250,7 @@ paths:
       operationId: getAuthProfile
       security: [{bearerAuth: []}]
       responses:
-        '200': {description: Self profile (id, username, email, display_name, role, roles, permissions, last_login_at)}
+        '200': {description: "Self profile (id, username, email, display_name, role, roles, permissions, last_login_at)"}
         '401': {$ref: '#/components/responses/Error'}
     put:
       tags: [Auth]

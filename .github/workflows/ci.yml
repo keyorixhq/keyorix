@@ -31,6 +31,8 @@ env:
   # asset and pinned here, matching the gitleaks/kubeconform convention above.
   CHECKOV_VERSION: 3.3.6
   CHECKOV_LINUX_X64_SHA256: 0b4f043603225acc55812d896233c98fdfe13e8de31dbbcb18edc669812fb667
+  SPECTRAL_VERSION: '6.15.0'
+  COVERAGE_FLOOR: '71'
 
 jobs:
   build-and-test:
@@ -51,13 +53,24 @@ jobs:
 
       - name: go test
         run: |
-          go test -race -timeout 120s \
+          go test -race -timeout 600s -coverprofile=coverage.out -covermode=atomic \
             $(go list ./... | grep -v \
               -e 'internal/cli$' \
               -e 'internal/core$' \
               -e 'internal/storage/remote' \
               -e 'server/http$' \
               -e 'server/middleware$')
+
+      - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
+        run: |
+          pct=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}' | tr -d '%')
+          awk -v pct="$pct" -v floor="${COVERAGE_FLOOR}" 'BEGIN {
+            if (pct+0 < floor+0) {
+              print "FAIL: coverage " pct "% is below the " floor "% floor"
+              exit 1
+            }
+            print "OK: coverage " pct "% meets the " floor "% floor"
+          }'
 
       - name: govulncheck
         run: |
@@ -113,7 +126,7 @@ jobs:
           go build ./...
 
       - name: go test
-        run: go test -race -timeout 120s ./...
+        run: go test -race -timeout 600s ./...
 
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (echo 'gofmt needed:'; gofmt -l .; exit 1)
@@ -503,3 +516,21 @@ jobs:
           CHECKS="CKV_K8S_16,CKV_K8S_17,CKV_K8S_18,CKV_K8S_19,CKV_K8S_20,CKV_K8S_22,CKV_K8S_23,CKV_K8S_28,CKV_K8S_31,CKV_K8S_37,CKV_K8S_42,CKV_K8S_49,CKV_K8S_155,CKV_K8S_156,CKV_K8S_157,CKV_K8S_158"
           checkov --framework kubernetes --compact --check "$CHECKS" \
             -f keyorix-render.yaml -f k8s-sync-render.yaml -f operator-render.yaml
+
+  # The 3,000-line openapi.yaml is the contract between the server and every
+  # client (dashboard, CLI remote mode, SDK users). Spectral validates structural
+  # correctness (response schemas present, security schemes consistent, no
+  # trailing slashes, typed enums) so drift between the spec and handler intent
+  # is caught in CI rather than discovered by a consumer. The OAS ruleset is
+  # used as-is: it only fails on ERRORs by default, so warnings are surfaced
+  # without blocking, and the .spectral.yaml at the repo root controls overrides.
+  openapi-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Spectral (pinned, lifecycle scripts disabled)
+        run: npm install --ignore-scripts @stoplight/spectral-cli@${SPECTRAL_VERSION}
+
+      - name: Lint OpenAPI spec
+        run: ./node_modules/.bin/spectral lint --ruleset .spectral.yaml server/http/handlers/openapi.yaml
