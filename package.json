@@ -4,6 +4,6 @@
   "private": true,
   "description": "CI tooling dependencies (pinned for Scorecard supply-chain compliance)",
   "dependencies": {
-    "@stoplight/spectral-cli": "6.15.0"
+    "@stoplight/spectral-cli": "6.16.1"
   }
 }
