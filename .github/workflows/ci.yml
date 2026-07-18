@@ -31,7 +31,6 @@ env:
   # asset and pinned here, matching the gitleaks/kubeconform convention above.
   CHECKOV_VERSION: 3.3.6
   CHECKOV_LINUX_X64_SHA256: 0b4f043603225acc55812d896233c98fdfe13e8de31dbbcb18edc669812fb667
-  SPECTRAL_VERSION: '6.15.0'
   COVERAGE_FLOOR: '71'
 
 jobs:
@@ -529,8 +528,8 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Install Spectral (pinned, lifecycle scripts disabled)
-        run: npm install --ignore-scripts @stoplight/spectral-cli@${SPECTRAL_VERSION}
+      - name: Install Spectral (lockfile-pinned, lifecycle scripts disabled)
+        run: npm ci --ignore-scripts
 
       - name: Lint OpenAPI spec
         run: ./node_modules/.bin/spectral lint --ruleset .spectral.yaml server/http/handlers/openapi.yaml

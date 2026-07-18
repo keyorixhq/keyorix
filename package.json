@@ -1,0 +1,9 @@
+{
+  "name": "keyorix-ci-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CI tooling dependencies (pinned for Scorecard supply-chain compliance)",
+  "dependencies": {
+    "@stoplight/spectral-cli": "6.16.1"
+  }
+}
