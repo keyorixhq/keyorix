@@ -23,14 +23,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"encoding/json"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 )
@@ -790,4 +791,205 @@ func TestInitializeCoreService_S27_SIEMProviderError(t *testing.T) {
 	// If siem.New rejects the unknown provider, err != nil; otherwise nil.
 	// Either way we exercise the SIEM wiring code path.
 	_, _, _ = initializeCoreService(cfg)
+}
+
+// ── initializeCoreService: encryption failure propagates to caller ────────────
+
+// TestInitializeCoreService_S27_EncryptionFailure exercises line 260-262 in
+// initializeCoreService: when initializeEncryption returns a non-nil error
+// (encryption enabled with password provider but no KEYORIX_MASTER_PASSWORD),
+// initializeCoreService must propagate the error.
+func TestInitializeCoreService_S27_EncryptionFailure(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "") // no password → initializeEncryption fails
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: "test_s27_enc.db"},
+			Encryption: config.EncryptionConfig{
+				Enabled:  true,
+				DEKPath:  "dek.json",
+				SaltPath: "salt.bin",
+				// KeyProvider.Type = "" → password provider (requires KEYORIX_MASTER_PASSWORD)
+			},
+		},
+	}
+
+	_, _, err := initializeCoreService(cfg)
+	if err == nil {
+		t.Fatal("expected error when encryption fails due to missing KEYORIX_MASTER_PASSWORD")
+	}
+}
+
+// ── initializeCoreService: evidence webhook error (bad SSRF endpoint) ─────────
+
+// TestInitializeCoreService_S27_EvidenceWebhookSSRFError exercises line 638-640:
+// evidencesink.NewWebhook fails for a link-local SSRF-blocked endpoint.
+func TestInitializeCoreService_S27_EvidenceWebhookSSRFError(t *testing.T) {
+	initI18n(t)
+	cfg := newMinimalCfg(t)
+	cfg.EvidenceDelivery = config.EvidenceDeliveryConfig{
+		Enabled: true,
+		Webhook: config.EvidenceWebhookConfig{
+			Enabled:                   true,
+			Endpoint:                  "http://169.254.169.254/evidence", // SSRF-blocked
+			AllowPrivateNetworkTarget: false,
+		},
+	}
+
+	_, _, err := initializeCoreService(cfg)
+	if err == nil {
+		t.Fatal("expected error when evidence webhook endpoint is SSRF-blocked")
+	}
+}
+
+// ── initializeCoreService: evidence object-store init error ──────────────────
+
+// TestInitializeCoreService_S27_EvidenceObjectStoreError triggers the
+// evidencesink.NewObjectStore error path (line 655-657) by providing an
+// invalid object_lock_mode value that is immediately rejected by NewObjectStore
+// before any network call is attempted.
+func TestInitializeCoreService_S27_EvidenceObjectStoreError(t *testing.T) {
+	initI18n(t)
+	cfg := newMinimalCfg(t)
+	cfg.EvidenceDelivery = config.EvidenceDeliveryConfig{
+		Enabled: true,
+		ObjectStore: config.EvidenceObjectStoreConfig{
+			Enabled:  true,
+			Bucket:   "test-bucket",
+			LockMode: "INVALID_LOCK_MODE", // objectLockMode returns error immediately
+		},
+	}
+
+	_, _, err := initializeCoreService(cfg)
+	if err == nil {
+		t.Fatal("expected error when object-store lock_mode is invalid")
+	}
+}
+
+// ── runStartupValidation: errors loop body covered (encryption validation) ───
+
+// TestRunStartupValidation_S27_EncryptionValidationError covers the
+// for _, e := range result.Errors { log } body (line 1435.35) by
+// producing a scenario where the encryption validation step fails:
+// the DEK file exists with correct permissions but is too small (< 60 bytes).
+// ValidateStartup appends to result.Errors and then returns an error, so
+// the for-loop body in runStartupValidation executes.
+func TestRunStartupValidation_S27_EncryptionValidationError(t *testing.T) {
+	dir := t.TempDir()
+
+	dekPath := filepath.Join(dir, "dek.key")
+	saltPath := filepath.Join(dir, "kek.salt")
+	dbPath := filepath.Join(dir, "keyorix.db")
+
+	// DEK: exists with correct perms but too small → encryption validation fails.
+	if err := os.WriteFile(dekPath, make([]byte, 10), 0o600); err != nil {
+		t.Fatalf("write dek: %v", err)
+	}
+	// Salt: correct size and perms → passes file perm + salt validation.
+	if err := os.WriteFile(saltPath, make([]byte, 32), 0o600); err != nil {
+		t.Fatalf("write salt: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("sqlite"), 0o600); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	configPath := filepath.Join(dir, "keyorix.yaml")
+	yamlContent := fmt.Sprintf(`storage:
+  type: local
+  database:
+    path: %q
+  encryption:
+    enabled: true
+    dek_path: %q
+    salt_path: %q
+security:
+  enable_file_permission_check: true
+  allow_unsafe_file_permissions: false
+`, dbPath, dekPath, saltPath)
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg := loadStartupTestConfig(t, configPath)
+
+	// ValidateStartup will:
+	//   1. Check file perms → DEK 0600 OK → no error
+	//   2. Validate encryption → DEK 10 bytes < 60 → appends to result.Errors → returns error
+	// runStartupValidation then iterates result.Errors, covering line 1435.35.
+	err := runStartupValidation(cfg)
+	if err == nil {
+		t.Fatal("expected runStartupValidation to return an error for under-size DEK")
+	}
+}
+
+// ── discoverOIDC: JSON decode error path ─────────────────────────────────────
+
+// TestDiscoverOIDC_S27_InvalidJSON exercises the json.Decode error path
+// in discoverOIDC (line 1659.97–1661.3). The discovery endpoint returns
+// a non-JSON body; the decode fails and the error is propagated.
+func TestDiscoverOIDC_S27_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Return invalid JSON — json.Decode will fail.
+		if _, err := w.Write([]byte("NOT-VALID-JSON{{{")); err != nil {
+			t.Logf("write error: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	_, err := discoverOIDC(srv.URL)
+	if err == nil {
+		t.Fatal("discoverOIDC must return an error when the discovery body is not valid JSON")
+	}
+}
+
+// ── startHTTPServer: encryption enabled — defer encSvc.Shutdown + audit checkpoint ──
+
+// TestStartHTTPServer_S27_WithEncryption runs startHTTPServer with storage
+// encryption enabled. This covers two uncovered branches:
+//   - line 837: `if encSvc != nil { defer encSvc.Shutdown() }` — the defer
+//     is registered and fires when startHTTPServer returns.
+//   - lines 1194–1209: the audit-checkpoint switch `default:` case — when
+//     encryption is active, AuditCheckpointsAvailable() returns true and
+//     the audit-checkpoint scheduler is started. The goroutine fires
+//     immediately (runScheduler calls tick() once before the first tick),
+//     covering the WriteAuditCheckpoint callback body.
+//
+// A context timer (300 ms) gives the scheduler goroutine time to run its
+// first tick before the server shuts down.
+func TestStartHTTPServer_S27_WithEncryption(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "test-coverage-password-s27")
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: "httptest_s27_enc2.db"},
+			Encryption: config.EncryptionConfig{
+				Enabled:  true,
+				DEKPath:  "dek_s27.json",
+				SaltPath: "salt_s27.bin",
+			},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    "0", // OS picks a free port
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	// startHTTPServer blocks until ctx is cancelled (300 ms).
+	// During that window the audit-checkpoint goroutine runs once.
+	// When startHTTPServer returns, defer encSvc.Shutdown() fires.
+	_ = startHTTPServer(ctx, cfg)
 }
