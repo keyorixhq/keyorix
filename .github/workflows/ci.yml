@@ -31,7 +31,7 @@ env:
   # asset and pinned here, matching the gitleaks/kubeconform convention above.
   CHECKOV_VERSION: 3.3.6
   CHECKOV_LINUX_X64_SHA256: 0b4f043603225acc55812d896233c98fdfe13e8de31dbbcb18edc669812fb667
-  COVERAGE_FLOOR: '71'
+  COVERAGE_FLOOR: '90'
 
 jobs:
   build-and-test:
@@ -58,7 +58,8 @@ jobs:
               -e 'internal/core$' \
               -e 'internal/storage/remote' \
               -e 'server/http$' \
-              -e 'server/middleware$')
+              -e 'server/middleware$' \
+              -e 'server/proto/pb$')
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
         run: |

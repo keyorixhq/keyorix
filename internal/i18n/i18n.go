@@ -17,7 +17,11 @@ import (
 // Embed the locales directory
 //
 //go:embed locales/*.json
-var localeFS embed.FS
+var localeEmbedFS embed.FS
+
+// localeFS is the filesystem used to load translation files.
+// It can be replaced in tests via setLocaleFSForTesting.
+var localeFS fs.FS = localeEmbedFS
 
 // Localizer provides translation functionality
 type Localizer struct {
@@ -101,7 +105,7 @@ func loadTranslationFiles(bundle *i18n.Bundle) error {
 		}
 
 		filePath := filepath.Join("locales", entry.Name())
-		data, err := localeFS.ReadFile(filePath)
+		data, err := fs.ReadFile(localeFS, filePath)
 		if err != nil {
 			return fmt.Errorf("failed to read translation file %s: %w", filePath, err)
 		}

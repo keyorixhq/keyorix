@@ -17,9 +17,13 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
+// fsSub is the function used to create a sub-FS. It exists as a variable so
+// tests can replace it to exercise the error-fallback branch of FS().
+var fsSub = fs.Sub
+
 // FS returns the embedded web build rooted at dist/.
 func FS() fs.FS {
-	sub, err := fs.Sub(distFS, "dist")
+	sub, err := fsSub(distFS, "dist")
 	if err != nil {
 		return distFS // dist is always present (committed placeholder); stay non-nil
 	}
