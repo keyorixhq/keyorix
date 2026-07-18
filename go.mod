@@ -38,7 +38,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	github.com/wneessen/go-mail v0.7.3
+	github.com/wneessen/go-mail v0.8.1
 	go.mongodb.org/mongo-driver v1.17.9
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
