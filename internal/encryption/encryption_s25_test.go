@@ -79,12 +79,6 @@ func s25Svc(t *testing.T) *Service {
 	return svc
 }
 
-// corruptJSON returns bytes that are not valid EncryptedData JSON but are
-// non-empty, so the sweep doesn't skip the row.
-func corruptJSON() []byte {
-	return []byte(`{"not":"valid encrypted data json","garbage":true}`)
-}
-
 // ─── sweepSecretVersions: deserialize error ──────────────────────────────────
 
 func TestSweepSecretVersions_DeserializeError(t *testing.T) {

@@ -508,7 +508,7 @@ func TestCreateLocalStorage_S28_MigrateDatabaseFailure(t *testing.T) {
 	// Close the seeding connection so createLocalStorage can open its own.
 	rawDB, dbErr := seed.DB()
 	if dbErr == nil {
-		rawDB.Close()
+		_ = rawDB.Close()
 	}
 
 	cfg := &config.Config{}

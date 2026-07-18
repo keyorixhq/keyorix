@@ -29,66 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ════════════════════════════════════════════════════════
-// Fake MySQL driver — handles CREATE USER / GRANT / DROP USER / KILL
-// ════════════════════════════════════════════════════════
-
-// fakeMySQLDriver is a database/sql/driver.Driver that accepts any query and
-// returns success so the full Issue/Revoke logic in mysql.go executes.
-type fakeMySQLDriver struct{}
-
-var fakeMySQLRegisterOnce sync.Once
-
-// dsnForFakeMySQL returns a DSN that the go-sql-driver/mysql parser accepts
-// (format user:pass@tcp(host)/db) but is routed to the fake driver.
-func dsnForFakeMySQL() string { return "admin:pass@tcp(127.0.0.1:3306)/testdb" }
-
-func registerFakeMySQL() {
-	fakeMySQLRegisterOnce.Do(func() {
-		sql.Register("fakemysql", &fakeMySQLDriver{})
-	})
-}
-
-func (d *fakeMySQLDriver) Open(_ string) (driver.Conn, error) {
-	return &fakeMySQLConn{}, nil
-}
-
-type fakeMySQLConn struct{}
-
-func (c *fakeMySQLConn) Prepare(query string) (driver.Stmt, error) {
-	return &fakeMySQLStmt{query: query}, nil
-}
-func (c *fakeMySQLConn) Close() error                        { return nil }
-func (c *fakeMySQLConn) Begin() (driver.Tx, error)          { return nil, fmt.Errorf("not supported") }
-
-type fakeMySQLStmt struct{ query string }
-
-func (s *fakeMySQLStmt) Close() error  { return nil }
-func (s *fakeMySQLStmt) NumInput() int { return -1 }
-func (s *fakeMySQLStmt) Exec(_ []driver.Value) (driver.Result, error) {
-	return driver.RowsAffected(1), nil
-}
-func (s *fakeMySQLStmt) Query(_ []driver.Value) (driver.Rows, error) {
-	return &emptyMySQLRows{}, nil
-}
-
-type emptyMySQLRows struct{ done bool }
-
-func (r *emptyMySQLRows) Columns() []string               { return []string{"id"} }
-func (r *emptyMySQLRows) Close() error                    { return nil }
-func (r *emptyMySQLRows) Next(_ []driver.Value) error     { return io.EOF }
-
-// openFakeMySQL opens a *sql.DB backed by the fake driver and pings it
-// successfully (the fake driver's Open always succeeds).
-func openFakeMySQL(t *testing.T) *sql.DB {
-	t.Helper()
-	registerFakeMySQL()
-	db, err := sql.Open("fakemysql", "any")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	return db
-}
-
 // ─── MySQL Issue – happy paths ──────────────────────────────────────────────
 
 // TestMySQLEngine_Issue_NoTemplate exercises the Issue path without a

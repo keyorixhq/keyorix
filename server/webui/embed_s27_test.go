@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,8 +83,7 @@ func TestHTTPFS_S27_RootDirectoryIsReadable(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
 
-	hf, ok := f.(http.File)
-	require.True(t, ok)
+	hf := f
 
 	entries, err := hf.Readdir(-1)
 	require.NoError(t, err)
@@ -145,8 +143,7 @@ func TestHTTPFS_S27_StatIsConsistentWithFSFS(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = hf.Close() })
 
-	hfFile, ok := hf.(http.File)
-	require.True(t, ok)
+	hfFile := hf
 	httpInfo, err := hfFile.Stat()
 	require.NoError(t, err)
 

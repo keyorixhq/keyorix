@@ -138,22 +138,6 @@ func TestVerify_S26_InvalidJSON(t *testing.T) {
 // WriteBundle — tw.WriteHeader error for component entry
 // ---------------------------------------------------------------------------
 
-// errorAfterNWriter fails once more than maxWrites Write calls have been made.
-// This lets the manifest + sig entries succeed but makes the component header write fail.
-type errorAfterNWriter struct {
-	writes int
-	max    int
-	buf    bytes.Buffer
-}
-
-func (w *errorAfterNWriter) Write(p []byte) (int, error) {
-	w.writes++
-	if w.writes > w.max {
-		return 0, errors.New("write quota exceeded")
-	}
-	return w.buf.Write(p)
-}
-
 // TestWriteBundle_S26_HeaderWriteError verifies that WriteBundle returns an error
 // when the tar.WriteHeader call for a component entry fails. We route it through
 // a writer that succeeds for the manifest+sig entries (first N writes) then fails.

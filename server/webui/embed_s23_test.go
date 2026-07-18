@@ -3,7 +3,6 @@ package webui_test
 import (
 	"io"
 	"io/fs"
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,8 +96,7 @@ func TestHTTPFS_stat(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.Close() })
 
-	hf, ok := f.(http.File)
-	require.True(t, ok, "HTTPFS().Open should return an http.File")
+	hf := f
 
 	info, err := hf.Stat()
 	require.NoError(t, err)

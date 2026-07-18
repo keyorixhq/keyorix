@@ -186,7 +186,7 @@ func TestRESTSink_Delete_TransportError(t *testing.T) {
 			return
 		}
 		conn, _, _ := hj.Hijack()
-		conn.Close()
+		_ = conn.Close()
 	}))
 	defer func() { _ = recover() }()
 
@@ -260,8 +260,7 @@ func TestRESTSink_Apply_GetOwnedMetaError(t *testing.T) {
 // TestRESTSink_Apply_TransportErrorOnPatch verifies that a transport error
 // during the PATCH call is surfaced as an error.
 func TestRESTSink_Apply_TransportErrorOnPatch(t *testing.T) {
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			// Not found — no pre-existing Secret, proceed to PATCH.
 			w.WriteHeader(http.StatusNotFound)
@@ -274,7 +273,7 @@ func TestRESTSink_Apply_TransportErrorOnPatch(t *testing.T) {
 			return
 		}
 		conn, _, _ := hj.Hijack()
-		conn.Close()
+		_ = conn.Close()
 	}))
 	defer srv.Close()
 

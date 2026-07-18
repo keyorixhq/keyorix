@@ -48,7 +48,7 @@ func TestSecureWriteFileSync_S27_SyncError_FIFO(t *testing.T) {
 		for {
 			n, rerr := r.Read(buf)
 			if n == 0 || rerr != nil {
-				r.Close()
+				_ = r.Close()
 				return
 			}
 		}

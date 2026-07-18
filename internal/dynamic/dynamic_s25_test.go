@@ -198,7 +198,7 @@ func mysqlEOFPkt() []byte {
 func handleMySQLCommands(conn net.Conn, failAfterQuery int) {
 	stmtIDCounter := uint32(1)
 	queryCount := 0
-	seq := uint8(1)
+	var seq uint8
 	for {
 		_, payload, err := readMySQLPkt(conn)
 		if err != nil {
@@ -514,11 +514,6 @@ func bsonDocHello() []byte {
 		bsonString("me", "127.0.0.1:27017"),
 		bsonDouble("ok", 1.0),
 	)
-}
-
-// writeOPMsgOK writes a MongoDB OP_MSG response with {ok: 1}.
-func writeOPMsgOK(conn net.Conn, responseTo int32) error {
-	return writeOPMsgWithBody(conn, responseTo, bsonDocOK())
 }
 
 // writeOPMsgWithBody sends an OP_MSG response with the given BSON body.

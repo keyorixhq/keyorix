@@ -56,25 +56,6 @@ locale:
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(yaml), 0600))
 }
 
-// writeEnabledYAML writes a keyorix.yaml with encryption ENABLED pointing
-// at a given dbPath. Used for tests that need a valid DB-enabled config.
-func writeEnabledYAML(t *testing.T, dir, dbPath string) {
-	t.Helper()
-	yaml := `storage:
-  type: local
-  database:
-    path: "` + dbPath + `"
-  encryption:
-    enabled: true
-    dek_path: dek.key
-    salt_path: salt.bin
-locale:
-  language: "en"
-  fallback_language: "en"
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(yaml), 0600))
-}
-
 // openBareDB opens a minimal SQLite in-memory DB with no schema (tables will
 // not exist). Used to force UPDATE failures on models that need real schema.
 func openBareDB(t *testing.T, path string) *gorm.DB {

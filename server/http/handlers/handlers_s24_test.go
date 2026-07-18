@@ -40,7 +40,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -134,16 +133,6 @@ func freshCoreS24WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(testUser).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testUser.ID, RoleID: adminRole.ID}).Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
-}
-
-// withUserCtxID_S24 returns a request with a UserContext set to a specific user ID.
-func withUserCtxID_S24(r *http.Request, userID uint) *http.Request {
-	userCtx := &middleware.UserContext{
-		UserID:   userID,
-		Username: "testuser",
-		Email:    "testuser@example.com",
-	}
-	return r.WithContext(context.WithValue(r.Context(), middleware.GetUserContextKey(), userCtx))
 }
 
 // withChiParam_S24 is a local alias to avoid redeclaration conflicts.

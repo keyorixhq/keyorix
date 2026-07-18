@@ -47,8 +47,8 @@ func TestParseJWK_ECP256Success(t *testing.T) {
 	k := jwk{
 		Kty: "EC",
 		Crv: "P-256",
-		X:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.X.Bytes()),
-		Y:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.Y.Bytes()),
+		X:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.X.Bytes()), //nolint:staticcheck
+		Y:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.Y.Bytes()), //nolint:staticcheck
 	}
 	result, err := parseJWK(k)
 	require.NoError(t, err)
@@ -63,8 +63,8 @@ func TestParseJWK_ECP384Success(t *testing.T) {
 	k := jwk{
 		Kty: "EC",
 		Crv: "P-384",
-		X:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.X.Bytes()),
-		Y:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.Y.Bytes()),
+		X:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.X.Bytes()), //nolint:staticcheck
+		Y:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.Y.Bytes()), //nolint:staticcheck
 	}
 	result, err := parseJWK(k)
 	require.NoError(t, err)
@@ -79,8 +79,8 @@ func TestParseJWK_ECP521Success(t *testing.T) {
 	k := jwk{
 		Kty: "EC",
 		Crv: "P-521",
-		X:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.X.Bytes()),
-		Y:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.Y.Bytes()),
+		X:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.X.Bytes()), //nolint:staticcheck
+		Y:   base64.RawURLEncoding.EncodeToString(priv.PublicKey.Y.Bytes()), //nolint:staticcheck
 	}
 	result, err := parseJWK(k)
 	require.NoError(t, err)
