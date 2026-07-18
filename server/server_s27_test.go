@@ -23,7 +23,9 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -34,6 +36,8 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ── startHTTPServer: initializeCoreService failure returns error ──────────────
@@ -992,4 +996,293 @@ func TestStartHTTPServer_S27_WithEncryption(t *testing.T) {
 	// During that window the audit-checkpoint goroutine runs once.
 	// When startHTTPServer returns, defer encSvc.Shutdown() fires.
 	_ = startHTTPServer(ctx, cfg)
+}
+
+// ── startHTTPServer: SCIM enabled with weak token → NewRouter error ──────────
+
+// TestStartHTTPServer_S27_SCIMWeakToken exercises the NewRouter error path
+// (line 847-849) when SCIM is enabled with a token shorter than the minimum
+// 20-character requirement. NewRouter returns an error before any listener is
+// bound, so startHTTPServer returns an error immediately.
+func TestStartHTTPServer_S27_SCIMWeakToken(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: "httptest_s27_scim_weak.db"},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    "0",
+			},
+		},
+		SCIM: config.SCIMConfig{
+			Enabled: true,
+			Token:   "weak", // 4 chars — fails ValidateSCIMTokenStrength (< 20 chars)
+		},
+	}
+
+	// startHTTPServer must return an error because NewRouter rejects the weak SCIM token.
+	err := startHTTPServer(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected startHTTPServer to return an error for a weak SCIM token")
+	}
+}
+
+// ── startHTTPServer: AutoCert TLS with invalid cipher → goroutine error ──────
+
+// TestStartHTTPServer_S27_AutoCertBadCipher exercises the AutoCert TLS serve
+// goroutine error path (lines 1331-1334) where buildAutoCertTLSConfig fails
+// because AllowedCiphers names an unrecognised cipher suite. The goroutine
+// starts, calls buildAutoCertTLSConfig, hits the error, logs it, and returns
+// early — never calling ServeTLS. The context timer (200 ms) lets the goroutine
+// run before the main body's <-ctx.Done() returns.
+func TestStartHTTPServer_S27_AutoCertBadCipher(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: "httptest_s27_autocert_badcipher.db"},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    "0",
+				TLS: config.TLSConfig{
+					Enabled:        true,
+					AutoCert:       true,
+					AllowedCiphers: []string{"INVALID_CIPHER_XYZ_S27"}, // not a recognised cipher suite
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	_ = startHTTPServer(ctx, cfg)
+}
+
+// ── startHTTPServer: non-AutoCert TLS with valid cert → ServeTLS path ────────
+
+// TestStartHTTPServer_S27_TLSNonAutoCert exercises the non-AutoCert TLS serve
+// path (line 1337) where server.ServeTLS is called with explicit cert/key files
+// rather than the autocert.Manager. writeSelfSignedCert generates a valid
+// self-signed cert+key pair; createTLSConfig succeeds and the goroutine calls
+// ServeTLS which begins listening. A 200 ms context timer cancels the server.
+func TestStartHTTPServer_S27_TLSNonAutoCert(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	certFile, keyFile := writeSelfSignedCert(t, dir)
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: "httptest_s27_tlsnonauto.db"},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    "0",
+				TLS: config.TLSConfig{
+					Enabled:  true,
+					AutoCert: false,
+					CertFile: certFile,
+					KeyFile:  keyFile,
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	_ = startHTTPServer(ctx, cfg)
+}
+
+// ── buildSSOProviders: SAML provider where ssoCompleteURL rejects ACSURL ─────
+
+// TestBuildSSOProviders_S27_SAMLInvalidACSURL exercises the ssoCompleteURL
+// error path (lines 1745-1747) that fires after buildSAMLProvider succeeds but
+// the ACSURL turns out to have no scheme, making ssoCompleteURL return an error.
+//
+// It calls buildSSOProviders directly (no HTTP server, no DB needed). The IdP
+// metadata is a minimal but valid SAML XML document backed by a real self-signed
+// EC certificate (from testSelfSignedCACert) to pass parseIDPMetadata/xrv.Validate.
+// ACSURL "relative-no-scheme" passes samlpkg.NewProvider (url.Parse succeeds)
+// but fails ssoCompleteURL (u.Scheme == "").
+func TestBuildSSOProviders_S27_SAMLInvalidACSURL(t *testing.T) {
+	initI18n(t)
+
+	// Generate a PEM-encoded self-signed cert and derive its base64 DER for the SAML metadata.
+	caPEM := testSelfSignedCACert(t)
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		t.Fatal("pem.Decode returned nil block")
+	}
+	certB64 := base64.StdEncoding.EncodeToString(block.Bytes)
+
+	metaXML := fmt.Sprintf(`<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>%s</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/sso"/>
+  </IDPSSODescriptor>
+</EntityDescriptor>`, certB64)
+
+	sso := config.SSOConfig{
+		Providers: []config.SSOProviderConfig{
+			{
+				Name: "test-saml-s27",
+				Type: "saml",
+				SAML: &config.SAMLProviderConfig{
+					IDPMetadataXML: metaXML,
+					SPEntityID:     "https://sp.example.com/s27",
+					ACSURL:         "relative-no-scheme", // no "https://" → ssoCompleteURL returns error
+				},
+			},
+		},
+	}
+
+	_, _, count := buildSSOProviders(sso)
+	// The SAML provider is skipped because ssoCompleteURL rejects the ACSURL, so no
+	// provider is registered and count is 0.
+	if count != 0 {
+		t.Fatalf("expected 0 registered providers, got %d", count)
+	}
+}
+
+// ── startHTTPServer: active legal hold blocks the retention-purge scheduler ──
+
+// TestStartHTTPServer_S27_LegalHoldBlocksPurge exercises the legalHoldBlocks
+// closure's "active hold" branch (lines 915-918) inside startHTTPServer. A
+// legal hold is inserted directly into the storage layer (bypassing the RBAC
+// check in PlaceLegalHold) by calling initializeCoreService once to set up the
+// DB schema and insert the hold, then running startHTTPServer against the same
+// DB with the retention-purge scheduler enabled.
+//
+// On its first tick (immediate, per runScheduler) the purge scheduler calls
+// legalHoldBlocks, which finds an active hold and returns true, logging the
+// "skipped: a legal hold is active" message — covering lines 915.13,918.4.
+func TestStartHTTPServer_S27_LegalHoldBlocksPurge(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	const dbPath = "legalholdtest_s27.db"
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: dbPath},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    "0",
+			},
+		},
+		Purge: config.PurgeConfig{
+			Enabled:  true,
+			Schedule: "1ms",
+		},
+	}
+
+	// Phase 1: initialise the DB schema and insert a legal hold via direct storage access.
+	coreService1, _, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService (phase 1): %v", err)
+	}
+	ctx1 := context.Background()
+	_, err = coreService1.Storage().CreateLegalHold(ctx1, &models.LegalHold{
+		Reason:   "s27-test-hold",
+		PlacedAt: time.Now(),
+		Released: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateLegalHold: %v", err)
+	}
+
+	// Phase 2: run the HTTP server against the same DB. The purge scheduler fires
+	// immediately (interval=1ms), finds the active legal hold, and logs the skip message,
+	// covering lines 915-918.
+	ctx2, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	_ = startHTTPServer(ctx2, cfg)
+}
+
+// ── startHTTPServer: JIT access-expiry sweep removes expired role grants ─────
+
+// TestStartHTTPServer_S27_JITExpiredGrantSwept exercises the JIT expiry
+// scheduler's "n > 0" log branch (lines 1233-1235) by pre-populating the DB
+// with an expired role grant. initializeCoreService sets up the schema; then a
+// role and a user are inserted directly and the role is assigned to the user
+// with a past expiry time. When startHTTPServer runs with
+// JITAccessExpiry.Enabled, the sweeper fires immediately (interval=1ms) and
+// RemoveExpiredRoleGrants returns n=1, triggering the log.Printf call.
+func TestStartHTTPServer_S27_JITExpiredGrantSwept(t *testing.T) {
+	initI18n(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	const dbPath = "jitexpiry_s27.db"
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: dbPath},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    "0",
+			},
+		},
+		JITAccessExpiry: config.JITAccessExpiryConfig{
+			Enabled:  true,
+			Schedule: "1ms",
+		},
+	}
+
+	// Phase 1: initialise DB schema and pre-populate an expired role grant.
+	coreService1, _, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService (phase 1): %v", err)
+	}
+	ctx1 := context.Background()
+	store := coreService1.Storage()
+
+	role, err := store.CreateRole(ctx1, &models.Role{Name: "s27-jit-role"})
+	if err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	user, err := store.CreateUser(ctx1, &models.User{
+		Username: "jituser-s27",
+		IsActive: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := store.AssignRoleWithExpiry(
+		ctx1, user.ID, role.ID,
+		corestorage.Scope{}, // global scope
+		time.Now().Add(-time.Hour), // already expired
+	); err != nil {
+		t.Fatalf("AssignRoleWithExpiry: %v", err)
+	}
+
+	// Phase 2: run the server. The JIT expiry sweeper fires at once (interval=1ms),
+	// calls RemoveExpiredRoleGrants, finds n=1, and logs the "removed N expired grant(s)"
+	// message — covering lines 1233.14,1235.6.
+	ctx2, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(300*time.Millisecond, cancel)
+	_ = startHTTPServer(ctx2, cfg)
 }
