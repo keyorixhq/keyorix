@@ -106,7 +106,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending,
 	}, nil)
 	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
-	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6}, nil)
+	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
