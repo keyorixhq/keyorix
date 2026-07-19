@@ -374,12 +374,18 @@ func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
-	if _, err := c.storage.GetSecret(ctx, id); err != nil {
+	secret, err := c.storage.GetSecret(ctx, id)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 	if err := c.storage.DeleteSecret(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Emit an audit event for every dependency edge incident to this secret so
+	// operators know which rotation plans are affected (best-effort; the delete
+	// already succeeded). actorID 0 here because DeleteSecret itself has no actor
+	// context — the HTTP handler's LogSecretDeleted carries the authenticated user.
+	c.emitDependencyLifecycleEvents(ctx, EventSecretDependencyInvalidated, 0, id, secret.ProjectID, secret.Name)
 	return nil
 }
 
@@ -402,11 +408,24 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
+	// Fetch before restoring so we have name + projectID even though the row is
+	// still soft-deleted at this point (GetSecretIncludingDeleted ignores deleted_at).
+	secret, err := c.storage.GetSecretIncludingDeleted(ctx, id)
+	if err != nil {
+		// Fall back gracefully: the storage.RestoreSecret call will re-validate the
+		// row and return a proper error if the id is unknown.
+		secret = nil
+	}
 	if err := c.storage.RestoreSecret(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	sid := id
 	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, fmt.Sprintf("secret %d restored", id))
+	// Emit an audit event for every dependency edge that is now re-active so
+	// operators know which rotation plans are unblocked (best-effort).
+	if secret != nil {
+		c.emitDependencyLifecycleEvents(ctx, EventSecretDependencyRestored, actorID, id, secret.ProjectID, secret.Name)
+	}
 	return nil
 }
 

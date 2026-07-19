@@ -300,8 +300,10 @@ func TestDeleteSecret_NotFound(t *testing.T) {
 
 func TestDeleteSecret_Success(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("GetSecret", mock.Anything, uint(3)).Return(&models.SecretNode{ID: 3}, nil)
+	ms.On("GetSecret", mock.Anything, uint(3)).Return(&models.SecretNode{ID: 3, ProjectID: 1}, nil)
 	ms.On("DeleteSecret", mock.Anything, uint(3)).Return(nil)
+	// emitDependencyLifecycleEvents lists the project's edges after delete.
+	ms.On("ListSecretDependenciesForProject", mock.Anything, uint(1)).Return([]*models.SecretDependency{}, nil)
 	c := NewKeyorixCore(ms)
 	require.NoError(t, c.DeleteSecret(context.Background(), 3))
 }
@@ -337,6 +339,8 @@ func TestRestoreSecret_ZeroID(t *testing.T) {
 
 func TestRestoreSecret_StorageError(t *testing.T) {
 	ms := new(MockStorage)
+	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
+	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1}, nil)
 	ms.On("RestoreSecret", mock.Anything, uint(5)).Return(errors.New("not found"))
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
@@ -346,8 +350,12 @@ func TestRestoreSecret_StorageError(t *testing.T) {
 
 func TestRestoreSecret_Success(t *testing.T) {
 	ms := new(MockStorage)
+	// GetSecretIncludingDeleted is called before RestoreSecret to obtain name+projectID.
+	ms.On("GetSecretIncludingDeleted", mock.Anything, uint(5)).Return(&models.SecretNode{ID: 5, ProjectID: 1}, nil)
 	ms.On("RestoreSecret", mock.Anything, uint(5)).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	// emitDependencyLifecycleEvents lists the project's edges after restore.
+	ms.On("ListSecretDependenciesForProject", mock.Anything, uint(1)).Return([]*models.SecretDependency{}, nil)
 	c := NewKeyorixCore(ms)
 	require.NoError(t, c.RestoreSecret(context.Background(), 1, 5))
 }

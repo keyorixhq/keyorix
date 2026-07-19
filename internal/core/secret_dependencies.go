@@ -22,8 +22,10 @@ import (
 
 // Secret-dependency audit event types.
 const (
-	EventSecretDependencyAdded   = "secret.dependency_added"   // #nosec G101 -- audit event type, not a credential
-	EventSecretDependencyRemoved = "secret.dependency_removed" // #nosec G101 -- audit event type, not a credential
+	EventSecretDependencyAdded        = "secret.dependency_added"        // #nosec G101 -- audit event type, not a credential
+	EventSecretDependencyRemoved      = "secret.dependency_removed"      // #nosec G101 -- audit event type, not a credential
+	EventSecretDependencyInvalidated  = "secret.dependency_invalidated"  // #nosec G101 -- emitted when a soft-delete breaks a dependency edge
+	EventSecretDependencyRestored     = "secret.dependency_restored"     // #nosec G101 -- emitted when a restore re-activates a broken dependency edge
 )
 
 // SecretRef is a secret identified for a dependency view (id + name; never a value).
@@ -247,6 +249,44 @@ func (c *KeyorixCore) requireSecret(ctx context.Context, id uint) (*models.Secre
 		return nil, fmt.Errorf("%s: %d is not a secret", i18n.T("ErrorValidation", nil), id)
 	}
 	return node, nil
+}
+
+// emitDependencyLifecycleEvents emits one audit event per dependency edge that is
+// incident to secretID (either as the dependent or the depended-on target).
+// eventType is EventSecretDependencyInvalidated on soft-delete or
+// EventSecretDependencyRestored on restore. projectID is used to load the full edge
+// list; secretName is included in the human-readable description. Errors from the
+// edge list query are logged but never surface to the caller — the delete/restore
+// already succeeded and the audit emission is best-effort.
+func (c *KeyorixCore) emitDependencyLifecycleEvents(ctx context.Context, eventType string, actorID, secretID, projectID uint, secretName string) {
+	edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
+	if err != nil {
+		return // best-effort; the primary operation already succeeded
+	}
+	for _, e := range edges {
+		switch secretID {
+		case e.DependsOnSecretID:
+			// secretID is the "depends-on" target — its dependent loses its upstream.
+			dep := e.DependentSecretID
+			c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &dep,
+				fmt.Sprintf("dependency of secret %d on %q (id %d) %s due to secret lifecycle event",
+					e.DependentSecretID, secretName, secretID, lifecycleVerb(eventType)))
+		case e.DependentSecretID:
+			// secretID is the dependent — the edge it owns is now unresolvable.
+			src := e.DependentSecretID
+			c.writeAuditEvent(ctx, eventType, actorPtr(actorID), &src,
+				fmt.Sprintf("dependency of %q (id %d) on secret %d %s due to secret lifecycle event",
+					secretName, secretID, e.DependsOnSecretID, lifecycleVerb(eventType)))
+		}
+	}
+}
+
+// lifecycleVerb returns a short past-tense word for an audit description.
+func lifecycleVerb(eventType string) string {
+	if eventType == EventSecretDependencyRestored {
+		return "restored"
+	}
+	return "invalidated"
 }
 
 // secretInfo is the per-secret metadata the views need: its name and the environment
