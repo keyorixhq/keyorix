@@ -435,6 +435,20 @@ func (m *MockStorage) CreateSecretDependencyExclusive(ctx context.Context, d *mo
 	return v, a.Error(1)
 }
 
+// Secret ACL stubs (RBAC Phase 3) — core ACL logic is tested against real SQLite, not this mock.
+func (m *MockStorage) CreateOrUpdateSecretACL(_ context.Context, _ *models.SecretACL) error {
+	return nil
+}
+func (m *MockStorage) ListSecretACLs(_ context.Context, _ uint) ([]*models.SecretACL, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetSecretACL(_ context.Context, _, _ uint) (*models.SecretACL, error) {
+	return nil, nil
+}
+func (m *MockStorage) DeleteSecretACL(_ context.Context, _ uint) error {
+	return nil
+}
+
 func (m *MockStorage) CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error) {
 	args := m.Called(ctx, h)
 	if args.Get(0) == nil {

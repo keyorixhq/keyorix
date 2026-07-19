@@ -642,6 +642,20 @@ type SecretDependency struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+// SecretACL grants a specific user fine-grained access to one secret (RBAC Phase 3).
+// When a SecretACL entry exists for (UserID, SecretID), the listed Permissions are
+// granted regardless of project-level RBAC — the user need not hold a project role.
+// ACL management requires secrets.manage at project scope.
+type SecretACL struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	SecretID    uint   `gorm:"uniqueIndex:idx_secret_acl_user;not null" json:"secret_id"`
+	UserID      uint   `gorm:"uniqueIndex:idx_secret_acl_user;not null" json:"user_id"`
+	Permissions string `gorm:"type:text;not null" json:"permissions"` // JSON []string, e.g. ["secrets.read"]
+	GrantedBy   uint   `gorm:"not null" json:"granted_by"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type SecretVersion struct {
 	ID                 uint `gorm:"primaryKey"`
 	SecretNodeID       uint

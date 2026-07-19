@@ -47,6 +47,7 @@ const (
 	permRolesRead = "roles.read"
 	permRolesWrite = "roles.write"
 	permSecretsDelete = "secrets.delete"
+	permSecretsManage = "secrets.manage"
 	permSecretsRead = "secrets.read"
 	permSecretsWrite = "secrets.write"
 	permSystemRead = "system.read"
@@ -530,6 +531,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
+
+			// Per-secret ACLs (RBAC Phase 3): fine-grained user grants independent of project RBAC.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/acl", secretHandler.ListSecretACLs)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Post("/{id}/acl", secretHandler.GrantSecretACL)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete("/{id}/acl/{aclId}", secretHandler.RevokeSecretACL)
 
 			// Certificate inspection (ADR-054) — public X.509 metadata, no value/key.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/certificate", secretHandler.GetSecretCertificate)

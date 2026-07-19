@@ -163,6 +163,16 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// RemoteStorage.WithTransaction is a no-op passthrough, so it's proxied as
 	// ONE atomic call via POST /api/v1/system/users/with-role-grants instead —
 	// see internal/storage/store/remote_users.go.
+
+	// Secret ACL (RBAC Phase 3) — no proxy routes exist yet. A future PR will
+	// add /api/v1/system/secret-acls endpoints mirroring the secret-dependencies
+	// pattern. For now the four methods are intentional stubs: the ACL feature
+	// only runs server-side and a remote-storage caller never directly invokes
+	// ACL management (the HTTP/gRPC boundary owns authorization).
+	"CreateOrUpdateSecretACL": {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"ListSecretACLs":          {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"GetSecretACL":            {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"DeleteSecretACL":         {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every
