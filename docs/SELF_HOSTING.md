@@ -63,8 +63,32 @@ Two ways to permanently lose every stored secret:
 
 1. **Changing `KEYORIX_MASTER_PASSWORD`** after first boot. The KEK no longer
    derives, the DEK can't be unwrapped. (To rotate it intentionally, use
-   `keyorix encryption rotate` — see ADR-010 — never by editing `.env`.)
+   `keyorix encryption rotate` — see below — never by editing `.env`.)
 2. **Losing the `keyorix_keys` volume.** Back it up (next section).
+
+### DEK rotation procedure
+
+To generate a new Data Encryption Key and re-encrypt every secret in the database:
+
+```sh
+# 1. Stop the server (rotation acquires an exclusive lock; it refuses if the
+#    server process is running and holding the key lock).
+docker compose stop keyorix
+
+# 2. Preview what will be re-encrypted — no changes made, no --confirm needed.
+docker compose run --rm keyorix keyorix encryption rotate --dry-run
+
+# 3. Perform the rotation.  --confirm is required (acknowledges write-lock).
+docker compose run --rm keyorix keyorix encryption rotate --confirm
+
+# 4. Restart the server.
+docker compose start keyorix
+```
+
+The rotation re-encrypts all secrets, credentials, and session tokens in a
+single transaction.  If the server crashes mid-sweep, the orphaned pending key
+file is detected and cleaned up automatically on the next `--confirm` run.
+Back up the `keyorix_keys` volume after a successful rotation.
 
 Store `KEYORIX_MASTER_PASSWORD` in your own password manager / secret store. It is
 not recoverable from the system.

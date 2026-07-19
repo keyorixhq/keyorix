@@ -122,7 +122,7 @@ Alternatively exposed as a protected admin API endpoint (operator-only, no user-
 
 - **Downtime:** the sweep holds a long-running write transaction. For large installations, this will block concurrent secret reads/writes for the duration. Acceptable at v0.x scale (hundreds of secrets). Document in operator guide. Hot-swap streaming rotation is a v2 concern.
 - **Memory pressure:** batched sweep keeps at most 500 plaintext values in memory at once. Acceptable trade-off between memory pressure and transaction duration.
-- **Failure mode:** if the server crashes mid-sweep (after `keys/dek.key.pending` is written but before rename), the pending file is orphaned. Recovery: re-run `key rotate-dek`. The pending file is detected and cleaned up at startup.
+- **Failure mode:** if the server crashes mid-sweep (after `keys/dek.key.pending` is written but before rename), the pending file is orphaned. Recovery: re-run `keyorix encryption rotate --confirm`. The pending file is detected and cleaned up at startup.
 
 ### Not in scope for this ADR
 
