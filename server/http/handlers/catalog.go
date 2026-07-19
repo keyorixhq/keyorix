@@ -337,6 +337,57 @@ func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.
 	sendSuccess(w, map[string]interface{}{"environments": environments}, "")
 }
 
+// CloneEnvironment handles POST /api/v1/projects/{id}/environments/{envId}/clone
+// Body: {"destination_environment_id": N}
+// Copies all active secrets from {envId} into the destination environment (same project).
+// Secrets already present by name in the destination are skipped.
+func (h *CatalogHandler) CloneEnvironment(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "BadRequest", errInvalidProjectID, http.StatusBadRequest, nil)
+		return
+	}
+	srcEnvID, err := strconv.ParseUint(chi.URLParam(r, "envId"), 10, 32)
+	if err != nil {
+		sendError(w, "BadRequest", errInvalidEnvironmentID, http.StatusBadRequest, nil)
+		return
+	}
+	var reqBody struct {
+		DestinationEnvironmentID uint `json:"destination_environment_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if reqBody.DestinationEnvironmentID == 0 {
+		sendError(w, "BadRequest", "destination_environment_id is required", http.StatusBadRequest, nil)
+		return
+	}
+
+	result, err := h.coreService.CloneEnvironment(r.Context(), uint(projectID), uint(srcEnvID), reqBody.DestinationEnvironmentID, userCtx.Username, userCtx.UserID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		if strings.Contains(msg, "must ") || strings.Contains(msg, "required") ||
+			strings.Contains(msg, "belong") || strings.Contains(msg, "validation") {
+			status = http.StatusBadRequest
+		} else if strings.Contains(msg, errNotFound) {
+			status = http.StatusNotFound
+		} else {
+			log.Printf("Error cloning environment %d to %d (project %d): %v", srcEnvID, reqBody.DestinationEnvironmentID, projectID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, result, "")
+}
+
 // RestoreEnvironment handles POST /api/v1/projects/{projectId}/environments/{id}/restore.
 // Nested under the project so the permission scope resolves from the project ID
 // (the environment row itself is soft-deleted and not loadable by the scope check).

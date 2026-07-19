@@ -474,6 +474,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope),
 			customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromEnvParam("envId")),
 		).Post("/projects/{id}/environments/{envId}/copy-secrets", secretHandler.CopyEnvironmentSecrets)
+		// Environment clone: copies all secrets from one environment to another within the same
+		// project (staging → production promotion). Requires secrets.write on the project scope
+		// (creates in destination) AND secrets.read on the source environment (reads values).
+		r.With(
+			customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope),
+			customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromEnvParam("envId")),
+		).Post("/projects/{id}/environments/{envId}/clone", catalogHandler.CloneEnvironment)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get(pathProjectEnvs, catalogHandler.ListProjectEnvironments)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post(pathProjectEnvs, catalogHandler.CreateProjectEnvironment)
 		// Environment restore is nested under the project so the scope resolves
