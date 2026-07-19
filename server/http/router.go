@@ -1777,6 +1777,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/rotation-reminders", adminJobsHandler.RunRotationReminders)
 			r.Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
 			r.Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
+			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted
