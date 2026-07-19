@@ -1177,6 +1177,10 @@ type SecretFilter struct {
 	// ParentID, when set, restricts to secrets whose parent_id equals the given
 	// value. Use to list the direct children of a folder node.
 	ParentID *uint
+	// Search, when set, restricts to secrets whose name contains the given
+	// substring (case-insensitive). Uses LOWER/LIKE so it works on both SQLite
+	// and PostgreSQL.
+	Search *string
 	// FolderOnly, when true, restricts to folder nodes (is_secret=false). Mutually
 	// exclusive with listing only real secrets — callers set one or the other.
 	FolderOnly bool

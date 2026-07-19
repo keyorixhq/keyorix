@@ -425,6 +425,7 @@ func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *s
 		IncludeDeleted: filter.IncludeDeleted,
 		ParentID:       filter.ParentID,
 		FolderOnly:     filter.FolderOnly,
+		Search:         filter.Search,
 	}
 }
 

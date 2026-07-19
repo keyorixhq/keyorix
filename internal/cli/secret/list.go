@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -106,6 +107,9 @@ func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	if listFolderID != 0 {
 		path += fmt.Sprintf("&parent_id=%d", listFolderID)
 	}
+	if listSearch != "" {
+		path += fmt.Sprintf("&search=%s", url.QueryEscape(listSearch))
+	}
 
 	var resp models.SecretListResponse
 	if err := rc.Get(ctx, path, &resp); err != nil {
@@ -168,6 +172,10 @@ func runListEmbedded(ctx context.Context) error {
 	if listFolderID != 0 {
 		filter.ParentID = &listFolderID
 	}
+	if listSearch != "" {
+		s := listSearch
+		filter.Search = &s
+	}
 
 	secrets, total, err := service.ListSecrets(ctx, filter)
 	if err != nil {
@@ -192,7 +200,7 @@ func displaySecretsTable(secrets []*models.SecretNode, total int64, filter *core
 	fmt.Printf("============\n")
 
 	if listSearch != "" {
-		fmt.Printf("Search: %s (note: search filtering not yet implemented)\n", listSearch)
+		fmt.Printf("Search: %s\n", listSearch)
 	}
 
 	nsLabel := "all"
