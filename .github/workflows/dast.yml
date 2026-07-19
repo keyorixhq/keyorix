@@ -1,0 +1,63 @@
+name: DAST
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'  # weekly Monday 3am UTC
+  workflow_dispatch:
+
+jobs:
+  nuclei:
+    name: Nuclei DAST
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26.5'
+
+      - name: Build server
+        run: go build -o /tmp/keyorix-server ./server
+
+      - name: Start server
+        run: |
+          KEYORIX_DB_DSN="file::memory:?cache=shared" /tmp/keyorix-server &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+        env:
+          KEYORIX_LOG_LEVEL: error
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/health && break
+            sleep 2
+          done
+
+      - name: Install Nuclei
+        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+
+      - name: Update Nuclei templates
+        run: nuclei -update-templates -silent
+
+      - name: Run Nuclei (unauthenticated surface)
+        run: |
+          nuclei -target http://localhost:8080 \
+                 -tags "auth,token,jwt,exposure,misconfig" \
+                 -sarif-export /tmp/nuclei-results.sarif \
+                 -silent \
+                 -no-color || true
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        if: always()
+        with:
+          sarif_file: /tmp/nuclei-results.sarif
+          category: nuclei-dast
+
+      - name: Stop server
+        if: always()
+        run: kill $SERVER_PID || true
