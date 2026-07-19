@@ -13,33 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func makeConfigServer(t *testing.T, current anomalyConfigRecord) (*httptest.Server, *http.Request) {
-	t.Helper()
-	var lastReq *http.Request
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		lastReq = r
-		resp := map[string]interface{}{
-			"data": map[string]interface{}{
-				"config": current,
-			},
-		}
-		if r.Method == http.MethodPut {
-			var body anomalyConfigRecord
-			b, _ := io.ReadAll(r.Body)
-			_ = json.Unmarshal(b, &body)
-			resp = map[string]interface{}{
-				"data": map[string]interface{}{
-					"config": body,
-				},
-			}
-		}
-		b, _ := json.Marshal(resp)
-		_, _ = w.Write(b)
-	}))
-	t.Cleanup(srv.Close)
-	return srv, lastReq
-}
-
 // TestAnomalyConfigGet_Remote verifies that "anomaly config get" issues a GET
 // to /api/v1/admin/anomaly-config and decodes the response.
 func TestAnomalyConfigGet_Remote(t *testing.T) {
