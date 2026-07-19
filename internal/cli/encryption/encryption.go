@@ -213,8 +213,48 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Initialized: ✅\n")
 	fmt.Printf("Key Version: %s\n", service.GetKeyVersion())
+	printProviderStatus(cfg.Storage.Encryption.KeyProvider)
 
 	return nil
+}
+
+func printProviderStatus(kp config.KeyProviderConfig) {
+	provType := kp.Type
+	if provType == "" {
+		provType = "password"
+	}
+	fmt.Printf("Key Provider: %s\n", provType)
+	switch provType {
+	case "password":
+		fmt.Println("  (passphrase-derived KEK; use `keyorix encryption migrate-provider` to change)")
+	case "file":
+		fmt.Printf("  File: %s\n", kp.FilePath)
+		if _, err := os.Stat(kp.FilePath); err == nil {
+			fmt.Println("  Status: file accessible ✅")
+		} else {
+			fmt.Printf("  Status: file not accessible ❌ (%v)\n", err)
+		}
+	case "env":
+		fmt.Printf("  Env var: %s\n", kp.EnvVar)
+		if os.Getenv(kp.EnvVar) != "" {
+			fmt.Println("  Status: env var set ✅")
+		} else {
+			fmt.Println("  Status: env var not set ❌")
+		}
+	case "exec":
+		fmt.Printf("  Command: %v\n", kp.ExecCommand)
+	case "shamir":
+		fmt.Printf("  Share files: %d configured\n", len(kp.ShamirShareFiles))
+	case "tpm":
+		fmt.Printf("  TPM device: %s\n", kp.TPMDevice)
+		fmt.Printf("  Wrapped key: %s\n", kp.WrappedKeyPath)
+	case "aws-kms", "gcp-kms", "azure-kms":
+		fmt.Printf("  KMS key: %s\n", kp.KMSKeyID)
+		if kp.WrappedKeyPath != "" {
+			fmt.Printf("  Wrapped key: %s\n", kp.WrappedKeyPath)
+		}
+		fmt.Println("  (connectivity not checked; verify credentials separately)")
+	}
 }
 
 func runRotate(cmd *cobra.Command, args []string) error {
