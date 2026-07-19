@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,4 +83,96 @@ func TestGetSecretImpact_CascadesSoftDeleteAndRestore(t *testing.T) {
 
 	require.NoError(t, c.RestoreSecret(ctx, 0, appTok))
 	assert.ElementsMatch(t, []string{"app-token", "cache-key"}, impactNames(), "restore brings it back")
+}
+
+// --- audit event emission tests ---
+
+// DeleteSecret emits secret.dependency_invalidated for each incident edge.
+func TestDeleteSecret_EmitsDependencyInvalidatedAuditEvents(t *testing.T) {
+	ctx := context.Background()
+	c, db := newDepCore(t)
+
+	dbPass := mkSecret(t, db, 1, "db-password")
+	appTok := mkSecret(t, db, 1, "app-token")
+	cacheKey := mkSecret(t, db, 1, "cache-key")
+	// appTok and cacheKey both depend on dbPass.
+	_, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "")
+	require.NoError(t, err)
+	_, err = c.AddSecretDependency(ctx, 10, cacheKey, dbPass, "")
+	require.NoError(t, err)
+
+	// Soft-delete the dependency target (dbPass). Both edges become invalid.
+	require.NoError(t, c.DeleteSecret(ctx, dbPass))
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretDependencyInvalidated).Find(&events).Error)
+	assert.Len(t, events, 2, "one invalidation event per incident edge")
+
+	// All events reference a dependent secret (not dbPass itself), because dbPass is
+	// the depends-on target and both appTok and cacheKey lose their upstream.
+	secretIDs := make(map[uint]bool)
+	for _, e := range events {
+		if e.SecretNodeID != nil {
+			secretIDs[*e.SecretNodeID] = true
+		}
+	}
+	assert.True(t, secretIDs[appTok], "app-token dependent must be referenced")
+	assert.True(t, secretIDs[cacheKey], "cache-key dependent must be referenced")
+}
+
+// RestoreSecret emits secret.dependency_restored for each incident edge.
+func TestRestoreSecret_EmitsDependencyRestoredAuditEvents(t *testing.T) {
+	ctx := context.Background()
+	c, db := newDepCore(t)
+
+	dbPass := mkSecret(t, db, 1, "db-password")
+	appTok := mkSecret(t, db, 1, "app-token")
+	cacheKey := mkSecret(t, db, 1, "cache-key")
+	_, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "")
+	require.NoError(t, err)
+	_, err = c.AddSecretDependency(ctx, 10, cacheKey, dbPass, "")
+	require.NoError(t, err)
+
+	require.NoError(t, c.DeleteSecret(ctx, dbPass))
+	require.NoError(t, c.RestoreSecret(ctx, 42, dbPass))
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretDependencyRestored).Find(&events).Error)
+	assert.Len(t, events, 2, "one restore event per incident edge")
+}
+
+// No dependency audit events are emitted when the secret has no dependency edges.
+func TestDeleteSecret_NoDependencyEventsWhenNoEdges(t *testing.T) {
+	ctx := context.Background()
+	c, db := newDepCore(t)
+
+	isolated := mkSecret(t, db, 1, "isolated")
+	require.NoError(t, c.DeleteSecret(ctx, isolated))
+
+	var count int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", EventSecretDependencyInvalidated).Count(&count).Error)
+	assert.Zero(t, count, "no dependency events for a secret with no edges")
+}
+
+// DeleteSecret emits an event for the edge where the deleted secret is the dependent
+// (not just where it is the depends-on target).
+func TestDeleteSecret_EmitsEventWhenDeletedSecretIsDependent(t *testing.T) {
+	ctx := context.Background()
+	c, db := newDepCore(t)
+
+	upstream := mkSecret(t, db, 1, "upstream")
+	downstream := mkSecret(t, db, 1, "downstream")
+	// downstream depends on upstream.
+	_, err := c.AddSecretDependency(ctx, 10, downstream, upstream, "")
+	require.NoError(t, err)
+
+	// Delete the dependent (downstream). The edge is incident to it, so one event
+	// is expected with SecretNodeID = downstream.
+	require.NoError(t, c.DeleteSecret(ctx, downstream))
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretDependencyInvalidated).Find(&events).Error)
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].SecretNodeID)
+	assert.Equal(t, downstream, *events[0].SecretNodeID)
 }
