@@ -107,6 +107,30 @@ func parseFile(path, format string) ([]secretEntry, error) {
 	}
 }
 
+// parseJSONBytes parses a flat key-value JSON object from already-read bytes.
+// This is used by the encrypted-json import path where the bytes have already
+// been decrypted in memory; the file-size limit is enforced before decryption.
+func parseJSONBytes(data []byte) ([]secretEntry, error) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	var entries []secretEntry
+	for k, v := range raw {
+		val := fmt.Sprintf("%v", v)
+		if k == "" || val == "" {
+			continue
+		}
+		entry := secretEntry{Name: k, Value: val}
+		if err := validateImportedEntry(entry); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
 // parseDotenv reads a standard .env file.
 // Rules:
 //   - Lines starting with # are comments — skipped.

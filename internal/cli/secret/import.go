@@ -4,6 +4,7 @@
 package secret
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ var (
 	importProject      string
 	importDryRun       bool
 	importSkipExisting bool
+	importDecryptWith  string
 )
 
 var importCmd = &cobra.Command{
@@ -35,6 +37,7 @@ File mode (--file):
   keyorix secret import --file vault-export.yaml --format vault --env production
   keyorix secret import --file secrets.json --format json --env staging
   keyorix secret import --file .env --format dotenv --env development --dry-run
+  keyorix secret import --file secrets.enc.json --decrypt-with private.pem --env production
 
 Live-source mode (--source) — reads directly from a running provider using your
 local credentials and never sends them to the Keyorix server:
@@ -47,6 +50,12 @@ Supported file formats (--format):
   dotenv  .env files (KEY=VALUE, comments and blank lines ignored)
   vault   Medusa/Vault YAML export (path hierarchy, last two segments become name)
   json    Flat key-value JSON object
+
+Encrypted imports (--decrypt-with):
+  When the file is a keyorix-encrypted-export-v1 envelope (produced by
+  'keyorix secret export --format encrypted-json'), pass the RSA private key
+  with --decrypt-with. The file is decrypted transparently and then imported
+  as a standard JSON payload.
 
 Live sources (--source):
   vault   HashiCorp Vault KV engine (VAULT_ADDR / VAULT_TOKEN or --vault-* flags)
@@ -66,6 +75,7 @@ func init() {
 	importCmd.Flags().StringVar(&importProject, "project", "default", "Project name")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "Show what would be imported without creating anything")
 	importCmd.Flags().BoolVar(&importSkipExisting, "skip-existing", true, "Skip secrets that already exist instead of failing")
+	importCmd.Flags().StringVar(&importDecryptWith, "decrypt-with", "", "Path to RSA private key PEM to decrypt an encrypted-json export")
 
 	// Live-source flags (mutually exclusive with --file).
 	importCmd.Flags().StringVar(&importSource, "source", "", "Live source: vault, aws, azure, gcp (instead of --file)")
@@ -171,6 +181,20 @@ func collectEntries(ctx context.Context) ([]secretEntry, error) {
 		clean := filepath.Clean(importFile)
 		if _, err := os.Stat(clean); err != nil {
 			return nil, fmt.Errorf("cannot open file %q: %w", importFile, err)
+		}
+		// Detect encrypted-json envelope and decrypt transparently.
+		if importDecryptWith != "" {
+			fileBytes, err := os.ReadFile(clean) // #nosec G304 — path already cleaned
+			if err != nil {
+				return nil, fmt.Errorf("read file %q: %w", clean, err)
+			}
+			if bytes.HasPrefix(bytes.TrimSpace(fileBytes), []byte(`{"format":"`+encryptedExportFormat)) {
+				plain, err := decryptExport(fileBytes, importDecryptWith)
+				if err != nil {
+					return nil, fmt.Errorf("decrypt %q: %w", clean, err)
+				}
+				return parseJSONBytes(plain)
+			}
 		}
 		entries, err := parseFile(clean, importFormat)
 		if err != nil {
