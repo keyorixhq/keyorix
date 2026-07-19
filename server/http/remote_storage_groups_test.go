@@ -157,7 +157,7 @@ func TestRemoteStorageGroup_Membership_RealServer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, downstream.Storage().AddUserToGroup(ctx, user.ID, group.ID))
+	require.NoError(t, downstream.Storage().AddUserToGroup(ctx, user.ID, group.ID, 0))
 
 	// The membership is a REAL row on the upstream, visible via upstream's own
 	// direct storage call.
@@ -188,7 +188,7 @@ func TestRemoteStorageGroup_Membership_RealServer(t *testing.T) {
 	assert.Equal(t, user.ID, byGroup[group.ID][0].ID)
 
 	// RemoveUserFromGroup via the downstream removes the REAL upstream row.
-	require.NoError(t, downstream.Storage().RemoveUserFromGroup(ctx, user.ID, group.ID))
+	require.NoError(t, downstream.Storage().RemoveUserFromGroup(ctx, user.ID, group.ID, 0))
 	directMembers, err = upstream.Storage().ListGroupMembers(ctx, group.ID)
 	require.NoError(t, err)
 	assert.Empty(t, directMembers, "the membership removal must be a REAL upstream write")

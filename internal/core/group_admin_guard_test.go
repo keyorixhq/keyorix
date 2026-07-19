@@ -116,7 +116,7 @@ func TestRemoveUserFromGroup_RefusesLastAdminMember(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "sole-admin", Email: "sole@example.com"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 42, GroupID: 1}).Error)
 
-	err := c.RemoveUserFromGroup(ctx, 0, 42, 1)
+	err := c.RemoveUserFromGroup(ctx, 0, 42, 1, 0) // projectID=0: global membership
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "last administrator")
 
@@ -140,7 +140,7 @@ func TestRemoveUserFromGroup_AllowsWhenAnotherGroupMemberRemains(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 42, GroupID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 43, GroupID: 1}).Error)
 
-	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1))
+	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1, 0)) // projectID=0: global membership
 }
 
 // RemoveUserFromGroup: succeeds once another admin route survives (a direct grant
@@ -156,7 +156,7 @@ func TestRemoveUserFromGroup_AllowsWhenDirectAdminExists(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 42, GroupID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 99, RoleID: 1}).Error) // direct global admin
 
-	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1))
+	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1, 0)) // projectID=0: global membership
 }
 
 // RemoveUserFromGroup: membership in a group with no admin-tier grant is always
@@ -171,5 +171,5 @@ func TestRemoveUserFromGroup_NonAdminGroupAlwaysRemovable(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "alice", Email: "alice@example.com"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 42, GroupID: 1}).Error)
 
-	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1))
+	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1, 0)) // projectID=0: global membership
 }

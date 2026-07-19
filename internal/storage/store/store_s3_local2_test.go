@@ -734,19 +734,19 @@ func TestRBAC_UserGroups(t *testing.T) {
 	var u models.User
 	require.NoError(t, ls.db.Where("username = ?", "dev1").First(&u).Error)
 
-	// AddUserToGroup.
-	require.NoError(t, ls.AddUserToGroup(ctx, u.ID, group.ID))
+	// AddUserToGroup (global: projectID=0).
+	require.NoError(t, ls.AddUserToGroup(ctx, u.ID, group.ID, 0))
 
-	// AddUserToGroup — idempotent (returns nil for duplicate).
-	require.NoError(t, ls.AddUserToGroup(ctx, u.ID, group.ID))
+	// AddUserToGroup — idempotent (returns nil for duplicate with same projectID).
+	require.NoError(t, ls.AddUserToGroup(ctx, u.ID, group.ID, 0))
 
 	// GetUserGroups.
 	groups, err := ls.GetUserGroups(ctx, u.ID)
 	require.NoError(t, err)
 	assert.Len(t, groups, 1)
 
-	// RemoveUserFromGroup.
-	require.NoError(t, ls.RemoveUserFromGroup(ctx, u.ID, group.ID))
+	// RemoveUserFromGroup (global: projectID=0).
+	require.NoError(t, ls.RemoveUserFromGroup(ctx, u.ID, group.ID, 0))
 
 	// GetUserGroups — empty.
 	groups2, err := ls.GetUserGroups(ctx, u.ID)

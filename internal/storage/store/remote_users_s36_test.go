@@ -144,7 +144,7 @@ func TestRemoteStorage_RemoveUserFromGroup_Error_S36(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	err = rs.RemoveUserFromGroup(context.Background(), 1, 999)
+	err = rs.RemoveUserFromGroup(context.Background(), 1, 999, 0)
 	assert.Error(t, err)
 }
 

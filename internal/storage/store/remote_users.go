@@ -885,12 +885,14 @@ func (rs *RemoteStorage) ListGroupsPage(ctx context.Context, offset, pageSize in
 	return groups, result.Total, nil
 }
 
-// AddUserToGroup adds userID to groupID via POST /api/v1/system/groups/{id}/members.
-func (rs *RemoteStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+// AddUserToGroup adds userID to groupID scoped to projectID via POST
+// /api/v1/system/groups/{id}/members. projectID=0 creates a global membership.
+func (rs *RemoteStorage) AddUserToGroup(ctx context.Context, userID, groupID, projectID uint) error {
 	path := fmt.Sprintf("/api/v1/system/groups/%d/members", groupID)
 	body := struct {
-		UserID uint `json:"user_id"`
-	}{UserID: userID}
+		UserID    uint `json:"user_id"`
+		ProjectID uint `json:"project_id"`
+	}{UserID: userID, ProjectID: projectID}
 	resp, err := rs.client.Post(ctx, path, body)
 	if err != nil {
 		return fmt.Errorf("failed to add user to group: %w", err)
@@ -901,10 +903,10 @@ func (rs *RemoteStorage) AddUserToGroup(ctx context.Context, userID, groupID uin
 	return nil
 }
 
-// RemoveUserFromGroup removes userID from groupID via DELETE
-// /api/v1/system/groups/{id}/members/{userId}.
-func (rs *RemoteStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
-	path := fmt.Sprintf("/api/v1/system/groups/%d/members/%d", groupID, userID)
+// RemoveUserFromGroup removes the (userID, groupID, projectID) membership via
+// DELETE /api/v1/system/groups/{id}/members/{userId}?project_id={projectID}.
+func (rs *RemoteStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID, projectID uint) error {
+	path := fmt.Sprintf("/api/v1/system/groups/%d/members/%d?project_id=%d", groupID, userID, projectID)
 	resp, err := rs.client.Delete(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed to remove user from group: %w", err)

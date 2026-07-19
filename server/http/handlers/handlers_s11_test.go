@@ -1728,7 +1728,7 @@ func TestRemoveGroupMemberProxy_HappyPath_S11(t *testing.T) {
 	user, err := cs.GetUserByUsername(ctx, "s11removemember11")
 	require.NoError(t, err)
 	// Add member first.
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID)
+	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
 	require.NoError(t, err)
 
 	r := httptest.NewRequest(http.MethodDelete, "/", nil)
@@ -1749,7 +1749,7 @@ func TestListGroupMembersProxy_WithMembers_S11(t *testing.T) {
 	bootstrapS11(t, cs, "listmembers11")
 	user, err := cs.GetUserByUsername(ctx, "s11listmembers11")
 	require.NoError(t, err)
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID)
+	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
 	require.NoError(t, err)
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -1830,7 +1830,7 @@ func TestListGroupMembersByIDsProxy_HappyPath_S11(t *testing.T) {
 	bootstrapS11(t, cs, "listmemberbyids11")
 	user, err := cs.GetUserByUsername(ctx, "s11listmemberbyids11")
 	require.NoError(t, err)
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID)
+	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
 	require.NoError(t, err)
 
 	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/?ids=%d", grp.ID), nil)
@@ -1865,7 +1865,7 @@ func TestGetUserGroupsProxy_WithGroups_S11(t *testing.T) {
 	bootstrapS11(t, cs, "usrgrp11")
 	user, err := cs.GetUserByUsername(ctx, "s11usrgrp11")
 	require.NoError(t, err)
-	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID)
+	err = cs.Storage().AddUserToGroup(ctx, user.ID, grp.ID, 0)
 	require.NoError(t, err)
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)

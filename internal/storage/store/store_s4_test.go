@@ -439,12 +439,12 @@ func TestGroup_UserMembership(t *testing.T) {
 	g, err := ls.CreateGroup(ctx, &models.Group{Name: "ops"})
 	require.NoError(t, err)
 
-	// AddUserToGroup.
-	err = ls.AddUserToGroup(ctx, u.ID, g.ID)
+	// AddUserToGroup (global: projectID=0).
+	err = ls.AddUserToGroup(ctx, u.ID, g.ID, 0)
 	require.NoError(t, err)
 
-	// Idempotent second add.
-	err = ls.AddUserToGroup(ctx, u.ID, g.ID)
+	// Idempotent second add (same projectID).
+	err = ls.AddUserToGroup(ctx, u.ID, g.ID, 0)
 	require.NoError(t, err)
 
 	// ListGroupMembers.
@@ -457,8 +457,8 @@ func TestGroup_UserMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, groups, 1)
 
-	// RemoveUserFromGroup.
-	err = ls.RemoveUserFromGroup(ctx, u.ID, g.ID)
+	// RemoveUserFromGroup (global: projectID=0).
+	err = ls.RemoveUserFromGroup(ctx, u.ID, g.ID, 0)
 	require.NoError(t, err)
 
 	members, err = ls.ListGroupMembers(ctx, g.ID)
@@ -497,7 +497,7 @@ func TestAddUserToGroup_UserNotFound(t *testing.T) {
 	g, err := ls.CreateGroup(ctx, &models.Group{Name: "admins"})
 	require.NoError(t, err)
 
-	err = ls.AddUserToGroup(ctx, 99999, g.ID)
+	err = ls.AddUserToGroup(ctx, 99999, g.ID, 0)
 	require.Error(t, err)
 }
 
@@ -508,7 +508,7 @@ func TestAddUserToGroup_GroupNotFound(t *testing.T) {
 	u, err := ls.CreateUser(ctx, &models.User{Username: "ivan", Email: "ivan@example.com"})
 	require.NoError(t, err)
 
-	err = ls.AddUserToGroup(ctx, u.ID, 99999)
+	err = ls.AddUserToGroup(ctx, u.ID, 99999, 0)
 	require.Error(t, err)
 }
 
@@ -529,8 +529,8 @@ func TestListGroupMembersByGroupIDsS4(t *testing.T) {
 	g2, err := ls.CreateGroup(ctx, &models.Group{Name: "g2"})
 	require.NoError(t, err)
 
-	require.NoError(t, ls.AddUserToGroup(ctx, u1.ID, g1.ID))
-	require.NoError(t, ls.AddUserToGroup(ctx, u2.ID, g2.ID))
+	require.NoError(t, ls.AddUserToGroup(ctx, u1.ID, g1.ID, 0))
+	require.NoError(t, ls.AddUserToGroup(ctx, u2.ID, g2.ID, 0))
 
 	result, err := ls.ListGroupMembersByGroupIDs(ctx, []uint{g1.ID, g2.ID})
 	require.NoError(t, err)

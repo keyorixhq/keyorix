@@ -1033,13 +1033,13 @@ func (m *MockStorage) ListGroupsPage(ctx context.Context, offset, pageSize int) 
 	return args.Get(0).([]*models.Group), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
-	args := m.Called(ctx, userID, groupID)
+func (m *MockStorage) AddUserToGroup(ctx context.Context, userID, groupID, projectID uint) error {
+	args := m.Called(ctx, userID, groupID, projectID)
 	return args.Error(0)
 }
 
-func (m *MockStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
-	return m.Called(ctx, userID, groupID).Error(0)
+func (m *MockStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID, projectID uint) error {
+	return m.Called(ctx, userID, groupID, projectID).Error(0)
 }
 
 func (m *MockStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {

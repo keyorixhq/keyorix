@@ -157,7 +157,7 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
 		return nil, err
 	}
-	if err := s.core.AddUserToGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId())); err != nil {
+	if err := s.core.AddUserToGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
 		return nil, groupError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -171,7 +171,7 @@ func (s *GroupGRPCService) RemoveGroupMember(ctx context.Context, req *pb.GroupM
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
 		return nil, err
 	}
-	if err := s.core.RemoveUserFromGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId())); err != nil {
+	if err := s.core.RemoveUserFromGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId()), 0); err != nil { // gRPC: global membership (projectID=0)
 		return nil, groupError(err)
 	}
 	return &emptypb.Empty{}, nil

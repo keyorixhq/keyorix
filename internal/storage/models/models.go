@@ -533,8 +533,13 @@ type Group struct {
 }
 
 type UserGroup struct {
-	UserID  uint `gorm:"primaryKey"`
+	UserID uint `gorm:"primaryKey"`
 	GroupID uint `gorm:"primaryKey"`
+	// ProjectID scopes this membership to a specific project. 0 = global (member
+	// in every project), non-zero = member only within that project. The
+	// authorisation query unions project_id=0 rows with project_id=<requested>
+	// rows, so global memberships still confer roles everywhere.
+	ProjectID uint `gorm:"primaryKey;not null;default:0"`
 }
 
 // GroupRole binds a group to a role at a scope. See UserRole for the

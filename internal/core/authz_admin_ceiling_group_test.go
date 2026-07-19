@@ -90,7 +90,7 @@ func TestAddUserToGroup_EscalationByProxyBlocked(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.storage.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{}))
 
-	err = c.AddUserToGroup(ctx, attacker, attacker, group.ID)
+	err = c.AddUserToGroup(ctx, attacker, attacker, group.ID, 0)
 	require.Error(t, err, "a non-admin actor must not be able to join an admin-conferring group")
 	assert.Contains(t, err.Error(), "administrator")
 }
@@ -109,7 +109,7 @@ func TestAddUserToGroup_AdminActorAndLocalCLIAllowed(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.storage.AssignRoleToGroup(ctx, group.ID, adminRole.ID, storage.Scope{}))
 
-	require.NoError(t, c.AddUserToGroup(ctx, admin, victim, group.ID))
+	require.NoError(t, c.AddUserToGroup(ctx, admin, victim, group.ID, 0))
 	members, err := c.GetGroupMembers(ctx, group.ID)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -119,7 +119,7 @@ func TestAddUserToGroup_AdminActorAndLocalCLIAllowed(t *testing.T) {
 	group2, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "admins3"})
 	require.NoError(t, err)
 	require.NoError(t, c.storage.AssignRoleToGroup(ctx, group2.ID, adminRole.ID, storage.Scope{}))
-	require.NoError(t, c.AddUserToGroup(ctx, 0, victim, group2.ID))
+	require.NoError(t, c.AddUserToGroup(ctx, 0, victim, group2.ID, 0))
 }
 
 // #107: AssignRoleToGroup must refuse a non-admin actor granting an admin role
@@ -197,12 +197,12 @@ func TestRemoveUserFromGroup_LastMemberBlocked(t *testing.T) {
 	group, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "sole-admins3"})
 	require.NoError(t, err)
 	require.NoError(t, c.AssignRoleToGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{}))
-	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID))
+	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID, 0))
 	require.NoError(t, c.RemoveUserRole(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, adminRole.ID, Scope{}))
 
 	// bootstrapAdmin is now the group's only member and the install's only
 	// global-admin path runs through it.
-	err = c.RemoveUserFromGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID)
+	err = c.RemoveUserFromGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID, 0)
 	require.Error(t, err, "removing the group's last member would leave no one able to manage the install")
 	assert.Contains(t, err.Error(), "last administrator")
 }
@@ -222,10 +222,10 @@ func TestRemoveUserFromGroup_OtherMemberSurvivesAllowed(t *testing.T) {
 	group, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "two-admins"})
 	require.NoError(t, err)
 	require.NoError(t, c.AssignRoleToGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{}))
-	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID))
-	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, second, group.ID))
+	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID, 0))
+	require.NoError(t, c.AddUserToGroup(ctx, bootstrapAdmin.ID, second, group.ID, 0))
 	require.NoError(t, c.RemoveUserRole(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, adminRole.ID, Scope{}))
 
-	require.NoError(t, c.RemoveUserFromGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID),
+	require.NoError(t, c.RemoveUserFromGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID, 0),
 		"the second group member keeps the install's admin access live")
 }

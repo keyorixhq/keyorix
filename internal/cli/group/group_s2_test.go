@@ -119,7 +119,7 @@ func TestRunMembers_WithMembersOutput(t *testing.T) {
 	require.NoError(t, err)
 	g, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "infra"})
 	require.NoError(t, err)
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, g.ID))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, g.ID, 0))
 
 	members, err := svc.GetGroupMembers(ctx, g.ID)
 	require.NoError(t, err)
@@ -229,12 +229,12 @@ func TestRunAddMember_ThenRemove(t *testing.T) {
 	g, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "proj-team"})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, g.ID))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, g.ID, 0))
 	members, err := svc.GetGroupMembers(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Len(t, members, 1)
 
-	require.NoError(t, svc.RemoveUserFromGroup(ctx, 0, u.ID, g.ID))
+	require.NoError(t, svc.RemoveUserFromGroup(ctx, 0, u.ID, g.ID, 0))
 	members, err = svc.GetGroupMembers(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Empty(t, members)
@@ -486,7 +486,7 @@ func TestRunRemoveMember_CLI_LocalMode(t *testing.T) {
 	require.NotEmpty(t, groups)
 
 	// Add first so remove has something to do.
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, groups[0].ID))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, groups[0].ID, 0))
 
 	origG, origU := removeMemberGroupID, removeMemberUserID
 	defer func() { removeMemberGroupID = origG; removeMemberUserID = origU }()

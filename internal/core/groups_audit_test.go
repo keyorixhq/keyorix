@@ -82,7 +82,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	ctx := context.Background()
 
-	require.NoError(t, c.AddUserToGroup(ctx, 42, 11, 7))
+	require.NoError(t, c.AddUserToGroup(ctx, 42, 11, 7, 0))
 
 	entries, total, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	require.NotNil(t, entries[0].GroupID)
 	assert.Equal(t, uint(7), *entries[0].GroupID)
 
-	require.NoError(t, c.RemoveUserFromGroup(ctx, 42, 11, 7))
+	require.NoError(t, c.RemoveUserFromGroup(ctx, 42, 11, 7, 0))
 
 	entries, total, err = c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)

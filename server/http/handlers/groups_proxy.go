@@ -248,8 +248,10 @@ func (h *GroupHandler) ListGroupsPageProxy(w http.ResponseWriter, r *http.Reques
 }
 
 // groupMemberBody is the wire body for POST /api/v1/system/groups/{id}/members.
+// ProjectID is optional; 0 (or omitted) means a global membership.
 type groupMemberBody struct {
-	UserID uint `json:"user_id"`
+	UserID    uint `json:"user_id"`
+	ProjectID uint `json:"project_id"`
 }
 
 // AddGroupMemberProxy handles POST /api/v1/system/groups/{id}/members.
@@ -268,7 +270,7 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
 		return
 	}
-	if err := h.coreService.Storage().AddUserToGroup(r.Context(), body.UserID, uint(groupID)); err != nil {
+	if err := h.coreService.Storage().AddUserToGroup(r.Context(), body.UserID, uint(groupID), body.ProjectID); err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "user or group not found")
 			return
@@ -281,6 +283,7 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 }
 
 // RemoveGroupMemberProxy handles DELETE /api/v1/system/groups/{id}/members/{userId}.
+// Optional query param: project_id (default 0 = global membership).
 func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -292,7 +295,16 @@ func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Req
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid user ID")
 		return
 	}
-	if err := h.coreService.Storage().RemoveUserFromGroup(r.Context(), uint(userID), uint(groupID)); err != nil {
+	var projectID uint
+	if pidStr := r.URL.Query().Get("project_id"); pidStr != "" {
+		pid, parseErr := strconv.ParseUint(pidStr, 10, 32)
+		if parseErr != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid project_id")
+			return
+		}
+		projectID = uint(pid)
+	}
+	if err := h.coreService.Storage().RemoveUserFromGroup(r.Context(), uint(userID), uint(groupID), projectID); err != nil {
 		log.Printf("groups proxy: remove member failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

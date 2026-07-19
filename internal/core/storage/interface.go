@@ -752,8 +752,13 @@ type Storage interface {
 	// directory into memory (see ListGroups' full-scan callers for why that's fine
 	// there: they intentionally want every group, e.g. SSO group sync).
 	ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error)
-	AddUserToGroup(ctx context.Context, userID, groupID uint) error
-	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error
+	// AddUserToGroup adds userID to groupID. projectID scopes the membership: 0
+	// means global (the user is a member in every project context), non-zero
+	// restricts it to that project only. The authorisation path unions both.
+	AddUserToGroup(ctx context.Context, userID, groupID, projectID uint) error
+	// RemoveUserFromGroup removes the (userID, groupID, projectID) membership row.
+	// projectID must match the value used when the membership was created.
+	RemoveUserFromGroup(ctx context.Context, userID, groupID, projectID uint) error
 	ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error)
 	// ListGroupMembersByGroupIDs is the batch form of ListGroupMembers: the members
 	// of every group in groupIDs, keyed by group ID, in one query — used by the
