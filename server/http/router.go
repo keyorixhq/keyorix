@@ -129,6 +129,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	catalogHandler := handlers.NewCatalogHandler(coreService)
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
+	adminUsageHandler := handlers.NewAdminUsageHandler(coreService)
 	auditHandler := handlers.NewAuditHandler(coreService)
 	licenseHandler := handlers.NewLicenseHandler(coreService)
 	rotationPolicyHandler := handlers.NewRotationPolicyHandler(coreService)
@@ -1754,6 +1755,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sod/policies", catalogHandler.CreateSoDPolicy)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/sod/policies/{id}", catalogHandler.DeleteSoDPolicy)
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/sod/violations", catalogHandler.ListSoDViolations)
+
+		// Usage report — per-project secret counts + read activity over a time window.
+		// Deployment-wide aggregation, gated by system.read.
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/admin/usage", adminUsageHandler.GetUsageReport)
 
 		// On-demand triggers for the notification/alert jobs that otherwise run only on
 		// their background schedulers — dispatch immediately after an incident or config
