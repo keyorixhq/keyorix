@@ -25,7 +25,7 @@ func (h *SecretHandler) ListSecretACLs(w http.ResponseWriter, r *http.Request) {
 	}
 	secretID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	acls, err := h.coreService.ListSecretACLs(r.Context(), uint(secretID))
@@ -45,7 +45,7 @@ func (h *SecretHandler) GrantSecretACL(w http.ResponseWriter, r *http.Request) {
 	}
 	secretID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
@@ -80,7 +80,7 @@ func (h *SecretHandler) RevokeSecretACL(w http.ResponseWriter, r *http.Request) 
 	}
 	secretID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
 	aclID, err := strconv.ParseUint(chi.URLParam(r, "aclId"), 10, 32)

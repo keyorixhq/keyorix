@@ -6,6 +6,7 @@ const (
 	errFailedCreateUser = "Failed to create user"
 	errFailedGetRole = "Failed to get role"
 	errFailedGetUser = "Failed to get user"
+	errFailedToListSecrets = "Failed to list secrets" // #nosec G101 -- error message string, not a hardcoded credential
 	errGroupNotFound = "Group not found"
 	errGroupNotFoundLower = "group not found"
 	errInvalidAccessRequestID = "invalid access request ID"
