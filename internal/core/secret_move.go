@@ -65,8 +65,8 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 
 	uid, sid := actorID, secretID
 	parentDesc := "root"
-	if newParentID != nil && *newParentID != 0 {
-		parentDesc = fmt.Sprintf("folder %d", *newParentID)
+	if secret.ParentID != nil {
+		parentDesc = fmt.Sprintf("folder %d", *secret.ParentID)
 	}
 	c.writeAuditEvent(ctx, EventSecretMoved, &uid, &sid,
 		fmt.Sprintf("moved secret/folder %q to %s", updated.Name, parentDesc))

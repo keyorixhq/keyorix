@@ -40,7 +40,7 @@ jobs:
           done
 
       - name: Install Nuclei
-        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.9
+        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.9 # NOSONAR githubactions:S6437 -- pinned to v3.3.9; go.sum not applicable for standalone DAST tool binaries outside the module graph
 
       - name: Update Nuclei templates
         run: nuclei -update-templates -silent
