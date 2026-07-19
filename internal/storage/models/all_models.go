@@ -63,6 +63,7 @@ func AllTestModels() []any {
 		&SchedulerLockLease{},
 		&SecretACL{},
 		&RotationPolicy{},
+		&NotificationChannel{},
 		&AnomalyConfigRecord{},
 		&StatsSnapshot{},
 		&DeploymentStatsSnapshot{},

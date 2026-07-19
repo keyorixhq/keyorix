@@ -138,6 +138,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	rbacHandler := handlers.NewRBACHandler(coreService)
 	usersRolesHandler := handlers.NewUsersRolesHandler(coreService)
 	notificationHandler := handlers.NewNotificationHandler(coreService)
+	notificationChannelHandler := handlers.NewNotificationChannelHandler(coreService)
 	connectHandler := handlers.NewConnectHandler(coreService)
 	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
 	hygieneTrendsHandler := handlers.NewHygieneTrendsHandler(coreService)
@@ -321,6 +322,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Get("/notifications", notificationHandler.List)
 		r.Post("/notifications/read-all", notificationHandler.MarkAllRead)
 		r.Post("/notifications/{id}/read", notificationHandler.MarkRead)
+
+		// Notification channel management — admin-only (system.write).
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels", notificationChannelHandler.List)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/notification-channels", notificationChannelHandler.Create)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels/{id}", notificationChannelHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}", notificationChannelHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/notification-channels/{id}", notificationChannelHandler.Delete)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,

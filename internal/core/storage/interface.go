@@ -1222,6 +1222,16 @@ type Storage interface {
 	ListSecretVersionComments(ctx context.Context, versionID uint) ([]models.SecretVersionComment, error)
 	DeleteSecretVersionComment(ctx context.Context, id uint) error
 
+	// Notification channel management — runtime-managed outbound destinations
+	// (webhook/slack/teams/email). The REST API is the remote surface; these
+	// methods only run server-side via LocalStorage.
+	ListNotificationChannels(ctx context.Context) ([]*models.NotificationChannel, error)
+	GetNotificationChannel(ctx context.Context, id uint) (*models.NotificationChannel, error)
+	GetNotificationChannelByName(ctx context.Context, name string) (*models.NotificationChannel, error)
+	CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
+	UpdateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
+	DeleteNotificationChannel(ctx context.Context, id uint) error
+
 }
 
 // SecretFilter defines filtering options for secret queries
