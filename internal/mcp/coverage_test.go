@@ -40,7 +40,7 @@ func TestServe_EncodeError(t *testing.T) {
 	pr, pw := io.Pipe()
 	// Close the write-end of the reader immediately so the goroutine's pipe
 	// writer (to our errWriter) fails.
-	pr.Close()
+	_ = pr.Close()
 
 	// Use an io.Pipe to get a reader+writer pair:
 	// feed a valid request to Serve but have the writer reject writes.
