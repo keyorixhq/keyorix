@@ -851,3 +851,41 @@ func (ls *LocalStorage) TryIncrementSecretNodeReadCount(ctx context.Context, sec
 	}
 	return res.RowsAffected == 1, nil
 }
+
+// maxAncestorDepth caps the ParentID chain walk to prevent infinite loops
+// from accidental circular references in secret_nodes.parent_id.
+const maxAncestorDepth = 20
+
+// GetSecretAncestors walks the ParentID chain for nodeID and returns the
+// ancestor IDs ordered from immediate parent to root. Capped at
+// maxAncestorDepth levels. Stopping early (cycle / depth limit) never
+// returns an error — missing ancestors are simply absent, the caller walks
+// as far as the chain allows.
+func (ls *LocalStorage) GetSecretAncestors(ctx context.Context, nodeID uint) ([]uint, error) {
+	var ancestors []uint
+	visited := make(map[uint]struct{})
+	currentID := nodeID
+	for depth := 0; depth < maxAncestorDepth; depth++ {
+		var node models.SecretNode
+		err := ls.db.WithContext(ctx).
+			Select("id", "parent_id").
+			First(&node, currentID).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			break // node not found — stop walk
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get secret ancestors (node %d): %w", currentID, err)
+		}
+		if node.ParentID == nil {
+			break // reached the root
+		}
+		parentID := *node.ParentID
+		if _, seen := visited[parentID]; seen {
+			break // cycle guard
+		}
+		visited[parentID] = struct{}{}
+		ancestors = append(ancestors, parentID)
+		currentID = parentID
+	}
+	return ancestors, nil
+}

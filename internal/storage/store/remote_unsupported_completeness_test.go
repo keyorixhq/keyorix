@@ -51,7 +51,7 @@ type remoteUnsupportedEntry struct {
 // (keeping this list from silently accumulating stale entries as gaps get
 // closed round by round).
 var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
-	// --- Confirmed genuinely permanent (11) ---
+	// --- Confirmed genuinely permanent (16) ---
 
 	"CountStaleMachineIdentitiesByProject": {statusIntentional,
 		"the #393 grouped hygiene rollup query runs server-side only; documented in-code on the method itself"},
@@ -166,13 +166,15 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 
 	// Secret ACL (RBAC Phase 3) — no proxy routes exist yet. A future PR will
 	// add /api/v1/system/secret-acls endpoints mirroring the secret-dependencies
-	// pattern. For now the four methods are intentional stubs: the ACL feature
+	// pattern. For now the five methods are intentional stubs: the ACL feature
 	// only runs server-side and a remote-storage caller never directly invokes
-	// ACL management (the HTTP/gRPC boundary owns authorization).
+	// ACL management or the folder-inheritance ancestor walk (the HTTP/gRPC
+	// boundary owns authorization; HasSecretACL/AuthorizeSecret run on the server).
 	"CreateOrUpdateSecretACL": {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 	"ListSecretACLs":          {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 	"GetSecretACL":            {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 	"DeleteSecretACL":         {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"GetSecretAncestors":      {statusIntentional, "RBAC Phase 3 — folder-ACL inheritance walk runs server-side; HasSecretACL uses ErrUnsupportedByBackend to skip the ancestor walk on remote callers"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every

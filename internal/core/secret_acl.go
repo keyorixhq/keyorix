@@ -9,15 +9,21 @@
 // requested permission OR the project-scope RBAC check passes (see AuthorizeSecret in
 // authz.go). ACL management itself (grant/revoke/list) requires secrets.manage at
 // project scope, so only project admins can hand out per-secret grants.
+//
+// Folder inheritance: HasSecretACL also walks the ancestor folder chain via
+// GetSecretAncestors so that a grant on a parent folder node is inherited by all
+// child secret nodes automatically — no extra grant per secret needed.
 package core
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -145,12 +151,46 @@ func (c *KeyorixCore) ListSecretACLs(ctx context.Context, secretID uint) ([]*mod
 }
 
 // HasSecretACL reports whether userID holds an explicit SecretACL grant on secretID
-// that covers perm. Returns (false, nil) when no grant exists or the grant doesn't
-// cover perm; only returns an error on storage failure.
+// (or on any ancestor folder node) that covers perm. The check first examines
+// the specific secret, then walks the ancestor folder chain via GetSecretAncestors
+// so that a grant on a parent folder is inherited by all child secrets.
+//
+// Returns (false, nil) when no matching grant exists or the grant doesn't cover
+// perm; only returns an error on storage failure.
+//
+// When GetSecretAncestors returns ErrUnsupportedByBackend (e.g. RemoteStorage),
+// only the direct secret grant is checked — folder inheritance is enforced
+// server-side in that deployment.
 func (c *KeyorixCore) HasSecretACL(ctx context.Context, userID, secretID uint, perm string) (bool, error) {
-	acl, err := c.storage.GetSecretACL(ctx, secretID, userID)
+	// Check the specific secret first.
+	found, err := c.aclGrantsPermission(ctx, secretID, userID, perm)
+	if err != nil || found {
+		return found, err
+	}
+	// Walk ancestor folders for inheritance.
+	ancestors, err := c.storage.GetSecretAncestors(ctx, secretID)
 	if err != nil {
-		// "not found" is not an error; any other error is.
+		if errors.Is(err, storage.ErrUnsupportedByBackend) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, ancestorID := range ancestors {
+		found, err := c.aclGrantsPermission(ctx, ancestorID, userID, perm)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// aclGrantsPermission checks if userID has an ACL grant on nodeID covering perm.
+func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID uint, perm string) (bool, error) {
+	acl, err := c.storage.GetSecretACL(ctx, nodeID, userID)
+	if err != nil {
 		if isNotFound(err) {
 			return false, nil
 		}
