@@ -6,6 +6,7 @@ const (
 	errFailedCreateUser = "Failed to create user"
 	errFailedGetRole = "Failed to get role"
 	errFailedGetUser = "Failed to get user"
+	errFailedToListSecrets = "Failed to list secrets"
 	errGroupNotFound = "Group not found"
 	errGroupNotFoundLower = "group not found"
 	errInvalidAccessRequestID = "invalid access request ID"

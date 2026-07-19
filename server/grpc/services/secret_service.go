@@ -27,6 +27,8 @@ type SecretGRPCService struct {
 // Compile-time assertion that the service satisfies the generated interface.
 var _ pb.SecretServiceServer = (*SecretGRPCService)(nil)
 
+const errSecretIDRequired = "secret_id is required"
+
 // NewSecretService creates a secret gRPC service backed by the shared core.
 func NewSecretService(coreService *core.KeyorixCore) *SecretGRPCService {
 	return &SecretGRPCService{core: coreService}
@@ -369,7 +371,7 @@ func (s *SecretGRPCService) GrantSecretACL(ctx context.Context, req *pb.GrantSec
 		return nil, err
 	}
 	if req.GetSecretId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+		return nil, status.Error(codes.InvalidArgument, errSecretIDRequired)
 	}
 	if req.GetUserId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -404,7 +406,7 @@ func (s *SecretGRPCService) RevokeSecretACL(ctx context.Context, req *pb.RevokeS
 		return nil, err
 	}
 	if req.GetSecretId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+		return nil, status.Error(codes.InvalidArgument, errSecretIDRequired)
 	}
 	if req.GetAclId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "acl_id is required")
@@ -426,7 +428,7 @@ func (s *SecretGRPCService) ListSecretACLs(ctx context.Context, req *pb.ListSecr
 		return nil, err
 	}
 	if req.GetSecretId() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+		return nil, status.Error(codes.InvalidArgument, errSecretIDRequired)
 	}
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsManage); err != nil {
 		return nil, err

@@ -3,11 +3,9 @@ package rbac
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -48,46 +46,18 @@ func runRemoveRole(cmd *cobra.Command, args []string) error {
 		return runRemoveRoleRemote(ctx, rc, removeUserEmail, removeRoleName, removeProjectFlag, removeEnvFlag)
 	}
 
-	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
 	st, err := common.InitializeStorage()
 	if err != nil {
 		return err
 	}
 
-	// Resolve scope.
-	scope := storage.Scope{}
-	if removeProjectFlag != "" {
-		projectID, err := common.LookupProjectIDByName(ctx, st, removeProjectFlag)
-		if err != nil {
-			return fmt.Errorf("failed to resolve project: %w", err)
-		}
-		scope.ProjectID = projectID
-
-		if removeEnvFlag != "" {
-			envs, err := st.ListEnvironmentsByProject(ctx, projectID)
-			if err != nil {
-				return fmt.Errorf("failed to list environments: %w", err)
-			}
-			found := false
-			for _, e := range envs {
-				if strings.EqualFold(e.Name, removeEnvFlag) {
-					scope.EnvironmentID = e.ID
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("environment %q not found in project %q", removeEnvFlag, removeProjectFlag)
-			}
-		}
+	scope, err := resolveScope(ctx, st, removeProjectFlag, removeEnvFlag)
+	if err != nil {
+		return err
 	}
 
-	// Create core service
 	coreService := core.NewKeyorixCore(st)
-
-	// Use core service to remove role at the resolved scope.
-	err = coreService.RemoveUserRoleScoped(ctx, removeUserEmail, removeRoleName, scope)
-	if err != nil {
+	if err = coreService.RemoveUserRoleScoped(ctx, removeUserEmail, removeRoleName, scope); err != nil {
 		return fmt.Errorf("failed to remove role: %w", err)
 	}
 

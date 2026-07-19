@@ -72,46 +72,45 @@ func runAssignRole(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve scope.
-	scope := storage.Scope{}
-	if assignProjectFlag != "" {
-		projectID, err := common.LookupProjectIDByName(ctx, st, assignProjectFlag)
-		if err != nil {
-			return fmt.Errorf("failed to resolve project: %w", err)
-		}
-		scope.ProjectID = projectID
-
-		if assignEnvFlag != "" {
-			envs, err := st.ListEnvironmentsByProject(ctx, projectID)
-			if err != nil {
-				return fmt.Errorf("failed to list environments: %w", err)
-			}
-			found := false
-			for _, e := range envs {
-				if strings.EqualFold(e.Name, assignEnvFlag) {
-					scope.EnvironmentID = e.ID
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("environment %q not found in project %q", assignEnvFlag, assignProjectFlag)
-			}
-		}
+	scope, err := resolveScope(ctx, st, assignProjectFlag, assignEnvFlag)
+	if err != nil {
+		return err
 	}
 
-	// Create core service
 	coreService := core.NewKeyorixCore(st)
-
-	// Use core service to assign role at the resolved scope.
-	err = coreService.AssignUserRoleScoped(ctx, userEmail, roleName, scope)
-	if err != nil {
+	if err = coreService.AssignUserRoleScoped(ctx, userEmail, roleName, scope); err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
 
 	suffix := scopeSuffix(assignProjectFlag, assignEnvFlag)
 	fmt.Printf("Successfully assigned role '%s' to user '%s'%s\n", roleName, userEmail, suffix)
 	return nil
+}
+
+// resolveScope looks up the project and environment IDs for scope-scoped role grants.
+func resolveScope(ctx context.Context, st storage.Storage, project, env string) (storage.Scope, error) {
+	if project == "" {
+		return storage.Scope{}, nil
+	}
+	projectID, err := common.LookupProjectIDByName(ctx, st, project)
+	if err != nil {
+		return storage.Scope{}, fmt.Errorf("failed to resolve project: %w", err)
+	}
+	scope := storage.Scope{ProjectID: projectID}
+	if env == "" {
+		return scope, nil
+	}
+	envs, err := st.ListEnvironmentsByProject(ctx, projectID)
+	if err != nil {
+		return storage.Scope{}, fmt.Errorf("failed to list environments: %w", err)
+	}
+	for _, e := range envs {
+		if strings.EqualFold(e.Name, env) {
+			scope.EnvironmentID = e.ID
+			return scope, nil
+		}
+	}
+	return storage.Scope{}, fmt.Errorf("environment %q not found in project %q", env, project)
 }
 
 // scopeSuffix returns a human-readable scope qualifier for display messages.

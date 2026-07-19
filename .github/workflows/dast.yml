@@ -38,7 +38,7 @@ jobs:
           done
 
       - name: Install Nuclei
-        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.9
 
       - name: Update Nuclei templates
         run: nuclei -update-templates -silent

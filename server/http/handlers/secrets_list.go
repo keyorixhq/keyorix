@@ -132,7 +132,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		response, err = h.coreService.ListSecretsInScope(r.Context(), filter)
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)
-			h.sendError(w, "InternalError", "Failed to list secrets", http.StatusInternalServerError, nil)
+			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
@@ -155,7 +155,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	if scopeRequested {
 		// Caller narrowed to a specific scope — enforce secrets.read there.
 		allowed, aerr := h.coreService.AuthorizePrincipal(
-			r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.read", requestedScope,
+			r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, requestedScope,
 		)
 		if aerr != nil || !allowed {
 			h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
@@ -165,7 +165,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)
-			h.sendError(w, "InternalError", "Failed to list secrets", http.StatusInternalServerError, nil)
+			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
@@ -175,14 +175,14 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 
 	// No scope filter — try global first.
 	globalOK, aerr := h.coreService.AuthorizePrincipal(
-		r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.read", core.Scope{},
+		r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, core.Scope{},
 	)
 	if aerr == nil && globalOK {
 		// Global reader — original behaviour.
 		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)
-			h.sendError(w, "InternalError", "Failed to list secrets", http.StatusInternalServerError, nil)
+			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 			return
 		}
 		h.resolveSecretNames(r.Context(), response.Secrets)
@@ -191,10 +191,10 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	}
 
 	// Not a global reader — enumerate scopes and return the union.
-	scopes, serr := h.coreService.GetReadableScopes(r.Context(), userCtx.UserID, "secrets.read")
+	scopes, serr := h.coreService.GetReadableScopes(r.Context(), userCtx.UserID, permSecretsRead)
 	if serr != nil {
 		log.Printf("Error enumerating readable scopes for user %d: %v", userCtx.UserID, serr)
-		h.sendError(w, "InternalError", "Failed to list secrets", http.StatusInternalServerError, nil)
+		h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
 		return
 	}
 
