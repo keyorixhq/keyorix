@@ -435,20 +435,6 @@ func (m *MockStorage) CreateSecretDependencyExclusive(ctx context.Context, d *mo
 	return v, a.Error(1)
 }
 
-// Secret ACL stubs (RBAC Phase 3) — core ACL logic is tested against real SQLite, not this mock.
-func (m *MockStorage) CreateOrUpdateSecretACL(_ context.Context, _ *models.SecretACL) error {
-	return nil
-}
-func (m *MockStorage) ListSecretACLs(_ context.Context, _ uint) ([]*models.SecretACL, error) {
-	return nil, nil
-}
-func (m *MockStorage) GetSecretACL(_ context.Context, _, _ uint) (*models.SecretACL, error) {
-	return nil, nil
-}
-func (m *MockStorage) DeleteSecretACL(_ context.Context, _ uint) error {
-	return nil
-}
-
 func (m *MockStorage) CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error) {
 	args := m.Called(ctx, h)
 	if args.Get(0) == nil {
@@ -2041,4 +2027,33 @@ func (m *MockStorage) CreateWebAuthnSession(_ context.Context, _ *models.WebAuth
 }
 func (m *MockStorage) ConsumeWebAuthnSession(_ context.Context, _ string, _ time.Time) (*models.WebAuthnSession, error) {
 	return nil, nil
+}
+
+// Per-secret / per-folder ACL stubs (ADR-058).
+func (m *MockStorage) CreateOrUpdateSecretACL(_ context.Context, _ *models.SecretACL) error {
+	return nil
+}
+
+func (m *MockStorage) GetSecretACL(ctx context.Context, secretID, userID uint) (*models.SecretACL, error) {
+	args := m.Called(ctx, secretID, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SecretACL), args.Error(1)
+}
+
+func (m *MockStorage) ListSecretACLs(_ context.Context, _ uint) ([]*models.SecretACL, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) DeleteSecretACL(_ context.Context, _ uint) error {
+	return nil
+}
+
+func (m *MockStorage) GetSecretAncestors(ctx context.Context, nodeID uint) ([]uint, error) {
+	args := m.Called(ctx, nodeID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uint), args.Error(1)
 }

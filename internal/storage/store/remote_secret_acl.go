@@ -1,6 +1,10 @@
 // remote_secret_acl.go — SecretACL stubs for RemoteStorage (RBAC Phase 3).
 // These operations are currently not proxied over HTTP; they return ErrRemoteUnsupported.
 // A future PR may add proxy routes under /api/v1/system/secret-acls.
+//
+// GetSecretAncestors returns ErrUnsupportedByBackend so the core ancestor walk
+// in HasSecretACL skips folder-inheritance checks on remote callers — the server
+// already enforces them locally before returning a response to the CLI.
 package store
 
 import (
@@ -23,4 +27,11 @@ func (rs *RemoteStorage) GetSecretACL(_ context.Context, _, _ uint) (*models.Sec
 
 func (rs *RemoteStorage) DeleteSecretACL(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteSecretACL")
+}
+
+// GetSecretAncestors is the folder-ACL inheritance walk helper. Folder-ACL
+// enforcement is server-side only; the inheritance walk in HasSecretACL skips
+// this path when ErrUnsupportedByBackend is returned.
+func (rs *RemoteStorage) GetSecretAncestors(_ context.Context, _ uint) ([]uint, error) {
+	return nil, remoteUnsupported("GetSecretAncestors")
 }

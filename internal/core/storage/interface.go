@@ -333,10 +333,20 @@ type Storage interface {
 
 	// Secret ACL (RBAC Phase 3) — per-secret fine-grained access grants.
 	// A SecretACL row grants (UserID, SecretID, Permissions) independent of project RBAC.
+	// Folder-level grants are inherited by descendant secrets via the ancestor walk in
+	// HasSecretACL (uses GetSecretAncestors to climb the ParentID chain).
 	CreateOrUpdateSecretACL(ctx context.Context, acl *models.SecretACL) error
 	ListSecretACLs(ctx context.Context, secretID uint) ([]*models.SecretACL, error)
 	GetSecretACL(ctx context.Context, secretID, userID uint) (*models.SecretACL, error)
 	DeleteSecretACL(ctx context.Context, id uint) error
+	// GetSecretAncestors returns the ancestor SecretNode IDs for nodeID,
+	// ordered from immediate parent to root (breadth-first up the ParentID
+	// chain). Used by HasSecretACL to walk the folder ACL inheritance path.
+	// Capped at 20 levels to guard against accidental circular ParentID
+	// references in the data. LocalStorage climbs the chain via repeated
+	// GetSecret calls; RemoteStorage returns ErrUnsupportedByBackend because
+	// folder-ACL enforcement runs server-side on the remote deployment.
+	GetSecretAncestors(ctx context.Context, nodeID uint) ([]uint, error)
 
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
@@ -1133,6 +1143,7 @@ type Storage interface {
 	// Health and Maintenance
 	HealthCheck(ctx context.Context) error
 	GetStats(ctx context.Context) (*StorageStats, error)
+
 }
 
 // SecretFilter defines filtering options for secret queries
