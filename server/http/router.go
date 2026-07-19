@@ -367,6 +367,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/rotation-order", secretHandler.GetProjectRotationOrder)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/rotation-plan", secretHandler.GetProjectRotationPlan)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/health", secretHandler.GetProjectHealth)
+		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get("/projects/{id}/stats", secretHandler.GetProjectStats)
 		// Deployment-wide rotation plan (ADR-053): aggregates every project. Gated by
 		// GLOBAL secrets.read — the same access level as listing all projects — so it
 		// reveals no project the caller cannot already see.

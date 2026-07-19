@@ -22,6 +22,7 @@ func init() {
 	ProjectCmd.AddCommand(useCmd)
 	ProjectCmd.AddCommand(currentCmd)
 	ProjectCmd.AddCommand(describeCmd)
+	ProjectCmd.AddCommand(statsCmd)
 
 	// env subcommand tree: project env list/create/delete/clone
 	envCmd.AddCommand(envListCmd)
