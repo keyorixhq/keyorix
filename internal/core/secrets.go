@@ -32,6 +32,10 @@ type CreateSecretRequest struct {
 	Tags          []string          `json:"tags,omitempty"`
 	CreatedBy     string            `json:"created_by" validate:"required"`
 	OwnerID       uint              `json:"owner_id,omitempty"`
+	// ParentID optionally places the new secret inside a folder node. When set,
+	// the parent must exist, belong to the same project/environment, and be a
+	// folder (IsSecret=false). A zero value means no parent (root level).
+	ParentID *uint `json:"parent_id,omitempty"`
 	// Classification is an optional data-sensitivity label (A.5.12): "" or one of
 	// public|internal|confidential|restricted.
 	Classification string `json:"classification,omitempty"`
@@ -92,6 +96,20 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
 	}
 
+	// Validate parent folder when one is requested.
+	if req.ParentID != nil && *req.ParentID != 0 {
+		parent, perr := c.storage.GetSecret(ctx, *req.ParentID)
+		if perr != nil {
+			return nil, fmt.Errorf("%s: parent folder %d not found", i18n.T("ErrorValidation", nil), *req.ParentID)
+		}
+		if parent.IsSecret {
+			return nil, fmt.Errorf("%s: parent %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *req.ParentID)
+		}
+		if parent.ProjectID != req.ProjectID || parent.EnvironmentID != req.EnvironmentID {
+			return nil, fmt.Errorf("%s: parent folder %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *req.ParentID)
+		}
+	}
+
 	if !IsValidClassification(req.Classification) {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "invalid classification")
 	}
@@ -123,6 +141,9 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		OwnerID:        req.OwnerID,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
+	}
+	if req.ParentID != nil && *req.ParentID != 0 {
+		secret.ParentID = req.ParentID
 	}
 
 	// req.Value is forwarded as the optional plaintext argument (#499): LocalStorage

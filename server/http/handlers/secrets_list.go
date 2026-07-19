@@ -123,6 +123,15 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 			filter.ExpiresBefore = &t
 		}
 	}
+	if pidStr := r.URL.Query().Get("parent_id"); pidStr != "" {
+		if pID, err := strconv.ParseUint(pidStr, 10, 32); err == nil {
+			pIDUint := uint(pID)
+			filter.ParentID = &pIDUint
+		}
+	}
+	if r.URL.Query().Get("folder_only") == "true" {
+		filter.FolderOnly = true
+	}
 
 	// Machine principals (ADR-030) have no user identity for the owned/shared
 	// model; they list by their authorized scope without the scoped-union logic.

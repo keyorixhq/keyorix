@@ -31,6 +31,7 @@ var (
 	createFromFile      string
 	createInteractive   bool
 	createDescription   string
+	createFolderID      uint
 )
 
 var createCmd = &cobra.Command{
@@ -50,6 +51,7 @@ func init() {
 	createCmd.Flags().StringVar(&createFromFile, "from-file", "", "Read secret value from file")
 	createCmd.Flags().BoolVar(&createInteractive, "interactive", false, "Interactive mode")
 	createCmd.Flags().StringVar(&createDescription, "description", "", "Optional free-text note about the secret")
+	createCmd.Flags().UintVar(&createFolderID, "folder", 0, "Parent folder ID (places the secret inside a folder node; 0 = root level)")
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -92,6 +94,9 @@ func runCreateRemote(ctx context.Context, rc *common.RemoteClient, req *core.Cre
 	}
 	if req.Description != "" {
 		body["description"] = req.Description
+	}
+	if req.ParentID != nil && *req.ParentID != 0 {
+		body["parent_id"] = *req.ParentID
 	}
 
 	var secret models.SecretNode
@@ -178,6 +183,10 @@ func buildCreateRequest() (*core.CreateSecretRequest, error) { // NOSONAR -- cog
 			return nil, fmt.Errorf("invalid expiration format: %w", err)
 		}
 		req.Expiration = &exp
+	}
+
+	if createFolderID != 0 {
+		req.ParentID = &createFolderID
 	}
 
 	return req, nil

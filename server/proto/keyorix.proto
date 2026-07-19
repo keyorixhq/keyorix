@@ -232,6 +232,10 @@ message CreateSecretRequest {
   optional google.protobuf.Timestamp expiration = 7;
   map<string, string> metadata = 8;
   repeated string tags = 9;
+  // parent_id optionally places the new secret inside a folder node.
+  // The parent must exist, be a folder (is_secret=false), and belong to the
+  // same project/environment. 0 or absent means root level.
+  optional uint32 parent_id = 10;
 }
 
 message GetSecretRequest {
@@ -264,6 +268,10 @@ message ListSecretsRequest {
   bool show_shared_only = 7;
   uint32 page = 8;
   uint32 page_size = 9;
+  // parent_id, when set, restricts results to direct children of that folder node.
+  optional uint32 parent_id = 10;
+  // folder_only, when true, returns only folder nodes (is_secret=false).
+  bool folder_only = 11;
 }
 
 message ListSecretsResponse {

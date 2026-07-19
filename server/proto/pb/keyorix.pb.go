@@ -308,6 +308,10 @@ type CreateSecretRequest struct {
 	Expiration    *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=expiration,proto3,oneof" json:"expiration,omitempty"`
 	Metadata      map[string]string      `protobuf:"bytes,8,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Tags          []string               `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
+	// parent_id optionally places the new secret inside a folder node.
+	// The parent must exist, be a folder (is_secret=false), and belong to the
+	// same project/environment. 0 or absent means root level.
+	ParentId      *uint32 `protobuf:"varint,10,opt,name=parent_id,json=parentId,proto3,oneof" json:"parent_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -403,6 +407,13 @@ func (x *CreateSecretRequest) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *CreateSecretRequest) GetParentId() uint32 {
+	if x != nil && x.ParentId != nil {
+		return *x.ParentId
+	}
+	return 0
 }
 
 type GetSecretRequest struct {
@@ -598,8 +609,12 @@ type ListSecretsRequest struct {
 	ShowSharedOnly bool    `protobuf:"varint,7,opt,name=show_shared_only,json=showSharedOnly,proto3" json:"show_shared_only,omitempty"`
 	Page           uint32  `protobuf:"varint,8,opt,name=page,proto3" json:"page,omitempty"`
 	PageSize       uint32  `protobuf:"varint,9,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// parent_id, when set, restricts results to direct children of that folder node.
+	ParentId *uint32 `protobuf:"varint,10,opt,name=parent_id,json=parentId,proto3,oneof" json:"parent_id,omitempty"`
+	// folder_only, when true, returns only folder nodes (is_secret=false).
+	FolderOnly    bool `protobuf:"varint,11,opt,name=folder_only,json=folderOnly,proto3" json:"folder_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListSecretsRequest) Reset() {
@@ -693,6 +708,20 @@ func (x *ListSecretsRequest) GetPageSize() uint32 {
 		return x.PageSize
 	}
 	return 0
+}
+
+func (x *ListSecretsRequest) GetParentId() uint32 {
+	if x != nil && x.ParentId != nil {
+		return *x.ParentId
+	}
+	return 0
+}
+
+func (x *ListSecretsRequest) GetFolderOnly() bool {
+	if x != nil {
+		return x.FolderOnly
+	}
+	return false
 }
 
 type ListSecretsResponse struct {
@@ -10663,7 +10692,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x05value\x18\x03 \x01(\tR\x05value\x12%\n" +
 	"\x0eversion_number\x18\x04 \x01(\rR\rversionNumber\x12\x1d\n" +
 	"\n" +
-	"read_count\x18\x05 \x01(\rR\treadCount\"\xb5\x03\n" +
+	"read_count\x18\x05 \x01(\rR\treadCount\"\xe5\x03\n" +
 	"\x13CreateSecretRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x1d\n" +
@@ -10676,13 +10705,17 @@ const file_keyorix_proto_rawDesc = "" +
 	"expiration\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x01R\n" +
 	"expiration\x88\x01\x01\x12I\n" +
 	"\bmetadata\x18\b \x03(\v2-.keyorix.v1.CreateSecretRequest.MetadataEntryR\bmetadata\x12\x12\n" +
-	"\x04tags\x18\t \x03(\tR\x04tags\x1a;\n" +
+	"\x04tags\x18\t \x03(\tR\x04tags\x12 \n" +
+	"\tparent_id\x18\n" +
+	" \x01(\rH\x02R\bparentId\x88\x01\x01\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
 	"\n" +
 	"_max_readsB\r\n" +
-	"\v_expiration\"G\n" +
+	"\v_expirationB\f\n" +
+	"\n" +
+	"_parent_id\"G\n" +
 	"\x10GetSecretRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12#\n" +
 	"\rinclude_value\x18\x02 \x01(\bR\fincludeValue\"\xe6\x02\n" +
@@ -10703,7 +10736,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"_max_readsB\r\n" +
 	"\v_expiration\"%\n" +
 	"\x13DeleteSecretRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\rR\x02id\"\x87\x03\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\"\xd8\x03\n" +
 	"\x12ListSecretsRequest\x12\"\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\rH\x00R\tprojectId\x88\x01\x01\x12*\n" +
@@ -10716,12 +10749,18 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x0fshow_owned_only\x18\x06 \x01(\bR\rshowOwnedOnly\x12(\n" +
 	"\x10show_shared_only\x18\a \x01(\bR\x0eshowSharedOnly\x12\x12\n" +
 	"\x04page\x18\b \x01(\rR\x04page\x12\x1b\n" +
-	"\tpage_size\x18\t \x01(\rR\bpageSizeB\r\n" +
+	"\tpage_size\x18\t \x01(\rR\bpageSize\x12 \n" +
+	"\tparent_id\x18\n" +
+	" \x01(\rH\x05R\bparentId\x88\x01\x01\x12\x1f\n" +
+	"\vfolder_only\x18\v \x01(\bR\n" +
+	"folderOnlyB\r\n" +
 	"\v_project_idB\x11\n" +
 	"\x0f_environment_idB\a\n" +
 	"\x05_typeB\t\n" +
 	"\a_searchB\r\n" +
-	"\v_permission\"\xef\x01\n" +
+	"\v_permissionB\f\n" +
+	"\n" +
+	"_parent_id\"\xef\x01\n" +
 	"\x13ListSecretsResponse\x12,\n" +
 	"\asecrets\x18\x01 \x03(\v2\x12.keyorix.v1.SecretR\asecrets\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\rR\x05total\x12\x12\n" +

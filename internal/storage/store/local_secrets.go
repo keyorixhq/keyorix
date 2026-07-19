@@ -617,6 +617,9 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	if filter.ParentID != nil {
 		query = query.Where("secret_nodes.parent_id = ?", *filter.ParentID)
 	}
+	if filter.FolderOnly {
+		query = query.Where("secret_nodes.is_secret = ?", false)
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
