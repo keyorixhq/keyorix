@@ -430,3 +430,74 @@ func (c *KeyorixCore) ListSecrets(ctx context.Context, filter *storage.SecretFil
 	}
 	return secrets, total, nil
 }
+
+// CreateFolder creates a SecretNode with IsSecret=false (a folder container).
+// name must be non-empty. If parentID is provided the referenced node must
+// exist and must itself be a folder (IsSecret=false).
+func (c *KeyorixCore) CreateFolder(
+	ctx context.Context,
+	actorID uint,
+	name string,
+	projectID, envID uint,
+	parentID *uint,
+) (*models.SecretNode, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("%s: folder name is required", i18n.T("ErrorValidation", nil))
+	}
+	if projectID == 0 {
+		return nil, fmt.Errorf("%s: project_id is required", i18n.T("ErrorValidation", nil))
+	}
+	if envID == 0 {
+		return nil, fmt.Errorf("%s: environment_id is required", i18n.T("ErrorValidation", nil))
+	}
+
+	// Validate that the parent exists and is itself a folder node.
+	if parentID != nil {
+		parent, err := c.storage.GetSecret(ctx, *parentID)
+		if err != nil {
+			return nil, fmt.Errorf("parent folder %d not found: %w", *parentID, err)
+		}
+		if parent.IsSecret {
+			return nil, fmt.Errorf("%s: parent node %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *parentID)
+		}
+	}
+
+	node := &models.SecretNode{
+		Name:          name,
+		ProjectID:     projectID,
+		EnvironmentID: envID,
+		ParentID:      parentID,
+		IsSecret:      false,
+		Type:          "folder",
+		Status:        "active",
+		CreatedBy:     fmt.Sprintf("%d", actorID),
+		OwnerID:       actorID,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	created, err := c.storage.CreateSecret(ctx, node, "")
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return created, nil
+}
+
+// ListFolders returns all folder nodes (IsSecret=false) for a project/environment.
+// If parentID is non-nil, only children of that parent are returned.
+func (c *KeyorixCore) ListFolders(ctx context.Context, projectID uint, parentID *uint, page, pageSize int) ([]*models.SecretNode, int64, error) {
+	isFalse := false
+	filter := &storage.SecretFilter{
+		IsSecret: &isFalse,
+		Page:     page,
+		PageSize: pageSize,
+	}
+	if projectID != 0 {
+		filter.ProjectID = &projectID
+	}
+	if parentID != nil {
+		filter.ParentID = parentID
+	}
+	return c.ListSecrets(ctx, filter)
+}

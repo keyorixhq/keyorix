@@ -138,6 +138,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	notificationHandler := handlers.NewNotificationHandler(coreService)
 	connectHandler := handlers.NewConnectHandler(coreService)
 	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
+	folderHandler := handlers.NewFolderHandler(coreService)
 
 	// Auth endpoints (no authentication middleware). Several of these mint or hand back a
 	// session token (login, refresh, MFA/WebAuthn verify, the SSO/SAML callbacks) or
@@ -576,6 +577,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Shared secrets endpoint (the caller's own shares)
 		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/shared-secrets", shareHandler.ListSharedSecrets)
+
+		// Folder endpoints. Create authorizes in-handler (scope from the body).
+		// List scopes via the project_id query param. Delete resolves scope from
+		// the folder node's own project/environment.
+		folderScope := customMiddleware.ScopeFromSecretParam("id")
+		r.Route("/folders", func(r chi.Router) {
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/", folderHandler.ListFolders)
+			r.Post("/", folderHandler.CreateFolder)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, folderScope)).Delete("/{id}", folderHandler.DeleteFolder)
+		})
 
 		// Rotation policies endpoints. List/evaluate take an optional scope
 		// filter; per-policy routes resolve scope from the policy; create

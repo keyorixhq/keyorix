@@ -1163,6 +1163,13 @@ type SecretFilter struct {
 	// NULL) — the recycle-bin / restore view. Implies reaching past GORM's
 	// soft-delete scope. Takes precedence over IncludeDeleted.
 	DeletedOnly bool
+	// IsSecret, when set, restricts to nodes matching the given value:
+	// true = actual secrets only, false = folder nodes only.
+	// When nil, both secrets and folders are returned.
+	IsSecret *bool
+	// ParentID, when set, restricts to nodes whose parent_id matches.
+	// Use a pointer to 0 (or a sentinel) to match root-level nodes.
+	ParentID *uint
 }
 
 // DriftSecretRow is one secret's drift-relevant projection: which environment it

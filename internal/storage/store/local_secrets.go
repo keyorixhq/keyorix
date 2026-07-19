@@ -611,6 +611,12 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	if filter.CreatedBefore != nil {
 		query = query.Where("secret_nodes.created_at < ?", *filter.CreatedBefore)
 	}
+	if filter.IsSecret != nil {
+		query = query.Where("secret_nodes.is_secret = ?", *filter.IsSecret)
+	}
+	if filter.ParentID != nil {
+		query = query.Where("secret_nodes.parent_id = ?", *filter.ParentID)
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
