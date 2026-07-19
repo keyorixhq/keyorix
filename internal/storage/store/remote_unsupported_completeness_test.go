@@ -178,6 +178,8 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"GetSecretACL":             {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 	"DeleteSecretACL":          {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 	"GetSecretAncestors":       {statusIntentional, "RBAC Phase 3 — folder-ACL inheritance walk runs server-side; HasSecretACL uses ErrUnsupportedByBackend to skip the ancestor walk on remote callers"},
+
+	"GetProjectUsageStats": {statusIntentional, "usage report queries run server-side; a future PR may add a /api/v1/system/usage proxy route"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every

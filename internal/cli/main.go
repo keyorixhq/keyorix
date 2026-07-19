@@ -35,6 +35,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/status"
 	"github.com/keyorixhq/keyorix/internal/cli/system"
 	trustcli "github.com/keyorixhq/keyorix/internal/cli/trust"
+	"github.com/keyorixhq/keyorix/internal/cli/usage"
 	"github.com/keyorixhq/keyorix/internal/cli/user"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -84,6 +85,7 @@ func init() {
 	rootCmd.AddCommand(trustcli.TrustCmd)
 	rootCmd.AddCommand(bundlecli.BundleCmd)
 	rootCmd.AddCommand(licensecli.LicenseCmd)
+	rootCmd.AddCommand(usage.UsageCmd)
 }
 
 // bootstrapI18n initializes i18n with the user's actual configured locale

@@ -1157,6 +1157,11 @@ type Storage interface {
 	HealthCheck(ctx context.Context) error
 	GetStats(ctx context.Context) (*StorageStats, error)
 
+	// GetProjectUsageStats returns per-project usage stats for the given projects
+	// over the past windowDays days. Passing nil for projectIDs returns stats for
+	// ALL projects. The result may omit projects with zero activity and zero secrets.
+	GetProjectUsageStats(ctx context.Context, projectIDs []uint, windowDays int) ([]ProjectUsageStat, error)
+
 }
 
 // SecretFilter defines filtering options for secret queries
@@ -1338,6 +1343,23 @@ type RBACAuditLog struct {
 	IPAddress  string    `json:"ip_address"`
 	Success    bool      `json:"success"`
 	Timestamp  time.Time `json:"timestamp"`
+}
+
+// ProjectUsageStat is one row in a usage report, aggregating all metrics for
+// one project over the reporting window.
+type ProjectUsageStat struct {
+	ProjectID     uint   `json:"project_id"`
+	ProjectName   string `json:"project_name"`
+	SecretCount   int64  `json:"secret_count"`   // active leaf secrets (is_secret=true, not deleted)
+	ReadsInWindow int64  `json:"reads_in_window"` // audit_events: event_type="secret.read", success=true, in window
+	UniqueReaders int    `json:"unique_readers"`  // distinct user_id values in those audit events
+}
+
+// UsageReport is the full usage response.
+type UsageReport struct {
+	WindowDays  int                `json:"window_days"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Projects    []ProjectUsageStat `json:"projects"`
 }
 
 // StorageStats provides statistics about the storage system
