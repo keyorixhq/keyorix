@@ -352,6 +352,13 @@ type Storage interface {
 	// folder-ACL enforcement runs server-side on the remote deployment.
 	GetSecretAncestors(ctx context.Context, nodeID uint) ([]uint, error)
 
+	// Temporal access schedule — restricts a secret's reads to a configured
+	// time window (day-of-week + hour range). GetSecretAccessSchedule returns
+	// nil, nil when no schedule has been configured for the secret.
+	GetSecretAccessSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, error)
+	SetSecretAccessSchedule(ctx context.Context, schedule *models.SecretAccessSchedule) error
+	DeleteSecretAccessSchedule(ctx context.Context, secretNodeID uint) error
+
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
 	CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error)

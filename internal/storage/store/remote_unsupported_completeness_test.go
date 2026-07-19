@@ -172,6 +172,14 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// boundary owns authorization; HasSecretACL/AuthorizeSecret run on the server).
 	"ListAllUserRoleGrants": {statusIntentional, "permission matrix is server-aggregated via GET /api/v1/rbac/permission-matrix; direct grant enumeration runs server-side"},
 
+	// Temporal access schedule — schedule enforcement runs server-side inside
+	// checkSecretAccessSchedule; a remote CLI caller never invokes these storage
+	// primitives directly. Schedule management is exposed via HTTP handlers
+	// (server/http/handlers/secret_schedule.go) under /api/v1/secrets/{id}/schedule.
+	"GetSecretAccessSchedule":    {statusIntentional, "temporal schedule check runs server-side; schedule management routes are HTTP-proxied via secret_schedule.go"},
+	"SetSecretAccessSchedule":    {statusIntentional, "temporal schedule check runs server-side; schedule management routes are HTTP-proxied via secret_schedule.go"},
+	"DeleteSecretAccessSchedule": {statusIntentional, "temporal schedule check runs server-side; schedule management routes are HTTP-proxied via secret_schedule.go"},
+
 	"CreateOrUpdateSecretACL":  {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 	"ListSecretACLs":           {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
 	"ListSecretACLsByUser":     {statusIntentional, "RBAC Phase 3 — listing ACL-granted secrets for a user runs server-side in ListSecretsWithSharingInfo; the core function calls LocalStorage on the server, not RemoteStorage"},

@@ -156,6 +156,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// GetCompliancePosture on every call; the table must exist for posture
 		// handler tests that go through the real router.
 		&models.CompliancePostureSnapshot{},
+		// temporal access policies: SecretAccessSchedule enforces time-window
+		// read restrictions on secrets; the schedule check runs server-side
+		// in checkSecretAccessSchedule, called from GetSecretWithPermissionCheck.
+		&models.SecretAccessSchedule{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

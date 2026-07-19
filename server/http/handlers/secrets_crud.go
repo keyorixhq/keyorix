@@ -226,7 +226,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, core.ErrAccessOutsideSchedule) {
+			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+		} else if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
