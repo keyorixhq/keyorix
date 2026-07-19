@@ -19,7 +19,7 @@ func TestCompleteInvitationAccept(t *testing.T) {
 	hash := sha256Hex(raw)
 	iid := uint(11)
 
-	pendingInvite := func(c *KeyorixCore, mode string) *models.SetupToken {
+	pendingInvite := func(c *KeyorixCore, _ string) *models.SetupToken {
 		return &models.SetupToken{
 			ID: 3, State: SetupTokenActive, Purpose: SetupPurposeInvitationAccept,
 			SubjectEmail: "bob@acme.io", InvitationID: &iid, ExpiresAt: c.now().Add(time.Hour),

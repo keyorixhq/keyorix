@@ -43,7 +43,6 @@ const (
 	EventSSOGroupsSynced = "auth.sso_groups_synced"
 	EventSSORolesSynced  = "auth.sso_roles_synced"
 	ssoClockSkew         = 60 * time.Second
-	ssoCompleteSuffix    = "/auth/sso/complete"
 	ssoDefaultRole       = "system_viewer"
 	ssoDefaultGroupClaim = "groups"
 )
