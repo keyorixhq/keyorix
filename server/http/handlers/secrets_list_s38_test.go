@@ -129,6 +129,8 @@ func TestListSecrets_LargePageClamped_S38(t *testing.T) {
 }
 
 // TestListSecrets_FilterParams_S38 exercises all optional query parameters in one request.
+// Note: project_id/environment_id are omitted here to avoid the scope-auth check
+// (user 1 has no role grants); those URL params are covered by TestListSecrets_ScopeFilter_403_S38.
 func TestListSecrets_FilterParams_S38(t *testing.T) {
 	t.Parallel()
 	h, _ := freshListFixtureS38(t)
@@ -137,12 +139,25 @@ func TestListSecrets_FilterParams_S38(t *testing.T) {
 			"/api/v1/secrets?search=foo&include_deleted=true&show_owned_only=true"+
 				"&show_shared_only=true&permission=secrets.read&type=static"+
 				"&classification=internal&tag=env:prod&tag=team:platform"+
-				"&project_id=1&environment_id=1&sort_by=name&sort_order=asc",
+				"&sort_by=name&sort_order=asc",
 			nil,
 		), 1)
 	w := httptest.NewRecorder()
 	h.ListSecrets(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestListSecrets_ScopeFilter_403_S38 verifies that a scope filter with an unauthorized
+// user returns 403 (exercises the project_id/environment_id parse + scope-auth check).
+func TestListSecrets_ScopeFilter_403_S38(t *testing.T) {
+	t.Parallel()
+	h, _ := freshListFixtureS38(t)
+	req := withUserCtxS38(
+		httptest.NewRequest(http.MethodGet,
+			"/api/v1/secrets?project_id=1&environment_id=1", nil), 1)
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // TestListSecrets_ExpiresBeforeParam_S38 exercises the expires_before RFC3339 filter.
