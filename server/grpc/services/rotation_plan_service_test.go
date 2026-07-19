@@ -10,6 +10,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // newRotationPlanRig reuses the secret rig (i18n + RBAC graph + project 1 / env 1 /
@@ -63,5 +64,23 @@ func TestGRPC_GetProjectRotationPlan(t *testing.T) {
 func TestGRPC_GetProjectRotationPlanRequiresAuth(t *testing.T) {
 	svc := newRotationPlanRig(t)
 	_, err := svc.GetProjectRotationPlan(t.Context(), &pb.GetProjectRequest{Id: 1})
+	require.Error(t, err)
+}
+
+func TestGRPC_GetDeploymentRotationPlan(t *testing.T) {
+	svc := newRotationPlanRig(t)
+	resp, err := svc.GetDeploymentRotationPlan(authCtx(1, "owner", "secrets.read"), &emptypb.Empty{})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), resp.GetProjectsScanned())
+	assert.Equal(t, int32(1), resp.GetProjectsWithWork())
+	assert.Equal(t, int32(2), resp.GetTotalSecrets())
+	assert.Equal(t, int32(2), resp.GetOverdueCount())
+	require.Len(t, resp.GetProjects(), 1, "one project has work")
+	assert.Empty(t, resp.GetBrokenProjects())
+}
+
+func TestGRPC_GetDeploymentRotationPlanRequiresAuth(t *testing.T) {
+	svc := newRotationPlanRig(t)
+	_, err := svc.GetDeploymentRotationPlan(t.Context(), &emptypb.Empty{})
 	require.Error(t, err)
 }
