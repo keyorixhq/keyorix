@@ -21,6 +21,7 @@ var (
 	listOffset      int
 	listSearch      string
 	listFormat      string
+	listFolderID    uint
 )
 
 var listCmd = &cobra.Command{
@@ -47,6 +48,7 @@ func init() {
 	listCmd.Flags().IntVar(&listOffset, "offset", 0, "Number of results to skip")
 	listCmd.Flags().StringVar(&listSearch, "search", "", "Search query")
 	listCmd.Flags().StringVar(&listFormat, "format", "table", "Output format (table, json)")
+	listCmd.Flags().UintVar(&listFolderID, "folder", 0, "Filter to direct children of this folder node ID (0 = all)")
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -100,6 +102,9 @@ func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 
 	if listEnv != 0 {
 		path += fmt.Sprintf("&environment_id=%d", listEnv)
+	}
+	if listFolderID != 0 {
+		path += fmt.Sprintf("&parent_id=%d", listFolderID)
 	}
 
 	var resp models.SecretListResponse
@@ -159,6 +164,9 @@ func runListEmbedded(ctx context.Context) error {
 
 	if listEnv != 0 {
 		filter.EnvironmentID = &listEnv
+	}
+	if listFolderID != 0 {
+		filter.ParentID = &listFolderID
 	}
 
 	secrets, total, err := service.ListSecrets(ctx, filter)

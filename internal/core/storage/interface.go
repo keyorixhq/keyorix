@@ -1170,8 +1170,14 @@ type SecretFilter struct {
 	// Classification, when set, restricts to secrets with that data-classification
 	// label (A.5.12). Use the sentinel "unclassified" to match the empty label.
 	Classification *string
-	Page           int
-	PageSize       int
+	// ParentID, when set, restricts to secrets whose parent_id equals the given
+	// value. Use to list the direct children of a folder node.
+	ParentID *uint
+	// FolderOnly, when true, restricts to folder nodes (is_secret=false). Mutually
+	// exclusive with listing only real secrets — callers set one or the other.
+	FolderOnly bool
+	Page       int
+	PageSize   int
 	// IncludeDeleted, when true, also returns soft-deleted secrets (ADR-033) —
 	// for a restore UI. Default false: GORM auto-scopes deleted_at IS NULL.
 	IncludeDeleted bool
@@ -1183,9 +1189,6 @@ type SecretFilter struct {
 	// true = actual secrets only, false = folder nodes only.
 	// When nil, both secrets and folders are returned.
 	IsSecret *bool
-	// ParentID, when set, restricts to nodes whose parent_id matches.
-	// Use a pointer to 0 (or a sentinel) to match root-level nodes.
-	ParentID *uint
 }
 
 // DriftSecretRow is one secret's drift-relevant projection: which environment it

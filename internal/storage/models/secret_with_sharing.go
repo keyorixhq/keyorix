@@ -45,6 +45,12 @@ type SecretListFilter struct {
 	// before this time (already expired or expiring within the window).
 	ExpiresBefore *time.Time
 
+	// ParentID, when set, restricts to secrets whose parent_id equals the given
+	// value (direct children of a folder node).
+	ParentID *uint
+	// FolderOnly, when true, returns only folder nodes (is_secret=false).
+	FolderOnly bool
+
 	// Sharing filters
 	ShowOwnedOnly  bool   // Show only secrets owned by the user
 	ShowSharedOnly bool   // Show only secrets shared with the user

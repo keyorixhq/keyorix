@@ -39,6 +39,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		Metadata       map[string]string `json:"metadata,omitempty"`
 		Tags           []string          `json:"tags,omitempty"`
 		Classification string            `json:"classification,omitempty"`
+		// ParentID optionally places the secret inside a folder node.
+		// The parent must exist and be a folder (IsSecret=false).
+		ParentID *uint `json:"parent_id,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -75,6 +78,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		Metadata:       reqBody.Metadata,
 		Tags:           reqBody.Tags,
 		Classification: reqBody.Classification,
+		ParentID:       reqBody.ParentID,
 		CreatedBy:      userCtx.Username,
 		OwnerID:        userCtx.UserID,
 	}

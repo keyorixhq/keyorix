@@ -54,7 +54,7 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 		return nil, err
 	}
 
-	secret, err := s.core.CreateSecret(ctx, &core.CreateSecretRequest{
+	coreReq := &core.CreateSecretRequest{
 		Name:          req.GetName(),
 		Value:         []byte(req.GetValue()),
 		ProjectID:     uint(req.GetProjectId()),
@@ -66,7 +66,12 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 		Tags:          req.GetTags(),
 		CreatedBy:     user.Username,
 		OwnerID:       user.UserID,
-	})
+	}
+	if req.ParentId != nil && req.GetParentId() != 0 {
+		pID := uint(req.GetParentId())
+		coreReq.ParentID = &pID
+	}
+	secret, err := s.core.CreateSecret(ctx, coreReq)
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
@@ -306,6 +311,8 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 		ShowSharedOnly: req.GetShowSharedOnly(),
 		Page:           page,
 		PageSize:       pageSize,
+		ParentID:       optUint(req.ParentId),
+		FolderOnly:     req.GetFolderOnly(),
 	}
 
 	resp, err := s.core.ListSecretsWithSharingInfo(ctx, user.UserID, filter)
