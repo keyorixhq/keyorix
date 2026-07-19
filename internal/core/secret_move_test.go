@@ -215,3 +215,24 @@ func TestMoveSecret_ZeroSecretID(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
+
+// TestMoveFolder_ToAnotherFolder moves a folder node into a sibling folder.
+func TestMoveFolder_ToAnotherFolder(t *testing.T) {
+	c, _, folderID, db := newMoveFixture(t)
+	ctx := context.Background()
+
+	// Create a second folder to be the target parent.
+	target, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: "target-folder", ProjectID: 1, EnvironmentID: 1,
+		Type: "folder", OwnerID: 1, IsSecret: false, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	_ = db
+
+	// Move the first folder into the target folder.
+	updated, err := c.MoveSecret(ctx, 1, folderID, &target.ID)
+	require.NoError(t, err)
+	require.NotNil(t, updated.ParentID)
+	assert.Equal(t, target.ID, *updated.ParentID)
+}
