@@ -152,6 +152,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// AuditEvents30d trend computation (GetDashboardStats, audit.read callers).
 		&models.StatsSnapshot{},
 		&models.DeploymentStatsSnapshot{},
+		// compliance posture trending — CompliancePostureSnapshot is written by
+		// GetCompliancePosture on every call; the table must exist for posture
+		// handler tests that go through the real router.
+		&models.CompliancePostureSnapshot{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

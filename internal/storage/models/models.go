@@ -1046,6 +1046,18 @@ type DeploymentStatsSnapshot struct {
 	CreatedAt      time.Time
 }
 
+// CompliancePostureSnapshot captures daily deployment compliance posture counts
+// for week-over-week trend computation.
+type CompliancePostureSnapshot struct {
+	ID               uint      `gorm:"primarykey"`
+	TotalControls    int       `json:"total_controls"`    // total control areas evaluated
+	PassedControls   int       `json:"passed_controls"`   // controls with no gaps
+	FailedControls   int       `json:"failed_controls"`   // controls with gaps/failures
+	DegradedControls int       `json:"degraded_controls"` // controls that couldn't be evaluated
+	SnapshotDate     time.Time `json:"snapshot_date" gorm:"uniqueIndex"` // date only (UTC midnight)
+	CreatedAt        time.Time `json:"created_at"`
+}
+
 type APIClient struct {
 	ID                    uint `gorm:"primaryKey"`
 	Name                  string
