@@ -47,7 +47,7 @@ func TestRunMembers_CLI_WithMembers(t *testing.T) {
 	require.NotEmpty(t, groups)
 
 	// Add the user to the group.
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, groups[0].ID))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, u.ID, groups[0].ID, 0))
 
 	origMID := membersGroupID
 	defer func() { membersGroupID = origMID }()
@@ -318,8 +318,8 @@ func TestRunMembers_CLI_WithMultipleMembers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, groups)
 
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u1.ID, groups[0].ID))
-	require.NoError(t, svc.AddUserToGroup(ctx, 0, u2.ID, groups[0].ID))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, u1.ID, groups[0].ID, 0))
+	require.NoError(t, svc.AddUserToGroup(ctx, 0, u2.ID, groups[0].ID, 0))
 
 	origMID := membersGroupID
 	defer func() { membersGroupID = origMID }()

@@ -140,8 +140,10 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 }
 
 // AddUserToGroup adds a user to a group. actorID is the admin performing it (0 = no
-// authenticated principal, e.g. a local CLI invocation). Membership confers every
-// role the group holds, so this is recorded in the RBAC audit trail (#233).
+// authenticated principal, e.g. a local CLI invocation). projectID scopes the
+// membership: 0 = global (applies in every project), non-zero = this project only.
+// Membership confers every role the group holds at the matching scope, so this is
+// recorded in the RBAC audit trail (#233).
 //
 // Joining an admin-conferring group inherits that access just as directly as a
 // role grant, so every global-scope admin role the group already holds is gated
@@ -152,7 +154,7 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 // any role directly via AssignRoleToUser, which bypasses this ceiling entirely) and
 // the exemption avoids forcing an existing admin group deployment through this new
 // check retroactively.
-func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID uint) error {
+func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
@@ -171,29 +173,43 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, group
 			}
 		}
 	}
-	if err := c.storage.AddUserToGroup(ctx, userID, groupID); err != nil {
+	if err := c.storage.AddUserToGroup(ctx, userID, groupID, projectID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.LogGroupMemberAdded(ctx, actorID, userID, groupID)
 	return nil
 }
 
-// RemoveUserFromGroup removes a user from a group. See AddUserToGroup for actorID
-// semantics. It refuses to remove a user whose global admin-tier authority comes
-// solely from this group's role grant when no other admin route remains (#107;
-// see guardLastGlobalAdminMembership).
-func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID uint) error {
+// AddUserToGroupGlobal is a convenience wrapper that adds a global membership
+// (projectID=0). Callers that do not need project-scoped membership (e.g. SSO
+// JIT provisioning, SCIM) should call this rather than hard-coding 0.
+func (c *KeyorixCore) AddUserToGroupGlobal(ctx context.Context, actorID, userID, groupID uint) error {
+	return c.AddUserToGroup(ctx, actorID, userID, groupID, 0)
+}
+
+// RemoveUserFromGroup removes a user from a group at the given projectID scope.
+// See AddUserToGroup for actorID semantics. It refuses to remove a user whose
+// global admin-tier authority comes solely from this group's role grant when no
+// other admin route remains (#107; see guardLastGlobalAdminMembership).
+func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
 	if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
 		return err
 	}
-	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID); err != nil {
+	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID, projectID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.LogGroupMemberRemoved(ctx, actorID, userID, groupID)
 	return nil
+}
+
+// RemoveUserFromGroupGlobal is a convenience wrapper that removes the global
+// membership (projectID=0). Callers that do not need project-scoped removal (e.g.
+// SSO JIT de-provisioning, SCIM) should call this rather than hard-coding 0.
+func (c *KeyorixCore) RemoveUserFromGroupGlobal(ctx context.Context, actorID, userID, groupID uint) error {
+	return c.RemoveUserFromGroup(ctx, actorID, userID, groupID, 0)
 }
 
 // GetGroupMembers returns all users that belong to a group.

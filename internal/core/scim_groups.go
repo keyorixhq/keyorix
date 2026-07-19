@@ -109,7 +109,7 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 		return nil, err
 	}
 	for _, uid := range allowed {
-		_ = c.storage.AddUserToGroup(ctx, uid, group.ID)
+		_ = c.storage.AddUserToGroup(ctx, uid, group.ID, 0) // SCIM memberships are always global
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupProvisioned, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM provisioned group %d (%q) with %d member(s)", group.ID, displayName, len(allowed)))
@@ -174,10 +174,10 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
 	}
 	for _, id := range allowedAdds {
-		_ = c.storage.AddUserToGroup(ctx, id, groupID)
+		_ = c.storage.AddUserToGroup(ctx, id, groupID, 0) // SCIM memberships are always global
 	}
 	for _, id := range filterNonZero(removeIDs) {
-		_ = c.storage.RemoveUserFromGroup(ctx, id, groupID)
+		_ = c.storage.RemoveUserFromGroup(ctx, id, groupID, 0) // SCIM memberships are always global
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM patched group %d (+%d/-%d members)", groupID, len(addIDs), len(removeIDs)))
@@ -246,11 +246,11 @@ func filterNonZero(ids []uint) []uint {
 func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint) {
 	for _, u := range current {
 		if !want[u.ID] {
-			_ = c.storage.RemoveUserFromGroup(ctx, u.ID, groupID)
+			_ = c.storage.RemoveUserFromGroup(ctx, u.ID, groupID, 0) // SCIM memberships are always global
 		}
 	}
 	for _, id := range toAdd {
-		_ = c.storage.AddUserToGroup(ctx, id, groupID)
+		_ = c.storage.AddUserToGroup(ctx, id, groupID, 0) // SCIM memberships are always global
 	}
 }
 

@@ -37,7 +37,7 @@ func TestGroupSoftDelete_RevokesThenRestoresAccess(t *testing.T) {
 
 	g, err := ls.CreateGroup(ctx, &models.Group{Name: "ops"})
 	require.NoError(t, err)
-	require.NoError(t, ls.AddUserToGroup(ctx, 1, g.ID))
+	require.NoError(t, ls.AddUserToGroup(ctx, 1, g.ID, 0))
 	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: g.ID, RoleID: 50}).Error)
 	// A secret shared with the group.
 	require.NoError(t, ls.db.Create(&models.SecretNode{ID: 7, Name: "s", IsSecret: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}).Error)

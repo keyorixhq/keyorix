@@ -440,8 +440,10 @@ func (ls *LocalStorage) ListGroupsPage(ctx context.Context, offset, pageSize int
 	return groups, total, nil
 }
 
-// AddUserToGroup adds userID to groupID; idempotent (existing membership is a no-op).
-func (ls *LocalStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+// AddUserToGroup adds userID to groupID scoped to projectID; idempotent
+// (existing (userID, groupID, projectID) membership is a no-op). projectID=0
+// creates a global membership that applies in every project context.
+func (ls *LocalStorage) AddUserToGroup(ctx context.Context, userID, groupID, projectID uint) error {
 	if _, err := ls.GetUser(ctx, userID); err != nil {
 		return err
 	}
@@ -449,22 +451,28 @@ func (ls *LocalStorage) AddUserToGroup(ctx context.Context, userID, groupID uint
 		return err
 	}
 	var existing models.UserGroup
-	err := ls.db.WithContext(ctx).Where("user_id = ? AND group_id = ?", userID, groupID).First(&existing).Error
+	err := ls.db.WithContext(ctx).
+		Where("user_id = ? AND group_id = ? AND project_id = ?", userID, groupID, projectID).
+		First(&existing).Error
 	if err == nil {
-		return nil // already a member
+		return nil // already a member with this scope
 	}
 	if err != gorm.ErrRecordNotFound {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	ug := models.UserGroup{UserID: userID, GroupID: groupID}
+	ug := models.UserGroup{UserID: userID, GroupID: groupID, ProjectID: projectID}
 	if err := ls.db.WithContext(ctx).Create(&ug).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
 }
 
-func (ls *LocalStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
-	result := ls.db.WithContext(ctx).Where("user_id = ? AND group_id = ?", userID, groupID).Delete(&models.UserGroup{})
+// RemoveUserFromGroup removes the (userID, groupID, projectID) membership row.
+// projectID must match the value used when the membership was created.
+func (ls *LocalStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID, projectID uint) error {
+	result := ls.db.WithContext(ctx).
+		Where("user_id = ? AND group_id = ? AND project_id = ?", userID, groupID, projectID).
+		Delete(&models.UserGroup{})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}

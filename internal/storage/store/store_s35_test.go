@@ -154,7 +154,7 @@ func TestListGroupsPage_DBError_S35(t *testing.T) {
 func TestRemoveUserFromGroup_DBError_S35(t *testing.T) {
 	t.Parallel()
 	ls := newBrokenDB(t)
-	err := ls.RemoveUserFromGroup(context.Background(), 1, 1)
+	err := ls.RemoveUserFromGroup(context.Background(), 1, 1, 0)
 	require.Error(t, err)
 }
 

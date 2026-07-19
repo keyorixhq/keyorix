@@ -333,6 +333,81 @@ func TestRemoveGroupMember_InternalError_S13(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
 
+// ── groups_members.go: project-scoped AddGroupMember / RemoveGroupMember ─────
+
+// TestAddGroupMember_ProjectScoped_S13 verifies that a project_id in the body
+// is accepted and the response echoes it back.
+func TestAddGroupMember_ProjectScoped_S13(t *testing.T) {
+	t.Parallel()
+	h, cs := newGroupHandlerWithCoreS13(t)
+	ctx := context.Background()
+
+	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "scoped-add-s13"})
+	require.NoError(t, err)
+
+	// Seed a user so AddUserToGroup doesn't return "not found".
+	user, err := cs.Storage().CreateUser(ctx, &models.User{
+		Username: "scoped-add-user-s13", Email: "scopedadd@s13.test", PasswordHash: "x", IsActive: true,
+	})
+	require.NoError(t, err)
+
+	body := map[string]interface{}{"user_id": user.ID, "project_id": 42}
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPost, "/", jsonBody(t, body)), "id", fmt.Sprintf("%d", grp.ID)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.AddGroupMember(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Data struct {
+			ProjectID uint `json:"project_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, uint(42), resp.Data.ProjectID)
+}
+
+// TestRemoveGroupMember_ProjectScoped_S13 verifies that a project_id query param
+// is accepted when removing a scoped membership.
+func TestRemoveGroupMember_ProjectScoped_S13(t *testing.T) {
+	t.Parallel()
+	h, cs := newGroupHandlerWithCoreS13(t)
+	ctx := context.Background()
+
+	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "scoped-rm-s13"})
+	require.NoError(t, err)
+	user, err := cs.Storage().CreateUser(ctx, &models.User{
+		Username: "scoped-rm-user-s13", Email: "scopedrm@s13.test", PasswordHash: "x", IsActive: true,
+	})
+	require.NoError(t, err)
+
+	// Add a project-scoped membership first.
+	require.NoError(t, cs.AddUserToGroup(ctx, 0, user.ID, grp.ID, 5))
+
+	// Now remove it via the handler with ?project_id=5.
+	url := fmt.Sprintf("/?project_id=5")
+	req := withUserCtx(withChiParams(
+		httptest.NewRequest(http.MethodDelete, url, nil),
+		map[string]string{"id": fmt.Sprintf("%d", grp.ID), "userId": fmt.Sprintf("%d", user.ID)}))
+	w := httptest.NewRecorder()
+	h.RemoveGroupMember(w, req)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// TestRemoveGroupMember_InvalidProjectID_S13 verifies that an invalid project_id
+// query param returns 400.
+func TestRemoveGroupMember_InvalidProjectID_S13(t *testing.T) {
+	t.Parallel()
+	h := newGroupHandlerS13(t)
+	req := withUserCtx(withChiParams(
+		httptest.NewRequest(http.MethodDelete, "/?project_id=notanumber", nil),
+		map[string]string{"id": "1", "userId": "1"}))
+	w := httptest.NewRecorder()
+	h.RemoveGroupMember(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 // ── groups_members.go: InitCoreHandlers ──────────────────────────────────────
 
 func TestInitCoreHandlers_S13(t *testing.T) {

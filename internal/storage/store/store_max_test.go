@@ -323,7 +323,7 @@ func TestListGroups_Empty(t *testing.T) {
 // RemoveUserFromGroup — silent no-op when no row exists.
 func TestRemoveUserFromGroup_Noop(t *testing.T) {
 	ls := newUserStoreMax(t)
-	require.NoError(t, ls.RemoveUserFromGroup(context.Background(), 1, 1))
+	require.NoError(t, ls.RemoveUserFromGroup(context.Background(), 1, 1, 0))
 }
 
 // AddPasswordHistory + PrunePasswordHistory.

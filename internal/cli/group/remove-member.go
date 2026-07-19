@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	removeMemberGroupID uint
-	removeMemberUserID  uint
+	removeMemberGroupID   uint
+	removeMemberUserID    uint
+	removeMemberProjectID uint
 )
 
 var removeMemberCmd = &cobra.Command{
@@ -23,6 +24,7 @@ var removeMemberCmd = &cobra.Command{
 func init() {
 	removeMemberCmd.Flags().UintVar(&removeMemberGroupID, "group-id", 0, "Group ID (required)")
 	removeMemberCmd.Flags().UintVar(&removeMemberUserID, "user-id", 0, "User ID (required)")
+	removeMemberCmd.Flags().UintVar(&removeMemberProjectID, "project-id", 0, "Project ID (0 = global membership, default)")
 }
 
 func runRemoveMember(cmd *cobra.Command, args []string) error {
@@ -34,9 +36,9 @@ func runRemoveMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
-	if err := service.RemoveUserFromGroup(ctx, 0, removeMemberUserID, removeMemberGroupID); err != nil { // actorID 0: local/unauthenticated CLI
+	if err := service.RemoveUserFromGroup(ctx, 0, removeMemberUserID, removeMemberGroupID, removeMemberProjectID); err != nil { // actorID 0: local/unauthenticated CLI
 		return fmt.Errorf("failed to remove member: %w", err)
 	}
-	fmt.Printf("User %d removed from group %d.\n", removeMemberUserID, removeMemberGroupID)
+	fmt.Printf("User %d removed from group %d (project %d).\n", removeMemberUserID, removeMemberGroupID, removeMemberProjectID)
 	return nil
 }

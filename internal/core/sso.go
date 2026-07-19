@@ -575,7 +575,7 @@ func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uin
 			blocked++
 			continue
 		}
-		if err := c.storage.AddUserToGroup(ctx, userID, id); err == nil {
+		if err := c.storage.AddUserToGroup(ctx, userID, id, 0); err == nil {
 			added++
 		}
 	}
@@ -586,7 +586,7 @@ func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint
 	// De-escalating removals are unconditional (dropping a group only reduces privilege).
 	for id := range currentSet {
 		if !desired[id] {
-			if err := c.storage.RemoveUserFromGroup(ctx, userID, id); err == nil {
+			if err := c.storage.RemoveUserFromGroup(ctx, userID, id, 0); err == nil {
 				removed++
 			}
 		}

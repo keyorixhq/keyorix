@@ -487,6 +487,11 @@ func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) 
 // LIVE project/environment row, same as GetUserRoleIDsAt (#161) — a group-bound
 // role scoped to a since-soft-deleted project previously kept authorizing every
 // group member regardless of the project's own soft-delete state.
+//
+// Project-scoped memberships (UserGroup.ProjectID != 0) are honoured only when
+// the requested scope matches: a membership with project_id=5 does not confer
+// roles when evaluating scope project_id=7.  Global memberships (project_id=0)
+// continue to apply at every scope.
 func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Table("group_roles").
@@ -497,6 +502,9 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 		Joins("LEFT JOIN projects ON projects.id = group_roles.project_id").
 		Joins("LEFT JOIN environments ON environments.id = group_roles.environment_id").
 		Where(sqlWhereUGUserID, userID).
+		// Honour project-scoped memberships: global (project_id=0) always applies;
+		// non-zero only when it matches the requested project.
+		Where("user_groups.project_id = 0 OR user_groups.project_id = ?", scope.ProjectID).
 		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
 		Where("group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Where(sqlWhereGRNotExpired, time.Now()).

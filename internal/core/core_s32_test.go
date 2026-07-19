@@ -85,11 +85,11 @@ func TestRemovePermissionFromRole_RoleNotFound(t *testing.T) {
 
 func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
 	ms := new(MockStorage)
-	// user 1 is in current but NOT in want → RemoveUserFromGroup.
-	ms.On("RemoveUserFromGroup", mock.Anything, uint(1), uint(10)).Return(nil)
+	// user 1 is in current but NOT in want → RemoveUserFromGroup (global: projectID=0).
+	ms.On("RemoveUserFromGroup", mock.Anything, uint(1), uint(10), uint(0)).Return(nil)
 	// user 2 is in current AND in want → no-op.
-	// user 3 is in toAdd → AddUserToGroup.
-	ms.On("AddUserToGroup", mock.Anything, uint(3), uint(10)).Return(nil)
+	// user 3 is in toAdd → AddUserToGroup (global: projectID=0).
+	ms.On("AddUserToGroup", mock.Anything, uint(3), uint(10), uint(0)).Return(nil)
 	c := NewKeyorixCore(ms)
 	want := map[uint]bool{2: true}
 	current := []*models.User{{ID: 1}, {ID: 2}}

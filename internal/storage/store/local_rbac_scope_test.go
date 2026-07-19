@@ -201,3 +201,54 @@ func TestGetUserGroupRoleIDsAt_ScopeBoundary(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got, "a user in no group inherits nothing")
 }
+
+// TestGetUserGroupRoleIDsAt_ProjectScopedMembership verifies that a project-scoped
+// group membership (UserGroup.ProjectID != 0) only grants roles within the matching
+// project, while global memberships (ProjectID=0) still apply everywhere.
+func TestGetUserGroupRoleIDsAt_ProjectScopedMembership(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+
+	// Group 200 grants role 55 globally (group_roles.project_id = 0).
+	// group_roles scoping is unchanged — we're testing user_groups.project_id.
+	require.NoError(t, ls.db.Create(&models.Group{ID: 200, Name: "g200"}).Error)
+	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: 200, RoleID: 55, ProjectID: 0, EnvironmentID: 0}).Error)
+
+	// User 3 has a project-scoped membership in group 200 (only active for project 7).
+	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 3, GroupID: 200, ProjectID: 7}).Error)
+
+	// At project 7: scoped membership applies → role 55 is inherited.
+	got, err := ls.GetUserGroupRoleIDsAt(ctx, 3, sc(7, 0))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{55}, got, "scoped membership grants roles at its own project")
+
+	// At project 8: scoped membership does NOT apply → no roles.
+	got, err = ls.GetUserGroupRoleIDsAt(ctx, 3, sc(8, 0))
+	require.NoError(t, err)
+	assert.Empty(t, got, "scoped membership must not grant roles in a different project")
+
+	// At the global scope (project 0): scoped membership does NOT apply.
+	got, err = ls.GetUserGroupRoleIDsAt(ctx, 3, sc(0, 0))
+	require.NoError(t, err)
+	assert.Empty(t, got, "scoped membership must not apply at global scope")
+}
+
+// TestGetUserGroupRoleIDsAt_GlobalMembership verifies that a global membership
+// (UserGroup.ProjectID=0) applies at every project scope, not just one.
+func TestGetUserGroupRoleIDsAt_GlobalMembership(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, ls.db.Create(&models.Group{ID: 300, Name: "g300"}).Error)
+	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: 300, RoleID: 66, ProjectID: 0, EnvironmentID: 0}).Error)
+
+	// User 4 has a GLOBAL membership (ProjectID=0) in group 300.
+	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 4, GroupID: 300, ProjectID: 0}).Error)
+
+	// Global membership applies at any project scope.
+	for _, pid := range []uint{0, 1, 5, 99} {
+		got, err := ls.GetUserGroupRoleIDsAt(ctx, 4, sc(pid, 0))
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []uint{66}, got, "global membership applies at project %d", pid)
+	}
+}

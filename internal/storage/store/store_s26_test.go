@@ -433,7 +433,7 @@ func TestAddUserToGroup_S26_UserNotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	// User 9999 doesn't exist.
-	err = ls.AddUserToGroup(ctx, 9999, grp.ID)
+	err = ls.AddUserToGroup(ctx, 9999, grp.ID, 0)
 	require.Error(t, err)
 }
 
@@ -449,7 +449,7 @@ func TestAddUserToGroup_S26_GroupNotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	// Group 9999 doesn't exist.
-	err = ls.AddUserToGroup(ctx, user.ID, 9999)
+	err = ls.AddUserToGroup(ctx, user.ID, 9999, 0)
 	require.Error(t, err)
 }
 

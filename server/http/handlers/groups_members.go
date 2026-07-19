@@ -47,7 +47,9 @@ func (h *GroupHandler) GetGroupMembers(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, map[string]interface{}{"members": out, "total": len(out)}, "")
 }
 
-// AddGroupMember handles POST /api/v1/groups/{id}/members
+// AddGroupMember handles POST /api/v1/groups/{id}/members.
+// Body: {"user_id": <uint>, "project_id": <uint>}
+// project_id is optional; omitting it (or passing 0) creates a global membership.
 func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -61,7 +63,8 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		UserID uint `json:"user_id"`
+		UserID    uint `json:"user_id"`
+		ProjectID uint `json:"project_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -71,7 +74,7 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "user_id is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, body.UserID, uint(groupID)); err != nil {
+	if err := h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, body.UserID, uint(groupID), body.ProjectID); err != nil {
 		log.Printf("Error adding group member: %v", err)
 		switch {
 		case strings.Contains(err.Error(), "not found"):
@@ -83,10 +86,11 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"group_id": uint(groupID), "user_id": body.UserID}, "Member added to group")
+	sendSuccess(w, map[string]interface{}{"group_id": uint(groupID), "user_id": body.UserID, "project_id": body.ProjectID}, "Member added to group")
 }
 
-// RemoveGroupMember handles DELETE /api/v1/groups/{id}/members/{userId}
+// RemoveGroupMember handles DELETE /api/v1/groups/{id}/members/{userId}.
+// Optional query param: project_id (default 0 = global membership).
 func (h *GroupHandler) RemoveGroupMember(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -103,7 +107,16 @@ func (h *GroupHandler) RemoveGroupMember(w http.ResponseWriter, r *http.Request)
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RemoveUserFromGroup(r.Context(), userCtx.UserID, uint(userID), uint(groupID)); err != nil {
+	var projectID uint
+	if pidStr := r.URL.Query().Get("project_id"); pidStr != "" {
+		pid, err := strconv.ParseUint(pidStr, 10, 32)
+		if err != nil {
+			sendError(w, "InvalidParameter", "Invalid project_id", http.StatusBadRequest, nil)
+			return
+		}
+		projectID = uint(pid)
+	}
+	if err := h.coreService.RemoveUserFromGroup(r.Context(), userCtx.UserID, uint(userID), uint(groupID), projectID); err != nil {
 		log.Printf("Error removing group member: %v", err)
 		if strings.Contains(err.Error(), "refusing to remove the last member") {
 			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)

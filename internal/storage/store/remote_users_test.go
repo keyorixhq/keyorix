@@ -819,8 +819,8 @@ func TestRemoteStorage_AddUserToGroup(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	// AddUserToGroup(ctx, userID, groupID)
-	err = rs.AddUserToGroup(context.Background(), 1, 5)
+	// AddUserToGroup(ctx, userID, groupID, projectID)
+	err = rs.AddUserToGroup(context.Background(), 1, 5, 0)
 	require.NoError(t, err)
 }
 
@@ -837,7 +837,7 @@ func TestRemoteStorage_AddUserToGroup_Error(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	err = rs.AddUserToGroup(context.Background(), 1, 5)
+	err = rs.AddUserToGroup(context.Background(), 1, 5, 0)
 	assert.Error(t, err)
 }
 
@@ -846,6 +846,7 @@ func TestRemoteStorage_AddUserToGroup_Error(t *testing.T) {
 func TestRemoteStorage_RemoveUserFromGroup(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)
+		// projectID=0 → path includes ?project_id=0
 		assert.Equal(t, "/api/v1/system/groups/5/members/1", r.URL.Path)
 		_, _ = w.Write(apiOK(nil))
 	}))
@@ -854,8 +855,8 @@ func TestRemoteStorage_RemoveUserFromGroup(t *testing.T) {
 	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
 	require.NoError(t, err)
 
-	// RemoveUserFromGroup(ctx, userID, groupID)
-	err = rs.RemoveUserFromGroup(context.Background(), 1, 5)
+	// RemoveUserFromGroup(ctx, userID, groupID, projectID)
+	err = rs.RemoveUserFromGroup(context.Background(), 1, 5, 0)
 	require.NoError(t, err)
 }
 

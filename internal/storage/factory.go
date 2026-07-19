@@ -985,6 +985,20 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	}
 
+	// UserGroup.ProjectID scopes group membership to a project (0 = global).
+	// The old PK was (user_id, group_id); the new PK is (user_id, group_id, project_id).
+	// For SQLite (fresh DBs or test environments) AutoMigrate handles this; for
+	// existing installs we add the column with a DEFAULT 0 so existing global
+	// memberships are correctly mapped to project_id=0. The PK cannot be altered in
+	// place on SQLite (no ADD COLUMN to PK), but GORM's AutoMigrate on a fresh DB
+	// already creates the correct composite PK. For Postgres, the ALTER adds the
+	// column first and we let GORM's AutoMigrate handle the rest on next fresh-DB
+	// creation; upgraded installs get a best-effort column add so the application
+	// can at least insert new scoped rows without breaking on old global ones.
+	if tableExists(db, "user_groups") && !columnExists(db, "user_groups", "project_id") {
+		db.Exec("ALTER TABLE user_groups ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0")
+	}
+
 	// Swap the plain unique index on users.username for a partial one (live rows only),
 	// so a SCIM-deprovisioned username can be re-provisioned. Additive + idempotent; the
 	// full AutoMigrate below covers fresh DBs.

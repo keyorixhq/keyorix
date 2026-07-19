@@ -237,8 +237,8 @@ func TestGroupMembers_LocalMode(t *testing.T) {
 	g, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "engineers"})
 	require.NoError(t, err)
 
-	// Add member
-	err = svc.AddUserToGroup(ctx, 0, u.ID, g.ID)
+	// Add member (global membership: projectID=0)
+	err = svc.AddUserToGroup(ctx, 0, u.ID, g.ID, 0)
 	require.NoError(t, err)
 
 	// List members
@@ -247,8 +247,8 @@ func TestGroupMembers_LocalMode(t *testing.T) {
 	require.Len(t, members, 1)
 	assert.Equal(t, "alice", members[0].Username)
 
-	// Remove member
-	err = svc.RemoveUserFromGroup(ctx, 0, u.ID, g.ID)
+	// Remove member (global membership: projectID=0)
+	err = svc.RemoveUserFromGroup(ctx, 0, u.ID, g.ID, 0)
 	require.NoError(t, err)
 
 	members, err = svc.GetGroupMembers(ctx, g.ID)

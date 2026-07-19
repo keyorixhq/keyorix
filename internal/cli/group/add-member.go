@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	addMemberGroupID uint
-	addMemberUserID  uint
+	addMemberGroupID   uint
+	addMemberUserID    uint
+	addMemberProjectID uint
 )
 
 var addMemberCmd = &cobra.Command{
@@ -23,6 +24,7 @@ var addMemberCmd = &cobra.Command{
 func init() {
 	addMemberCmd.Flags().UintVar(&addMemberGroupID, "group-id", 0, "Group ID (required)")
 	addMemberCmd.Flags().UintVar(&addMemberUserID, "user-id", 0, "User ID (required)")
+	addMemberCmd.Flags().UintVar(&addMemberProjectID, "project-id", 0, "Project ID (0 = global membership, default)")
 }
 
 func runAddMember(cmd *cobra.Command, args []string) error {
@@ -34,9 +36,9 @@ func runAddMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
-	if err := service.AddUserToGroup(ctx, 0, addMemberUserID, addMemberGroupID); err != nil { // actorID 0: local/unauthenticated CLI
+	if err := service.AddUserToGroup(ctx, 0, addMemberUserID, addMemberGroupID, addMemberProjectID); err != nil { // actorID 0: local/unauthenticated CLI
 		return fmt.Errorf("failed to add member: %w", err)
 	}
-	fmt.Printf("User %d added to group %d.\n", addMemberUserID, addMemberGroupID)
+	fmt.Printf("User %d added to group %d (project %d).\n", addMemberUserID, addMemberGroupID, addMemberProjectID)
 	return nil
 }

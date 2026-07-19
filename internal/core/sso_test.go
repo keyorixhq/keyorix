@@ -366,17 +366,17 @@ func TestSyncSSOGroups(t *testing.T) {
 		// Native groups: admins(1), devs(2), ops(3). User currently in devs(2), ops(3).
 		store.On("ListGroups", mock.Anything).Return([]*models.Group{{ID: 1, Name: "admins"}, {ID: 2, Name: "devs"}, {ID: 3, Name: "ops"}}, nil)
 		store.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{{ID: 2, Name: "devs"}, {ID: 3, Name: "ops"}}, nil)
-		store.On("AddUserToGroup", mock.Anything, uint(7), uint(1)).Return(nil)      // admins: asserted, not current → add
-		store.On("RemoveUserFromGroup", mock.Anything, uint(7), uint(3)).Return(nil) // ops: current, not asserted → remove
+		store.On("AddUserToGroup", mock.Anything, uint(7), uint(1), uint(0)).Return(nil)      // admins: asserted, not current → add (global)
+		store.On("RemoveUserFromGroup", mock.Anything, uint(7), uint(3), uint(0)).Return(nil) // ops: current, not asserted → remove (global)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 		c.syncSSOGroups(context.Background(), p, 7, raw)
 
-		store.AssertCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(1))
-		store.AssertCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(3))
+		store.AssertCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(1), uint(0))
+		store.AssertCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(3), uint(0))
 		// devs(2) already a member and still asserted → untouched.
-		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(2))
-		store.AssertNotCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(2))
+		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(2), uint(0))
+		store.AssertNotCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(2), uint(0))
 	})
 
 	t.Run("ignores asserted groups with no native counterpart", func(t *testing.T) {
@@ -387,7 +387,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
 
 		c.syncSSOGroups(context.Background(), p, 7, raw)
-		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("absent groups claim → no-op (never touches memberships)", func(t *testing.T) {
@@ -399,7 +399,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		// Returns before listing groups — so an IdP that omits groups in the id_token
 		// can't strip a user's memberships.
 		store.AssertNotCalled(t, "ListGroups", mock.Anything)
-		store.AssertNotCalled(t, "RemoveUserFromGroup", mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "RemoveUserFromGroup", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 }
