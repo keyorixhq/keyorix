@@ -23,10 +23,11 @@ func init() {
 	ProjectCmd.AddCommand(currentCmd)
 	ProjectCmd.AddCommand(describeCmd)
 
-	// env subcommand tree: project env list/create/delete
+	// env subcommand tree: project env list/create/delete/clone
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envCreateCmd)
 	envCmd.AddCommand(envDeleteCmd)
+	envCmd.AddCommand(envCloneCmd)
 	ProjectCmd.AddCommand(envCmd)
 
 	// Keep legacy 'environments' alias for backwards compat.
