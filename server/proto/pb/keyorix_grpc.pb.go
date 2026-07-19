@@ -30,6 +30,9 @@ const (
 	SecretService_SetSecretAutoRotate_FullMethodName    = "/keyorix.v1.SecretService/SetSecretAutoRotate"
 	SecretService_ListSecretDependencies_FullMethodName = "/keyorix.v1.SecretService/ListSecretDependencies"
 	SecretService_GetSecretImpact_FullMethodName        = "/keyorix.v1.SecretService/GetSecretImpact"
+	SecretService_GrantSecretACL_FullMethodName         = "/keyorix.v1.SecretService/GrantSecretACL"
+	SecretService_RevokeSecretACL_FullMethodName        = "/keyorix.v1.SecretService/RevokeSecretACL"
+	SecretService_ListSecretACLs_FullMethodName         = "/keyorix.v1.SecretService/ListSecretACLs"
 )
 
 // SecretServiceClient is the client API for SecretService service.
@@ -60,6 +63,11 @@ type SecretServiceClient interface {
 	ListSecretDependencies(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*SecretDependencies, error)
 	// The blast radius of rotating a secret (its transitive dependents).
 	GetSecretImpact(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*SecretImpact, error)
+	// Per-secret fine-grained ACL management (RBAC Phase 3).
+	// All three require secrets.manage at the secret's project scope.
+	GrantSecretACL(ctx context.Context, in *GrantSecretACLRequest, opts ...grpc.CallOption) (*SecretACLEntry, error)
+	RevokeSecretACL(ctx context.Context, in *RevokeSecretACLRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ListSecretACLs(ctx context.Context, in *ListSecretACLsRequest, opts ...grpc.CallOption) (*ListSecretACLsResponse, error)
 }
 
 type secretServiceClient struct {
@@ -170,6 +178,36 @@ func (c *secretServiceClient) GetSecretImpact(ctx context.Context, in *GetSecret
 	return out, nil
 }
 
+func (c *secretServiceClient) GrantSecretACL(ctx context.Context, in *GrantSecretACLRequest, opts ...grpc.CallOption) (*SecretACLEntry, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SecretACLEntry)
+	err := c.cc.Invoke(ctx, SecretService_GrantSecretACL_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *secretServiceClient) RevokeSecretACL(ctx context.Context, in *RevokeSecretACLRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, SecretService_RevokeSecretACL_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *secretServiceClient) ListSecretACLs(ctx context.Context, in *ListSecretACLsRequest, opts ...grpc.CallOption) (*ListSecretACLsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSecretACLsResponse)
+	err := c.cc.Invoke(ctx, SecretService_ListSecretACLs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretServiceServer is the server API for SecretService service.
 // All implementations must embed UnimplementedSecretServiceServer
 // for forward compatibility.
@@ -198,6 +236,11 @@ type SecretServiceServer interface {
 	ListSecretDependencies(context.Context, *GetSecretRequest) (*SecretDependencies, error)
 	// The blast radius of rotating a secret (its transitive dependents).
 	GetSecretImpact(context.Context, *GetSecretRequest) (*SecretImpact, error)
+	// Per-secret fine-grained ACL management (RBAC Phase 3).
+	// All three require secrets.manage at the secret's project scope.
+	GrantSecretACL(context.Context, *GrantSecretACLRequest) (*SecretACLEntry, error)
+	RevokeSecretACL(context.Context, *RevokeSecretACLRequest) (*emptypb.Empty, error)
+	ListSecretACLs(context.Context, *ListSecretACLsRequest) (*ListSecretACLsResponse, error)
 	mustEmbedUnimplementedSecretServiceServer()
 }
 
@@ -237,6 +280,15 @@ func (UnimplementedSecretServiceServer) ListSecretDependencies(context.Context, 
 }
 func (UnimplementedSecretServiceServer) GetSecretImpact(context.Context, *GetSecretRequest) (*SecretImpact, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSecretImpact not implemented")
+}
+func (UnimplementedSecretServiceServer) GrantSecretACL(context.Context, *GrantSecretACLRequest) (*SecretACLEntry, error) {
+	return nil, status.Error(codes.Unimplemented, "method GrantSecretACL not implemented")
+}
+func (UnimplementedSecretServiceServer) RevokeSecretACL(context.Context, *RevokeSecretACLRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeSecretACL not implemented")
+}
+func (UnimplementedSecretServiceServer) ListSecretACLs(context.Context, *ListSecretACLsRequest) (*ListSecretACLsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSecretACLs not implemented")
 }
 func (UnimplementedSecretServiceServer) mustEmbedUnimplementedSecretServiceServer() {}
 func (UnimplementedSecretServiceServer) testEmbeddedByValue()                       {}
@@ -439,6 +491,60 @@ func _SecretService_GetSecretImpact_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SecretService_GrantSecretACL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrantSecretACLRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretServiceServer).GrantSecretACL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SecretService_GrantSecretACL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretServiceServer).GrantSecretACL(ctx, req.(*GrantSecretACLRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SecretService_RevokeSecretACL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeSecretACLRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretServiceServer).RevokeSecretACL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SecretService_RevokeSecretACL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretServiceServer).RevokeSecretACL(ctx, req.(*RevokeSecretACLRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SecretService_ListSecretACLs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSecretACLsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretServiceServer).ListSecretACLs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SecretService_ListSecretACLs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretServiceServer).ListSecretACLs(ctx, req.(*ListSecretACLsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SecretService_ServiceDesc is the grpc.ServiceDesc for SecretService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -485,6 +591,18 @@ var SecretService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSecretImpact",
 			Handler:    _SecretService_GetSecretImpact_Handler,
+		},
+		{
+			MethodName: "GrantSecretACL",
+			Handler:    _SecretService_GrantSecretACL_Handler,
+		},
+		{
+			MethodName: "RevokeSecretACL",
+			Handler:    _SecretService_RevokeSecretACL_Handler,
+		},
+		{
+			MethodName: "ListSecretACLs",
+			Handler:    _SecretService_ListSecretACLs_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
