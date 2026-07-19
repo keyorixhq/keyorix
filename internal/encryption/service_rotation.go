@@ -219,6 +219,24 @@ func (s *Service) RotateDEK(passphrase string) error {
 	return nil
 }
 
+// RotateKEKPassphrase changes the master passphrase without re-encrypting the
+// database. It re-wraps the current DEK under a new KEK derived from
+// newPassphrase + a fresh random salt. The DEK value is unchanged, so all
+// existing ciphertext stays valid. Evidence-signing and audit-checkpoint key
+// fingerprints will change because those keys are KEK-derived.
+//
+// The old passphrase is verified against the on-disk wrapped DEK before any
+// file is modified. The server must be stopped (exclusive key lock must not
+// be held by another process) before running this command.
+func (s *Service) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("encryption service not initialized")
+	}
+	return s.keyManager.RotateKEKPassphrase(oldPassphrase, newPassphrase)
+}
+
 // RewrapDEKWithProvider re-wraps the in-memory DEK with a KEK from newProvider and
 // atomically replaces the on-disk wrapped DEK (ADR-041 KEK-provider migration). The
 // DEK value is unchanged, so every existing ciphertext stays valid — only the
