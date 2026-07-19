@@ -167,7 +167,7 @@ func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, use
 }
 
 // buildSharingIndicators creates UI indicators for a secret based on sharing information.
-func (c *KeyorixCore) buildSharingIndicators(secret *models.SecretNode, shares []*models.ShareRecord, isOwner bool, userPermission string) *models.SharingIndicators {
+func (c *KeyorixCore) buildSharingIndicators(_ *models.SecretNode, shares []*models.ShareRecord, isOwner bool, userPermission string) *models.SharingIndicators {
 	indicators := &models.SharingIndicators{
 		CanRead:   true,
 		CanWrite:  isOwner || userPermission == string(PermissionWrite),

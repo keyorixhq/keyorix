@@ -195,7 +195,7 @@ func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID
 	return result, nil
 }
 
-func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
+func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userID uint, _ *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	shares, err := c.storage.ListSharesByUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
