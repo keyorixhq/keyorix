@@ -39,6 +39,12 @@ service SecretService {
   rpc ListSecretDependencies(GetSecretRequest) returns (SecretDependencies);
   // The blast radius of rotating a secret (its transitive dependents).
   rpc GetSecretImpact(GetSecretRequest) returns (SecretImpact);
+
+  // Per-secret fine-grained ACL management (RBAC Phase 3).
+  // All three require secrets.manage at the secret's project scope.
+  rpc GrantSecretACL(GrantSecretACLRequest) returns (SecretACLEntry);
+  rpc RevokeSecretACL(RevokeSecretACLRequest) returns (google.protobuf.Empty);
+  rpc ListSecretACLs(ListSecretACLsRequest) returns (ListSecretACLsResponse);
 }
 
 // Share service for managing secret sharing
@@ -1435,4 +1441,36 @@ message CreateConnectRefGrantRequest {
 
 message DeleteConnectRefGrantRequest {
   uint32 id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Per-secret ACL messages (RBAC Phase 3)
+// ---------------------------------------------------------------------------
+
+message GrantSecretACLRequest {
+  uint64 secret_id = 1;
+  uint64 user_id = 2;
+  repeated string permissions = 3;
+}
+
+message RevokeSecretACLRequest {
+  uint64 secret_id = 1;
+  uint64 acl_id = 2;
+}
+
+message ListSecretACLsRequest {
+  uint64 secret_id = 1;
+}
+
+message SecretACLEntry {
+  uint64 id = 1;
+  uint64 secret_id = 2;
+  uint64 user_id = 3;
+  repeated string permissions = 4;
+  uint64 granted_by = 5;
+  string created_at = 6;
+}
+
+message ListSecretACLsResponse {
+  repeated SecretACLEntry acls = 1;
 }

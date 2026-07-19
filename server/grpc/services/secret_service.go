@@ -361,6 +361,115 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	return &pb.GetSecretVersionsResponse{Versions: out}, nil
 }
 
+// GrantSecretACL grants (or updates) a per-secret ACL for a user.
+// Requires secrets.manage at the secret's project scope.
+func (s *SecretGRPCService) GrantSecretACL(ctx context.Context, req *pb.GrantSecretACLRequest) (*pb.SecretACLEntry, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetSecretId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+	}
+	if req.GetUserId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	if len(req.GetPermissions()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one permission is required")
+	}
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsManage); err != nil {
+		return nil, err
+	}
+	if err := s.core.GrantSecretACL(ctx, user.UserID, uint(req.GetSecretId()), uint(req.GetUserId()), req.GetPermissions()); err != nil {
+		return nil, mapSecretACLError(err)
+	}
+	// Re-fetch so we can return the created/updated row with its ID and timestamps.
+	acls, err := s.core.ListSecretACLs(ctx, uint(req.GetSecretId()))
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to retrieve created ACL")
+	}
+	for _, a := range acls {
+		if a.UserID == uint(req.GetUserId()) {
+			return secretACLToProto(a), nil
+		}
+	}
+	return nil, status.Error(codes.Internal, "ACL created but not found on re-fetch")
+}
+
+// RevokeSecretACL removes a per-secret ACL entry by its ID.
+// Requires secrets.manage at the secret's project scope.
+func (s *SecretGRPCService) RevokeSecretACL(ctx context.Context, req *pb.RevokeSecretACLRequest) (*emptypb.Empty, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetSecretId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+	}
+	if req.GetAclId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "acl_id is required")
+	}
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsManage); err != nil {
+		return nil, err
+	}
+	if err := s.core.RevokeSecretACL(ctx, user.UserID, uint(req.GetSecretId()), uint(req.GetAclId())); err != nil {
+		return nil, mapSecretACLError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
+// ListSecretACLs returns all ACL grants for a secret.
+// Requires secrets.manage at the secret's project scope.
+func (s *SecretGRPCService) ListSecretACLs(ctx context.Context, req *pb.ListSecretACLsRequest) (*pb.ListSecretACLsResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetSecretId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+	}
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsManage); err != nil {
+		return nil, err
+	}
+	acls, err := s.core.ListSecretACLs(ctx, uint(req.GetSecretId()))
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to list ACLs")
+	}
+	entries := make([]*pb.SecretACLEntry, 0, len(acls))
+	for _, a := range acls {
+		entries = append(entries, secretACLToProto(a))
+	}
+	return &pb.ListSecretACLsResponse{Acls: entries}, nil
+}
+
+// secretACLToProto converts a models.SecretACL to its proto representation.
+func secretACLToProto(a *models.SecretACL) *pb.SecretACLEntry {
+	perms := core.DecodeSecretACLPerms(a.Permissions)
+	return &pb.SecretACLEntry{
+		Id:          uint64(a.ID),
+		SecretId:    uint64(a.SecretID),
+		UserId:      uint64(a.UserID),
+		Permissions: perms,
+		GrantedBy:   uint64(a.GrantedBy),
+		CreatedAt:   a.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+// mapSecretACLError translates core ACL errors into gRPC status codes.
+func mapSecretACLError(err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return status.Error(codes.NotFound, "ACL or secret not found")
+	case strings.Contains(msg, "invalid"), strings.Contains(msg, "required"):
+		return status.Error(codes.InvalidArgument, msg)
+	case strings.Contains(msg, "not authorized"):
+		return status.Error(codes.PermissionDenied, msg)
+	default:
+		return status.Error(codes.Internal, "ACL operation failed")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

@@ -8,8 +8,9 @@ const (
 	permRolesAssign = "roles.assign"
 	permRolesRead = "roles.read"
 	permRolesWrite = "roles.write"
-	permSecretsRead = "secrets.read"
-	permSecretsWrite = "secrets.write"
+	permSecretsManage = "secrets.manage"
+	permSecretsRead   = "secrets.read"
+	permSecretsWrite  = "secrets.write"
 	permUsersRead = "users.read"
 	permUsersWrite = "users.write"
 )
