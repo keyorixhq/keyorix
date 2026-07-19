@@ -108,8 +108,8 @@ func TestRemoteCommandWrappers(t *testing.T) {
 	require.NoError(t, runListPermissionsRemote(ctx, rc, "alice@test.com"))
 	require.NoError(t, runCheckPermissionRemote(ctx, rc, "alice@test.com", "secrets.read"))
 	require.NoError(t, runCheckPermissionRemote(ctx, rc, "alice@test.com", "secrets.write")) // not held → ❌, still nil err
-	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 0))
-	require.NoError(t, runRemoveRoleRemote(ctx, rc, "alice@test.com", "admin"))
+	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 0, "", ""))
+	require.NoError(t, runRemoveRoleRemote(ctx, rc, "alice@test.com", "admin", "", ""))
 
 	// A malformed permission name is rejected before any request.
 	require.Error(t, runCheckPermissionRemote(ctx, rc, "alice@test.com", "notvalid"))
@@ -136,14 +136,14 @@ func TestRunAssignRoleRemote_TimeBound(t *testing.T) {
 	rc := remoteClientFor(t, srv)
 	ctx := context.Background()
 
-	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 4*time.Hour))
+	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 4*time.Hour, "", ""))
 	require.Contains(t, lastBody, "expires_at")
 	exp, err := time.Parse(time.RFC3339, lastBody["expires_at"].(string))
 	require.NoError(t, err)
 	assert.True(t, exp.After(time.Now()), "expiry must be in the future")
 
 	lastBody = nil
-	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 0))
+	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 0, "", ""))
 	assert.NotContains(t, lastBody, "expires_at", "a permanent grant omits expires_at")
 }
 

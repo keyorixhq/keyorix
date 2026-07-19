@@ -366,7 +366,7 @@ func TestRemoveRoleRemote_DeleteFails(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	rc := remoteClientFor(t, srv)
-	err := runRemoveRoleRemote(context.Background(), rc, "alice@test.com", "viewer")
+	err := runRemoveRoleRemote(context.Background(), rc, "alice@test.com", "viewer", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to remove role")
 }

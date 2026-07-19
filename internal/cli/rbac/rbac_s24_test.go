@@ -186,7 +186,7 @@ func TestRunAssignRoleRemote_PostFails(t *testing.T) {
 	defer srv.Close()
 
 	rc := remoteClientFor(t, srv)
-	err := runAssignRoleRemote(context.Background(), rc, "alice@test.com", "admin", 0)
+	err := runAssignRoleRemote(context.Background(), rc, "alice@test.com", "admin", 0, "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to assign role")
 }
