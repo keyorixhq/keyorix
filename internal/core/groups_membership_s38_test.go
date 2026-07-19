@@ -45,7 +45,7 @@ func newGroupsS38Core(t *testing.T) (*KeyorixCore, *gorm.DB) {
 func TestAddUserToGroup_ZeroUserID(t *testing.T) {
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "dev"}).Error)
-	err := c.AddUserToGroup(context.Background(), 1, 0, 5)
+	err := c.AddUserToGroupGlobal(context.Background(), 1, 0, 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -54,7 +54,7 @@ func TestAddUserToGroup_ZeroUserID(t *testing.T) {
 func TestAddUserToGroup_ZeroGroupID(t *testing.T) {
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.User{ID: 7, Username: "bob", Email: "bob@example.com"}).Error)
-	err := c.AddUserToGroup(context.Background(), 1, 7, 0)
+	err := c.AddUserToGroupGlobal(context.Background(), 1, 7, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -65,7 +65,7 @@ func TestAddUserToGroup_CLIActor_ZeroActorID(t *testing.T) {
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "cli-group"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 20, Username: "cli-user", Email: "cli@example.com"}).Error)
-	err := c.AddUserToGroup(context.Background(), 0, 20, 10)
+	err := c.AddUserToGroupGlobal(context.Background(), 0, 20, 10)
 	require.NoError(t, err)
 }
 
@@ -75,7 +75,7 @@ func TestAddUserToGroup_CLIActor_ZeroActorID(t *testing.T) {
 func TestRemoveUserFromGroup_ZeroUserID(t *testing.T) {
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.Group{ID: 15, Name: "ops"}).Error)
-	err := c.RemoveUserFromGroup(context.Background(), 1, 0, 15)
+	err := c.RemoveUserFromGroupGlobal(context.Background(), 1, 0, 15)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -84,7 +84,7 @@ func TestRemoveUserFromGroup_ZeroUserID(t *testing.T) {
 func TestRemoveUserFromGroup_ZeroGroupID(t *testing.T) {
 	c, db := newGroupsS38Core(t)
 	require.NoError(t, db.Create(&models.User{ID: 25, Username: "alice", Email: "alice@example.com"}).Error)
-	err := c.RemoveUserFromGroup(context.Background(), 1, 25, 0)
+	err := c.RemoveUserFromGroupGlobal(context.Background(), 1, 25, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -109,8 +109,8 @@ func TestGetGroupMembers_HappyPath(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 41, Username: "member2", Email: "m2@example.com"}).Error)
 
 	// Add members directly via store (bypasses guard that checks last admin).
-	require.NoError(t, c.AddUserToGroup(ctx, 0, 40, 30))
-	require.NoError(t, c.AddUserToGroup(ctx, 0, 41, 30))
+	require.NoError(t, c.AddUserToGroupGlobal(ctx, 0, 40, 30))
+	require.NoError(t, c.AddUserToGroupGlobal(ctx, 0, 41, 30))
 
 	members, err := c.GetGroupMembers(ctx, 30)
 	require.NoError(t, err)
