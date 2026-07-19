@@ -2121,3 +2121,14 @@ func (m *MockStorage) SetSecretAccessSchedule(_ context.Context, _ *models.Secre
 func (m *MockStorage) DeleteSecretAccessSchedule(_ context.Context, _ uint) error {
 	return nil
 }
+
+// NEW STORAGE METHODS — do NOT append here.
+//
+// This file is frozen so that parallel feature branches never conflict on it.
+// When your PR adds new Storage interface methods to mock, create a NEW file:
+//
+//	internal/core/mock_storage_<feature>_test.go
+//
+// Declare the methods there (same package "core", no struct redeclaration).
+// Go allows a struct's method set to span multiple files in the same package,
+// so the compiler enforces interface completeness across all of them.
