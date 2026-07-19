@@ -1772,6 +1772,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
 			r.Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
 		})
+
+		// Runtime anomaly detection configuration — read/write the DB-persisted
+		// detection thresholds without restarting the server.
+		r.Route("/admin/anomaly-config", func(r chi.Router) {
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/", handlers.GetAnomalyConfig)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/", handlers.UpdateAnomalyConfig)
+		})
 	})
 
 	// Swagger UI and the raw OpenAPI spec (optional, based on config). #224: the

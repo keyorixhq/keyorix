@@ -145,6 +145,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// SecretACL (RBAC Phase 3): ListSecretsWithSharingInfo now calls
 		// ListSecretACLsByUser on every listing, so the table must exist.
 		&models.SecretACL{},
+		// AnomalyConfigRecord backs GET/PUT /api/v1/admin/anomaly-config — the
+		// runtime-tunable anomaly detection configuration.
+		&models.AnomalyConfigRecord{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

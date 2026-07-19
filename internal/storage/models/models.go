@@ -1166,6 +1166,28 @@ type AnomalyAlert struct {
 	CreatedAt time.Time
 }
 
+// AnomalyConfigRecord stores runtime-tunable anomaly detection parameters.
+// Only one row exists (ID=1); use GetAnomalyConfig/SaveAnomalyConfig to manage it.
+type AnomalyConfigRecord struct {
+	ID uint `gorm:"primarykey"`
+	// Lookback window for access-frequency baseline (default: 7 days)
+	LookbackDays int `json:"lookback_days"`
+	// Quarantine period before a new secret's first-read is flagged (default: 24h)
+	QuarantineHours int `json:"quarantine_hours"`
+	// Off-hours enforcement
+	OffHoursEnabled  bool   `json:"off_hours_enabled"`
+	OffHoursTimezone string `json:"off_hours_timezone"` // IANA tz
+	OffHoursStart    int    `json:"off_hours_start"`    // 0–23
+	OffHoursEnd      int    `json:"off_hours_end"`      // 0–23
+	// ML Isolation Forest
+	MLEnabled    bool    `json:"ml_enabled"`
+	MLThreshold  float64 `json:"ml_threshold"`   // 0.5–1.0
+	MLNumTrees   int     `json:"ml_num_trees"`
+	MLSampleSize int     `json:"ml_sample_size"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	UpdatedBy    string    `json:"updated_by"` // username of last editor
+}
+
 // MachineIdentity is a non-human project member (ADR-023): a CI runner, a
 // Kubernetes workload, a service, or other automation. It carries its own
 // lifecycle, separate from human users, so the Members view can segment the two.
