@@ -906,6 +906,28 @@ type Storage interface {
 	// Returns nil, nil when no prior snapshot exists.
 	GetPreviousCompliancePostureSnapshot(ctx context.Context) (*models.CompliancePostureSnapshot, error)
 
+	// Credential Hygiene Trend Snapshots — daily counts of stale/expired PATs and
+	// stale machine credentials for per-day trend queries.
+	//
+	// SaveHygieneTrendSnapshot upserts a snapshot for the given UTC calendar day
+	// (first write creates; same-day re-run overwrites in place). Used by
+	// RecordHygieneTrendPoint and the daily hygiene scheduler.
+	SaveHygieneTrendSnapshot(ctx context.Context, snap *models.HygieneTrendSnapshot) error
+	// ListHygieneTrendSnapshots returns up to `days` snapshots ordered by
+	// snapshot_date DESC (newest first). Used by GetHygieneTrends.
+	ListHygieneTrendSnapshots(ctx context.Context, days int) ([]*models.HygieneTrendSnapshot, error)
+	// CountStalePATs returns the count of non-revoked PersonalAccessTokens where
+	// ExpiresAt IS NULL OR ExpiresAt > now (active), AND
+	// (LastUsedAt IS NULL OR LastUsedAt < threshold) — stale but not expired.
+	CountStalePATs(ctx context.Context, threshold time.Time) (int, error)
+	// CountExpiredPATs returns the count of non-revoked PersonalAccessTokens where
+	// ExpiresAt IS NOT NULL AND ExpiresAt < now (expired but never revoked).
+	CountExpiredPATs(ctx context.Context) (int, error)
+	// CountStaleMachineCredentials returns the count of distinct machine identities
+	// (active state) where all their credentials are either never used or were
+	// last used before threshold (i.e. the machine identity is "stale").
+	CountStaleMachineCredentials(ctx context.Context, threshold time.Time) (int, error)
+
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
