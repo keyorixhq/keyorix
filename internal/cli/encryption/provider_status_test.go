@@ -8,22 +8,26 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func captureProviderStatusOutput(fn func()) string {
+func captureProviderStatusOutput(t *testing.T, fn func()) string {
+	t.Helper()
 	old := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
 	os.Stdout = w
 	fn()
-	w.Close()
+	require.NoError(t, w.Close())
 	os.Stdout = old
 	var buf bytes.Buffer
-	io.Copy(&buf, r) //nolint:errcheck
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
 	return buf.String()
 }
 
 func TestPrintProviderStatus_Password(t *testing.T) {
-	out := captureProviderStatusOutput(func() {
+	out := captureProviderStatusOutput(t, func() {
 		printProviderStatus(config.KeyProviderConfig{Type: "password"})
 	})
 	assert.Contains(t, out, "Key Provider: password")
@@ -31,16 +35,17 @@ func TestPrintProviderStatus_Password(t *testing.T) {
 }
 
 func TestPrintProviderStatus_EmptyTypeDefaultsToPassword(t *testing.T) {
-	out := captureProviderStatusOutput(func() {
+	out := captureProviderStatusOutput(t, func() {
 		printProviderStatus(config.KeyProviderConfig{})
 	})
 	assert.Contains(t, out, "Key Provider: password")
 }
 
 func TestPrintProviderStatus_FileExists(t *testing.T) {
-	f, _ := os.CreateTemp(t.TempDir(), "kek")
-	f.Close()
-	out := captureProviderStatusOutput(func() {
+	f, err := os.CreateTemp(t.TempDir(), "kek")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	out := captureProviderStatusOutput(t, func() {
 		printProviderStatus(config.KeyProviderConfig{Type: "file", FilePath: f.Name()})
 	})
 	assert.Contains(t, out, "Key Provider: file")
@@ -49,7 +54,7 @@ func TestPrintProviderStatus_FileExists(t *testing.T) {
 }
 
 func TestPrintProviderStatus_FileMissing(t *testing.T) {
-	out := captureProviderStatusOutput(func() {
+	out := captureProviderStatusOutput(t, func() {
 		printProviderStatus(config.KeyProviderConfig{Type: "file", FilePath: "/nonexistent/kek.key"})
 	})
 	assert.Contains(t, out, "not accessible ❌")
@@ -57,7 +62,7 @@ func TestPrintProviderStatus_FileMissing(t *testing.T) {
 
 func TestPrintProviderStatus_EnvSet(t *testing.T) {
 	t.Setenv("_TEST_KEYORIX_KEK", "val")
-	out := captureProviderStatusOutput(func() {
+	out := captureProviderStatusOutput(t, func() {
 		printProviderStatus(config.KeyProviderConfig{Type: "env", EnvVar: "_TEST_KEYORIX_KEK"})
 	})
 	assert.Contains(t, out, "Key Provider: env")
@@ -65,15 +70,15 @@ func TestPrintProviderStatus_EnvSet(t *testing.T) {
 }
 
 func TestPrintProviderStatus_EnvNotSet(t *testing.T) {
-	os.Unsetenv("_TEST_KEYORIX_KEK_MISSING") //nolint:errcheck
-	out := captureProviderStatusOutput(func() {
+	t.Setenv("_TEST_KEYORIX_KEK_MISSING", "")
+	out := captureProviderStatusOutput(t, func() {
 		printProviderStatus(config.KeyProviderConfig{Type: "env", EnvVar: "_TEST_KEYORIX_KEK_MISSING"})
 	})
 	assert.Contains(t, out, "not set ❌")
 }
 
 func TestPrintProviderStatus_AWSKMS(t *testing.T) {
-	out := captureProviderStatusOutput(func() {
+	out := captureProviderStatusOutput(t, func() {
 		printProviderStatus(config.KeyProviderConfig{
 			Type:     "aws-kms",
 			KMSKeyID: "arn:aws:kms:eu-west-1:123:key/abc",
