@@ -487,7 +487,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// authorizes in-handler against the project/environment in the body.
 		secretScope := customMiddleware.ScopeFromSecretParam("id")
 		r.Route("/secrets", func(r chi.Router) {
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/", secretHandler.ListSecrets)
+			// ListSecrets performs its own authorization inside the handler so that
+			// project-scoped readers receive the union of their accessible scopes
+			// rather than a 403 on an unfiltered request. See secrets_list.go.
+			r.Get("/", secretHandler.ListSecrets)
 			// Active create-time policies (naming/value) — any authenticated caller.
 			r.Get("/policy", secretHandler.SecretPolicy)
 			// Usage analytics (static paths, before /{id}).

@@ -520,6 +520,42 @@ func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID
 	return nil
 }
 
+// GetReadableScopes returns every (project, environment) scope at which userID
+// holds the given permission, directly or via group membership. It is used by
+// ListSecrets to enumerate the scopes a project-scoped reader can access when
+// no explicit project_id/environment_id filter is provided and the user lacks a
+// global grant. The global scope ({0,0}) is deliberately excluded — callers
+// check that first and fall back here only when the global check fails.
+//
+// PAT restrictions are honoured: a PAT that is itself narrowed to one project
+// will receive at most that project's scopes from this function.
+//
+// Any storage error is returned unchanged; the caller fails closed (returns an
+// empty list to the user rather than a 500).
+func (c *KeyorixCore) GetReadableScopes(ctx context.Context, userID uint, permission string) ([]Scope, error) {
+	allScopes, err := c.storage.GetUserRoleScopes(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to enumerate user scopes: %w", err)
+	}
+
+	var result []Scope
+	for _, scope := range allScopes {
+		if scope.ProjectID == 0 {
+			// Global scope handled by caller; skip.
+			continue
+		}
+		ok, aerr := c.Authorize(ctx, userID, permission, scope)
+		if aerr != nil {
+			// Fail closed: skip scopes we cannot evaluate.
+			continue
+		}
+		if ok {
+			result = append(result, scope)
+		}
+	}
+	return result, nil
+}
+
 // dedupeUints returns ids with duplicates removed, preserving first-seen order.
 func dedupeUints(ids []uint) []uint {
 	if len(ids) <= 1 {
