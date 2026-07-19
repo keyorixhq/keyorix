@@ -9,7 +9,6 @@ package store_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,21 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// apiNotOK returns an HTTP-200 body whose success=false, mirroring the shape
-// the Keyorix client library parses for application-level errors.
-func apiNotOK(code, message string) []byte {
-	type errObj struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}
-	type resp struct {
-		Success bool   `json:"success"`
-		Error   errObj `json:"error"`
-	}
-	b, _ := json.Marshal(resp{Success: false, Error: errObj{Code: code, Message: message}})
-	return b
-}
 
 // --------------------------------------------------------------------------
 // remote_mfa.go — error paths

@@ -9,7 +9,6 @@ package store_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,24 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// apiNotOK returns a 200-body whose success field is false, together with an
-// error object carrying the given code and message.  This is the only way to
-// exercise the `if !resp.Success` branches in RemoteStorage methods; the
-// remote client turns real 4xx/5xx responses into a network-level error before
-// those branches are reached.
-func apiNotOK(code, message string) []byte {
-	type errObj struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}
-	type resp struct {
-		Success bool   `json:"success"`
-		Error   errObj `json:"error"`
-	}
-	b, _ := json.Marshal(resp{Success: false, Error: errObj{Code: code, Message: message}})
-	return b
-}
 
 // ============================================================================
 // remote_access_review_campaigns.go — error paths
