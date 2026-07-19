@@ -813,6 +813,10 @@ type Storage interface {
 	// the project admin who performed the offboarding (#232).
 	RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
+	// ListAllUserRoleGrants returns every user→role grant row in the deployment,
+	// including scoped (project/environment) and global (project_id=0) grants.
+	// Includes time-bound (JIT) grants; callers filter by ExpiresAt if needed.
+	ListAllUserRoleGrants(ctx context.Context) ([]*models.UserRole, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	// IsProjectMember reports whether the user holds a LIVE role grant scoped to the

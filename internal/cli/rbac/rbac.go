@@ -20,4 +20,5 @@ func init() {
 	RbacCmd.AddCommand(assignRoleToGroupCmd)
 	RbacCmd.AddCommand(removeRoleFromGroupCmd)
 	RbacCmd.AddCommand(listGroupRolesCmd)
+	RbacCmd.AddCommand(exportMatrixCmd)
 }

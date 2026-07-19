@@ -315,6 +315,13 @@ func (rs *RemoteStorage) GetUserRoles(ctx context.Context, userID uint) ([]*mode
 	return result, nil
 }
 
+// ListAllUserRoleGrants is not supported in remote storage. The permission
+// matrix is server-aggregated via GET /api/v1/rbac/permission-matrix; direct
+// grant enumeration runs server-side against LocalStorage.
+func (rs *RemoteStorage) ListAllUserRoleGrants(_ context.Context) ([]*models.UserRole, error) {
+	return nil, remoteUnsupported("ListAllUserRoleGrants")
+}
+
 // GetUserPermissions retrieves all permissions for a user via remote API.
 func (rs *RemoteStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
 	path := fmt.Sprintf("/api/v1/users/%d/permissions", userID)

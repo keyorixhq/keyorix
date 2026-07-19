@@ -780,3 +780,11 @@ func (ls *LocalStorage) GetUserGroupPermissions(ctx context.Context, userID uint
 	}
 	return permissions, nil
 }
+
+// ListAllUserRoleGrants returns every user→role grant row in the deployment,
+// including scoped (project/environment) and global (project_id=0) grants.
+// Includes time-bound (JIT) grants; callers filter by ExpiresAt if needed.
+func (ls *LocalStorage) ListAllUserRoleGrants(ctx context.Context) ([]*models.UserRole, error) {
+	var grants []*models.UserRole
+	return grants, ls.db.WithContext(ctx).Find(&grants).Error
+}

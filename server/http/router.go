@@ -1560,6 +1560,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/rbac/project-role-assignments", rbacHandler.ListProjectRoleAssignmentsProxy)
 			r.Get("/rbac/project-machine-role-assignments", rbacHandler.ListProjectMachineRoleAssignmentsProxy)
 			r.Get("/rbac/global-admin-assignments", rbacHandler.ListGlobalAdminAssignmentsForUpdateProxy)
+			r.With(customMiddleware.RequirePermission(permRolesRead)).Get("/rbac/permission-matrix", rbacHandler.GetPermissionMatrix)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
