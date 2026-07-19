@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	exportFormat  string
-	exportOutput  string
-	exportEnv     string
-	exportProject string
+	exportFormat     string
+	exportOutput     string
+	exportEnv        string
+	exportProject    string
+	exportEncryptFor string
 )
 
 // createExportFile opens path for a fresh plaintext-secrets export. O_EXCL
@@ -37,17 +38,24 @@ func createExportFile(path string) (*os.File, error) {
 var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export secrets to a file or stdout",
-	Long: `Export secrets from Keyorix to dotenv, JSON, or Vault YAML format.
+	Long: `Export secrets from Keyorix to dotenv, JSON, Vault YAML, or encrypted-json format.
 
 Examples:
   keyorix secret export --env production --format dotenv
   keyorix secret export --env production --format json --output secrets.json
   keyorix secret export --env staging --format vault --output vault-export.yaml
+  keyorix secret export --env production --format encrypted-json --encrypt-for recipient.pub.pem --output secrets.enc.json
+  keyorix secret export --env production --encrypt-for recipient.pub.pem --output secrets.enc.json
 
 Supported formats:
-  dotenv  .env files (KEY=VALUE)
-  json    Flat key-value JSON object
-  vault   Medusa/Vault YAML (importable back via 'keyorix secret import --format vault')
+  dotenv         .env files (KEY=VALUE)
+  json           Flat key-value JSON object
+  vault          Medusa/Vault YAML (importable back via 'keyorix secret import --format vault')
+  encrypted-json RSA-OAEP-SHA256 + AES-256-GCM encrypted envelope (safe for airgap transfer)
+
+The encrypted-json format wraps the standard JSON export in a hybrid encryption
+envelope. Provide the recipient's RSA public key via --encrypt-for. Decrypt and
+import with: keyorix secret import --file secrets.enc.json --decrypt-with private.pem
 
 Output goes to stdout unless --output is specified.
 Warnings and summary are always printed to stderr.`,
@@ -55,10 +63,11 @@ Warnings and summary are always printed to stderr.`,
 }
 
 func init() {
-	exportCmd.Flags().StringVar(&exportFormat, "format", "dotenv", "Output format: dotenv, json, vault")
+	exportCmd.Flags().StringVar(&exportFormat, "format", "dotenv", "Output format: dotenv, json, vault, encrypted-json")
 	exportCmd.Flags().StringVar(&exportOutput, "output", "", "Output file path (default: stdout)")
 	exportCmd.Flags().StringVar(&exportEnv, "env", "development", "Environment name (e.g. production)")
 	exportCmd.Flags().StringVar(&exportProject, "project", "default", "Project name")
+	exportCmd.Flags().StringVar(&exportEncryptFor, "encrypt-for", "", "Path to RSA public key PEM (switches format to encrypted-json)")
 }
 
 // exportedSecret holds a secret's name and decrypted value.
@@ -101,6 +110,13 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 		return err
 	}
 
+	// If --encrypt-for is set and format was not explicitly chosen as
+	// encrypted-json, auto-switch and inform the operator.
+	if exportEncryptFor != "" && strings.ToLower(exportFormat) != "encrypted-json" {
+		fmt.Fprintf(os.Stderr, "NOTE: --encrypt-for is set; switching format to encrypted-json.\n")
+		exportFormat = "encrypted-json"
+	}
+
 	var out io.Writer = os.Stdout
 	if exportOutput != "" {
 		f, err := createExportFile(exportOutput)
@@ -115,7 +131,9 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 		out = f
 	}
 
-	fmt.Fprintln(os.Stderr, "WARNING: exported secrets are in plaintext. Handle with care.")
+	if strings.ToLower(exportFormat) != "encrypted-json" {
+		fmt.Fprintln(os.Stderr, "WARNING: exported secrets are in plaintext. Handle with care.")
+	}
 
 	switch strings.ToLower(exportFormat) {
 	case "dotenv", "env":
@@ -124,8 +142,13 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 		err = writeExportJSON(out, fetched)
 	case "vault":
 		err = writeVault(out, fetched, exportEnv)
+	case "encrypted-json":
+		if exportEncryptFor == "" {
+			return fmt.Errorf("--encrypt-for <pubkey.pem> is required for the encrypted-json format")
+		}
+		err = writeEncryptedJSON(out, fetched, exportEncryptFor)
 	default:
-		return fmt.Errorf("unknown format %q (supported: dotenv, json, vault)", exportFormat)
+		return fmt.Errorf("unknown format %q (supported: dotenv, json, vault, encrypted-json)", exportFormat)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to write output: %w", err)
@@ -209,6 +232,21 @@ func writeExportJSON(w io.Writer, secrets []exportedSecret) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(m)
+}
+
+// writeEncryptedJSON produces the RSA-OAEP + AES-256-GCM envelope JSON on w.
+func writeEncryptedJSON(w io.Writer, secrets []exportedSecret, pubKeyPath string) error {
+	// Reuse the existing JSON serialisation logic via a bytes buffer.
+	var buf strings.Builder
+	if err := writeExportJSON(&buf, secrets); err != nil {
+		return err
+	}
+	envelope, err := encryptExport([]byte(buf.String()), pubKeyPath)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(envelope)
+	return err
 }
 
 func writeVault(w io.Writer, secrets []exportedSecret, envName string) error {
