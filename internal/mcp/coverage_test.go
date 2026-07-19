@@ -82,7 +82,7 @@ func TestToolListSecrets_NoVisible(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_list_secrets","arguments":{}}}`)
 	require.Len(t, resps, 1)
 	res := resultMap(t, resps[0])
-	text := res["content"].([]interface{})[0].(map[string]interface{})["text"].(string)
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
 	assert.Contains(t, text, "no secrets visible")
 }
 
@@ -96,7 +96,7 @@ func TestToolListSecrets_AllFilteredByAllowList(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_list_secrets","arguments":{}}}`)
 	require.Len(t, resps, 1)
 	res := resultMap(t, resps[0])
-	text := res["content"].([]interface{})[0].(map[string]interface{})["text"].(string)
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
 	assert.Contains(t, text, "no secrets visible")
 }
 
@@ -108,7 +108,7 @@ func TestToolListSecrets_Error(t *testing.T) {
 	require.Len(t, resps, 1)
 	res := resultMap(t, resps[0])
 	assert.Equal(t, true, res["isError"])
-	assert.Equal(t, genericListError, res["content"].([]interface{})[0].(map[string]interface{})["text"])
+	assert.Equal(t, genericListError, res["content"].([]any)[0].(map[string]any)["text"])
 }
 
 // errTest is a sentinel error used across these tests.
