@@ -269,7 +269,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if req.Username != "" && req.Username != user.Username {
 		if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
 			return nil, fmt.Errorf("%w: username already exists", ErrUserAlreadyExists)
-		} else if err != nil && !storage.IsUserNotFound(err) {
+		} else if !storage.IsUserNotFound(err) {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}
 		user.Username = req.Username
