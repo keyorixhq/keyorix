@@ -2029,6 +2029,10 @@ func (m *MockStorage) ConsumeWebAuthnSession(_ context.Context, _ string, _ time
 	return nil, nil
 }
 
+func (m *MockStorage) ListAllUserRoleGrants(_ context.Context) ([]*models.UserRole, error) {
+	return nil, nil
+}
+
 // Per-secret / per-folder ACL stubs (ADR-058).
 func (m *MockStorage) CreateOrUpdateSecretACL(_ context.Context, _ *models.SecretACL) error {
 	return nil

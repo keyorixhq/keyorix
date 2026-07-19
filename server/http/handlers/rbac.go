@@ -10,6 +10,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -978,4 +979,53 @@ func queryUint(r *http.Request, key string) uint {
 		return uint(v)
 	}
 	return 0
+}
+
+// GetPermissionMatrix handles GET /api/v1/rbac/permission-matrix[?project_id=N&format=csv].
+// It returns a deployment-wide audit matrix of every (user, role, permission, scope)
+// tuple. Gated on roles.read permission.
+//
+// ?project_id=N  — optional project filter (0 = all projects, including global grants)
+// ?format=csv    — return CSV instead of JSON
+func (h *RBACHandler) GetPermissionMatrix(w http.ResponseWriter, r *http.Request) {
+	projectID := queryUint(r, "project_id")
+	format := r.URL.Query().Get("format")
+
+	rows, err := h.coreService.GetPermissionMatrix(r.Context(), projectID)
+	if err != nil {
+		sendError(w, "InternalError", "Failed to build permission matrix", http.StatusInternalServerError, nil)
+		return
+	}
+
+	if format == "csv" {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", `attachment; filename="permission-matrix.csv"`)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{
+			"username", "email", "role", "permission", "resource", "action",
+			"scope", "project", "environment", "expires_at",
+		})
+		for _, row := range rows {
+			expiresAt := "never"
+			if row.ExpiresAt != nil {
+				expiresAt = row.ExpiresAt.UTC().Format(time.RFC3339)
+			}
+			_ = cw.Write([]string{
+				row.Username,
+				row.Email,
+				row.RoleName,
+				row.PermissionName,
+				row.Resource,
+				row.Action,
+				row.Scope,
+				row.ProjectName,
+				row.EnvironmentName,
+				expiresAt,
+			})
+		}
+		cw.Flush()
+		return
+	}
+
+	sendSuccess(w, map[string]interface{}{"rows": rows, "total": len(rows)}, "")
 }
