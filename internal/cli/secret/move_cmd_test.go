@@ -38,7 +38,7 @@ func TestMoveCmd_ToRoot_PrintsRootMessage(t *testing.T) {
 	t.Cleanup(func() { moveID = origID; moveTo = origTo })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"success":true,"data":{}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
 	}))
 	defer srv.Close()
 	t.Setenv("KEYORIX_SERVER", srv.URL)
@@ -57,7 +57,7 @@ func TestMoveCmd_ToFolder_PrintsFolderMessage(t *testing.T) {
 	t.Cleanup(func() { moveID = origID; moveTo = origTo })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"success":true,"data":{}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
 	}))
 	defer srv.Close()
 	t.Setenv("KEYORIX_SERVER", srv.URL)
