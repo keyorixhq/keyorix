@@ -9,8 +9,14 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// AssignRoleToUser assigns a role to a user by email and role name.
+// AssignRoleToUser assigns a role to a user by email and role name (global scope).
 func (c *KeyorixCore) AssignRoleToUser(ctx context.Context, userEmail, roleName string) error {
+	return c.AssignUserRoleScoped(ctx, userEmail, roleName, Scope{})
+}
+
+// AssignUserRoleScoped assigns a role to a user at an explicit scope (project/environment).
+// Pass Scope{} for a global grant. actorID 0 = local CLI/system (no authenticated session).
+func (c *KeyorixCore) AssignUserRoleScoped(ctx context.Context, userEmail, roleName string, scope Scope) error {
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
@@ -19,15 +25,20 @@ func (c *KeyorixCore) AssignRoleToUser(ctx context.Context, userEmail, roleName 
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	// actorID 0: invoked without an authenticated session (local CLI/system).
-	if err := c.AssignUserRole(ctx, 0, user.ID, role.ID, Scope{}); err != nil {
+	if err := c.AssignUserRole(ctx, 0, user.ID, role.ID, scope); err != nil {
 		return err
 	}
 	return nil
 }
 
-// RemoveRoleFromUser removes a role from a user by email and role name.
+// RemoveRoleFromUser removes a role from a user by email and role name (global scope).
 func (c *KeyorixCore) RemoveRoleFromUser(ctx context.Context, userEmail, roleName string) error {
+	return c.RemoveUserRoleScoped(ctx, userEmail, roleName, Scope{})
+}
+
+// RemoveUserRoleScoped removes a role from a user at an explicit scope (project/environment).
+// Pass Scope{} for a global grant. actorID 0 = local CLI/system (no authenticated session).
+func (c *KeyorixCore) RemoveUserRoleScoped(ctx context.Context, userEmail, roleName string, scope Scope) error {
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
@@ -36,8 +47,7 @@ func (c *KeyorixCore) RemoveRoleFromUser(ctx context.Context, userEmail, roleNam
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	// actorID 0: invoked without an authenticated session (local CLI/system).
-	if err := c.RemoveUserRole(ctx, 0, user.ID, role.ID, Scope{}); err != nil {
+	if err := c.RemoveUserRole(ctx, 0, user.ID, role.ID, scope); err != nil {
 		return err
 	}
 	return nil

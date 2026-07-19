@@ -23,6 +23,44 @@ import (
 
 // ── shared resolution helpers ───────────────────────────────────────────────
 
+// resolveProjectIDByName finds a project's ID by name via GET /api/v1/projects.
+func resolveProjectIDByName(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
+	var resp struct {
+		Projects []struct {
+			ID   uint   `json:"id"`
+			Name string `json:"name"`
+		} `json:"projects"`
+	}
+	if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
+		return 0, fmt.Errorf("failed to list projects: %w", err)
+	}
+	for _, p := range resp.Projects {
+		if strings.EqualFold(p.Name, name) {
+			return p.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", name)
+}
+
+// resolveEnvironmentIDByName finds an environment's ID by name via GET /api/v1/environments.
+func resolveEnvironmentIDByName(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
+	var resp struct {
+		Environments []struct {
+			ID   uint   `json:"id"`
+			Name string `json:"name"`
+		} `json:"environments"`
+	}
+	if err := rc.Get(ctx, "/api/v1/environments", &resp); err != nil {
+		return 0, fmt.Errorf("failed to list environments: %w", err)
+	}
+	for _, e := range resp.Environments {
+		if strings.EqualFold(e.Name, name) {
+			return e.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("environment %q not found", name)
+}
+
 // resolveUserIDByEmail finds a user's ID by email via GET /api/v1/users.
 func resolveUserIDByEmail(ctx context.Context, rc *common.RemoteClient, email string) (uint, error) {
 	var resp struct {
@@ -196,7 +234,7 @@ func runCheckPermissionRemote(ctx context.Context, rc *common.RemoteClient, emai
 	return nil
 }
 
-func runAssignRoleRemote(ctx context.Context, rc *common.RemoteClient, email, role string, ttl time.Duration) error {
+func runAssignRoleRemote(ctx context.Context, rc *common.RemoteClient, email, role string, ttl time.Duration, project, env string) error {
 	userID, err := resolveUserIDByEmail(ctx, rc, email)
 	if err != nil {
 		return err
@@ -209,19 +247,34 @@ func runAssignRoleRemote(ctx context.Context, rc *common.RemoteClient, email, ro
 	if ttl > 0 {
 		body["expires_at"] = time.Now().Add(ttl).UTC().Format(time.RFC3339)
 	}
+	if project != "" {
+		projectID, err := resolveProjectIDByName(ctx, rc, project)
+		if err != nil {
+			return err
+		}
+		body["project_id"] = projectID
+		if env != "" {
+			envID, err := resolveEnvironmentIDByName(ctx, rc, env)
+			if err != nil {
+				return err
+			}
+			body["environment_id"] = envID
+		}
+	}
 	var out map[string]interface{}
 	if err := rc.Post(ctx, "/api/v1/user-roles", body, &out); err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
+	suffix := scopeSuffix(project, env)
 	if ttl > 0 {
-		fmt.Printf("✅ Assigned role '%s' to user '%s' for %s (time-bound)\n", role, email, ttl)
+		fmt.Printf("Assigned role '%s' to user '%s'%s for %s (time-bound)\n", role, email, suffix, ttl)
 	} else {
-		fmt.Printf("✅ Successfully assigned role '%s' to user '%s'\n", role, email)
+		fmt.Printf("Successfully assigned role '%s' to user '%s'%s\n", role, email, suffix)
 	}
 	return nil
 }
 
-func runRemoveRoleRemote(ctx context.Context, rc *common.RemoteClient, email, role string) error {
+func runRemoveRoleRemote(ctx context.Context, rc *common.RemoteClient, email, role string, project, env string) error {
 	userID, err := resolveUserIDByEmail(ctx, rc, email)
 	if err != nil {
 		return err
@@ -230,10 +283,25 @@ func runRemoveRoleRemote(ctx context.Context, rc *common.RemoteClient, email, ro
 	if err != nil {
 		return err
 	}
-	body := map[string]uint{"user_id": userID, "role_id": roleID}
+	body := map[string]interface{}{"user_id": userID, "role_id": roleID}
+	if project != "" {
+		projectID, err := resolveProjectIDByName(ctx, rc, project)
+		if err != nil {
+			return err
+		}
+		body["project_id"] = projectID
+		if env != "" {
+			envID, err := resolveEnvironmentIDByName(ctx, rc, env)
+			if err != nil {
+				return err
+			}
+			body["environment_id"] = envID
+		}
+	}
 	if err := rc.DeleteWithBody(ctx, "/api/v1/user-roles", body); err != nil {
 		return fmt.Errorf("failed to remove role: %w", err)
 	}
-	fmt.Printf("✅ Successfully removed role '%s' from user '%s'\n", role, email)
+	suffix := scopeSuffix(project, env)
+	fmt.Printf("Successfully removed role '%s' from user '%s'%s\n", role, email, suffix)
 	return nil
 }
