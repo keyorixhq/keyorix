@@ -740,15 +740,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	// RBAC Phase 2: scope role assignments by environment as well as project.
 	// project_id already exists (nullable on pre-008 DBs); add environment_id and
 	// normalise NULL project_id rows to the 0 = global sentinel the queries expect.
-	for _, tbl := range []string{"user_roles", "group_roles"} {
-		if !tableExists(db, tbl) {
+	for _, m := range []struct{ tbl, addEnvID, nullPID string }{
+		{"user_roles", "ALTER TABLE user_roles ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0", "UPDATE user_roles SET project_id = 0 WHERE project_id IS NULL"},
+		{"group_roles", "ALTER TABLE group_roles ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0", "UPDATE group_roles SET project_id = 0 WHERE project_id IS NULL"},
+	} {
+		if !tableExists(db, m.tbl) {
 			continue
 		}
-		if !columnExists(db, tbl, "environment_id") {
-			db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0", tbl))
+		if !columnExists(db, m.tbl, "environment_id") {
+			db.Exec(m.addEnvID)
 		}
-		if columnExists(db, tbl, "project_id") {
-			db.Exec(fmt.Sprintf("UPDATE %s SET project_id = 0 WHERE project_id IS NULL", tbl))
+		if columnExists(db, m.tbl, "project_id") {
+			db.Exec(m.nullPID)
 		}
 	}
 
