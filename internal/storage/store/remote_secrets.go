@@ -467,6 +467,7 @@ func buildSecretFilterPath(filter *storage.SecretFilter) string {
 	params.addTime("created_after", filter.CreatedAfter)
 	params.addTime("created_before", filter.CreatedBefore)
 	params.addTags("tags", filter.Tags)
+	params.addString("search", filter.Search)
 	params.addPage(filter.Page, filter.PageSize)
 	return apiSecretsPath + params.String()
 }
