@@ -21,6 +21,10 @@ func (rs *RemoteStorage) ListSecretACLs(_ context.Context, _ uint) ([]*models.Se
 	return nil, remoteUnsupported("ListSecretACLs")
 }
 
+func (rs *RemoteStorage) ListSecretACLsByUser(_ context.Context, _ uint) ([]*models.SecretACL, error) {
+	return nil, remoteUnsupported("ListSecretACLsByUser")
+}
+
 func (rs *RemoteStorage) GetSecretACL(_ context.Context, _, _ uint) (*models.SecretACL, error) {
 	return nil, remoteUnsupported("GetSecretACL")
 }

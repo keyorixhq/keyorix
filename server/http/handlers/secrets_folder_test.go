@@ -81,6 +81,7 @@ func freshSecretFolderFixture(t *testing.T) (*SecretHandler, *core.KeyorixCore, 
 		&models.SystemMetadata{},
 		&models.PasswordHistory{},
 		&models.SecretVersion{},
+		&models.SecretACL{},
 	))
 
 	// Seed user 1 as system_admin so in-handler authorization passes.

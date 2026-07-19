@@ -29,6 +29,7 @@ func setupScopedRBACCore(t *testing.T) *core.KeyorixCore {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.SecretNode{}, &models.ShareRecord{}, &models.Session{},
+		&models.SecretACL{}, // ListSecretsWithSharingInfo calls ListSecretACLsByUser
 	))
 
 	now := time.Now()
@@ -102,8 +103,8 @@ func TestScopedRBACEnforcement(t *testing.T) {
 		"viewer-A lists project A")
 	assert.Equal(t, http.StatusForbidden, do(t, "GET", "/api/v1/secrets?project_id=2", "viewerA-tok"),
 		"viewer-A cannot list project B")
-	assert.Equal(t, http.StatusForbidden, do(t, "GET", "/api/v1/secrets", "viewerA-tok"),
-		"viewer-A cannot list globally")
+	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets", "viewerA-tok"),
+		"viewer-A unscoped list returns union of accessible project-A secrets (scoped-union, not 403)")
 
 	// Admin lists globally.
 	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets", "admin-tok"))

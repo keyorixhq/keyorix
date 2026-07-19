@@ -112,6 +112,7 @@ func freshCoreS12WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		&models.SystemMetadata{},
 		&models.PasswordHistory{},
 		&models.SecretVersion{},
+		&models.SecretACL{},
 	)
 	require.NoError(t, err)
 

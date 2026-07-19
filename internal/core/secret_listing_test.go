@@ -78,6 +78,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo(t *testing.T) {
 	mockStorage.On("GetSecret", ctx, uint(2)).Return(sharedSecret, nil)
 	mockStorage.On("GetUser", ctx, uint(2)).Return(owner, nil)
 	mockStorage.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "testuser"}, nil)
+	mockStorage.On("ListSecretACLsByUser", ctx, userID).Return(([]*models.SecretACL)(nil), nil)
 
 	// Execute
 	result, err := core.ListSecretsWithSharingInfo(ctx, userID, filter)
@@ -197,6 +198,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 	mockStorage.On("ListSharesByUser", ctx, userID).Return(userShares, nil)
 	mockStorage.On("GetSecret", ctx, uint(2)).Return(sharedSecret, nil)
 	mockStorage.On("GetUser", ctx, uint(2)).Return(owner, nil)
+	mockStorage.On("ListSecretACLsByUser", ctx, userID).Return(([]*models.SecretACL)(nil), nil)
 
 	// Execute
 	result, err := core.ListSecretsWithSharingInfo(ctx, userID, filter)

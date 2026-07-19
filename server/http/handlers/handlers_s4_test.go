@@ -847,6 +847,7 @@ func newHandlerCoreS4(t *testing.T) *core.KeyorixCore {
 			// s4 batch3 additions:
 			&models.ProjectInvitation{}, &models.SchedulerLockLease{},
 			&models.SecretAccessLog{},
+			&models.SecretACL{},
 		); err != nil {
 			panic("newHandlerCoreS4: AutoMigrate: " + err.Error())
 		}
