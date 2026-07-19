@@ -882,6 +882,15 @@ type Storage interface {
 	SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error
 	GetPreviousStatsSnapshot(ctx context.Context, userID uint) (*models.StatsSnapshot, error)
 
+	// SaveDeploymentStatsSnapshot persists a deployment-wide stats snapshot.
+	// Call once per UTC day from GetDashboardStats when admin stats are available.
+	SaveDeploymentStatsSnapshot(ctx context.Context, snap *models.DeploymentStatsSnapshot) error
+
+	// GetPreviousDeploymentStatsSnapshot returns the most recent deployment stats
+	// snapshot that is older than 20 hours (so a new snapshot saved today doesn't
+	// immediately compare against itself).  Returns nil, nil if none exists.
+	GetPreviousDeploymentStatsSnapshot(ctx context.Context) (*models.DeploymentStatsSnapshot, error)
+
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error

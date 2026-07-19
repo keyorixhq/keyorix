@@ -1,8 +1,8 @@
 // remote_stats.go — Stats and health operations for RemoteStorage.
 //
 // Covers: GetStats, SaveStatsSnapshot (no-op), GetPreviousStatsSnapshot (unsupported),
-//
-//	Health, HealthCheck.
+// SaveDeploymentStatsSnapshot (unsupported), GetPreviousDeploymentStatsSnapshot (unsupported),
+// Health, HealthCheck.
 //
 // Stats snapshots are managed server-side; only GetStats proxies to the API.
 // For the local (GORM) equivalent see local_stats.go.
@@ -41,6 +41,18 @@ func (rs *RemoteStorage) SaveStatsSnapshot(_ context.Context, _ *models.StatsSna
 // GetPreviousStatsSnapshot is not supported in remote mode.
 func (rs *RemoteStorage) GetPreviousStatsSnapshot(_ context.Context, _ uint) (*models.StatsSnapshot, error) {
 	return nil, fmt.Errorf("stats snapshots not available in remote mode")
+}
+
+// SaveDeploymentStatsSnapshot is not supported in remote mode — deployment
+// stats snapshots are saved server-side in GetDashboardStats.
+func (rs *RemoteStorage) SaveDeploymentStatsSnapshot(_ context.Context, _ *models.DeploymentStatsSnapshot) error {
+	return remoteUnsupported("SaveDeploymentStatsSnapshot")
+}
+
+// GetPreviousDeploymentStatsSnapshot is not supported in remote mode — the
+// trend is computed server-side in core.GetDashboardStats.
+func (rs *RemoteStorage) GetPreviousDeploymentStatsSnapshot(_ context.Context) (*models.DeploymentStatsSnapshot, error) {
+	return nil, remoteUnsupported("GetPreviousDeploymentStatsSnapshot")
 }
 
 // Health checks whether the remote Keyorix server is reachable.

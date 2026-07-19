@@ -1568,6 +1568,14 @@ func (m *MockStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uint)
 	return args.Get(0).(*models.StatsSnapshot), args.Error(1)
 }
 
+func (m *MockStorage) SaveDeploymentStatsSnapshot(_ context.Context, _ *models.DeploymentStatsSnapshot) error {
+	return nil
+}
+
+func (m *MockStorage) GetPreviousDeploymentStatsSnapshot(_ context.Context) (*models.DeploymentStatsSnapshot, error) {
+	return nil, nil
+}
+
 func (m *MockStorage) GetDistinctActiveUserIDs(_ context.Context, _ time.Time) ([]uint, error) {
 	return nil, nil
 }

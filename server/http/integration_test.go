@@ -148,6 +148,10 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// AnomalyConfigRecord backs GET/PUT /api/v1/admin/anomaly-config — the
 		// runtime-tunable anomaly detection configuration.
 		&models.AnomalyConfigRecord{},
+		// Dashboard trends: deployment-wide stats snapshot for ActiveUsers /
+		// AuditEvents30d trend computation (GetDashboardStats, audit.read callers).
+		&models.StatsSnapshot{},
+		&models.DeploymentStatsSnapshot{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

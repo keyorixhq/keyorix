@@ -47,10 +47,14 @@ type DashboardStats struct {
 	AuditSecretReads30d   int64            `json:"auditSecretReads30d"`
 	FailedAuthAttempts24h int64            `json:"failedAuthAttempts24h"`
 	InactiveUsers         int64            `json:"inactiveUsers"`
-	PrevTotalSecrets      *int64           `json:"prevTotalSecrets,omitempty"`
-	TotalSecretsTrend     *StatTrend       `json:"totalSecretsTrend,omitempty"`
-	SharedSecretsTrend    *StatTrend       `json:"sharedSecretsTrend,omitempty"`
-	SharedWithMeTrend     *StatTrend       `json:"sharedWithMeTrend,omitempty"`
+	PrevTotalSecrets       *int64     `json:"prevTotalSecrets,omitempty"`
+	TotalSecretsTrend      *StatTrend `json:"totalSecretsTrend,omitempty"`
+	SharedSecretsTrend     *StatTrend `json:"sharedSecretsTrend,omitempty"`
+	SharedWithMeTrend      *StatTrend `json:"sharedWithMeTrend,omitempty"`
+	PrevActiveUsers        *int64     `json:"prevActiveUsers,omitempty"`
+	ActiveUsersTrend       *StatTrend `json:"activeUsersTrend,omitempty"`
+	PrevAuditEvents30d     *int64     `json:"prevAuditEvents30d,omitempty"`
+	AuditEvents30dTrend    *StatTrend `json:"auditEvents30dTrend,omitempty"`
 	ExpiringSecrets       []ExpiringSecret `json:"expiringSecrets,omitempty"`
 	RecentActivity        []ActivityItem   `json:"recentActivity"`
 	// Degraded is true when one or more sub-checks above could not be queried —
@@ -169,6 +173,27 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	stats.InactiveUsers = inactiveUsers
 	stats.RecentActivity = recent
 	stats.ExpiringSecrets = expiringSecrets
+
+	// Save today's deployment stats snapshot (once per UTC day) and compute trends.
+	// Only meaningful when the caller holds audit.read and the admin stats were fetched.
+	if hasAuditRead {
+		todayDate := time.Now().UTC().Truncate(24 * time.Hour)
+		prevSnap, snapErr := c.storage.GetPreviousDeploymentStatsSnapshot(ctx)
+		if snapErr == nil { // tolerate failure — trends are best-effort
+			newSnap := &models.DeploymentStatsSnapshot{
+				ActiveUsers:    stats.ActiveUsers,
+				AuditEvents30d: stats.AuditEvents30d,
+				SnapshotDate:   todayDate,
+			}
+			_ = c.storage.SaveDeploymentStatsSnapshot(ctx, newSnap) // best-effort
+			if prevSnap != nil {
+				stats.PrevActiveUsers = &prevSnap.ActiveUsers
+				stats.ActiveUsersTrend = computeTrend(float64(prevSnap.ActiveUsers), float64(stats.ActiveUsers))
+				stats.PrevAuditEvents30d = &prevSnap.AuditEvents30d
+				stats.AuditEvents30dTrend = computeTrend(float64(prevSnap.AuditEvents30d), float64(stats.AuditEvents30d))
+			}
+		}
+	}
 
 	prev, err := c.storage.GetPreviousStatsSnapshot(ctx, userID)
 	if err == nil && prev != nil {

@@ -1322,6 +1322,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
 		&models.AnomalyAlert{},
+		&models.StatsSnapshot{},
+		&models.DeploymentStatsSnapshot{},
 	} {
 		if err := db.AutoMigrate(m); err != nil {
 			return fmt.Errorf("failed to migrate %T: %w", m, err)

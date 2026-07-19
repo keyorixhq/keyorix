@@ -1,6 +1,7 @@
 // local_stats.go — Stats and health operations for LocalStorage.
 //
-// Covers: GetStats, SaveStatsSnapshot, GetPreviousStatsSnapshot, HealthCheck.
+// Covers: GetStats, SaveStatsSnapshot, GetPreviousStatsSnapshot,
+// SaveDeploymentStatsSnapshot, GetPreviousDeploymentStatsSnapshot, HealthCheck.
 //
 // All operations use direct GORM queries.
 // For the remote (HTTP) equivalent see remote_stats.go.
@@ -8,10 +9,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 )
 
 // GetStats aggregates row counts for the key entity types.
@@ -42,6 +45,29 @@ func (ls *LocalStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uin
 		return nil, err
 	}
 	return &snapshot, nil
+}
+
+// SaveDeploymentStatsSnapshot persists a deployment-wide stats snapshot.
+func (ls *LocalStorage) SaveDeploymentStatsSnapshot(ctx context.Context, snap *models.DeploymentStatsSnapshot) error {
+	return ls.db.WithContext(ctx).Create(snap).Error
+}
+
+// GetPreviousDeploymentStatsSnapshot returns the most recent deployment stats
+// snapshot older than 20 hours. Returns nil, nil if none exists.
+func (ls *LocalStorage) GetPreviousDeploymentStatsSnapshot(ctx context.Context) (*models.DeploymentStatsSnapshot, error) {
+	cutoff := time.Now().UTC().Add(-20 * time.Hour)
+	var snap models.DeploymentStatsSnapshot
+	err := ls.db.WithContext(ctx).
+		Where("snapshot_date < ?", cutoff).
+		Order("snapshot_date DESC").
+		First(&snap).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &snap, nil
 }
 
 // HealthCheck verifies the database is reachable with a lightweight SELECT 1.
