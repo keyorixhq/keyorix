@@ -368,6 +368,200 @@ func warnIfDuplicatesExist(db *gorm.DB, table, keyExpr, whereClause, remediation
 	return nil
 }
 
+// rolePKIsComplete reports whether the given role-assignment table already has the
+// full composite PK: (user_id/group_id, role_id, project_id, environment_id).
+// Detection is dialect-specific:
+//   - SQLite: parse the CREATE TABLE statement from sqlite_master and check whether
+//     the PRIMARY KEY clause mentions "project_id" and "environment_id".
+//   - Postgres: query information_schema.key_column_usage for the table's PK and
+//     check that both columns appear among the PK members.
+func rolePKIsComplete(db *gorm.DB, table string) bool {
+	if db.Dialector.Name() == "postgres" {
+		var count int64
+		db.Raw(`
+			SELECT COUNT(*) FROM information_schema.key_column_usage
+			WHERE table_schema = 'public'
+			  AND table_name   = ?
+			  AND constraint_name IN (
+				SELECT constraint_name
+				FROM   information_schema.table_constraints
+				WHERE  table_schema     = 'public'
+				  AND  table_name       = ?
+				  AND  constraint_type  = 'PRIMARY KEY'
+			  )
+			  AND column_name IN ('project_id', 'environment_id')`,
+			table, table).Scan(&count)
+		return count >= 2
+	}
+	// SQLite: read the CREATE TABLE SQL and look for project_id in the PK clause.
+	var createSQL string
+	db.Raw("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&createSQL)
+	lower := strings.ToLower(createSQL)
+	pkStart := strings.Index(lower, "primary key")
+	if pkStart == -1 {
+		return false
+	}
+	pkClause := lower[pkStart:]
+	return strings.Contains(pkClause, "project_id") && strings.Contains(pkClause, "environment_id")
+}
+
+// rebuildRolePKIfNeeded detects whether user_roles / group_roles still carry the
+// old (user_id, role_id) or (user_id, role_id, project_id) primary key and, if so,
+// rebuilds the table with the correct four-column composite PK
+// (user_id/group_id, role_id, project_id, environment_id). By the time this runs,
+// the Phase 2 block above has already added environment_id (if absent) and
+// normalised NULL project_id values to 0, so all data is clean.
+//
+// SQLite does not support ALTER TABLE DROP/ADD CONSTRAINT, so the rebuild is done
+// via CREATE TABLE … AS SELECT / DROP / RENAME, wrapped in a transaction.
+// Postgres supports DROP CONSTRAINT / ADD CONSTRAINT in a single DDL statement.
+//
+// Idempotent: if the PK is already correct, nothing is done.
+func rebuildRolePKIfNeeded(db *gorm.DB) error {
+	type tableSpec struct {
+		name    string // table name
+		idCol   string // first PK column (user_id or group_id)
+		pkCols  string // full new PK column list for CREATE TABLE
+		oldPK   string // old PK constraint name on Postgres (heuristic)
+	}
+	tables := []tableSpec{
+		{
+			name:   "user_roles",
+			idCol:  "user_id",
+			pkCols: "user_id, role_id, project_id, environment_id",
+			oldPK:  "user_roles_pkey",
+		},
+		{
+			name:   "group_roles",
+			idCol:  "group_id",
+			pkCols: "group_id, role_id, project_id, environment_id",
+			oldPK:  "group_roles_pkey",
+		},
+	}
+
+	for _, spec := range tables {
+		if !tableExists(db, spec.name) {
+			continue
+		}
+		if rolePKIsComplete(db, spec.name) {
+			continue
+		}
+
+		if db.Dialector.Name() == "postgres" {
+			if err := rebuildRolePKPostgres(db, spec.name, spec.idCol, spec.pkCols, spec.oldPK); err != nil {
+				return fmt.Errorf("PK rebuild for %s (postgres): %w", spec.name, err)
+			}
+		} else {
+			if err := rebuildRolePKSQLite(db, spec.name, spec.idCol, spec.pkCols); err != nil {
+				return fmt.Errorf("PK rebuild for %s (sqlite): %w", spec.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// rebuildRolePKSQLite recreates table on SQLite with the correct composite PK.
+// SQLite does not support DROP/ADD CONSTRAINT, so a CREATE/INSERT/DROP/RENAME
+// sequence is used. The Phase 2 column-add block runs before this, but we guard
+// defensively: if project_id or environment_id are absent (truly ancient schemas)
+// we substitute the literal 0, so the rebuild is self-contained regardless of
+// what prior migration steps managed to run.
+func rebuildRolePKSQLite(db *gorm.DB, table, idCol, pkCols string) error {
+	newTable := table + "_new"
+	hasExpiresAt := columnExists(db, table, "expires_at")
+	hasProjectID := columnExists(db, table, "project_id")
+	hasEnvID := columnExists(db, table, "environment_id")
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		// Build column list for SELECT: substitute 0 for columns not yet present.
+		projectExpr := "0"
+		if hasProjectID {
+			projectExpr = "COALESCE(project_id, 0)"
+		}
+		envExpr := "0"
+		if hasEnvID {
+			envExpr = "COALESCE(environment_id, 0)"
+		}
+		selectCols := fmt.Sprintf(
+			"COALESCE(%s, 0), COALESCE(role_id, 0), %s, %s",
+			idCol, projectExpr, envExpr,
+		)
+		createExpiresCol := ""
+		if hasExpiresAt {
+			selectCols += ", expires_at"
+			createExpiresCol = ",\n\t\texpires_at TIMESTAMP WITH TIME ZONE"
+		}
+
+		createSQL := fmt.Sprintf(`CREATE TABLE %s (
+		%s INTEGER NOT NULL,
+		role_id INTEGER NOT NULL,
+		project_id INTEGER NOT NULL DEFAULT 0,
+		environment_id INTEGER NOT NULL DEFAULT 0%s,
+		PRIMARY KEY (%s)
+	)`, newTable, idCol, createExpiresCol, pkCols)
+
+		if err := tx.Exec(createSQL).Error; err != nil {
+			return fmt.Errorf("create %s: %w", newTable, err)
+		}
+
+		insertSQL := fmt.Sprintf("INSERT INTO %s SELECT %s FROM %s", newTable, selectCols, table)
+		if err := tx.Exec(insertSQL).Error; err != nil {
+			return fmt.Errorf("copy rows into %s: %w", newTable, err)
+		}
+
+		if err := tx.Exec(fmt.Sprintf("DROP TABLE %s", table)).Error; err != nil {
+			return fmt.Errorf("drop old %s: %w", table, err)
+		}
+
+		if err := tx.Exec(fmt.Sprintf("ALTER TABLE %s RENAME TO %s", newTable, table)).Error; err != nil {
+			return fmt.Errorf("rename %s to %s: %w", newTable, table, err)
+		}
+
+		return nil
+	})
+}
+
+// rebuildRolePKPostgres rebuilds the PK on Postgres by ensuring project_id /
+// environment_id columns exist (with default 0 if not yet present — belt-and-
+// suspenders after the Phase 2 block), then dropping the old constraint and adding
+// the new four-column one.
+func rebuildRolePKPostgres(db *gorm.DB, table, idCol, pkCols, oldConstraint string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		// Belt-and-suspenders: add missing columns (Phase 2 already did this,
+		// but guard here too so this function is self-contained).
+		for _, col := range []string{"project_id", "environment_id"} {
+			if !columnExists(tx, table, col) {
+				if err := tx.Exec(fmt.Sprintf(
+					"ALTER TABLE %s ADD COLUMN %s INTEGER NOT NULL DEFAULT 0", table, col,
+				)).Error; err != nil {
+					return fmt.Errorf("add %s.%s: %w", table, col, err)
+				}
+			}
+		}
+
+		// Normalise any remaining NULLs (should be 0 already after Phase 2).
+		tx.Exec(fmt.Sprintf("UPDATE %s SET project_id = 0 WHERE project_id IS NULL", table))
+		tx.Exec(fmt.Sprintf("UPDATE %s SET environment_id = 0 WHERE environment_id IS NULL", table))
+
+		// Drop the old PK constraint. Use IF EXISTS (Postgres 9.5+) so this is safe
+		// even if the constraint name was customised.
+		if err := tx.Exec(fmt.Sprintf(
+			"ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s", table, oldConstraint,
+		)).Error; err != nil {
+			return fmt.Errorf("drop old PK on %s: %w", table, err)
+		}
+
+		// Add the new four-column PK.
+		if err := tx.Exec(fmt.Sprintf(
+			"ALTER TABLE %s ADD PRIMARY KEY (%s)", table, pkCols,
+		)).Error; err != nil {
+			return fmt.Errorf("add new PK on %s (%s): %w", table, pkCols, err)
+		}
+
+		return nil
+	})
+}
+
 // migrateDatabase performs database migrations via GORM AutoMigrate.
 // Idempotent: safe to run on both fresh and existing databases.
 // On a fresh DB, AutoMigrate creates all tables. On an existing DB,
@@ -556,6 +750,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if columnExists(db, tbl, "project_id") {
 			db.Exec(fmt.Sprintf("UPDATE %s SET project_id = 0 WHERE project_id IS NULL", tbl))
 		}
+	}
+
+	// RBAC PK rebuild: fresh installs get the full composite PK (user_id, role_id,
+	// project_id, environment_id) via AutoMigrate, but existing GORM-created DBs
+	// keep their old (user_id, role_id) or (user_id, role_id, project_id) PK — so
+	// the same role cannot be assigned at two different project/environment scopes
+	// on an upgraded install. Detect the old PK and rebuild it (SQLite requires a
+	// table recreation; Postgres can drop + add the constraint in-place), run after
+	// the Phase 2 ADD COLUMN / NULL-normalise so the data is clean before we touch
+	// the PK.
+	if err := rebuildRolePKIfNeeded(db); err != nil {
+		return err
 	}
 
 	// Snapshot all table-existence checks UP FRONT, before any AutoMigrate runs.
