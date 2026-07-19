@@ -94,7 +94,7 @@ func TestBulkDeleteSecrets_VerifyDeleted(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// GET each secret — both must now return 404.
@@ -104,7 +104,7 @@ func TestBulkDeleteSecrets_VerifyDeleted(t *testing.T) {
 		getReq.Header.Set("Authorization", "Bearer "+token)
 		getResp, err := client.Do(getReq)
 		require.NoError(t, err)
-		getResp.Body.Close()
+		_ = getResp.Body.Close()
 		assert.Equal(t, http.StatusNotFound, getResp.StatusCode, "expected 404 for secret %d after bulk delete", id)
 	}
 }
@@ -128,7 +128,7 @@ func TestBulkDeleteSecrets_NonExistentID(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -167,7 +167,7 @@ func TestBulkDeleteSecrets_Unauthenticated(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
@@ -191,7 +191,7 @@ func TestBulkDeleteSecrets_EmptyRequest(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
