@@ -180,6 +180,23 @@ type CertificatePosture struct {
 	NotEvaluated      int `json:"not_evaluated"`
 }
 
+// ComplianceTrend reports the week-over-week direction of the deployment's
+// compliance posture, derived by comparing the current CompliancePostureSnapshot
+// (written just before this field is populated) against the most recent prior
+// snapshot that is at least 20 hours old (avoiding same-day self-comparison).
+type ComplianceTrend struct {
+	PreviousDate *time.Time `json:"previous_date,omitempty"`
+	// PassedDelta is the change in passed-controls count since the previous
+	// snapshot (positive = more controls passing now).
+	PassedDelta *int `json:"passed_delta,omitempty"`
+	// FailedDelta is the change in failed-controls count since the previous
+	// snapshot (negative = fewer controls failing now — an improvement).
+	FailedDelta *int `json:"failed_delta,omitempty"`
+	// Direction summarises the overall movement: "improving" | "regressing" |
+	// "stable" | "no_data" (no previous snapshot exists yet).
+	Direction string `json:"direction"`
+}
+
 // CompliancePosture is the deployment's control posture at a point in time.
 //
 // #136: every sub-rollup is queried best-effort so one failing signal doesn't abort
@@ -209,6 +226,10 @@ type CompliancePosture struct {
 	Degraded bool `json:"degraded"`
 	// DegradedReasons names each failed sub-rollup with its underlying error.
 	DegradedReasons []string `json:"degraded_reasons,omitempty"`
+	// Trend holds the week-over-week posture direction. Nil on the very first call
+	// (no previous snapshot exists). Best-effort: a snapshot I/O failure leaves
+	// Trend as nil rather than aborting the posture response.
+	Trend *ComplianceTrend `json:"trend,omitempty"`
 }
 
 // degrade records that a posture sub-rollup could not be queried: it flips Degraded
@@ -378,7 +399,75 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	if err != nil {
 		return nil, err
 	}
-	return c.compliancePostureFromSnapshot(ctx, snap), nil
+	p := c.compliancePostureFromSnapshot(ctx, snap)
+
+	// Persist today's snapshot for trend tracking (best-effort — a write failure
+	// must not abort the posture response an auditor is waiting on).
+	today := truncateToUTCDay(c.now())
+	postureSnap := buildCompliancePostureSnapshot(p, today)
+	_ = c.storage.SaveCompliancePostureSnapshot(ctx, postureSnap)
+
+	// Fetch the previous snapshot and compute the trend.
+	p.Trend = c.computeComplianceTrend(ctx, postureSnap)
+
+	return p, nil
+}
+
+// truncateToUTCDay returns t with the time portion stripped (UTC midnight), so that
+// one snapshot per calendar day is stored regardless of what time the call arrives.
+func truncateToUTCDay(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// buildCompliancePostureSnapshot derives a CompliancePostureSnapshot from the given
+// posture using EvaluateControls for an accurate pass/fail/degraded count.
+func buildCompliancePostureSnapshot(p *CompliancePosture, snapshotDate time.Time) *models.CompliancePostureSnapshot {
+	controls := EvaluateControls(p)
+	var passed, failed, degraded int
+	for _, ctrl := range controls {
+		switch ctrl.Status {
+		case ControlStatusPass, ControlStatusNotConfigured:
+			passed++
+		case ControlStatusGap:
+			failed++
+		case ControlStatusUnknown:
+			degraded++
+		}
+	}
+	return &models.CompliancePostureSnapshot{
+		TotalControls:    len(controls),
+		PassedControls:   passed,
+		FailedControls:   failed,
+		DegradedControls: degraded,
+		SnapshotDate:     snapshotDate,
+	}
+}
+
+// computeComplianceTrend fetches the previous snapshot and computes trend direction.
+// Best-effort: a storage error returns a "no_data" trend rather than an error.
+func (c *KeyorixCore) computeComplianceTrend(ctx context.Context, current *models.CompliancePostureSnapshot) *ComplianceTrend {
+	prev, err := c.storage.GetPreviousCompliancePostureSnapshot(ctx)
+	if err != nil || prev == nil {
+		return &ComplianceTrend{Direction: "no_data"}
+	}
+
+	passedDelta := current.PassedControls - prev.PassedControls
+	failedDelta := current.FailedControls - prev.FailedControls
+
+	direction := "stable"
+	if passedDelta > 0 || failedDelta < 0 {
+		direction = "improving"
+	} else if passedDelta < 0 || failedDelta > 0 {
+		direction = "regressing"
+	}
+
+	return &ComplianceTrend{
+		PreviousDate: &prev.SnapshotDate,
+		PassedDelta:  &passedDelta,
+		FailedDelta:  &failedDelta,
+		Direction:    direction,
+	}
 }
 
 // compliancePostureFromSnapshot builds the posture rollup entirely from an

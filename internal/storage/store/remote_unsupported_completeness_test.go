@@ -190,6 +190,13 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// Deployment-wide stats snapshots — saved and read server-side only.
 	"SaveDeploymentStatsSnapshot":        {statusIntentional, "deployment-wide stats snapshots are saved server-side in GetDashboardStats; a remote caller never directly invokes this"},
 	"GetPreviousDeploymentStatsSnapshot": {statusIntentional, "deployment-wide stats snapshot retrieval runs server-side; the trend is computed in core.GetDashboardStats, not in the CLI"},
+
+	// Compliance posture snapshots — written and read inside GetCompliancePosture,
+	// a server-side admin endpoint. No CLI/remote caller ever invokes these directly;
+	// no REST proxy routes exist or are planned (the snapshot is internal telemetry,
+	// not a user-facing API surface).
+	"SaveCompliancePostureSnapshot":        {statusIntentional, "compliance posture snapshot writes are server-side only; GetCompliancePosture is a server-only admin endpoint with no remote caller"},
+	"GetPreviousCompliancePostureSnapshot": {statusIntentional, "compliance posture snapshot reads are server-side only; same reasoning as SaveCompliancePostureSnapshot"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every

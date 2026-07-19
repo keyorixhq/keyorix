@@ -891,6 +891,14 @@ type Storage interface {
 	// immediately compare against itself).  Returns nil, nil if none exists.
 	GetPreviousDeploymentStatsSnapshot(ctx context.Context) (*models.DeploymentStatsSnapshot, error)
 
+	// Compliance Posture Snapshots
+	SaveCompliancePostureSnapshot(ctx context.Context, snap *models.CompliancePostureSnapshot) error
+	// GetPreviousCompliancePostureSnapshot returns the most recent snapshot whose
+	// snapshot_date is strictly before today's UTC midnight (i.e., from a prior
+	// calendar day), to avoid same-day self-comparison.
+	// Returns nil, nil when no prior snapshot exists.
+	GetPreviousCompliancePostureSnapshot(ctx context.Context) (*models.CompliancePostureSnapshot, error)
+
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error

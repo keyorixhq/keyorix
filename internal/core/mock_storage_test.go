@@ -2097,3 +2097,15 @@ func (m *MockStorage) GetSecretAncestors(ctx context.Context, nodeID uint) ([]ui
 	}
 	return args.Get(0).([]uint), args.Error(1)
 }
+
+// Compliance posture snapshot stubs — best-effort server-side writes; MockStorage
+// tests that construct a core without a real DB can tolerate a no-op save and a
+// nil prior snapshot (both represent "no history yet", which is the correct
+// initial state for any fresh deployment).
+func (m *MockStorage) SaveCompliancePostureSnapshot(_ context.Context, _ *models.CompliancePostureSnapshot) error {
+	return nil
+}
+
+func (m *MockStorage) GetPreviousCompliancePostureSnapshot(_ context.Context) (*models.CompliancePostureSnapshot, error) {
+	return nil, nil
+}
