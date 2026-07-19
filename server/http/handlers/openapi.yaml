@@ -1509,6 +1509,83 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/acl:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}, description: Secret ID}
+    get:
+      tags: [Secrets]
+      summary: List ACL grants for a secret
+      description: >-
+        Returns all per-secret ACL entries for the given secret. Requires
+        `secrets.manage` at the secret's project scope.
+      operationId: listSecretACLs
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is an array of SecretACL objects."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean}
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/SecretACL'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Secrets]
+      summary: Grant a per-secret ACL entry
+      description: >-
+        Grants the specified permissions to a user on a single secret. The
+        caller must hold `secrets.manage` at the secret's project scope. If
+        an entry already exists for the (secret, user) pair it is replaced
+        (upsert semantics).
+      operationId: grantSecretACL
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, permissions]
+              properties:
+                user_id:
+                  type: integer
+                  description: ID of the user to grant access to.
+                permissions:
+                  type: array
+                  items: {type: string}
+                  description: "List of permission strings to grant, e.g. [\"secrets.read\"]."
+                  minItems: 1
+      responses:
+        '200':
+          description: "Envelope `data` is `{granted: true}`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/acl/{aclId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}, description: Secret ID}
+      - {name: aclId, in: path, required: true, schema: {type: integer}, description: ACL entry ID}
+    delete:
+      tags: [Secrets]
+      summary: Revoke a per-secret ACL entry
+      description: >-
+        Deletes the ACL entry identified by `aclId` for the given secret.
+        Requires `secrets.manage` at the secret's project scope.
+      operationId: revokeSecretACL
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is `{revoked: true}`."
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /api/v1/secrets/{id}/classification:
     patch:
       tags: [Secrets]
@@ -2216,9 +2293,13 @@ paths:
               required: [user_id]
               properties:
                 user_id: {type: integer}
+                project_id:
+                  type: integer
+                  default: 0
+                  description: "0 = global membership (default); non-zero = scoped to that project only."
       responses:
         '200':
-          description: "Envelope `data` is `{group_id, user_id}`."
+          description: "Envelope `data` is `{group_id, user_id, project_id}`."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
@@ -3034,3 +3115,17 @@ components:
           type: integer
           format: uint32
           description: Required when source=direct_share or group_share.
+    SecretACL:
+      type: object
+      description: >-
+        Per-secret ACL grant. Confers the listed permissions on a specific user
+        for one secret, independently of project RBAC (RBAC Phase 3).
+      properties:
+        id: {type: integer}
+        secret_id: {type: integer}
+        user_id: {type: integer}
+        permissions:
+          type: array
+          items: {type: string}
+        granted_by: {type: integer}
+        created_at: {type: string, format: date-time}
