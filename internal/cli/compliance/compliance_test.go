@@ -210,6 +210,76 @@ func TestVerify_RequiresFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "--file is required")
 }
 
+// ---------------------------------------------------------------------------
+// digestCmd
+// ---------------------------------------------------------------------------
+
+const digestPayload = `{"success":true,"data":{"title":"Keyorix compliance digest — 2026-07-19","body":"Controls: 10 pass\nClassification: 5 restricted"}}`
+const digestSendPayload = `{"success":true,"data":{"sent":true}}`
+const digestSendNotSentPayload = `{"success":true,"data":{"sent":false}}`
+
+func TestDigest_PrintsDigest(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/compliance/digest", r.URL.Path)
+		assert.Equal(t, http.MethodGet, r.Method)
+		_, _ = w.Write([]byte(digestPayload))
+	})
+
+	digestSend = false
+	t.Cleanup(func() { digestSend = false })
+
+	out := captureStdout(t, func() { require.NoError(t, digestCmd.RunE(nil, nil)) })
+	assert.Contains(t, out, "Keyorix compliance digest — 2026-07-19")
+	assert.Contains(t, out, "Controls: 10 pass")
+	assert.Contains(t, out, "Classification: 5 restricted")
+}
+
+func TestDigest_Send_Sent(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/compliance/digest/send", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		_, _ = w.Write([]byte(digestSendPayload))
+	})
+
+	digestSend = true
+	t.Cleanup(func() { digestSend = false })
+
+	out := captureStdout(t, func() { require.NoError(t, digestCmd.RunE(nil, nil)) })
+	assert.Contains(t, out, "broadcast to notification channels")
+}
+
+func TestDigest_Send_NotSent(t *testing.T) {
+	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(digestSendNotSentPayload))
+	})
+
+	digestSend = true
+	t.Cleanup(func() { digestSend = false })
+
+	out := captureStdout(t, func() { require.NoError(t, digestCmd.RunE(nil, nil)) })
+	assert.Contains(t, out, "No notification channels configured")
+}
+
+func TestDigest_NotConnected(t *testing.T) {
+	setupDisconnected(t)
+	digestSend = false
+	t.Cleanup(func() { digestSend = false })
+
+	err := digestCmd.RunE(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected to a server")
+}
+
+func TestDigest_Send_NotConnected(t *testing.T) {
+	setupDisconnected(t)
+	digestSend = true
+	t.Cleanup(func() { digestSend = false })
+
+	err := digestCmd.RunE(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected to a server")
+}
+
 func TestVerify_ValidAndInvalid(t *testing.T) {
 	dir := t.TempDir()
 	packPath := filepath.Join(dir, "pack.json")

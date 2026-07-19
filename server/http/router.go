@@ -1718,6 +1718,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Compliance digest — on-demand human-readable summary (the scheduled-broadcast
 		// text); restates the same posture data, same gate.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/digest", dashboardHandler.GetComplianceDigest)
+		// Compliance digest send — triggers an immediate broadcast to notification channels
+		// (Slack/Teams/webhook/email). Gated by system.write: it's an active dispatch
+		// action, not a read disclosure, even though the content is the same as the GET.
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/compliance/digest/send", dashboardHandler.SendComplianceDigest)
 		// Legal hold (ISO A.5.34): status discloses the free-text hold reason
 		// deployment-wide, so reads need audit.read; place/lift stay system.write
 		// (an admin action, not a read disclosure).
