@@ -522,6 +522,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/by-name", secretHandler.GetSecretByName)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}", secretHandler.GetSecret)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/versions/{from}/diff/{to}", secretHandler.DiffSecretVersions)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/risk", secretHandler.GetSecretRisk)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/shares", shareHandler.ListSecretShares)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/access", secretHandler.ListAccessors)
