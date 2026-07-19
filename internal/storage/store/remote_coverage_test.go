@@ -42,7 +42,7 @@ import (
 // branch does not. The actual Keyorix server never returns 200+success:false
 // in steady state, but this wire format IS valid per APIResponse's schema.
 func apiNotOK(code, message string) []byte {
-	b, _ := json.Marshal(map[string]interface{}{
+	b, _ := json.Marshal(map[string]any{
 		"success": false,
 		"error": map[string]string{
 			"code":    code,
@@ -58,7 +58,7 @@ func TestRemoteCov_GetStats_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/stats", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"total_secrets": float64(42),
 			"total_users":   float64(7),
 		}))
@@ -94,7 +94,7 @@ func TestRemoteCov_CreateSoDPolicy_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/sod-policies", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"id":           float64(1),
 			"name":         "no-admin-and-billing",
 			"permission_a": "admin",
@@ -135,7 +135,7 @@ func TestRemoteCov_GetSoDPolicy_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/system/sod-policies/5", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"id":           float64(5),
 			"name":         "no-admin-and-deploy",
 			"permission_a": "admin",
@@ -171,8 +171,8 @@ func TestRemoteCov_ListSoDPolicies_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/system/sod-policies", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
-			"policies": []map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
+			"policies": []map[string]any{
 				{
 					"id":           float64(1),
 					"name":         "no-admin-and-billing",
@@ -235,7 +235,7 @@ func TestRemoteCov_CreateSSOLoginState_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/sso-state", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"id":         float64(10),
 			"state":      "csrf-state-abc",
 			"nonce":      "nonce-xyz",
@@ -284,7 +284,7 @@ func TestRemoteCov_ConsumeSSOLoginState_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/sso-state/consume", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"id":         float64(10),
 			"state":      "csrf-state-abc",
 			"nonce":      "nonce-xyz",
@@ -469,7 +469,7 @@ func TestRemoteCov_GetUser_WithDeletedAt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/users/42", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"id":                    float64(42),
 			"username":              "former-user",
 			"email":                 "former@example.com",
