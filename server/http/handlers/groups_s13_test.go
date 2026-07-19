@@ -386,7 +386,7 @@ func TestRemoveGroupMember_ProjectScoped_S13(t *testing.T) {
 	require.NoError(t, cs.AddUserToGroup(ctx, 0, user.ID, grp.ID, 5))
 
 	// Now remove it via the handler with ?project_id=5.
-	url := fmt.Sprintf("/?project_id=5")
+	url := "/?project_id=5"
 	req := withUserCtx(withChiParams(
 		httptest.NewRequest(http.MethodDelete, url, nil),
 		map[string]string{"id": fmt.Sprintf("%d", grp.ID), "userId": fmt.Sprintf("%d", user.ID)}))
