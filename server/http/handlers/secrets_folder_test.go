@@ -48,7 +48,7 @@ func freshSecretFolderFixture(t *testing.T) (*SecretHandler, *core.KeyorixCore, 
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	n := folderTestDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxfolder_%d?mode=memory&cache=shared&_timeout=30000", n)
+	dsn := fmt.Sprintf("file:kxsecfolder_%d?mode=memory&cache=shared&_timeout=30000", n)
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
