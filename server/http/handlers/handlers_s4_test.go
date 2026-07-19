@@ -4259,7 +4259,7 @@ func TestBeginWebAuthnPasswordlessLogin_BadBody(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
-// ── rotation_policies_handler.go ��────────────────────────────────────────────
+// ── rotation_policies_handler.go ──────────────────────────────────────────────
 
 func TestRotationPolicyHandler_List_Unauthorized(t *testing.T) {
 	h := NewRotationPolicyHandler(newHandlerCore(t))
