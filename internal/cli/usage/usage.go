@@ -103,16 +103,22 @@ func printReport(report *storage.UsageReport) error {
 		report.WindowDays, report.GeneratedAt.Format("2006-01-02 15:04:05 UTC"))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROJECT\tSECRETS\tREADS\tUNIQUE READERS")
+	if _, err := fmt.Fprintln(w, "PROJECT\tSECRETS\tREADS\tUNIQUE READERS"); err != nil {
+		return err
+	}
 	for _, p := range report.Projects {
 		name := p.ProjectName
 		if name == "" {
 			name = fmt.Sprintf("(project %d)", p.ProjectID)
 		}
-		fmt.Fprintf(w, "%s\t%d\t%d\t%d\n", name, p.SecretCount, p.ReadsInWindow, p.UniqueReaders)
+		if _, err := fmt.Fprintf(w, "%s\t%d\t%d\t%d\n", name, p.SecretCount, p.ReadsInWindow, p.UniqueReaders); err != nil {
+			return err
+		}
 	}
 	if len(report.Projects) == 0 {
-		fmt.Fprintln(w, "(no data)")
+		if _, err := fmt.Fprintln(w, "(no data)"); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }

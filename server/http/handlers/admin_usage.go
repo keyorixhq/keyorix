@@ -40,7 +40,7 @@ func (h *AdminUsageHandler) GetUsageReport(w http.ResponseWriter, r *http.Reques
 	// Parse optional project_id param
 	var projectID *uint
 	if s := r.URL.Query().Get("project_id"); s != "" {
-		if n, err := strconv.ParseUint(s, 10, 64); err == nil {
+		if n, err := strconv.ParseUint(s, 10, 32); err == nil {
 			id := uint(n)
 			projectID = &id
 		}
