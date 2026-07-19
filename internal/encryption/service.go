@@ -85,15 +85,36 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 // provider, byte-identical to the historical derivation; file/env supply
 // externally-managed raw key material, exec fetches it from a resolver command,
 // shamir reconstructs it from K-of-N shares, and tpm seals it to the host TPM; the
-// *-kms providers envelope-wrap the KEK with a cloud KMS key. baseDir resolves
-// provider-relative paths (salt /
-// wrapped_key_path). Exported so the KEK-provider migration tool can build a
-// *target* provider from a different config than the running service's.
+// *-kms providers envelope-wrap the KEK with a cloud KMS key. When Fallbacks are
+// configured, wraps all providers in a MultiKeyProvider that tries them in order.
+// baseDir resolves provider-relative paths (salt / wrapped_key_path). Exported so
+// the KEK-provider migration tool can build a *target* provider from a different
+// config than the running service's.
 func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase string) (crypto.KeyProvider, error) {
-	kp := cfg.KeyProvider
+	primary, err := buildSingleProvider(&cfg.KeyProvider, baseDir, passphrase, cfg.SaltPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfg.KeyProvider.Fallbacks) == 0 {
+		return primary, nil
+	}
+	providers := []crypto.KeyProvider{primary}
+	for i := range cfg.KeyProvider.Fallbacks {
+		fb, err := buildSingleProvider(&cfg.KeyProvider.Fallbacks[i], baseDir, passphrase, cfg.SaltPath)
+		if err != nil {
+			return nil, fmt.Errorf("fallback provider [%d] (%s): %w", i, cfg.KeyProvider.Fallbacks[i].Type, err)
+		}
+		providers = append(providers, fb)
+	}
+	return crypto.NewMultiKeyProvider(providers)
+}
+
+// buildSingleProvider constructs a single KeyProvider from one KeyProviderConfig.
+// saltPath is the encryption config's salt file path (used by the password provider).
+func buildSingleProvider(kp *config.KeyProviderConfig, baseDir, passphrase, saltPath string) (crypto.KeyProvider, error) {
 	switch kp.Type {
 	case "", "password":
-		return crypto.NewPasswordKeyProvider(passphrase, baseDir, cfg.SaltPath), nil
+		return crypto.NewPasswordKeyProvider(passphrase, baseDir, saltPath), nil
 	case "file":
 		return crypto.NewFileKeyProvider(kp.FilePath), nil
 	case "env":
