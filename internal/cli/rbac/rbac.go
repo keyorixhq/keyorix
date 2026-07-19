@@ -17,4 +17,7 @@ func init() {
 	RbacCmd.AddCommand(checkPermissionCmd)
 	RbacCmd.AddCommand(listPermissionsCmd)
 	RbacCmd.AddCommand(auditLogsCmd)
+	RbacCmd.AddCommand(assignRoleToGroupCmd)
+	RbacCmd.AddCommand(removeRoleFromGroupCmd)
+	RbacCmd.AddCommand(listGroupRolesCmd)
 }
