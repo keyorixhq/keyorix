@@ -331,6 +331,13 @@ type Storage interface {
 	// index can express.
 	CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error)
 
+	// Secret ACL (RBAC Phase 3) — per-secret fine-grained access grants.
+	// A SecretACL row grants (UserID, SecretID, Permissions) independent of project RBAC.
+	CreateOrUpdateSecretACL(ctx context.Context, acl *models.SecretACL) error
+	ListSecretACLs(ctx context.Context, secretID uint) ([]*models.SecretACL, error)
+	GetSecretACL(ctx context.Context, secretID, userID uint) (*models.SecretACL, error)
+	DeleteSecretACL(ctx context.Context, id uint) error
+
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
 	CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error)

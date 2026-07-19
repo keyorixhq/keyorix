@@ -599,6 +599,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	auditCkptExists := tableExists(db, "audit_checkpoints")
 	connectRefGrantExists := tableExists(db, "connect_ref_grants")
 	groupsExists := tableExists(db, "groups")
+	secretACLExists := tableExists(db, "secret_acls")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -868,6 +869,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !secretDepExists {
 		if err := db.AutoMigrate(&models.SecretDependency{}); err != nil {
 			return fmt.Errorf("failed to migrate secret_dependencies table: %w", err)
+		}
+	}
+
+	// Create the secret-ACL table if missing (RBAC Phase 3, additive).
+	if !secretACLExists {
+		if err := db.AutoMigrate(&models.SecretACL{}); err != nil {
+			return fmt.Errorf("failed to migrate secret_acls table: %w", err)
 		}
 	}
 

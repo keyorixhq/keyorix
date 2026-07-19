@@ -213,6 +213,28 @@ func (c *KeyorixCore) principalHasScopedPermission(ctx context.Context, userID u
 	return c.storage.RoleSetHasPermission(ctx, roleIDs, permission)
 }
 
+// AuthorizeSecret checks whether userID may perform perm on the given secretID.
+// It first checks any explicit SecretACL grant (RBAC Phase 3); if found and it covers
+// perm, returns true immediately — the user need not hold a project role. Otherwise
+// falls back to project-scope RBAC (Authorize at the secret's own project/environment
+// scope). Fails closed: any resolution error returns (false, err).
+func (c *KeyorixCore) AuthorizeSecret(ctx context.Context, userID, secretID uint, perm string) (bool, error) {
+	// Check per-secret ACL first (additive grant).
+	hasACL, err := c.HasSecretACL(ctx, userID, secretID, perm)
+	if err != nil {
+		return false, err
+	}
+	if hasACL {
+		return true, nil
+	}
+	// Fall back to project-scope RBAC.
+	secret, err := c.storage.GetSecret(ctx, secretID)
+	if err != nil {
+		return false, err
+	}
+	return c.Authorize(ctx, userID, perm, Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID})
+}
+
 // IsGlobalAdmin reports whether userID holds an admin role assigned globally
 // (project 0, environment 0). Used to short-circuit scope-filtered listing.
 //
