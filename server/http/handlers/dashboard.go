@@ -67,6 +67,19 @@ func (h *DashboardHandler) GetComplianceDigest(w http.ResponseWriter, r *http.Re
 	sendSuccess(w, map[string]string{"title": title, "body": body}, "")
 }
 
+// SendComplianceDigest handles POST /api/v1/compliance/digest/send — triggers an
+// on-demand broadcast of the compliance digest to the configured notification channels
+// (Slack/Teams/webhook/email). Returns {sent: bool}: false when no channel is wired.
+// Gated by system.write in the router (same as admin-jobs compliance-digest).
+func (h *DashboardHandler) SendComplianceDigest(w http.ResponseWriter, r *http.Request) {
+	sent, err := h.coreService.SendComplianceDigest(r.Context())
+	if err != nil {
+		sendError(w, "InternalServerError", "Failed to send compliance digest", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"sent": sent}, "")
+}
+
 // VerifyComplianceEvidence handles POST /api/v1/compliance/evidence/verify — checks
 // a previously-exported evidence pack against its detached signature. The pack bytes
 // are base64-encoded in the request so arbitrary JSON can ride in a JSON envelope.
