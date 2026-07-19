@@ -36,4 +36,5 @@ jobs:
             -Dsonar.organization=keyorixhq
             -Dsonar.go.coverage.reportPaths=coverage.out
             -Dsonar.sourceEncoding=UTF-8
+            -Dsonar.qualitygate.wait=false
           projectBaseDir: .
