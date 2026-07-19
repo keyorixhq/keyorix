@@ -10,6 +10,15 @@ _(nothing claimed)_
 
 ## Done
 
+- **RBAC PK rebuild migration** — `migrateDatabase` now detects when
+  `user_roles`/`group_roles` carry the old `(user_id, role_id)` or
+  `(user_id, role_id, project_id)` primary key (from GORM-created pre-Phase-2
+  installs) and rebuilds it to the full four-column composite PK
+  `(user_id/group_id, role_id, project_id, environment_id)`. SQLite uses a
+  CREATE/INSERT/DROP/RENAME recreation; Postgres uses DROP CONSTRAINT / ADD
+  PRIMARY KEY. Runs after the Phase 2 NULL-normalise block; idempotent on every
+  subsequent boot. Added in `internal/storage/factory.go`
+  (`rebuildRolePKIfNeeded`, `rebuildRolePKSQLite`, `rebuildRolePKPostgres`).
 - **RBAC Phase 2 — environment-scoped enforcement.** Permissions are resolved
   per-request against the target project/environment (`core.Authorize`), with
   group inheritance and a global `admin`/`super_admin` bypass. `UserRole`/
@@ -29,12 +38,6 @@ _(nothing claimed)_
 - **OpenAPI sync** — document the new optional `project_id` / `environment_id`
   fields on `POST /user-roles`, `PUT /users/{id}/roles`, and
   `POST /groups/{id}/roles`.
-- **Upgrade-path PK rebuild** — fresh installs get the full composite primary key
-  via AutoMigrate, but an existing GORM-created DB keeps its old
-  `(user_id, role_id)` PK, so the same role cannot be assigned at two scopes
-  there. Provide a one-off migration that rebuilds the `user_roles` /
-  `group_roles` primary key to include `project_id` / `environment_id`
-  (SQLite requires table recreation; Postgres an `ALTER`).
 - **Scoped list UX** — an unscoped `GET /secrets` by a non-global reader returns
   403; consider instead returning the union of secrets across the scopes they can
   read (requires a readable-scopes query + result filtering, with a log line when
