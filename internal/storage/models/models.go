@@ -1034,6 +1034,18 @@ type StatsSnapshot struct {
 	CreatedAt           time.Time
 }
 
+// DeploymentStatsSnapshot captures deployment-wide dashboard metrics once per
+// UTC day so the next day's dashboard can show a trend vs the previous snapshot.
+// Unlike StatsSnapshot (per-user secret counts), this is a singleton per day
+// (no UserID field).
+type DeploymentStatsSnapshot struct {
+	ID             uint      `gorm:"primarykey"`
+	ActiveUsers    int64     `json:"active_users"`
+	AuditEvents30d int64     `json:"audit_events_30d"`
+	SnapshotDate   time.Time `gorm:"index"` // UTC date (truncated to day)
+	CreatedAt      time.Time
+}
+
 type APIClient struct {
 	ID                    uint `gorm:"primaryKey"`
 	Name                  string

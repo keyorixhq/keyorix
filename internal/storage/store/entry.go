@@ -114,3 +114,10 @@ type LocalStorage struct {
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
 	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}, auditCheckpointMu: &sync.Mutex{}}
 }
+
+// DB returns the underlying *gorm.DB. Exposed for test helpers that need direct
+// SQL access (e.g. seeding rows with custom timestamps). Do not use in production
+// code — all writes must go through the Storage interface methods.
+func (ls *LocalStorage) DB() *gorm.DB {
+	return ls.db
+}

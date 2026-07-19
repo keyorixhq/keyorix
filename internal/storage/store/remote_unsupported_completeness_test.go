@@ -186,6 +186,10 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// storage layer itself is never reached through a remote hop.
 	"GetAnomalyConfig":  {statusIntentional, "anomaly config is managed via /api/v1/admin/anomaly-config; raw storage call never reached from a remote-storage caller"},
 	"SaveAnomalyConfig": {statusIntentional, "anomaly config is managed via /api/v1/admin/anomaly-config; raw storage call never reached from a remote-storage caller"},
+
+	// Deployment-wide stats snapshots — saved and read server-side only.
+	"SaveDeploymentStatsSnapshot":        {statusIntentional, "deployment-wide stats snapshots are saved server-side in GetDashboardStats; a remote caller never directly invokes this"},
+	"GetPreviousDeploymentStatsSnapshot": {statusIntentional, "deployment-wide stats snapshot retrieval runs server-side; the trend is computed in core.GetDashboardStats, not in the CLI"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every
