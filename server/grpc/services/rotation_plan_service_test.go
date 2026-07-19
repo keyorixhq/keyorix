@@ -10,6 +10,8 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -83,6 +85,19 @@ func TestGRPC_GetDeploymentRotationPlanRequiresAuth(t *testing.T) {
 	svc := newRotationPlanRig(t)
 	_, err := svc.GetDeploymentRotationPlan(t.Context(), &emptypb.Empty{})
 	require.Error(t, err)
+}
+
+// TestGRPC_GetDeploymentRotationPlanPermissionDenied verifies that an authenticated
+// user without a secrets.read RBAC grant cannot access the deployment-wide rotation plan.
+// User 2 is not granted any role in the rig so AuthorizePrincipal denies the call.
+func TestGRPC_GetDeploymentRotationPlanPermissionDenied(t *testing.T) {
+	svc := newRotationPlanRig(t)
+	// User 2 claims "secrets.read" in the flat context, but has no RBAC role
+	// binding — AuthorizePrincipal will deny the call.
+	ctx := authCtx(2, "nobody", "secrets.read")
+	_, err := svc.GetDeploymentRotationPlan(ctx, &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestDeploymentRotationPlanToProto_BrokenProjects(t *testing.T) {
