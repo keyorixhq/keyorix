@@ -180,6 +180,12 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	"GetSecretAncestors":       {statusIntentional, "RBAC Phase 3 — folder-ACL inheritance walk runs server-side; HasSecretACL uses ErrUnsupportedByBackend to skip the ancestor walk on remote callers"},
 
 	"GetProjectUsageStats": {statusIntentional, "usage report queries run server-side; a future PR may add a /api/v1/system/usage proxy route"},
+
+	// Anomaly config — server-side singleton; a remote-storage caller manages the
+	// config via the REST endpoint (GET/PUT /api/v1/admin/anomaly-config), so the
+	// storage layer itself is never reached through a remote hop.
+	"GetAnomalyConfig":  {statusIntentional, "anomaly config is managed via /api/v1/admin/anomaly-config; raw storage call never reached from a remote-storage caller"},
+	"SaveAnomalyConfig": {statusIntentional, "anomaly config is managed via /api/v1/admin/anomaly-config; raw storage call never reached from a remote-storage caller"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every

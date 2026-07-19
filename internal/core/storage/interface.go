@@ -918,6 +918,10 @@ type Storage interface {
 	// hygiene rollup (#393) instead of calling UnusedSecrets once per project. A
 	// project absent from the result has zero unused secrets.
 	CountUnusedSecretsByProject(ctx context.Context, projectIDs []uint, notReadSince time.Time) (map[uint]int, error)
+	// GetAnomalyConfig retrieves the single anomaly config row, or returns sensible
+	// defaults if no row has been saved yet.
+	GetAnomalyConfig(ctx context.Context) (*models.AnomalyConfigRecord, error)
+	SaveAnomalyConfig(ctx context.Context, cfg *models.AnomalyConfigRecord) error
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
 	// AcknowledgeAnomalyAlert marks an alert acknowledged and stamps who did it and

@@ -882,11 +882,25 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 		// leave the time between passes unexamined (floored at 1h inside SetLookback).
 		detector.SetLookback(interval)
 		detector.SetBaselineQuarantine(cfg.AnomalyAlerts.GetBaselineQuarantine())
+		// Overlay the DB-persisted anomaly config on top of the file-based defaults.
+		// Best-effort at startup: a storage error keeps the file-based settings rather
+		// than aborting startup or leaving the detector unconfigured.
+		if err := coreService.ApplyAnomalyConfig(ctx, detector); err != nil {
+			log.Printf("Anomaly: could not load persisted config (%v); using file-based defaults", err)
+		} else {
+			log.Printf("Anomaly: persisted runtime config applied")
+		}
 		if alertsEnabled {
 			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
 		}
 		runScheduler(ctx, "anomaly_detection", interval, func() middleware.SchedulerOutcome {
 			return lockedRun(ctx, coreService.Storage(), schedLockAnomaly, "Anomaly detection", func() error {
+				// Hotload: re-apply the persisted config before each pass so an operator's
+				// runtime change takes effect without a restart. Best-effort: a transient
+				// storage failure here is logged but does not skip the detection pass.
+				if err := coreService.ApplyAnomalyConfig(ctx, detector); err != nil {
+					log.Printf("Anomaly: failed to reload persisted config (%v); running with prior settings", err)
+				}
 				if derr := detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx)); derr != nil {
 					return derr
 				}
