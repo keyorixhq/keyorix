@@ -152,7 +152,7 @@ func TestBuildSinkFromPaths_Success(t *testing.T) {
 // error branch in Sync is dead code from the interface signature.)
 func TestSync_WithCleanupListError(t *testing.T) {
 	var logged []string
-	logf := func(format string, args ...interface{}) {
+	logf := func(format string, args ...any) {
 		logged = append(logged, format)
 	}
 
@@ -183,7 +183,7 @@ func TestSync_WithCleanupListError(t *testing.T) {
 // TestSync_Success exercises the summary log line emitted on a clean reconcile.
 func TestSync_Success(t *testing.T) {
 	var logged []string
-	logf := func(format string, args ...interface{}) {
+	logf := func(format string, args ...any) {
 		logged = append(logged, format)
 	}
 
@@ -213,7 +213,7 @@ func TestSync_Success(t *testing.T) {
 // TestSync_WithPerTargetErrors exercises the per-target error log lines inside Sync.
 func TestSync_WithPerTargetErrors(t *testing.T) {
 	var logged []string
-	logf := func(format string, args ...interface{}) {
+	logf := func(format string, args ...any) {
 		logged = append(logged, format)
 	}
 
