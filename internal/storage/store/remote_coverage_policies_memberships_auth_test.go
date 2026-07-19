@@ -14,7 +14,6 @@ package store_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,25 +24,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// apiNotOK returns a 200-status JSON body with success:false. Using HTTP 200
-// ensures the remote client does NOT convert the response into an HTTPError,
-// which means the !resp.Success branch inside each method is reached.
-func apiNotOK(code, message string) []byte {
-	type errBody struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}
-	type resp struct {
-		Success bool    `json:"success"`
-		Error   errBody `json:"error"`
-	}
-	b, _ := json.Marshal(resp{
-		Success: false,
-		Error:   errBody{Code: code, Message: message},
-	})
-	return b
-}
 
 // ============================================================
 // remote_break_glass.go — !resp.Success branches
