@@ -809,6 +809,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	connectRefGrantExists := tableExists(db, "connect_ref_grants")
 	groupsExists := tableExists(db, "groups")
 	secretACLExists := tableExists(db, "secret_acls")
+	scheduleExists := tableExists(db, "secret_access_schedules")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -1085,6 +1086,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !secretACLExists {
 		if err := db.AutoMigrate(&models.SecretACL{}); err != nil {
 			return fmt.Errorf("failed to migrate secret_acls table: %w", err)
+		}
+	}
+
+	// Create secret_access_schedules if missing (temporal access policies, additive).
+	if !scheduleExists {
+		if err := db.AutoMigrate(&models.SecretAccessSchedule{}); err != nil {
+			return fmt.Errorf("failed to migrate secret_access_schedules table: %w", err)
 		}
 	}
 

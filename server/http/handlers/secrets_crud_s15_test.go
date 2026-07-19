@@ -57,7 +57,7 @@ func freshSecretFixtureS15(t *testing.T) (*SecretHandler, *core.KeyorixCore, *mo
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.AuditEvent{}, &models.SecretVersion{}, &models.SecretAccessLog{},
-		&models.ShareRecord{},
+		&models.ShareRecord{}, &models.SecretACL{}, &models.SecretAccessSchedule{},
 	))
 
 	// Seed the user context user (UserID=1) as a global admin bypass.
