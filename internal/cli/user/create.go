@@ -76,13 +76,9 @@ func runCreate(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 	}
 
 	// Remote mode: go through the server so the user lands in the SAME store the
-	// dashboard/API use, instead of a local SQLite file. Currently the password
-	// mode is supported remotely; the setup-link / one-time-password provisioning
-	// flows are embedded-only for now.
+	// dashboard/API use, instead of a local SQLite file. All three credential modes
+	// (password, setup-link, one-time-password) are forwarded to the server.
 	if rc, ok := common.NewRemoteClient(); ok {
-		if createSetupLink || createOneTimePassword {
-			return errors.New("--setup-link / --one-time-password are not yet supported in remote mode; use --password, or run this command on the server host")
-		}
 		return runCreateRemote(rc, password)
 	}
 
@@ -144,28 +140,79 @@ func runCreate(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitiv
 	return nil
 }
 
-// runCreateRemote creates the user via POST /api/v1/users (password mode), so it
-// lands in the server's store rather than a local SQLite file.
+// runCreateRemote creates the user via POST /api/v1/users, forwarding whichever
+// credential mode was requested (password, setup-link, or one-time-password), so
+// the account lands in the server's store rather than a local SQLite file.
 func runCreateRemote(rc *common.RemoteClient, password string) error {
 	display := createDisplayName
 	if display == "" {
 		display = createUsername
 	}
-	body := map[string]string{
+	body := map[string]interface{}{
 		"username":     createUsername,
 		"email":        createEmail,
 		"display_name": display,
-		"password":     password,
 	}
-	var u struct {
+	switch {
+	case createSetupLink:
+		body["deliver_setup_link"] = true
+	case createOneTimePassword:
+		body["generate_one_time_password"] = true
+	default:
+		body["password"] = password
+	}
+
+	// The response shape varies by mode:
+	//   password:          the user object directly (data == user map)
+	//   setup-link:        {"user": {...}, "setup_link": {...}}
+	//   one-time-password: {"user": {...}, "one_time_password": {...}}
+	// RemoteClient.Post already strips the outer {"data":…} envelope.
+	var resp struct {
+		// Classic password mode: server sends the user object as the data value.
 		ID       uint   `json:"id"`
 		Username string `json:"username"`
 		Email    string `json:"email"`
+		// Setup-link and OTP modes: server nests the user under "user".
+		User *struct {
+			ID       uint   `json:"id"`
+			Username string `json:"username"`
+			Email    string `json:"email"`
+		} `json:"user"`
+		SetupLink *struct {
+			Email        string `json:"email"`
+			Channel      string `json:"channel"`
+			Delivered    bool   `json:"delivered"`
+			LinkForAdmin string `json:"link_for_admin,omitempty"`
+		} `json:"setup_link"`
+		OneTimePassword *struct {
+			Email    string `json:"email"`
+			OTPValue string `json:"one_time_password"`
+		} `json:"one_time_password"`
 	}
-	if err := rc.Post(context.Background(), "/api/v1/users", body, &u); err != nil {
+	if err := rc.Post(context.Background(), "/api/v1/users", body, &resp); err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
-	fmt.Printf("User created: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
+
+	// Determine which user fields to print: nested under "user" for setup-link/OTP,
+	// flat for the classic password path.
+	id, username, email := resp.ID, resp.Username, resp.Email
+	if resp.User != nil {
+		id, username, email = resp.User.ID, resp.User.Username, resp.User.Email
+	}
+	fmt.Printf("User created: id=%d username=%s email=%s\n", id, username, email)
+
+	if resp.SetupLink != nil {
+		sl := resp.SetupLink
+		if sl.Delivered {
+			fmt.Printf("Setup link delivered to %s via %s.\n", sl.Email, sl.Channel)
+		} else {
+			fmt.Printf("Setup link (relay this to %s securely — it is single-use and expires):\n  %s\n", sl.Email, sl.LinkForAdmin)
+		}
+	}
+	if resp.OneTimePassword != nil {
+		otp := resp.OneTimePassword
+		fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OTPValue) // codeql[go/clear-text-logging]
+	}
 	return nil
 }
 

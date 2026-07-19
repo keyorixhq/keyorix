@@ -171,11 +171,13 @@ func TestRunCreate_OTP_EmbeddedMode(t *testing.T) {
 	}
 }
 
-// TestRunCreate_OTP_RemoteModeRejected is already in user_remote_test.go
-// but we also verify the OTP rejection:
-func TestRunCreate_OTP_RemoteModeRejected(t *testing.T) {
+// TestRunCreate_OTP_RemoteReachesServer confirms that --one-time-password in remote
+// mode now forwards to the server (generate_one_time_password:true) rather than
+// rejecting with a "not yet supported" error.
+func TestRunCreate_OTP_RemoteReachesServer(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	// Port 1 is always refused — we just want to confirm the HTTP attempt is made.
 	t.Setenv("KEYORIX_SERVER", "http://127.0.0.1:1")
 	t.Setenv("KEYORIX_TOKEN", "tok")
 
@@ -190,8 +192,10 @@ func TestRunCreate_OTP_RemoteModeRejected(t *testing.T) {
 	createOneTimePassword = true
 
 	err := runCreate(nil, nil)
+	// Must error (refused connection), but NOT with "not yet supported".
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--one-time-password")
+	assert.NotContains(t, err.Error(), "not yet supported")
+	assert.Contains(t, err.Error(), "failed to create user")
 }
 
 // TestRunCreate_PasswordMode_EmbeddedMode tests the normal password creation path

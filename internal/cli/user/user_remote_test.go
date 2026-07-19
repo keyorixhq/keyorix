@@ -72,13 +72,14 @@ func TestRunCreate_EmailRequired(t *testing.T) {
 	assert.Contains(t, err.Error(), "email is required")
 }
 
-// TestRunCreate_RemoteUnsupportedSetupLink confirms that --setup-link is
-// rejected in remote mode with an appropriate error.
-func TestRunCreate_RemoteUnsupportedSetupLink(t *testing.T) {
-	// runCreate with env vars → remote mode; setup-link is not yet supported remotely.
+// TestRunCreate_RemoteSetupLink_ReachesServer confirms that --setup-link in remote
+// mode now forwards to the server (deliver_setup_link:true) rather than rejecting
+// with a "not yet supported" error. A refused connection proves the HTTP call was
+// made; the test verifies no pre-flight rejection occurs.
+func TestRunCreate_RemoteSetupLink_ReachesServer(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	// No actual server needed — we expect early rejection before the HTTP call.
+	// Port 1 is always refused — we just want to confirm the HTTP attempt is made.
 	t.Setenv("KEYORIX_SERVER", "http://127.0.0.1:1")
 	t.Setenv("KEYORIX_TOKEN", "tok")
 
@@ -93,8 +94,10 @@ func TestRunCreate_RemoteUnsupportedSetupLink(t *testing.T) {
 	createPassword = "" // setup-link path doesn't use password
 
 	err := runCreate(nil, nil)
+	// Must error (refused connection), but NOT with "not yet supported".
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--setup-link")
+	assert.NotContains(t, err.Error(), "not yet supported")
+	assert.Contains(t, err.Error(), "failed to create user")
 }
 
 // ──────────────────────────── printUser ──────────────────────────────────
