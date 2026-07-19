@@ -552,6 +552,8 @@ type KeyProviderConfig struct {
 	// TPMDevice is the TPM 2.0 device for type "tpm" (default /dev/tpmrm0). The KEK
 	// is sealed to this TPM and the sealed blob stored at WrappedKeyPath.
 	TPMDevice string `yaml:"tpm_device"`
+	// Fallbacks is an ordered list of providers tried when the primary fails.
+	Fallbacks []KeyProviderConfig `yaml:"fallbacks,omitempty"`
 }
 
 type SecretsConfig struct {
