@@ -296,6 +296,149 @@ func TestRevokeSecretACL_NotFound(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
+// TestGrantSecretACL_EmptyPermissions returns 400 when permissions slice is empty.
+func TestGrantSecretACL_EmptyPermissions(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "grant-emptyperms")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{"user_id": 55, "permissions": []string{}})
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.GrantSecretACL(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "permissions")
+}
+
+// TestGrantSecretACL_InvalidPermission returns an error when an unrecognised permission is used.
+func TestGrantSecretACL_InvalidPermission(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "grant-invalidperm")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{"user_id": 66, "permissions": []string{"secrets.admin"}})
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.GrantSecretACL(w, req)
+	// Core rejects invalid permissions — expect 4xx.
+	assert.NotEqual(t, http.StatusOK, w.Code)
+}
+
+// TestRevokeSecretACL_HappyPath is a standalone targeted test for the revoke success branch.
+func TestRevokeSecretACL_HappyPath(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "revoke-happy")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	// Grant first.
+	grantBody, _ := json.Marshal(map[string]interface{}{"user_id": 99, "permissions": []string{"secrets.read"}})
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), bytes.NewReader(grantBody)),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.GrantSecretACL(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Fetch the ACL ID.
+	req2 := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), nil),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	w2 := httptest.NewRecorder()
+	h.ListSecretACLs(w2, req2)
+	require.Equal(t, http.StatusOK, w2.Code)
+	var listResp struct {
+		Data []struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &listResp))
+	require.Len(t, listResp.Data, 1)
+	aclID := listResp.Data[0].ID
+
+	// Revoke.
+	req3 := withUserCtxACL(withChiParam2ACL(
+		httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/acl/%d", sid, aclID), nil),
+		"id", fmt.Sprintf("%d", sid), "aclId", fmt.Sprintf("%d", aclID),
+	))
+	w3 := httptest.NewRecorder()
+	h.RevokeSecretACL(w3, req3)
+	assert.Equal(t, http.StatusOK, w3.Code)
+	assert.Contains(t, w3.Body.String(), "revoked")
+}
+
+// TestListSecretACLs_WithACLs returns 200 with ACL data when grants exist.
+func TestListSecretACLs_WithACLs(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "list-with-acls")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	// Grant first.
+	grantBody, _ := json.Marshal(map[string]interface{}{"user_id": 123, "permissions": []string{"secrets.read"}})
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), bytes.NewReader(grantBody)),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.GrantSecretACL(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// List.
+	req2 := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), nil),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	w2 := httptest.NewRecorder()
+	h.ListSecretACLs(w2, req2)
+	assert.Equal(t, http.StatusOK, w2.Code)
+	body := w2.Body.String()
+	assert.Contains(t, body, "success")
+	assert.Contains(t, body, "123")
+}
+
+// TestAclErrorStatus_Forbidden verifies the 403 branch of aclErrorStatus.
+func TestAclErrorStatus_Forbidden(t *testing.T) {
+	code := aclErrorStatus("not authorized to perform this action")
+	assert.Equal(t, http.StatusForbidden, code)
+}
+
+// TestAclErrorStatus_NotFound verifies the 404 branch of aclErrorStatus.
+func TestAclErrorStatus_NotFound(t *testing.T) {
+	code := aclErrorStatus("record not found")
+	assert.Equal(t, http.StatusNotFound, code)
+}
+
+// TestAclErrorStatus_BadRequest verifies the 400 branch of aclErrorStatus.
+func TestAclErrorStatus_BadRequest(t *testing.T) {
+	code := aclErrorStatus("invalid permission value provided")
+	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+// TestAclErrorStatus_InternalServerError verifies the 500 default branch of aclErrorStatus.
+func TestAclErrorStatus_InternalServerError(t *testing.T) {
+	code := aclErrorStatus("database connection failed")
+	assert.Equal(t, http.StatusInternalServerError, code)
+}
+
 // TestGrantRevokeACL_RoundTrip verifies the full grant → list → revoke → list cycle.
 func TestGrantRevokeACL_RoundTrip(t *testing.T) {
 	t.Parallel()
