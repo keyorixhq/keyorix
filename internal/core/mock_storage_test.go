@@ -2096,6 +2096,7 @@ func (m *MockStorage) ListExpiringUserRoles(ctx context.Context, cutoff time.Tim
 	return args.Get(0).([]models.UserRole), args.Error(1)
 }
 
+
 // Per-secret / per-folder ACL stubs (ADR-058).
 func (m *MockStorage) CreateOrUpdateSecretACL(_ context.Context, _ *models.SecretACL) error {
 	return nil
