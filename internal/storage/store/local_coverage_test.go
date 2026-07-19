@@ -34,7 +34,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // newCovStore opens a unique in-memory SQLite and migrates the provided models.
-func newCovStore(t *testing.T, ms ...interface{}) *LocalStorage {
+func newCovStore(t *testing.T, ms ...any) *LocalStorage {
 	t.Helper()
 	dsn := "file:" + t.Name() + "_cov?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -81,7 +81,7 @@ func TestWithSchedulerLock_Cov_ConcurrentSQLite(t *testing.T) {
 
 	const n = 6
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		key := int64(i + 1)
 		go func(k int64) {
@@ -130,7 +130,7 @@ func TestWithAuditCheckpointLock_Cov_SequentialCalls(t *testing.T) {
 	ls := newCovStore(t)
 	ctx := context.Background()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err := ls.WithAuditCheckpointLock(ctx, func() error { return nil })
 		require.NoError(t, err, "iteration %d must not error or deadlock", i)
 	}
@@ -151,7 +151,7 @@ func TestWithAuditCheckpointLock_Cov_MutexSerializesConcurrent(t *testing.T) {
 	)
 	errs := make([]error, n)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
