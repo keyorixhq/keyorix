@@ -27,7 +27,7 @@ type SecretGRPCService struct {
 // Compile-time assertion that the service satisfies the generated interface.
 var _ pb.SecretServiceServer = (*SecretGRPCService)(nil)
 
-const errSecretIDRequired = "secret_id is required"
+const errSecretIDRequired = "secret_id is required" // #nosec G101 -- error message string, not a hardcoded credential
 
 // NewSecretService creates a secret gRPC service backed by the shared core.
 func NewSecretService(coreService *core.KeyorixCore) *SecretGRPCService {
