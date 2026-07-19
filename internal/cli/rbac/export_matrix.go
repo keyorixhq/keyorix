@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -68,11 +69,11 @@ func runExportMatrix(cmd *cobra.Command, args []string) error {
 
 	out := io.Writer(os.Stdout)
 	if exportMatrixOutput != "" {
-		f, err := os.Create(exportMatrixOutput)
+		f, err := os.Create(filepath.Clean(exportMatrixOutput))
 		if err != nil {
 			return fmt.Errorf("failed to open output file: %w", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		out = f
 	}
 
@@ -192,38 +193,46 @@ func writeMatrixEmbedded(out io.Writer, rows []*core.PermissionMatrixRow, format
 
 func writeEmbeddedTable(out io.Writer, rows []*core.PermissionMatrixRow) error {
 	if len(rows) == 0 {
-		fmt.Fprintln(out, "No permission grants found.")
-		return nil
+		_, err := fmt.Fprintln(out, "No permission grants found.")
+		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES")
+	if _, err := fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES"); err != nil {
+		return err
+	}
 	for _, r := range rows {
 		expiresAt := "never"
 		if r.ExpiresAt != nil {
 			expiresAt = r.ExpiresAt.UTC().Format(time.RFC3339)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Username, r.Email, r.RoleName, r.PermissionName,
-			r.Scope, r.ProjectName, expiresAt)
+			r.Scope, r.ProjectName, expiresAt); err != nil {
+			return err
+		}
 	}
 	return tw.Flush()
 }
 
 func writeRemoteTable(out io.Writer, rows []remoteMatrixRow) error {
 	if len(rows) == 0 {
-		fmt.Fprintln(out, "No permission grants found.")
-		return nil
+		_, err := fmt.Fprintln(out, "No permission grants found.")
+		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES")
+	if _, err := fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES"); err != nil {
+		return err
+	}
 	for _, r := range rows {
 		expiresAt := "never"
 		if r.ExpiresAt != nil {
 			expiresAt = r.ExpiresAt.UTC().Format(time.RFC3339)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Username, r.Email, r.RoleName, r.PermissionName,
-			r.Scope, r.ProjectName, expiresAt)
+			r.Scope, r.ProjectName, expiresAt); err != nil {
+			return err
+		}
 	}
 	return tw.Flush()
 }
