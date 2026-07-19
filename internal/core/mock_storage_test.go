@@ -2046,6 +2046,14 @@ func (m *MockStorage) ListSecretACLs(_ context.Context, _ uint) ([]*models.Secre
 	return nil, nil
 }
 
+func (m *MockStorage) ListSecretACLsByUser(ctx context.Context, userID uint) ([]*models.SecretACL, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.SecretACL), args.Error(1)
+}
+
 func (m *MockStorage) DeleteSecretACL(_ context.Context, _ uint) error {
 	return nil
 }

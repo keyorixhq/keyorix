@@ -78,8 +78,9 @@ type SecretListResponse struct {
 	TotalPages int                      `json:"total_pages"`
 
 	// Summary information
-	OwnedCount  int `json:"owned_count"`
-	SharedCount int `json:"shared_count"`
+	OwnedCount      int `json:"owned_count"`
+	SharedCount     int `json:"shared_count"`
+	ACLGrantedCount int `json:"acl_granted_count"` // secrets visible only via per-secret/per-folder ACL grant
 }
 
 // SharingStatus represents the sharing status of a secret

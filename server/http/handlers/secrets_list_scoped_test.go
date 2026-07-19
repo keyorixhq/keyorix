@@ -61,6 +61,7 @@ func freshScopedListFixture(t *testing.T) (*SecretHandler, *gorm.DB) {
 		&models.Project{},
 		&models.Environment{},
 		&models.SecretNode{},
+		&models.SecretACL{},
 		&models.AuditEvent{},
 		&models.SecretVersion{},
 		&models.SecretAccessLog{},

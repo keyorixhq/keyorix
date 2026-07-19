@@ -170,11 +170,12 @@ var remoteUnsupportedAllowlist = map[string]remoteUnsupportedEntry{
 	// only runs server-side and a remote-storage caller never directly invokes
 	// ACL management or the folder-inheritance ancestor walk (the HTTP/gRPC
 	// boundary owns authorization; HasSecretACL/AuthorizeSecret run on the server).
-	"CreateOrUpdateSecretACL": {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-	"ListSecretACLs":          {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-	"GetSecretACL":            {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-	"DeleteSecretACL":         {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-	"GetSecretAncestors":      {statusIntentional, "RBAC Phase 3 — folder-ACL inheritance walk runs server-side; HasSecretACL uses ErrUnsupportedByBackend to skip the ancestor walk on remote callers"},
+	"CreateOrUpdateSecretACL":  {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"ListSecretACLs":           {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"ListSecretACLsByUser":     {statusIntentional, "RBAC Phase 3 — listing ACL-granted secrets for a user runs server-side in ListSecretsWithSharingInfo; the core function calls LocalStorage on the server, not RemoteStorage"},
+	"GetSecretACL":             {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"DeleteSecretACL":          {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+	"GetSecretAncestors":       {statusIntentional, "RBAC Phase 3 — folder-ACL inheritance walk runs server-side; HasSecretACL uses ErrUnsupportedByBackend to skip the ancestor walk on remote callers"},
 }
 
 // remoteUnsupportedCallRe matches the exact, 100%-consistent call pattern every

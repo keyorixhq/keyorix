@@ -337,6 +337,10 @@ type Storage interface {
 	// HasSecretACL (uses GetSecretAncestors to climb the ParentID chain).
 	CreateOrUpdateSecretACL(ctx context.Context, acl *models.SecretACL) error
 	ListSecretACLs(ctx context.Context, secretID uint) ([]*models.SecretACL, error)
+	// ListSecretACLsByUser returns all ACL rows where user_id = userID, across all secrets.
+	// Used by ListSecretsWithSharingInfo to surface secrets the user can access via explicit
+	// per-secret/per-folder grants but does not own and has no ShareRecord for.
+	ListSecretACLsByUser(ctx context.Context, userID uint) ([]*models.SecretACL, error)
 	GetSecretACL(ctx context.Context, secretID, userID uint) (*models.SecretACL, error)
 	DeleteSecretACL(ctx context.Context, id uint) error
 	// GetSecretAncestors returns the ancestor SecretNode IDs for nodeID,

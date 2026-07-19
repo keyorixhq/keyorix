@@ -225,6 +225,8 @@ func TestListSecretsWithSharingInfo(t *testing.T) {
 		Username: "bob",
 	}, nil)
 
+	mockStorage.On("ListSecretACLsByUser", mock.Anything, userID).Return(([]*models.SecretACL)(nil), nil)
+
 	filter := &models.SecretListFilter{
 		Page:     1,
 		PageSize: 10,
@@ -320,6 +322,7 @@ func TestSecretListFiltering(t *testing.T) {
 			ID:       2,
 			Username: "alice",
 		}, nil)
+		mockStorage.On("ListSecretACLsByUser", mock.Anything, userID).Return(([]*models.SecretACL)(nil), nil)
 
 		filter := &models.SecretListFilter{
 			ShowSharedOnly: true,

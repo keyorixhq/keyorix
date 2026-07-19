@@ -142,6 +142,9 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		// #530: the scheduler-lock-proxy end-to-end tests exercise
 		// TryAcquireSchedulerLock/ReleaseSchedulerLock through the real router.
 		&models.SchedulerLockLease{},
+		// SecretACL (RBAC Phase 3): ListSecretsWithSharingInfo now calls
+		// ListSecretACLsByUser on every listing, so the table must exist.
+		&models.SecretACL{},
 	)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the

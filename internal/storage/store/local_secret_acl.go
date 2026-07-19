@@ -35,6 +35,15 @@ func (ls *LocalStorage) ListSecretACLs(ctx context.Context, secretID uint) ([]*m
 	return rows, nil
 }
 
+// ListSecretACLsByUser returns all ACL rows for the given user across all secrets.
+func (ls *LocalStorage) ListSecretACLsByUser(ctx context.Context, userID uint) ([]*models.SecretACL, error) {
+	var rows []*models.SecretACL
+	if err := ls.db.WithContext(ctx).Where("user_id = ?", userID).Order(sqlOrderIDAsc).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}
+
 // GetSecretACL returns the ACL for the given (secret, user) pair, or an error if not found.
 func (ls *LocalStorage) GetSecretACL(ctx context.Context, secretID, userID uint) (*models.SecretACL, error) {
 	var row models.SecretACL
