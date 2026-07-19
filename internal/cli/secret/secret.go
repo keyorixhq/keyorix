@@ -20,4 +20,5 @@ func init() {
 	SecretCmd.AddCommand(versionsCmd)
 	SecretCmd.AddCommand(importCmd)
 	SecretCmd.AddCommand(exportCmd)
+	SecretCmd.AddCommand(folderCmd)
 }
