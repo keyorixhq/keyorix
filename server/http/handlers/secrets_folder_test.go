@@ -44,7 +44,7 @@ var folderTestDBCounter atomic.Int64
 
 // freshFolderFixture builds an isolated named in-memory SQLite DB with a project,
 // environment, one system_admin user, and one folder node ready for use.
-func freshFolderFixture(t *testing.T) (*SecretHandler, *core.KeyorixCore, *models.SecretNode, *gorm.DB) {
+func freshSecretFolderFixture(t *testing.T) (*SecretHandler, *core.KeyorixCore, *models.SecretNode, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	n := folderTestDBCounter.Add(1)
@@ -125,7 +125,7 @@ func withAdminCtxFolder(r *http.Request) *http.Request {
 // TestCreateSecret_WithParentID verifies that POST /api/v1/secrets with a valid
 // parent_id places the new secret inside the folder (ParentID set on the response).
 func TestCreateSecret_WithParentID(t *testing.T) {
-	h, _, folder, _ := freshFolderFixture(t)
+	h, _, folder, _ := freshSecretFolderFixture(t)
 
 	body := map[string]interface{}{
 		"name":           "child-secret",
@@ -156,7 +156,7 @@ func TestCreateSecret_WithParentID(t *testing.T) {
 // TestCreateSecret_NonFolderParentID verifies that POST /api/v1/secrets with a
 // parent_id that points to a real secret (not a folder) is rejected with 400.
 func TestCreateSecret_NonFolderParentID(t *testing.T) {
-	h, cs, _, _ := freshFolderFixture(t)
+	h, cs, _, _ := freshSecretFolderFixture(t)
 
 	// Create a real secret to use as (invalid) parent.
 	realSecret, err := cs.CreateSecret(context.Background(), &core.CreateSecretRequest{
@@ -185,7 +185,7 @@ func TestCreateSecret_NonFolderParentID(t *testing.T) {
 // TestCreateSecret_NonExistentParentID verifies that POST /api/v1/secrets with a
 // parent_id that does not exist is rejected with 400.
 func TestCreateSecret_NonExistentParentID(t *testing.T) {
-	h, _, _, _ := freshFolderFixture(t)
+	h, _, _, _ := freshSecretFolderFixture(t)
 
 	body := map[string]interface{}{
 		"name":           "orphan-secret",
@@ -209,7 +209,7 @@ func TestCreateSecret_NonExistentParentID(t *testing.T) {
 // TestListSecrets_ParentID verifies that GET /api/v1/secrets?parent_id=N returns
 // only the secrets that are direct children of that folder.
 func TestListSecrets_ParentID(t *testing.T) {
-	h, cs, folder, _ := freshFolderFixture(t)
+	h, cs, folder, _ := freshSecretFolderFixture(t)
 
 	// Create a child secret inside the folder.
 	child, err := cs.CreateSecret(context.Background(), &core.CreateSecretRequest{
@@ -243,7 +243,7 @@ func TestListSecrets_ParentID(t *testing.T) {
 // TestListSecrets_FolderOnly verifies that GET /api/v1/secrets?folder_only=true
 // returns only folder nodes (IsSecret=false).
 func TestListSecrets_FolderOnly(t *testing.T) {
-	h, cs, _, _ := freshFolderFixture(t)
+	h, cs, _, _ := freshSecretFolderFixture(t)
 
 	// Create a real secret to confirm it is excluded.
 	_, err := cs.CreateSecret(context.Background(), &core.CreateSecretRequest{
