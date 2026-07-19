@@ -261,6 +261,26 @@ func rotationPlanToProto(p *core.RotationPlan) *pb.RotationPlan {
 	return out
 }
 
+func deploymentRotationPlanToProto(d *core.DeploymentRotationPlan) *pb.DeploymentRotationPlan {
+	out := &pb.DeploymentRotationPlan{
+		ProjectsScanned:  intToI32(d.ProjectsScanned),
+		ProjectsWithWork: intToI32(d.ProjectsWithWork),
+		TotalSecrets:     intToI32(d.TotalSecrets),
+		OverdueCount:     intToI32(d.OverdueCount),
+		DueSoonCount:     intToI32(d.DueSoonCount),
+	}
+	for i := range d.Projects {
+		out.Projects = append(out.Projects, rotationPlanToProto(&d.Projects[i]))
+	}
+	for _, bp := range d.BrokenProjects {
+		out.BrokenProjects = append(out.BrokenProjects, &pb.BrokenRotationProject{
+			ProjectId: intToU32(int(bp.ProjectID)),
+			Error:     bp.Error,
+		})
+	}
+	return out
+}
+
 func rotationOrderToProto(o *core.RotationOrder) *pb.RotationOrder {
 	out := &pb.RotationOrder{ProjectId: intToU32(int(o.ProjectID))}
 	for _, s := range o.Order {

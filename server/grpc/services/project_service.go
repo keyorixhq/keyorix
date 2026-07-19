@@ -120,6 +120,22 @@ func (s *ProjectGRPCService) GetProjectRotationPlan(ctx context.Context, req *pb
 	return rotationPlanToProto(plan), nil
 }
 
+// GetDeploymentRotationPlan returns the install-wide rotation plan (ADR-053).
+func (s *ProjectGRPCService) GetDeploymentRotationPlan(ctx context.Context, _ *emptypb.Empty) (*pb.DeploymentRotationPlan, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGlobal(ctx, s.core, user, permSecretsRead); err != nil {
+		return nil, err
+	}
+	plan, err := s.core.GenerateDeploymentRotationPlan(ctx)
+	if err != nil {
+		return nil, mapProjectError(err)
+	}
+	return deploymentRotationPlanToProto(plan), nil
+}
+
 func (s *ProjectGRPCService) CreateProject(ctx context.Context, req *pb.CreateProjectRequest) (*pb.Project, error) {
 	user, err := requireUser(ctx)
 	if err != nil {

@@ -332,6 +332,23 @@ message RotationOrder {
 
 // --- Automated rotation plan (ADR-053) ---
 
+// BrokenRotationProject names a project whose rotation plan could not be computed.
+message BrokenRotationProject {
+  uint32 project_id = 1;
+  string error = 2;
+}
+
+// DeploymentRotationPlan is the install-wide rotation plan roll-up (ADR-053).
+message DeploymentRotationPlan {
+  int32 projects_scanned = 1;
+  int32 projects_with_work = 2;
+  int32 total_secrets = 3;
+  int32 overdue_count = 4;
+  int32 due_soon_count = 5;
+  repeated RotationPlan projects = 6;
+  repeated BrokenRotationProject broken_projects = 7;
+}
+
 message PlannedRotation {
   uint32 secret_id = 1;
   string secret_name = 2;
@@ -903,6 +920,9 @@ service ProjectService {
   // The project's automated rotation plan (ADR-053): overdue/due-soon secrets
   // batched into dependency-safe waves, prioritised by urgency. Scoped secrets.read.
   rpc GetProjectRotationPlan(GetProjectRequest) returns (RotationPlan);
+
+  // GetDeploymentRotationPlan returns the install-wide rotation plan (ADR-053).
+  rpc GetDeploymentRotationPlan(google.protobuf.Empty) returns (DeploymentRotationPlan);
 
   // List a project's environments.
   rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);

@@ -2580,14 +2580,15 @@ var GroupService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	ProjectService_ListProjects_FullMethodName            = "/keyorix.v1.ProjectService/ListProjects"
-	ProjectService_GetProject_FullMethodName              = "/keyorix.v1.ProjectService/GetProject"
-	ProjectService_CreateProject_FullMethodName           = "/keyorix.v1.ProjectService/CreateProject"
-	ProjectService_UpdateProject_FullMethodName           = "/keyorix.v1.ProjectService/UpdateProject"
-	ProjectService_DeleteProject_FullMethodName           = "/keyorix.v1.ProjectService/DeleteProject"
-	ProjectService_GetProjectRotationOrder_FullMethodName = "/keyorix.v1.ProjectService/GetProjectRotationOrder"
-	ProjectService_GetProjectRotationPlan_FullMethodName  = "/keyorix.v1.ProjectService/GetProjectRotationPlan"
-	ProjectService_ListEnvironments_FullMethodName        = "/keyorix.v1.ProjectService/ListEnvironments"
+	ProjectService_ListProjects_FullMethodName              = "/keyorix.v1.ProjectService/ListProjects"
+	ProjectService_GetProject_FullMethodName                = "/keyorix.v1.ProjectService/GetProject"
+	ProjectService_CreateProject_FullMethodName             = "/keyorix.v1.ProjectService/CreateProject"
+	ProjectService_UpdateProject_FullMethodName             = "/keyorix.v1.ProjectService/UpdateProject"
+	ProjectService_DeleteProject_FullMethodName             = "/keyorix.v1.ProjectService/DeleteProject"
+	ProjectService_GetProjectRotationOrder_FullMethodName   = "/keyorix.v1.ProjectService/GetProjectRotationOrder"
+	ProjectService_GetProjectRotationPlan_FullMethodName    = "/keyorix.v1.ProjectService/GetProjectRotationPlan"
+	ProjectService_GetDeploymentRotationPlan_FullMethodName = "/keyorix.v1.ProjectService/GetDeploymentRotationPlan"
+	ProjectService_ListEnvironments_FullMethodName          = "/keyorix.v1.ProjectService/ListEnvironments"
 )
 
 // ProjectServiceClient is the client API for ProjectService service.
@@ -2614,6 +2615,8 @@ type ProjectServiceClient interface {
 	// The project's automated rotation plan (ADR-053): overdue/due-soon secrets
 	// batched into dependency-safe waves, prioritised by urgency. Scoped secrets.read.
 	GetProjectRotationPlan(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*RotationPlan, error)
+	// GetDeploymentRotationPlan returns the install-wide rotation plan (ADR-053).
+	GetDeploymentRotationPlan(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DeploymentRotationPlan, error)
 	// List a project's environments.
 	ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error)
 }
@@ -2696,6 +2699,16 @@ func (c *projectServiceClient) GetProjectRotationPlan(ctx context.Context, in *G
 	return out, nil
 }
 
+func (c *projectServiceClient) GetDeploymentRotationPlan(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DeploymentRotationPlan, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeploymentRotationPlan)
+	err := c.cc.Invoke(ctx, ProjectService_GetDeploymentRotationPlan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *projectServiceClient) ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListEnvironmentsResponse)
@@ -2730,6 +2743,8 @@ type ProjectServiceServer interface {
 	// The project's automated rotation plan (ADR-053): overdue/due-soon secrets
 	// batched into dependency-safe waves, prioritised by urgency. Scoped secrets.read.
 	GetProjectRotationPlan(context.Context, *GetProjectRequest) (*RotationPlan, error)
+	// GetDeploymentRotationPlan returns the install-wide rotation plan (ADR-053).
+	GetDeploymentRotationPlan(context.Context, *emptypb.Empty) (*DeploymentRotationPlan, error)
 	// List a project's environments.
 	ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error)
 	mustEmbedUnimplementedProjectServiceServer()
@@ -2762,6 +2777,9 @@ func (UnimplementedProjectServiceServer) GetProjectRotationOrder(context.Context
 }
 func (UnimplementedProjectServiceServer) GetProjectRotationPlan(context.Context, *GetProjectRequest) (*RotationPlan, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProjectRotationPlan not implemented")
+}
+func (UnimplementedProjectServiceServer) GetDeploymentRotationPlan(context.Context, *emptypb.Empty) (*DeploymentRotationPlan, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDeploymentRotationPlan not implemented")
 }
 func (UnimplementedProjectServiceServer) ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEnvironments not implemented")
@@ -2913,6 +2931,24 @@ func _ProjectService_GetProjectRotationPlan_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProjectService_GetDeploymentRotationPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProjectServiceServer).GetDeploymentRotationPlan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProjectService_GetDeploymentRotationPlan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProjectServiceServer).GetDeploymentRotationPlan(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProjectService_ListEnvironments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListEnvironmentsRequest)
 	if err := dec(in); err != nil {
@@ -2965,6 +3001,10 @@ var ProjectService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetProjectRotationPlan",
 			Handler:    _ProjectService_GetProjectRotationPlan_Handler,
+		},
+		{
+			MethodName: "GetDeploymentRotationPlan",
+			Handler:    _ProjectService_GetDeploymentRotationPlan_Handler,
 		},
 		{
 			MethodName: "ListEnvironments",
