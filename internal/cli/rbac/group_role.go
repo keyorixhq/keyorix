@@ -218,7 +218,7 @@ func runListGroupRoles(cmd *cobra.Command, args []string) error {
 
 func resolveGroupIDRemote(ctx context.Context, rc *common.RemoteClient, nameOrID string) (uint, string, error) {
 	// If the flag value is a plain integer, treat it as a direct ID.
-	if id, err := strconv.ParseUint(nameOrID, 10, 64); err == nil {
+	if id, err := strconv.ParseUint(nameOrID, 10, 32); err == nil {
 		return uint(id), nameOrID, nil
 	}
 
@@ -357,7 +357,7 @@ func runListGroupRolesRemote(ctx context.Context, rc *common.RemoteClient, group
 // the embedded storage. If nameOrID parses as an integer it is used directly;
 // otherwise all groups are listed and matched case-insensitively by name.
 func resolveGroupID(ctx context.Context, st storage.Storage, nameOrID string) (uint, error) {
-	if id, err := strconv.ParseUint(nameOrID, 10, 64); err == nil {
+	if id, err := strconv.ParseUint(nameOrID, 10, 32); err == nil {
 		return uint(id), nil
 	}
 
