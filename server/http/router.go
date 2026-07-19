@@ -463,6 +463,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/extend-expiring", secretHandler.ExtendExpiringSecrets)
 		// Bulk rename toward naming-policy conformance — remediation for name-conformance.
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/bulk-rename", secretHandler.BulkRenameSecrets)
+		// Bulk rotation — trigger rotation for multiple secrets at once (incident response).
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Post("/projects/{id}/secrets/bulk-rotate", secretHandler.BulkRotateSecrets)
 		// Bulk copy also requires secrets.read on the SOURCE environment (resolved from
 		// the envId path param, not attacker-supplied input) — mirroring the single-secret
 		// copy route below, which gates secrets.read on the source in addition to
