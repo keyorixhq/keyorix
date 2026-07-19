@@ -86,6 +86,7 @@ func freshSecretFixtureS13(t *testing.T) (*SecretHandler, *core.KeyorixCore, *mo
 		&models.SystemMetadata{},
 		&models.PasswordHistory{},
 		&models.SecretVersion{},
+		&models.SecretACL{}, &models.SecretAccessSchedule{},
 	))
 
 	// Seed user 1 as system_admin so in-handler authorization passes.

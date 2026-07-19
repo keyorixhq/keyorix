@@ -661,6 +661,21 @@ type SecretACL struct {
 	UpdatedAt   time.Time
 }
 
+// SecretAccessSchedule enforces temporal read-access controls on a secret.
+// A secret with a schedule is readable ONLY during the allowed window.
+// Days uses ISO weekday numbers: 1=Mon, 2=Tue, ..., 7=Sun. "*" = all days.
+type SecretAccessSchedule struct {
+	ID           uint      `gorm:"primarykey" json:"id"`
+	SecretNodeID uint      `gorm:"uniqueIndex;not null" json:"secret_node_id"`
+	// AllowedDays is a comma-separated ISO weekday list, e.g. "1,2,3,4,5" or "*"
+	AllowedDays string    `json:"allowed_days"`
+	StartHour   int       `json:"start_hour"` // 0–23 inclusive
+	EndHour     int       `json:"end_hour"`   // 1–24; EndHour > StartHour
+	Timezone    string    `json:"timezone"`   // IANA, e.g. "UTC" or "America/New_York"
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type SecretVersion struct {
 	ID                 uint `gorm:"primaryKey"`
 	SecretNodeID       uint

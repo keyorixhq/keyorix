@@ -219,6 +219,9 @@ func (c *KeyorixCore) GetSecretWithPermissionCheck(ctx context.Context, id, user
 	if _, err := c.EnforceSecretReadPermission(ctx, id, userID); err != nil {
 		return nil, err
 	}
+	if err := c.checkSecretAccessSchedule(ctx, id); err != nil {
+		return nil, err
+	}
 	return c.GetSecret(ctx, id)
 }
 
@@ -246,6 +249,9 @@ func (c *KeyorixCore) GetSecretByNameWithPermissionCheck(ctx context.Context, na
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 	if _, err := c.EnforceSecretReadPermission(ctx, secret.ID, userID); err != nil {
+		return nil, err
+	}
+	if err := c.checkSecretAccessSchedule(ctx, secret.ID); err != nil {
 		return nil, err
 	}
 	return c.GetSecret(ctx, secret.ID)

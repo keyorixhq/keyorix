@@ -86,6 +86,8 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 		// here so any test exercising a grant path gets a real (empty-by-default)
 		// sod_policies table instead of a "no such table" storage error.
 		&models.SoDPolicy{},
+		// GetSecret now queries secret_access_schedules for temporal-access enforcement.
+		&models.SecretAccessSchedule{},
 	)
 	require.NoError(t, err)
 
