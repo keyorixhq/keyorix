@@ -1747,6 +1747,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
 		// Verify a previously-exported evidence pack against its detached signature.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
+		// Permission baseline attestation — every user's effective permissions (through
+		// roles + group membership) as JSON or CSV for auditor hand-off. Gated on
+		// audit.read: it discloses the full role/permission topology deployment-wide,
+		// same disclosure family as /compliance/evidence.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/permission-baseline", dashboardHandler.GetPermissionBaseline)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/permission-baseline.csv", dashboardHandler.GetPermissionBaselineCSV)
 		// Risk register (ISO A.5.8): list discloses free-text Reference/Justification
 		// (which may itself name a secret) deployment-wide, so reads need audit.read;
 		// create/revoke stay system.write.
