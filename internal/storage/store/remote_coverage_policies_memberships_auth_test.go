@@ -293,7 +293,7 @@ func TestRemoteCov_ListRotationPolicies_NotSuccess(t *testing.T) {
 func TestRemoteCov_GetRotationPolicy_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/rotation-policies/2", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"ID":           2,
 			"Name":         "daily-rotation",
 			"IntervalDays": 1,
@@ -315,7 +315,7 @@ func TestRemoteCov_CreateRotationPolicy_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/rotation-policies", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"ID":           7,
 			"Name":         "weekly",
 			"IntervalDays": 7,
@@ -337,7 +337,7 @@ func TestRemoteCov_CreateRotationPolicy_Success(t *testing.T) {
 func TestRemoteCov_UpdateRotationPolicy_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPut, r.Method)
-		_, _ = w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]any{
 			"ID":           3,
 			"Name":         "monthly",
 			"IntervalDays": 30,
@@ -569,7 +569,7 @@ func TestRemoteCov_TryAcquireSchedulerLock_Success_Acquired(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/scheduler-lock/acquire", r.URL.Path)
-		_, _ = w.Write(apiOK(map[string]interface{}{"acquired": true}))
+		_, _ = w.Write(apiOK(map[string]any{"acquired": true}))
 	}))
 	defer srv.Close()
 
@@ -583,7 +583,7 @@ func TestRemoteCov_TryAcquireSchedulerLock_Success_Acquired(t *testing.T) {
 
 func TestRemoteCov_TryAcquireSchedulerLock_Success_NotAcquired(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(apiOK(map[string]interface{}{"acquired": false}))
+		_, _ = w.Write(apiOK(map[string]any{"acquired": false}))
 	}))
 	defer srv.Close()
 
@@ -600,7 +600,7 @@ func TestRemoteCov_TryAcquireSchedulerLock_Success_NotAcquired(t *testing.T) {
 func TestRemoteCov_WithSchedulerLock_NotAcquired(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Lock is held by someone else — return acquired:false.
-		_, _ = w.Write(apiOK(map[string]interface{}{"acquired": false}))
+		_, _ = w.Write(apiOK(map[string]any{"acquired": false}))
 	}))
 	defer srv.Close()
 
