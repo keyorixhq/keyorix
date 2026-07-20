@@ -145,6 +145,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	hygieneTrendsHandler := handlers.NewHygieneTrendsHandler(coreService)
 	folderHandler := handlers.NewFolderHandler(coreService)
 	versionCommentHandler := handlers.NewSecretVersionCommentHandler(coreService)
+	alertEscalationHandler := handlers.NewAlertEscalationHandler(coreService)
 
 	// Auth endpoints (no authentication middleware). Several of these mint or hand back a
 	// session token (login, refresh, MFA/WebAuthn verify, the SSO/SAML callbacks) or
@@ -330,6 +331,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels/{id}", notificationChannelHandler.Get)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}", notificationChannelHandler.Update)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/notification-channels/{id}", notificationChannelHandler.Delete)
+
+		// Alert escalation policy management — admin-only (system.write).
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/alert-escalation-policies", alertEscalationHandler.Create)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies", alertEscalationHandler.List)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies/{id}", alertEscalationHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/alert-escalation-policies/{id}", alertEscalationHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/alert-escalation-policies/{id}", alertEscalationHandler.Delete)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,
@@ -1831,6 +1839,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Persist today's credential-hygiene counts for trend queries.
 			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
 			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
+			r.Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
 			r.Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
 			r.Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
 		})
