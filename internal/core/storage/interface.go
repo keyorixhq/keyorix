@@ -456,6 +456,9 @@ type Storage interface {
 	// keyed by classification label ("" = unclassified) for the compliance posture.
 	CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error)
 	TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
+	// ListExpiringMachineCredentials returns every non-revoked MachineIdentityCredential
+	// whose ExpiresAt is non-nil and strictly before before. Used by CheckTokenExpiry.
+	ListExpiringMachineCredentials(ctx context.Context, before time.Time) ([]models.MachineIdentityCredential, error)
 
 	// Machine-identity role grants (ADR-030) — mirror the user_roles surface.
 	AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
@@ -1187,6 +1190,10 @@ type Storage interface {
 	// reset so PATs die with the password.
 	RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error)
 	TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
+	// ListExpiringPATs returns every non-revoked PersonalAccessToken whose ExpiresAt
+	// is non-nil and strictly before before (i.e. will expire before that instant).
+	// Used by CheckTokenExpiry to find tokens approaching their deadline.
+	ListExpiringPATs(ctx context.Context, before time.Time) ([]models.PersonalAccessToken, error)
 
 	// Setup Token Management (ADR-028) — single-use, hashed-at-rest credential-delivery tokens.
 	CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error)

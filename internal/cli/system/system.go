@@ -15,4 +15,5 @@ func init() {
 	SystemCmd.AddCommand(validateCmd)
 	SystemCmd.AddCommand(infoCmd)
 	SystemCmd.AddCommand(roleExpiryCheckCmd)
+	SystemCmd.AddCommand(tokenExpiryCheckCmd)
 }
