@@ -32,7 +32,7 @@ func TestGetPermissionMatrix_JSON(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -62,7 +62,7 @@ func TestGetPermissionMatrix_CSV(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, strings.HasPrefix(resp.Header.Get("Content-Type"), "text/csv"),
@@ -95,7 +95,7 @@ func TestGetPermissionMatrix_Unauthenticated(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
@@ -118,7 +118,7 @@ func TestGetPermissionMatrix_ProjectFilter(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 

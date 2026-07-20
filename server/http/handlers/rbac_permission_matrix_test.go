@@ -131,7 +131,7 @@ func TestGetPermissionMatrixHandler_StorageError(t *testing.T) {
 	// Close the underlying SQL connection so all queries fail.
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	sqlDB.Close()
+	_ = sqlDB.Close()
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	h := NewRBACHandler(c)
