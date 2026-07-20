@@ -26,6 +26,8 @@ var tokenCmd = &cobra.Command{
 	Long:  "Issue, list, and revoke bearer tokens for a machine identity (ADR-030).",
 }
 
+const tokenProjectFlagUsage = "Project name (defaults to the active project)"
+
 // ── flag variables ────────────────────────────────────────────────────────────
 
 var (
@@ -272,16 +274,16 @@ func runTokenRevoke(cmd *cobra.Command, args []string) error {
 
 func init() {
 	// issue flags
-	issueCmd.Flags().StringVar(&tokenProjectName, "project", "", "Project name (defaults to the active project)")
+	issueCmd.Flags().StringVar(&tokenProjectName, "project", "", tokenProjectFlagUsage)
 	issueCmd.Flags().StringVar(&tokenIssueName, "name", "", "Token label (required)")
 	issueCmd.Flags().IntVar(&tokenIssueExpiryDays, "expires-in-days", 0, "Token lifetime in days (0 = never expires)")
 	issueCmd.Flags().StringVar(&tokenIssueClass, "classification", "", "Data classification: public | internal | confidential | restricted")
 
 	// list flags
-	listTokensCmd.Flags().StringVar(&tokenProjectName, "project", "", "Project name (defaults to the active project)")
+	listTokensCmd.Flags().StringVar(&tokenProjectName, "project", "", tokenProjectFlagUsage)
 
 	// revoke flags
-	revokeTokenCmd.Flags().StringVar(&tokenProjectName, "project", "", "Project name (defaults to the active project)")
+	revokeTokenCmd.Flags().StringVar(&tokenProjectName, "project", "", tokenProjectFlagUsage)
 	revokeTokenCmd.Flags().BoolVar(&tokenRevokeForce, "force", false, "Skip the confirmation prompt")
 
 	// register subcommands under "machine token"

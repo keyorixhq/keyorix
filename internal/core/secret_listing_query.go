@@ -449,48 +449,7 @@ func (c *KeyorixCore) getACLGrantedSecretsWithSharingInfo(ctx context.Context, u
 	var result []*models.SecretWithSharingInfo
 
 	for _, acl := range acls {
-		// Normalise the first ACL permission to the sharing-style format
-		// ("read"/"write") so SharingIndicators.CanWrite and the common
-		// UserPermission field remain consistent with ShareRecord-based grants.
-		perm := ""
-		if perms := DecodeSecretACLPerms(acl.Permissions); len(perms) > 0 {
-			perm = normaliseACLPerm(perms[0])
-		}
-
-		node, err := c.storage.GetSecret(ctx, acl.SecretID)
-		if err != nil || node == nil {
-			continue
-		}
-
-		// Apply project/environment filter on the grant's target node.
-		if filter.ProjectID != nil && node.ProjectID != *filter.ProjectID {
-			continue
-		}
-		if filter.EnvironmentID != nil && node.EnvironmentID != *filter.EnvironmentID {
-			continue
-		}
-
-		var leaves []*models.SecretNode
-		if node.IsSecret {
-			leaves = []*models.SecretNode{node}
-		} else {
-			// Folder node: collect all descendant leaf secrets (BFS, capped at aclFolderMaxDepth).
-			leaves = c.collectFolderDescendants(ctx, node.ID, filter, 0)
-		}
-
-		for _, leaf := range leaves {
-			if seen[leaf.ID] {
-				continue
-			}
-			seen[leaf.ID] = true
-			result = append(result, &models.SecretWithSharingInfo{
-				SecretNode:        leaf,
-				IsShared:          false,
-				IsOwnedByUser:     false,
-				UserPermission:    perm,
-				SharingIndicators: c.buildSharingIndicators(leaf, nil, false, perm),
-			})
-		}
+		c.applyACLGrant(ctx, acl, filter, seen, &result)
 	}
 
 	return result, nil
@@ -525,6 +484,47 @@ func (c *KeyorixCore) collectFolderDescendants(ctx context.Context, folderID uin
 		}
 	}
 	return result
+}
+
+// applyACLGrant processes a single ACL grant, expanding folder nodes to leaf
+// secrets and appending any un-seen entries to result.
+func (c *KeyorixCore) applyACLGrant(ctx context.Context, acl *models.SecretACL, filter *models.SecretListFilter, seen map[uint]bool, result *[]*models.SecretWithSharingInfo) {
+	perm := ""
+	if perms := DecodeSecretACLPerms(acl.Permissions); len(perms) > 0 {
+		perm = normaliseACLPerm(perms[0])
+	}
+
+	node, err := c.storage.GetSecret(ctx, acl.SecretID)
+	if err != nil || node == nil {
+		return
+	}
+	if filter.ProjectID != nil && node.ProjectID != *filter.ProjectID {
+		return
+	}
+	if filter.EnvironmentID != nil && node.EnvironmentID != *filter.EnvironmentID {
+		return
+	}
+
+	var leaves []*models.SecretNode
+	if node.IsSecret {
+		leaves = []*models.SecretNode{node}
+	} else {
+		leaves = c.collectFolderDescendants(ctx, node.ID, filter, 0)
+	}
+
+	for _, leaf := range leaves {
+		if seen[leaf.ID] {
+			continue
+		}
+		seen[leaf.ID] = true
+		*result = append(*result, &models.SecretWithSharingInfo{
+			SecretNode:        leaf,
+			IsShared:          false,
+			IsOwnedByUser:     false,
+			UserPermission:    perm,
+			SharingIndicators: c.buildSharingIndicators(leaf, nil, false, perm),
+		})
+	}
 }
 
 // normaliseACLPerm maps an RBAC-style ACL permission name ("secrets.read",

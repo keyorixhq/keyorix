@@ -178,32 +178,37 @@ func collectEntries(ctx context.Context) ([]secretEntry, error) {
 		}
 		return entries, nil
 	case importFile != "":
-		clean := filepath.Clean(importFile)
-		if _, err := os.Stat(clean); err != nil {
-			return nil, fmt.Errorf("cannot open file %q: %w", importFile, err)
-		}
-		// Detect encrypted-json envelope and decrypt transparently.
-		if importDecryptWith != "" {
-			fileBytes, err := os.ReadFile(clean) // #nosec G304 — path already cleaned
-			if err != nil {
-				return nil, fmt.Errorf("read file %q: %w", clean, err)
-			}
-			if bytes.HasPrefix(bytes.TrimSpace(fileBytes), []byte(`{"format":"`+encryptedExportFormat)) {
-				plain, err := decryptExport(fileBytes, importDecryptWith)
-				if err != nil {
-					return nil, fmt.Errorf("decrypt %q: %w", clean, err)
-				}
-				return parseJSONBytes(plain)
-			}
-		}
-		entries, err := parseFile(clean, importFormat)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse %s file: %w", importFormat, err)
-		}
-		return entries, nil
+		return collectFromFile()
 	default:
 		return nil, fmt.Errorf("specify a source: --file <path> (with --format) or --source <vault|aws|azure>")
 	}
+}
+
+// collectFromFile handles the --file import path: stat, optional decrypt, then parse.
+func collectFromFile() ([]secretEntry, error) {
+	clean := filepath.Clean(importFile)
+	if _, err := os.Stat(clean); err != nil {
+		return nil, fmt.Errorf("cannot open file %q: %w", importFile, err)
+	}
+	// Detect encrypted-json envelope and decrypt transparently.
+	if importDecryptWith != "" {
+		fileBytes, err := os.ReadFile(clean) // #nosec G304 — path already cleaned
+		if err != nil {
+			return nil, fmt.Errorf("read file %q: %w", clean, err)
+		}
+		if bytes.HasPrefix(bytes.TrimSpace(fileBytes), []byte(`{"format":"`+encryptedExportFormat)) {
+			plain, err := decryptExport(fileBytes, importDecryptWith)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt %q: %w", clean, err)
+			}
+			return parseJSONBytes(plain)
+		}
+	}
+	entries, err := parseFile(clean, importFormat)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s file: %w", importFormat, err)
+	}
+	return entries, nil
 }
 
 // ── Name resolution ───────────────────────────────────────────────────────────

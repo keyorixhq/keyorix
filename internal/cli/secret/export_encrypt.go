@@ -112,17 +112,9 @@ func decryptExport(envelopeBytes []byte, privKeyPath string) ([]byte, error) {
 	if block == nil {
 		return nil, fmt.Errorf("no PEM block found in %q", privKeyPath)
 	}
-	priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	priv, err := parsePEMPrivKey(block.Bytes, privKeyPath)
 	if err != nil {
-		key, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err2 != nil {
-			return nil, fmt.Errorf("cannot parse private key (tried PKCS1: %v; PKCS8: %v)", err, err2)
-		}
-		rsaKey, ok := key.(*rsa.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("private key in %q is not an RSA key", privKeyPath)
-		}
-		priv = rsaKey
+		return nil, err
 	}
 
 	encKey, err := base64.StdEncoding.DecodeString(env.EncryptedKey)
@@ -156,4 +148,20 @@ func decryptExport(envelopeBytes []byte, privKeyPath string) ([]byte, error) {
 		return nil, fmt.Errorf("AES-GCM decrypt: %w", err)
 	}
 	return plain, nil
+}
+
+// parsePEMPrivKey parses an RSA private key from DER bytes, trying PKCS1 then PKCS8.
+func parsePEMPrivKey(blockBytes []byte, path string) (*rsa.PrivateKey, error) {
+	if priv, err := x509.ParsePKCS1PrivateKey(blockBytes); err == nil {
+		return priv, nil
+	}
+	key, err := x509.ParsePKCS8PrivateKey(blockBytes)
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse private key in %q (tried PKCS1 and PKCS8): %w", path, err)
+	}
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key in %q is not an RSA key", path)
+	}
+	return rsaKey, nil
 }

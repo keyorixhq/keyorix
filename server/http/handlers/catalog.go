@@ -379,7 +379,7 @@ func (h *CatalogHandler) CloneEnvironment(w http.ResponseWriter, r *http.Request
 		} else if strings.Contains(msg, errNotFound) {
 			status = http.StatusNotFound
 		} else {
-			log.Printf("Error cloning environment %d to %d (project %d): %v", srcEnvID, reqBody.DestinationEnvironmentID, projectID, err)
+			log.Printf("Error cloning environment in project %d: %v", projectID, err)
 			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)

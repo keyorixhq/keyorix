@@ -30,6 +30,7 @@ const (
 	pathIDPermissions = "/{id}/permissions"
 	pathIDRestore = "/{id}/restore"
 	pathIDRoles = "/{id}/roles"
+	pathIDSchedule = "/{id}/schedule"
 	pathInvitations = "/invitations"
 	pathLegalHold = "/legal-hold"
 	pathMetrics = "/metrics"
@@ -554,9 +555,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete("/{id}/acl/{aclId}", secretHandler.RevokeSecretACL)
 
 			// Temporal access schedule: restrict a secret's reads to a time window.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/schedule", secretHandler.GetSecretSchedule)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Put("/{id}/schedule", secretHandler.SetSecretSchedule)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete("/{id}/schedule", secretHandler.DeleteSecretSchedule)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get(pathIDSchedule, secretHandler.GetSecretSchedule)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Put(pathIDSchedule, secretHandler.SetSecretSchedule)
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete(pathIDSchedule, secretHandler.DeleteSecretSchedule)
 
 			// Certificate inspection (ADR-054) — public X.509 metadata, no value/key.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
