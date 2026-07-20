@@ -883,6 +883,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/audit", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission(permAuditRead))
 			r.Get("/logs", auditHandler.GetAuditLogs)
+			r.Get("/search", auditHandler.SearchAuditLogs)
 			r.Get("/export", auditHandler.ExportAuditLogs)
 			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)

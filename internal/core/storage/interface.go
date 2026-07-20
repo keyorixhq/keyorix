@@ -1355,6 +1355,15 @@ type AuditFilter struct {
 	// forward cursor), ignoring Page. Use with the /audit/export endpoint.
 	AfterID   *uint
 	Ascending bool
+
+	// IPAddress filters events by the exact IP address that originated the request.
+	IPAddress *string
+	// ActorUsername filters events by a partial match on the actor's username
+	// (resolved via a LEFT JOIN on the users table). Nil = no username filter.
+	ActorUsername *string
+	// ResourceType filters events by the resource type embedded in the event_type
+	// (the prefix before the first dot, e.g. "secret" from "secret.read").
+	ResourceType *string
 }
 
 // RBACAuditFilter defines filtering options for RBAC audit log queries
