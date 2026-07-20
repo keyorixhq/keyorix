@@ -1194,6 +1194,12 @@ type Storage interface {
 	// ALL projects. The result may omit projects with zero activity and zero secrets.
 	GetProjectUsageStats(ctx context.Context, projectIDs []uint, windowDays int) ([]ProjectUsageStat, error)
 
+	// Secret version comments — free-text annotations on a specific secret version,
+	// providing a human-readable audit trail of why a version was created or changed.
+	CreateSecretVersionComment(ctx context.Context, c *models.SecretVersionComment) error
+	ListSecretVersionComments(ctx context.Context, versionID uint) ([]models.SecretVersionComment, error)
+	DeleteSecretVersionComment(ctx context.Context, id uint) error
+
 }
 
 // SecretFilter defines filtering options for secret queries

@@ -67,5 +67,6 @@ func AllTestModels() []any {
 		&DeploymentStatsSnapshot{},
 		&CompliancePostureSnapshot{},
 		&SecretAccessSchedule{},
+		&SecretVersionComment{},
 	}
 }
