@@ -21,7 +21,7 @@ const NotificationPATExpiry = "pat_expiring_soon"
 
 // NotificationMachineCredExpiry is the in-app notification type for a
 // MachineIdentityCredential approaching its expiry deadline.
-const NotificationMachineCredExpiry = "machine_cred_expiring_soon"
+const NotificationMachineCredExpiry = "machine_cred_expiring_soon" // #nosec G101 -- notification type string, not a credential
 
 // tokenExpiryWarningWindow is the look-ahead for the "expiring soon" warning.
 const tokenExpiryWarningWindow = 7 * 24 * time.Hour
