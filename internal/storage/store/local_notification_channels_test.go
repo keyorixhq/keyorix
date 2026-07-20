@@ -47,6 +47,20 @@ func TestGetNotificationChannelByName_NotFound(t *testing.T) {
 	assert.Nil(t, ch, "GetNotificationChannelByName should return nil, nil for a missing channel")
 }
 
+func TestGetNotificationChannelByName_Found(t *testing.T) {
+	ctx := context.Background()
+	ls := newNotificationChannelTestStore(t)
+
+	orig := &models.NotificationChannel{Name: "find-me", Type: "slack", URL: "https://hooks.slack.com/xyz", Enabled: true}
+	require.NoError(t, ls.CreateNotificationChannel(ctx, orig))
+
+	got, err := ls.GetNotificationChannelByName(ctx, "find-me")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "find-me", got.Name)
+	assert.Equal(t, "slack", got.Type)
+}
+
 func TestUpdateNotificationChannel(t *testing.T) {
 	ctx := context.Background()
 	ls := newNotificationChannelTestStore(t)
@@ -80,4 +94,76 @@ func TestDeleteNotificationChannel(t *testing.T) {
 	channels, err := ls.ListNotificationChannels(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, channels)
+}
+
+// TestGetNotificationChannel_NotFound verifies that the ErrRecordNotFound path
+// returns an error containing "not found" (not the generic retrieval error).
+func TestGetNotificationChannel_NotFound(t *testing.T) {
+	ctx := context.Background()
+	ls := newNotificationChannelTestStore(t)
+
+	_, err := ls.GetNotificationChannel(ctx, 9999)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestUpdateNotificationChannel_NotFound verifies the RowsAffected==0 path when
+// updating a channel that does not exist.
+func TestUpdateNotificationChannel_NotFound(t *testing.T) {
+	ctx := context.Background()
+	ls := newNotificationChannelTestStore(t)
+
+	ghost := &models.NotificationChannel{
+		ID:     9999,
+		Name:   "ghost",
+		Type:   "webhook",
+		URL:    "https://ghost.example.com",
+		Events: "anomaly.detected",
+	}
+	err := ls.UpdateNotificationChannel(ctx, ghost)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestDeleteNotificationChannel_NotFound verifies the RowsAffected==0 path when
+// deleting a channel that does not exist.
+func TestDeleteNotificationChannel_NotFound(t *testing.T) {
+	ctx := context.Background()
+	ls := newNotificationChannelTestStore(t)
+
+	err := ls.DeleteNotificationChannel(ctx, 9999)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestGetNotificationChannelByName_DBError verifies the generic DB error path in
+// GetNotificationChannelByName (non-ErrRecordNotFound).
+func TestGetNotificationChannelByName_DBError(t *testing.T) {
+	ctx := context.Background()
+
+	// Open a DB without the required table to provoke a real DB error.
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	ls := NewLocalStorage(db)
+	// No AutoMigrate — the table doesn't exist, causing a "no such table" error.
+
+	_, err = ls.GetNotificationChannelByName(ctx, "any")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such table")
+}
+
+// TestGetNotificationChannel_DBError verifies the generic (non-ErrRecordNotFound)
+// error branch in GetNotificationChannel.
+func TestGetNotificationChannel_DBError(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	ls := NewLocalStorage(db)
+	// No AutoMigrate — table missing.
+
+	_, err = ls.GetNotificationChannel(ctx, 1)
+	require.Error(t, err)
+	// Should NOT be "not found" — the generic retrieval error wraps the real DB err.
+	assert.NotContains(t, err.Error(), "not found")
 }

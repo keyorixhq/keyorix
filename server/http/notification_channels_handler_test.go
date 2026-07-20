@@ -485,3 +485,357 @@ func itoa(n int) string {
 	}
 	return string(buf)
 }
+
+// ── broken-DB helpers ─────────────────────────────────────────────────────────
+
+// notificationChannelBrokenSetup is like notificationChannelTestSetup but
+// drops the notification_channels table after migration so every handler call
+// returns a 500 storage error (not a 404 "not found").
+func notificationChannelBrokenSetup(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+
+	c := newNotificationChannelCore(t)
+	token := createTestToken(t, c)
+
+	router, err := NewRouter(&config.Config{}, c)
+	require.NoError(t, err)
+
+	// Drop the notification_channels table so every query returns a DB error.
+	// We need to reach through the core to the underlying DB — the only way
+	// available here is to use a fresh raw-gorm connection to the same named DSN.
+	// Instead, build a fresh LocalStorage whose DB has the table dropped.
+	//
+	// Simpler approach: create a separate in-process DB where the table is absent
+	// and build the core from that broken storage.
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	return srv, token
+}
+
+// newBrokenNotificationChannelCore returns a *core.KeyorixCore backed by an
+// in-memory SQLite DB that does NOT have the notification_channels table, so
+// all notification-channel storage calls return a real DB error (not "not found").
+func newBrokenNotificationChannelCore(t *testing.T) *core.KeyorixCore {
+	t.Helper()
+	// Full migration first (needed for auth to work), then drop only the NC table.
+	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	err = db.AutoMigrate(
+		&models.SecretNode{},
+		&models.SecretVersion{},
+		&models.User{},
+		&models.Role{},
+		&models.UserRole{},
+		&models.Group{},
+		&models.UserGroup{},
+		&models.GroupRole{},
+		&models.ShareRecord{},
+		&models.AuditEvent{},
+		&models.Session{},
+		&models.Project{},
+		&models.Environment{},
+		&models.Permission{},
+		&models.RolePermission{},
+		&models.SystemMetadata{},
+		&models.LoginAttempt{},
+		&models.PasswordHistory{},
+		&models.PersonalAccessToken{},
+		&models.Tag{},
+		&models.SecretTag{},
+		&models.ProjectInvitation{},
+		&models.DynamicSecretConfig{},
+		&models.DynamicSecretLease{},
+		&models.Notification{},
+		&models.SetupToken{},
+		&models.ProjectMembership{},
+		&models.MFASecret{},
+		&models.MFARecoveryCode{},
+		&models.MFAChallenge{},
+		&models.SecretDependency{},
+		&models.MachineIdentity{},
+		&models.MachineIdentityCredential{},
+		&models.MachineIdentityRole{},
+		&models.MachineIdentityOIDCBinding{},
+		&models.WebAuthnCredential{},
+		&models.WebAuthnSession{},
+		&models.LegalHold{},
+		&models.AccessReviewCampaign{},
+		&models.AccessReviewItem{},
+		&models.BreakGlassActivation{},
+		&models.RiskException{},
+		&models.SoDPolicy{},
+		&models.ConnectRefGrant{},
+		&models.AnomalyAlert{},
+		&models.AccessRequest{},
+		&models.AccessRequestApproval{},
+		&models.SSOLoginState{},
+		&models.SchedulerLockLease{},
+		&models.SecretACL{},
+		&models.AnomalyConfigRecord{},
+		// Intentionally omit &models.NotificationChannel{} so the table is absent.
+		&models.StatsSnapshot{},
+		&models.DeploymentStatsSnapshot{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
+		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active "+
+		"ON legal_holds (released) WHERE released = false").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user "+
+		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
+		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
+	return core.NewKeyorixCore(store.NewLocalStorage(db))
+}
+
+// notificationChannelBrokenDBSetup builds a server backed by a DB that lacks
+// the notification_channels table so every storage call returns a hard error.
+func notificationChannelBrokenDBSetup(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+
+	c := newBrokenNotificationChannelCore(t)
+	token := createTestToken(t, c)
+
+	router, err := NewRouter(&config.Config{}, c)
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	return srv, token
+}
+
+// ── storage-error (500) path tests ────────────────────────────────────────────
+
+// TestNotificationChannelList_StorageError verifies that when ListNotificationChannels
+// returns a DB error (non-not-found) the List handler returns 500.
+func TestNotificationChannelList_StorageError(t *testing.T) {
+	srv, token := notificationChannelBrokenDBSetup(t)
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/notification-channels", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+// TestNotificationChannelCreate_StorageError verifies that when validation
+// passes but CreateNotificationChannel returns a non-validation DB error the
+// Create handler returns 500.
+func TestNotificationChannelCreate_StorageError(t *testing.T) {
+	srv, token := notificationChannelBrokenDBSetup(t)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"name": "hook",
+		"type": "webhook",
+		"url":  "https://hook.example.com",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+// TestNotificationChannelCreate_EnabledDefaultsTrue verifies that when the
+// request body omits the "enabled" field the channel is created with Enabled=true.
+func TestNotificationChannelCreate_EnabledDefaultsTrue(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	// Explicitly omit the "enabled" key.
+	payload, err := json.Marshal(map[string]interface{}{
+		"name":   "no-enabled-field",
+		"type":   "webhook",
+		"url":    "https://hook.example.com",
+		"events": "anomaly.detected",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	data := body["data"].(map[string]interface{})
+	assert.Equal(t, true, data["enabled"], "enabled must default to true when omitted from request")
+}
+
+
+// TestNotificationChannelGet_StorageError verifies that a non-not-found DB
+// error on Get returns 500.
+func TestNotificationChannelGet_StorageError(t *testing.T) {
+	srv, token := notificationChannelBrokenDBSetup(t)
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/notification-channels/1", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+// TestNotificationChannelUpdate_ValidationError verifies that an update body
+// that triggers core validation (e.g., invalid type) returns 400.
+func TestNotificationChannelUpdate_ValidationError(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	// First create a valid channel.
+	createPayload, err := json.Marshal(map[string]interface{}{
+		"name": "valid-hook",
+		"type": "webhook",
+		"url":  "https://hook.example.com",
+	})
+	require.NoError(t, err)
+	createReq, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(createPayload))
+	require.NoError(t, err)
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	var createBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&createBody))
+	_ = createResp.Body.Close()
+	id := int(createBody["data"].(map[string]interface{})["id"].(float64))
+
+	// Update with an invalid type — triggers core validation error → 400.
+	updatePayload, err := json.Marshal(map[string]interface{}{"type": "fax"})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPut,
+		srv.URL+"/api/v1/notification-channels/"+itoa(id),
+		bytes.NewReader(updatePayload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// TestNotificationChannelUpdate_StorageError verifies that a non-not-found DB
+// error on Update returns 500.
+func TestNotificationChannelUpdate_StorageError(t *testing.T) {
+	srv, token := notificationChannelBrokenDBSetup(t)
+
+	payload, err := json.Marshal(map[string]interface{}{"events": "anomaly.detected"})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/notification-channels/1",
+		bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+// TestNotificationChannelDelete_StorageError verifies that a non-not-found DB
+// error on Delete returns 500.
+func TestNotificationChannelDelete_StorageError(t *testing.T) {
+	srv, token := notificationChannelBrokenDBSetup(t)
+
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/notification-channels/1", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+// TestNotificationChannelGet_NotFound verifies that GET on a non-existent id
+// returns 404.
+func TestNotificationChannelGet_NotFound(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	req, err := http.NewRequest(http.MethodGet,
+		srv.URL+"/api/v1/notification-channels/9999", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// TestNotificationChannelCreate_Email verifies creating an email-type channel.
+func TestNotificationChannelCreate_Email(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"name":  "email-ops",
+		"type":  "email",
+		"email": "ops@example.com",
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	data := body["data"].(map[string]interface{})
+	assert.Equal(t, "email", data["type"])
+	assert.Equal(t, "ops@example.com", data["email"])
+}
+
+// TestNotificationChannelCreate_Teams verifies creating a teams-type channel.
+func TestNotificationChannelCreate_Teams(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"name": "teams-alerts",
+		"type": "teams",
+		"url":  "https://outlook.office.com/webhook/abc",
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+}

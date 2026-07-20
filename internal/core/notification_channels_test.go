@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -63,10 +64,10 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 	ctx := context.Background()
 
 	created := &models.NotificationChannel{
-		ID:    1,
-		Name:  "webhook-siem",
-		Type:  "webhook",
-		URL:   "https://siem.example.com/hook",
+		ID:     1,
+		Name:   "webhook-siem",
+		Type:   "webhook",
+		URL:    "https://siem.example.com/hook",
 		Events: "anomaly.detected,secret.expiring",
 	}
 
@@ -79,9 +80,9 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 	})
 
 	result, err := c.CreateNotificationChannel(ctx, &models.NotificationChannel{
-		Name:  "webhook-siem",
-		Type:  "webhook",
-		URL:   "https://siem.example.com/hook",
+		Name:   "webhook-siem",
+		Type:   "webhook",
+		URL:    "https://siem.example.com/hook",
 		Events: "anomaly.detected,secret.expiring",
 	}, "admin")
 	require.NoError(t, err)
@@ -117,4 +118,132 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 	require.NoError(t, c.DeleteNotificationChannel(ctx, 1))
 
 	store.AssertExpectations(t)
+}
+
+// TestCreateNotificationChannel_StorageError covers the branch where validation
+// passes but the DB write returns an error.
+func TestCreateNotificationChannel_StorageError(t *testing.T) {
+	st := new(MockStorage)
+	c := NewKeyorixCore(st)
+	ctx := context.Background()
+
+	st.On("CreateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).
+		Return(fmt.Errorf("db: connection refused"))
+
+	ch := &models.NotificationChannel{Name: "hook", Type: "webhook", URL: "https://hook.example.com"}
+	_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection refused")
+	st.AssertExpectations(t)
+}
+
+// TestUpdateNotificationChannel_GetError covers the branch where the initial
+// fetch of the channel returns an error.
+func TestUpdateNotificationChannel_GetError(t *testing.T) {
+	st := new(MockStorage)
+	c := NewKeyorixCore(st)
+	ctx := context.Background()
+
+	st.On("GetNotificationChannel", ctx, uint(99)).
+		Return(nil, fmt.Errorf("record not found"))
+
+	_, err := c.UpdateNotificationChannel(ctx, 99, map[string]interface{}{"events": "secret.rotated"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	st.AssertExpectations(t)
+}
+
+// TestUpdateNotificationChannel_UpdateStorageError covers the branch where the
+// DB write for the update itself fails.
+func TestUpdateNotificationChannel_UpdateStorageError(t *testing.T) {
+	st := new(MockStorage)
+	c := NewKeyorixCore(st)
+	ctx := context.Background()
+
+	existing := &models.NotificationChannel{
+		ID:   2,
+		Name: "hook",
+		Type: "webhook",
+		URL:  "https://hook.example.com",
+	}
+	st.On("GetNotificationChannel", ctx, uint(2)).Return(existing, nil)
+	st.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).
+		Return(fmt.Errorf("db: disk full"))
+
+	_, err := c.UpdateNotificationChannel(ctx, 2, map[string]interface{}{"events": "secret.rotated"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disk full")
+	st.AssertExpectations(t)
+}
+
+// TestValidateNotificationChannel_TeamsRequiresURL explicitly exercises the
+// "teams" case in the URL-required switch.
+func TestValidateNotificationChannel_TeamsRequiresURL(t *testing.T) {
+	st := new(MockStorage)
+	c := NewKeyorixCore(st)
+	ctx := context.Background()
+
+	ch := &models.NotificationChannel{Name: "teams-ch", Type: "teams", URL: ""}
+	_, err := c.CreateNotificationChannel(ctx, ch, "admin")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "URL is required")
+	assert.Contains(t, err.Error(), "teams")
+}
+
+// TestUpdateNotificationChannel_AllFieldUpdates exercises all field branches
+// in UpdateNotificationChannel (name, type, url, email, events, enabled).
+func TestUpdateNotificationChannel_AllFieldUpdates(t *testing.T) {
+	st := new(MockStorage)
+	c := NewKeyorixCore(st)
+	ctx := context.Background()
+
+	existing := &models.NotificationChannel{
+		ID:    3,
+		Name:  "old-name",
+		Type:  "webhook",
+		URL:   "https://old.example.com",
+		Email: "",
+	}
+	st.On("GetNotificationChannel", ctx, uint(3)).Return(existing, nil)
+	st.On("UpdateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).Return(nil)
+
+	updated, err := c.UpdateNotificationChannel(ctx, 3, map[string]interface{}{
+		"name":    "new-name",
+		"type":    "webhook",
+		"url":     "https://new.example.com",
+		"email":   "ops@example.com",
+		"events":  "secret.expiring",
+		"enabled": true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "new-name", updated.Name)
+	assert.Equal(t, "https://new.example.com", updated.URL)
+	assert.Equal(t, "ops@example.com", updated.Email)
+	assert.Equal(t, "secret.expiring", updated.Events)
+	assert.True(t, updated.Enabled)
+	st.AssertExpectations(t)
+}
+
+// TestUpdateNotificationChannel_ValidationFails exercises the case where an
+// update causes validation to fail (e.g., clearing the URL of a webhook type).
+func TestUpdateNotificationChannel_ValidationFails(t *testing.T) {
+	st := new(MockStorage)
+	c := NewKeyorixCore(st)
+	ctx := context.Background()
+
+	existing := &models.NotificationChannel{
+		ID:   4,
+		Name: "hook",
+		Type: "webhook",
+		URL:  "https://hook.example.com",
+	}
+	st.On("GetNotificationChannel", ctx, uint(4)).Return(existing, nil)
+
+	// Clearing the URL of a webhook should fail validation.
+	_, err := c.UpdateNotificationChannel(ctx, 4, map[string]interface{}{
+		"url": "",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "URL is required")
+	st.AssertExpectations(t)
 }

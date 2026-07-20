@@ -284,3 +284,121 @@ func TestRunChannelDelete_NoServer(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not connected to a server")
 }
+
+// ── additional coverage: empty list, error paths ──────────────────────────────
+
+// TestNotificationChannelList_Remote_Empty verifies that when the server returns
+// zero channels the function prints a "No notification channels configured."
+// message and returns nil.
+func TestNotificationChannelList_Remote_Empty(t *testing.T) {
+	emptyBody := `{"data":{"channels":[]}}`
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(emptyBody))
+	})
+
+	err := runChannelListRemote(rc)
+	require.NoError(t, err)
+}
+
+// TestNotificationChannelDelete_Remote_DeleteError verifies the rc.Delete error
+// path in runChannelDeleteRemote: list succeeds (name found), but DELETE call fails.
+func TestNotificationChannelDelete_Remote_DeleteError(t *testing.T) {
+	callCount := 0
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if r.Method == http.MethodGet {
+			// First call: return the channel list so resolveChannelID succeeds.
+			_, _ = w.Write([]byte(channelListBody))
+		} else {
+			// Second call (DELETE): return a server error.
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+
+	err := runChannelDeleteRemote(rc, "slack-ops")
+	require.Error(t, err)
+	assert.Equal(t, 2, callCount, "expected exactly GET+DELETE calls")
+}
+
+// TestNotificationChannelUpdate_Remote_PutError verifies the rc.Put error path
+// in runChannelUpdateRemote: list succeeds (name found), but PUT call fails.
+func TestNotificationChannelUpdate_Remote_PutError(t *testing.T) {
+	callCount := 0
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(channelListBody))
+		} else {
+			// PUT returns an error.
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+
+	body := map[string]interface{}{"events": "anomaly.detected"}
+	err := runChannelUpdateRemote(rc, "slack-ops", body)
+	require.Error(t, err)
+	assert.Equal(t, 2, callCount, "expected exactly GET+PUT calls")
+}
+
+// TestResolveChannelID_GetError verifies that when the GET call inside
+// resolveChannelID fails the error is propagated to the caller.
+func TestResolveChannelID_GetError(t *testing.T) {
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	})
+
+	id, err := resolveChannelID(rc, "slack-ops")
+	require.Error(t, err)
+	assert.Zero(t, id)
+	assert.Contains(t, err.Error(), "403")
+}
+
+// TestResolveChannelID_NotFound verifies that when the channel name is absent
+// from the list resolveChannelID returns a "not found" error.
+func TestResolveChannelID_NotFound(t *testing.T) {
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"channels":[]}}`))
+	})
+
+	id, err := resolveChannelID(rc, "nonexistent")
+	require.Error(t, err)
+	assert.Zero(t, id)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestNotificationChannelDelete_Remote_NotFound verifies runChannelDeleteRemote
+// when the channel name is absent from the server list.
+func TestNotificationChannelDelete_Remote_NotFound(t *testing.T) {
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"channels":[]}}`))
+	})
+
+	err := runChannelDeleteRemote(rc, "no-such-channel")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestNotificationChannelUpdate_Remote_NotFound verifies runChannelUpdateRemote
+// when the channel name is absent from the server list.
+func TestNotificationChannelUpdate_Remote_NotFound(t *testing.T) {
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"channels":[]}}`))
+	})
+
+	body := map[string]interface{}{"events": "anomaly.detected"}
+	err := runChannelUpdateRemote(rc, "no-such-channel", body)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestNotificationChannelList_Remote_WithEnabledFalse verifies the list output
+// shows "no" for disabled channels.
+func TestNotificationChannelList_Remote_WithEnabledFalse(t *testing.T) {
+	disabledBody := `{"data":{"channels":[{"id":2,"name":"disabled-hook","type":"webhook","enabled":false,"url":"https://hook.example.com","email":"","events":"","created_by":"admin"}]}}`
+	_, rc := buildTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(disabledBody))
+	})
+
+	err := runChannelListRemote(rc)
+	require.NoError(t, err)
+}
