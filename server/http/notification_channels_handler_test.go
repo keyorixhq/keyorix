@@ -488,32 +488,6 @@ func itoa(n int) string {
 
 // ── broken-DB helpers ─────────────────────────────────────────────────────────
 
-// notificationChannelBrokenSetup is like notificationChannelTestSetup but
-// drops the notification_channels table after migration so every handler call
-// returns a 500 storage error (not a 404 "not found").
-func notificationChannelBrokenSetup(t *testing.T) (*httptest.Server, string) {
-	t.Helper()
-	require.NoError(t, i18n.InitializeForTesting())
-	t.Cleanup(i18n.ResetForTesting)
-
-	c := newNotificationChannelCore(t)
-	token := createTestToken(t, c)
-
-	router, err := NewRouter(&config.Config{}, c)
-	require.NoError(t, err)
-
-	// Drop the notification_channels table so every query returns a DB error.
-	// We need to reach through the core to the underlying DB — the only way
-	// available here is to use a fresh raw-gorm connection to the same named DSN.
-	// Instead, build a fresh LocalStorage whose DB has the table dropped.
-	//
-	// Simpler approach: create a separate in-process DB where the table is absent
-	// and build the core from that broken storage.
-	srv := httptest.NewServer(router)
-	t.Cleanup(srv.Close)
-	return srv, token
-}
-
 // newBrokenNotificationChannelCore returns a *core.KeyorixCore backed by an
 // in-memory SQLite DB that does NOT have the notification_channels table, so
 // all notification-channel storage calls return a real DB error (not "not found").
