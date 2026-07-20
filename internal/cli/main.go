@@ -22,6 +22,7 @@ import (
 	licensecli "github.com/keyorixhq/keyorix/internal/cli/license"
 	"github.com/keyorixhq/keyorix/internal/cli/machine"
 	"github.com/keyorixhq/keyorix/internal/cli/migrate"
+	"github.com/keyorixhq/keyorix/internal/cli/notification"
 	"github.com/keyorixhq/keyorix/internal/cli/pat"
 	"github.com/keyorixhq/keyorix/internal/cli/project"
 	"github.com/keyorixhq/keyorix/internal/cli/rbac"
@@ -86,6 +87,7 @@ func init() {
 	rootCmd.AddCommand(bundlecli.BundleCmd)
 	rootCmd.AddCommand(licensecli.LicenseCmd)
 	rootCmd.AddCommand(usage.UsageCmd)
+	rootCmd.AddCommand(notification.NotificationCmd)
 }
 
 // bootstrapI18n initializes i18n with the user's actual configured locale

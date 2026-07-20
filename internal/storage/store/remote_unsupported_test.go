@@ -122,3 +122,41 @@ func TestRemoteStorage_RemovePermissionFromRole(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, rs.RemovePermissionFromRole(context.Background(), 2, 8))
 }
+
+// TestRemoteStorage_HygieneCountsUnsupported verifies that all five
+// credential-hygiene trend functions return ErrRemoteUnsupported on RemoteStorage
+// (they run server-side only — see remote_hygiene_counts.go).
+func TestRemoteStorage_HygieneCountsUnsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("https://unused.example"))
+	require.NoError(t, err)
+	ctx := context.Background()
+	threshold := time.Now()
+
+	calls := map[string]func() error{
+		"SaveHygieneTrendSnapshot": func() error {
+			return rs.SaveHygieneTrendSnapshot(ctx, &models.HygieneTrendSnapshot{})
+		},
+		"ListHygieneTrendSnapshots": func() error {
+			_, e := rs.ListHygieneTrendSnapshots(ctx, 30)
+			return e
+		},
+		"CountStalePATs": func() error {
+			_, e := rs.CountStalePATs(ctx, threshold)
+			return e
+		},
+		"CountExpiredPATs": func() error {
+			_, e := rs.CountExpiredPATs(ctx)
+			return e
+		},
+		"CountStaleMachineCredentials": func() error {
+			_, e := rs.CountStaleMachineCredentials(ctx, threshold)
+			return e
+		},
+	}
+	for name, call := range calls {
+		err := call()
+		require.Error(t, err, "%s should error", name)
+		assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+			"%s should wrap ErrRemoteUnsupported, got %v", name, err)
+	}
+}

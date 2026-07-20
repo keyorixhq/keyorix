@@ -1061,6 +1061,20 @@ type DeploymentStatsSnapshot struct {
 	CreatedAt      time.Time
 }
 
+// HygieneTrendSnapshot captures one day's credential-hygiene counts for
+// per-day trend queries (stale PATs, expired PATs, stale machine credentials).
+// One row per UTC calendar day (SnapshotDate is truncated to midnight).
+type HygieneTrendSnapshot struct {
+	ID            uint      `gorm:"primarykey"`
+	StalePATs     int       `json:"stale_pats"`     // non-revoked, active PATs unused > 30 days
+	ExpiredPATs   int       `json:"expired_pats"`   // non-revoked PATs where ExpiresAt < now
+	StaleMachines int       `json:"stale_machines"` // machine identities with no credential used in 30 days
+	TotalPATs     int       `json:"total_pats"`
+	TotalMachines int       `json:"total_machines"`
+	SnapshotDate  time.Time `gorm:"uniqueIndex" json:"snapshot_date"` // UTC midnight
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 // CompliancePostureSnapshot captures daily deployment compliance posture counts
 // for week-over-week trend computation.
 type CompliancePostureSnapshot struct {
@@ -1300,6 +1314,25 @@ type MachineIdentityOIDCBinding struct {
 // used in the migration guard and the GetMachineByOIDCSubject join.
 func (MachineIdentityOIDCBinding) TableName() string { return "machine_identity_oidc_bindings" }
 
+// NotificationChannel is a runtime-managed outbound notification destination.
+// Channel types: "webhook", "slack", "teams", "email".
+type NotificationChannel struct {
+	ID      uint   `gorm:"primarykey" json:"id"`
+	Name    string `gorm:"uniqueIndex;not null" json:"name"`
+	Type    string `gorm:"not null" json:"type"` // webhook|slack|teams|email
+	Enabled bool   `gorm:"default:true" json:"enabled"`
+	// URL is the webhook endpoint (for webhook/slack/teams types)
+	URL string `json:"url,omitempty"`
+	// Email is the recipient address (for email type)
+	Email string `json:"email,omitempty"`
+	// Events is a comma-separated list of event types this channel receives
+	// e.g. "secret.rotated,anomaly.detected,secret.expiring"
+	Events    string    `json:"events"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CreatedBy string    `json:"created_by"`
+}
+
 // ProjectMembership tracks the onboarding lifecycle of a user into a project
 // (ADR-022), separate from the actual role grant (user_roles). It carries a
 // 5-state machine: invited → identity_verified → provisioned → active, with
@@ -1325,4 +1358,16 @@ type ProjectMembership struct {
 	ActivatedAt *time.Time
 	RevokedAt   *time.Time
 	UpdatedAt   time.Time
+}
+
+// SecretVersionComment is a free-text annotation on a specific secret version,
+// providing a human-readable audit trail of why a version was created or changed.
+type SecretVersionComment struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	VersionID uint      `gorm:"not null;index" json:"version_id"`
+	SecretID  uint      `gorm:"not null;index" json:"secret_id"`
+	UserID    uint      `gorm:"not null" json:"user_id"`
+	Username  string    `gorm:"not null" json:"username"`
+	Comment   string    `gorm:"not null" json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
 }

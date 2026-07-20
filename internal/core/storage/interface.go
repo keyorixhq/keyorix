@@ -824,6 +824,10 @@ type Storage interface {
 	// including scoped (project/environment) and global (project_id=0) grants.
 	// Includes time-bound (JIT) grants; callers filter by ExpiresAt if needed.
 	ListAllUserRoleGrants(ctx context.Context) ([]*models.UserRole, error)
+	// ListExpiringUserRoles returns every UserRole whose ExpiresAt is non-nil and
+	// before the given cutoff (i.e. expiring or already expired). Used by
+	// CheckRoleExpiry to find grants approaching their deadline.
+	ListExpiringUserRoles(ctx context.Context, before time.Time) ([]models.UserRole, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	// IsProjectMember reports whether the user holds a LIVE role grant scoped to the
@@ -905,6 +909,28 @@ type Storage interface {
 	// calendar day), to avoid same-day self-comparison.
 	// Returns nil, nil when no prior snapshot exists.
 	GetPreviousCompliancePostureSnapshot(ctx context.Context, before time.Time) (*models.CompliancePostureSnapshot, error)
+
+	// Credential Hygiene Trend Snapshots — daily counts of stale/expired PATs and
+	// stale machine credentials for per-day trend queries.
+	//
+	// SaveHygieneTrendSnapshot upserts a snapshot for the given UTC calendar day
+	// (first write creates; same-day re-run overwrites in place). Used by
+	// RecordHygieneTrendPoint and the daily hygiene scheduler.
+	SaveHygieneTrendSnapshot(ctx context.Context, snap *models.HygieneTrendSnapshot) error
+	// ListHygieneTrendSnapshots returns up to `days` snapshots ordered by
+	// snapshot_date DESC (newest first). Used by GetHygieneTrends.
+	ListHygieneTrendSnapshots(ctx context.Context, days int) ([]*models.HygieneTrendSnapshot, error)
+	// CountStalePATs returns the count of non-revoked PersonalAccessTokens where
+	// ExpiresAt IS NULL OR ExpiresAt > now (active), AND
+	// (LastUsedAt IS NULL OR LastUsedAt < threshold) — stale but not expired.
+	CountStalePATs(ctx context.Context, threshold time.Time) (int, error)
+	// CountExpiredPATs returns the count of non-revoked PersonalAccessTokens where
+	// ExpiresAt IS NOT NULL AND ExpiresAt < now (expired but never revoked).
+	CountExpiredPATs(ctx context.Context) (int, error)
+	// CountStaleMachineCredentials returns the count of distinct machine identities
+	// (active state) where all their credentials are either never used or were
+	// last used before threshold (i.e. the machine identity is "stale").
+	CountStaleMachineCredentials(ctx context.Context, threshold time.Time) (int, error)
 
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
@@ -1189,6 +1215,22 @@ type Storage interface {
 	// over the past windowDays days. Passing nil for projectIDs returns stats for
 	// ALL projects. The result may omit projects with zero activity and zero secrets.
 	GetProjectUsageStats(ctx context.Context, projectIDs []uint, windowDays int) ([]ProjectUsageStat, error)
+
+	// Secret version comments — free-text annotations on a specific secret version,
+	// providing a human-readable audit trail of why a version was created or changed.
+	CreateSecretVersionComment(ctx context.Context, c *models.SecretVersionComment) error
+	ListSecretVersionComments(ctx context.Context, versionID uint) ([]models.SecretVersionComment, error)
+	DeleteSecretVersionComment(ctx context.Context, id uint) error
+
+	// Notification channel management — runtime-managed outbound destinations
+	// (webhook/slack/teams/email). The REST API is the remote surface; these
+	// methods only run server-side via LocalStorage.
+	ListNotificationChannels(ctx context.Context) ([]*models.NotificationChannel, error)
+	GetNotificationChannel(ctx context.Context, id uint) (*models.NotificationChannel, error)
+	GetNotificationChannelByName(ctx context.Context, name string) (*models.NotificationChannel, error)
+	CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
+	UpdateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
+	DeleteNotificationChannel(ctx context.Context, id uint) error
 
 }
 

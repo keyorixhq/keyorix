@@ -1595,7 +1595,16 @@ func (m *MockStorage) GetPermission(_ context.Context, id uint) (*models.Permiss
 	return &models.Permission{ID: id}, nil
 }
 
-func (m *MockStorage) GetRolePermissions(_ context.Context, _ uint) ([]*models.Permission, error) {
+func (m *MockStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetRolePermissions" {
+			args := m.Called(ctx, roleID)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.Permission), args.Error(1)
+		}
+	}
 	return nil, nil
 }
 
@@ -1620,7 +1629,16 @@ func (m *MockStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
 
 // Group-Role assignments
 
-func (m *MockStorage) GetGroupRoles(_ context.Context, _ uint) ([]*models.Role, error) {
+func (m *MockStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetGroupRoles" {
+			args := m.Called(ctx, groupID)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.Role), args.Error(1)
+		}
+	}
 	return nil, nil
 }
 
@@ -2057,9 +2075,27 @@ func (m *MockStorage) ConsumeWebAuthnSession(_ context.Context, _ string, _ time
 	return nil, nil
 }
 
-func (m *MockStorage) ListAllUserRoleGrants(_ context.Context) ([]*models.UserRole, error) {
+func (m *MockStorage) ListAllUserRoleGrants(ctx context.Context) ([]*models.UserRole, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "ListAllUserRoleGrants" {
+			args := m.Called(ctx)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.UserRole), args.Error(1)
+		}
+	}
 	return nil, nil
 }
+
+func (m *MockStorage) ListExpiringUserRoles(ctx context.Context, cutoff time.Time) ([]models.UserRole, error) {
+	args := m.Called(ctx, cutoff)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.UserRole), args.Error(1)
+}
+
 
 // Per-secret / per-folder ACL stubs (ADR-058).
 func (m *MockStorage) CreateOrUpdateSecretACL(_ context.Context, _ *models.SecretACL) error {
