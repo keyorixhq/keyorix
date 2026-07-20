@@ -36,7 +36,7 @@ func createSecret(t *testing.T, srv *httptest.Server, token, name string) uint {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "createSecret: expected 201")
 
 	var response map[string]interface{}
@@ -68,7 +68,7 @@ func TestGetProjectHealth_EmptyProject(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -104,7 +104,7 @@ func TestGetProjectHealth_WithSecrets(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -143,7 +143,7 @@ func TestGetProjectHealth_LimitParam(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -172,7 +172,7 @@ func TestGetProjectHealth_Unauthenticated(t *testing.T) {
 
 	resp, err := http.DefaultClient.Get(srv.URL + "/api/v1/projects/1/health")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
@@ -199,7 +199,7 @@ func TestGetProjectHealth_NotFound(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	// The handler returns 200 with an empty summary for non-existent projects
 	// rather than 404, because it delegates to GetProjectHealthSummary which
