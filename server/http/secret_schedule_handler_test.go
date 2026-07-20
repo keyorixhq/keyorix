@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createTestSecret POSTs to /api/v1/secrets and returns the created secret's ID.
-func createTestSecret(t *testing.T, client *http.Client, baseURL, token string) uint {
+// createScheduleTestSecret POSTs to /api/v1/secrets and returns the created secret's ID.
+func createScheduleTestSecret(t *testing.T, client *http.Client, baseURL, token string) uint {
 	t.Helper()
 	secretData := map[string]interface{}{
 		"name":           "schedule-test-secret",
@@ -36,11 +36,11 @@ func createTestSecret(t *testing.T, client *http.Client, baseURL, token string) 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "createTestSecret: POST /api/v1/secrets must return 201")
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "createScheduleTestSecret: POST /api/v1/secrets must return 201")
 
 	var response map[string]interface{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
-	require.NotNil(t, response["data"], "createTestSecret: response must contain data")
+	require.NotNil(t, response["data"], "createScheduleTestSecret: response must contain data")
 	data := response["data"].(map[string]interface{})
 	return uint(data["ID"].(float64))
 }
@@ -70,7 +70,7 @@ func TestSecretSchedule_SetAndGet(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	srv, client, token := scheduleTestSetup(t)
-	secretID := createTestSecret(t, client, srv.URL, token)
+	secretID := createScheduleTestSecret(t, client, srv.URL, token)
 
 	// PUT schedule
 	body := `{"allowed_days":"1,2,3,4,5","start_hour":9,"end_hour":17,"timezone":"UTC"}`
@@ -107,7 +107,7 @@ func TestSecretSchedule_Delete(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	srv, client, token := scheduleTestSetup(t)
-	secretID := createTestSecret(t, client, srv.URL, token)
+	secretID := createScheduleTestSecret(t, client, srv.URL, token)
 
 	// PUT a schedule first
 	body := `{"allowed_days":"1,2,3,4,5","start_hour":9,"end_hour":17,"timezone":"UTC"}`
@@ -144,7 +144,7 @@ func TestSecretSchedule_InvalidHours(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	srv, client, token := scheduleTestSetup(t)
-	secretID := createTestSecret(t, client, srv.URL, token)
+	secretID := createScheduleTestSecret(t, client, srv.URL, token)
 
 	// end_hour < start_hour must be rejected
 	body := `{"allowed_days":"1,2,3,4,5","start_hour":17,"end_hour":9,"timezone":"UTC"}`
@@ -163,7 +163,7 @@ func TestSecretSchedule_Unauthenticated(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	srv, client, token := scheduleTestSetup(t)
-	secretID := createTestSecret(t, client, srv.URL, token)
+	secretID := createScheduleTestSecret(t, client, srv.URL, token)
 
 	// PUT without Authorization header
 	body := `{"allowed_days":"1,2,3,4,5","start_hour":9,"end_hour":17,"timezone":"UTC"}`
@@ -182,7 +182,7 @@ func TestSecretSchedule_InvalidTimezone(t *testing.T) {
 	defer i18n.ResetForTesting()
 
 	srv, client, token := scheduleTestSetup(t)
-	secretID := createTestSecret(t, client, srv.URL, token)
+	secretID := createScheduleTestSecret(t, client, srv.URL, token)
 
 	// An invalid IANA timezone name must be rejected
 	body := `{"allowed_days":"1,2,3,4,5","start_hour":9,"end_hour":17,"timezone":"Not/AZone"}`
