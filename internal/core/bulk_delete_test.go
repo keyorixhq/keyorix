@@ -159,3 +159,23 @@ func TestBulkDeleteSecrets_VerifyCleanup(t *testing.T) {
 	assert.False(t, liveIDs[id2], "id2 should not appear in ListSecrets after delete")
 	assert.True(t, liveIDs[id3], "id3 should still appear in ListSecrets")
 }
+
+func TestBulkDeleteSecrets_ZeroID(t *testing.T) {
+	c, _ := setupBulkDeleteDB(t)
+	ctx := context.Background()
+
+	// SecretID=0 is explicitly rejected before any storage call.
+	req := BulkDeleteRequest{SecretIDs: []uint{0, 1}}
+	result, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	require.NoError(t, err)
+
+	// ID 0 must appear in Failed with "invalid secret ID"; ID 1 is not found.
+	zeroFailed := false
+	for _, f := range result.Failed {
+		if f.SecretID == 0 {
+			zeroFailed = true
+			assert.Contains(t, f.Error, "invalid")
+		}
+	}
+	assert.True(t, zeroFailed, "ID 0 must be in the failed list")
+}

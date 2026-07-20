@@ -195,3 +195,51 @@ func TestBulkDeleteSecrets_EmptyRequest(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
+func TestBulkDeleteSecrets_BadJSON(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	c := newTestCore(t)
+	token := createTestToken(t, c)
+	router, err := NewRouter(&config.Config{}, c)
+	require.NoError(t, err)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+	client := &http.Client{}
+
+	req, err := http.NewRequest("POST", srv.URL+"/api/v1/projects/1/secrets/bulk-delete", strings.NewReader("not-json"))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestBulkDeleteSecrets_InvalidProjectID(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	c := newTestCore(t)
+	token := createTestToken(t, c)
+	router, err := NewRouter(&config.Config{}, c)
+	require.NoError(t, err)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+	client := &http.Client{}
+
+	// Use an ID that overflows uint32 to trigger the ParseUint error path.
+	req, err := http.NewRequest("POST", srv.URL+"/api/v1/projects/9999999999999999999/secrets/bulk-delete",
+		strings.NewReader(`{"secret_ids":[1]}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
