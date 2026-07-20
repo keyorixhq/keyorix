@@ -1596,11 +1596,16 @@ func (m *MockStorage) GetPermission(_ context.Context, id uint) (*models.Permiss
 }
 
 func (m *MockStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
-	args := m.Called(ctx, roleID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetRolePermissions" {
+			args := m.Called(ctx, roleID)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.Permission), args.Error(1)
+		}
 	}
-	return args.Get(0).([]*models.Permission), args.Error(1)
+	return nil, nil
 }
 
 func (m *MockStorage) RemovePermissionFromRole(_ context.Context, _, _ uint) error {
@@ -1625,11 +1630,16 @@ func (m *MockStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
 // Group-Role assignments
 
 func (m *MockStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {
-	args := m.Called(ctx, groupID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetGroupRoles" {
+			args := m.Called(ctx, groupID)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.Role), args.Error(1)
+		}
 	}
-	return args.Get(0).([]*models.Role), args.Error(1)
+	return nil, nil
 }
 
 func (m *MockStorage) GetGroupRoleGrants(_ context.Context, _ uint) ([]*storage.GroupRoleGrant, error) {
@@ -2066,11 +2076,16 @@ func (m *MockStorage) ConsumeWebAuthnSession(_ context.Context, _ string, _ time
 }
 
 func (m *MockStorage) ListAllUserRoleGrants(ctx context.Context) ([]*models.UserRole, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "ListAllUserRoleGrants" {
+			args := m.Called(ctx)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.UserRole), args.Error(1)
+		}
 	}
-	return args.Get(0).([]*models.UserRole), args.Error(1)
+	return nil, nil
 }
 
 // Per-secret / per-folder ACL stubs (ADR-058).
