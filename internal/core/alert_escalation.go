@@ -98,8 +98,8 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 			}
 			// Dispatch to each channel in this policy.
 			for _, cidStr := range splitChannelIDs(policy.ChannelIDs) {
-				cid, err := strconv.ParseUint(cidStr, 10, 64)
-				if err != nil || cid > uint64(^uint(0)) {
+				cid, err := strconv.ParseUint(cidStr, 10, 32)
+				if err != nil {
 					log.Printf("alert escalation: policy %d: invalid channel ID %q: %v", policy.ID, cidStr, err)
 					continue
 				}
