@@ -1840,6 +1840,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
 			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
 			r.Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
+			r.Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
 			r.Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
 		})
 
