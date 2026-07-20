@@ -44,6 +44,20 @@ var (
 	logActorType string
 	logUntil     string
 	logLimit     int
+
+	// search filters
+	searchActor        string
+	searchUserID       uint
+	searchProjectID    uint
+	searchAction       string
+	searchResourceType string
+	searchResourceID   uint
+	searchIP           string
+	searchSuccess      string
+	searchSince        string
+	searchUntil        string
+	searchLimit        int
+	searchOffset       int
 )
 
 func init() {
@@ -63,7 +77,20 @@ func init() {
 	logsCmd.Flags().StringVar(&logUntil, "until", "", "Only events at/before this time (RFC3339)")
 	logsCmd.Flags().IntVar(&logLimit, "limit", 50, "Max events to show (1–100)")
 
-	AuditCmd.AddCommand(verifyCmd, exportCmd, checkpointCmd, logsCmd)
+	searchCmd.Flags().StringVar(&searchActor, "actor", "", "Partial match on actor username")
+	searchCmd.Flags().UintVar(&searchUserID, "user-id", 0, "Filter by exact actor user ID")
+	searchCmd.Flags().UintVar(&searchProjectID, "project-id", 0, "Filter by project ID")
+	searchCmd.Flags().StringVar(&searchAction, "action", "", "Filter by exact event type (e.g. secret.read)")
+	searchCmd.Flags().StringVar(&searchResourceType, "resource-type", "", "Filter by resource kind (e.g. secret, user, role)")
+	searchCmd.Flags().UintVar(&searchResourceID, "resource-id", 0, "Filter by exact resource ID (secret_node_id)")
+	searchCmd.Flags().StringVar(&searchIP, "ip", "", "Filter by originating IP address")
+	searchCmd.Flags().StringVar(&searchSuccess, "success", "", "Filter by outcome: true or false")
+	searchCmd.Flags().StringVar(&searchSince, "since", "", "Only events at/after this RFC3339 time")
+	searchCmd.Flags().StringVar(&searchUntil, "until", "", "Only events at/before this RFC3339 time")
+	searchCmd.Flags().IntVar(&searchLimit, "limit", 100, "Max results (1–1000)")
+	searchCmd.Flags().IntVar(&searchOffset, "offset", 0, "Pagination offset")
+
+	AuditCmd.AddCommand(verifyCmd, exportCmd, checkpointCmd, logsCmd, searchCmd)
 }
 
 func client() (*common.RemoteClient, error) {
@@ -434,4 +461,114 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s[:n-1] + "…"
+}
+
+// ── audit search ─────────────────────────────────────────────────────────────
+
+// searchEvent mirrors one row of the /audit/search response payload.
+type searchEvent struct {
+	ID          uint   `json:"id"`
+	EventType   string `json:"event_type"`
+	Description string `json:"description"`
+	EventTime   string `json:"event_time"`
+	IPAddress   string `json:"ip_address"`
+	ActorType   string `json:"actor_type"`
+}
+
+type searchPage struct {
+	Events []searchEvent `json:"events"`
+	Total  int64         `json:"total"`
+}
+
+var searchCmd = &cobra.Command{
+	Use:   "search",
+	Short: "Search the audit trail with structured filters",
+	Long: `Search audit events by actor, project, action, resource type, IP address,
+outcome (success/failure), and time range. Returns a table of matching events.
+For bulk consumption use 'keyorix audit export' instead.`,
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error { return runAuditSearch() },
+}
+
+func runAuditSearch() error {
+	q, err := buildAuditSearchQuery()
+	if err != nil {
+		return err
+	}
+	c, err := client()
+	if err != nil {
+		return err
+	}
+	var page searchPage
+	if err := c.Get(context.Background(), "/api/v1/audit/search?"+q.Encode(), &page); err != nil {
+		return err
+	}
+	if len(page.Events) == 0 {
+		fmt.Println("No audit events match.")
+		return nil
+	}
+	printAuditSearchTable(page.Events, page.Total)
+	return nil
+}
+
+func buildAuditSearchQuery() (url.Values, error) {
+	if searchLimit < 1 || searchLimit > 1000 {
+		return nil, fmt.Errorf("--limit must be between 1 and 1000")
+	}
+	for label, v := range map[string]string{"--since": searchSince, "--until": searchUntil} {
+		if v != "" {
+			if _, err := time.Parse(time.RFC3339, v); err != nil {
+				return nil, fmt.Errorf("invalid %s %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", label, v, err)
+			}
+		}
+	}
+	if searchSuccess != "" && searchSuccess != "true" && searchSuccess != "false" {
+		return nil, fmt.Errorf("--success must be true or false")
+	}
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(searchLimit))
+	if searchOffset > 0 {
+		q.Set("offset", strconv.Itoa(searchOffset))
+	}
+	if searchActor != "" {
+		q.Set("actor", searchActor)
+	}
+	if searchUserID > 0 {
+		q.Set("user_id", strconv.FormatUint(uint64(searchUserID), 10))
+	}
+	if searchProjectID > 0 {
+		q.Set("project_id", strconv.FormatUint(uint64(searchProjectID), 10))
+	}
+	if searchAction != "" {
+		q.Set("action", searchAction)
+	}
+	if searchResourceType != "" {
+		q.Set("resource_type", searchResourceType)
+	}
+	if searchResourceID > 0 {
+		q.Set("resource_id", strconv.FormatUint(uint64(searchResourceID), 10))
+	}
+	if searchIP != "" {
+		q.Set("ip", searchIP)
+	}
+	if searchSuccess != "" {
+		q.Set("success", searchSuccess)
+	}
+	if searchSince != "" {
+		q.Set("since", searchSince)
+	}
+	if searchUntil != "" {
+		q.Set("until", searchUntil)
+	}
+	return q, nil
+}
+
+func printAuditSearchTable(events []searchEvent, total int64) {
+	fmt.Printf("%-6s %-20s %-9s %-22s %-15s %s\n", "ID", "TIME", "KIND", "EVENT", "IP", "DESCRIPTION")
+	for _, e := range events {
+		fmt.Printf("%-6d %-20s %-9s %-22s %-15s %s\n",
+			e.ID, shortTime(e.EventTime), truncate(e.ActorType, 9),
+			truncate(e.EventType, 22), truncate(e.IPAddress, 15), e.Description)
+	}
+	fmt.Printf("\nShowing %d of %d total event(s).\n", len(events), total)
 }

@@ -275,6 +275,21 @@ func (ls *LocalStorage) ListUsersInStateBefore(ctx context.Context, state string
 	return users, nil
 }
 
+// ListInactiveUsers returns all live (non-deleted) users who have not logged in
+// since threshold: (last_login_at IS NULL AND created_at < threshold) OR
+// (last_login_at < threshold). Ordered by ID ascending for stable pagination.
+func (ls *LocalStorage) ListInactiveUsers(ctx context.Context, threshold time.Time) ([]*models.User, error) {
+	var users []*models.User
+	err := ls.db.WithContext(ctx).
+		Where("(last_login_at IS NULL AND created_at < ?) OR last_login_at < ?", threshold, threshold).
+		Order("id ASC").
+		Find(&users).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return users, nil
+}
+
 func (ls *LocalStorage) DeleteUser(ctx context.Context, id uint) error {
 	result := ls.db.WithContext(ctx).Delete(&models.User{}, id)
 	if result.Error != nil {

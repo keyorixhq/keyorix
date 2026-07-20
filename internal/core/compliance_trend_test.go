@@ -17,6 +17,12 @@ import (
 // minimal tables GetCompliancePosture needs (Project, to avoid a fatal error on
 // ListProjects) and CompliancePostureSnapshot (for the trend machinery).
 // Additional tables left unmigrated degrade the posture sub-rollups gracefully.
+//
+// c.now is fixed to a date far in the future (2099-01-15) so that snapshots saved
+// during tests are dated in 2099 and are never returned by GetPreviousCompliancePostureSnapshot
+// (which queries WHERE snapshot_date < real-today's midnight). Only explicitly seeded
+// rows in the past qualify as "previous", keeping tests deterministic regardless of
+// the actual calendar date they run on.
 func complianceTrendCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -26,7 +32,7 @@ func complianceTrendCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.CompliancePostureSnapshot{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
-	c.now = func() time.Time { return time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC) }
+	c.now = func() time.Time { return time.Date(2099, 1, 15, 12, 0, 0, 0, time.UTC) }
 	return c, db
 }
 
@@ -115,4 +121,133 @@ func TestGetCompliancePosture_TrendStable(t *testing.T) {
 	assert.Equal(t, 0, *p2.Trend.PassedDelta)
 	require.NotNil(t, p2.Trend.FailedDelta)
 	assert.Equal(t, 0, *p2.Trend.FailedDelta)
+}
+
+// TestComputeComplianceTrend_Regressing verifies the "regressing" branch
+// (passedDelta < 0 || failedDelta > 0) of computeComplianceTrend directly,
+// using a seeded previous snapshot with more passed controls than the current one.
+func TestComputeComplianceTrend_Regressing(t *testing.T) {
+	c, db := complianceTrendCore(t)
+	ctx := context.Background()
+
+	// Seed a previous snapshot with high passed-control counts.
+	prevDate := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&models.CompliancePostureSnapshot{
+		TotalControls:  20,
+		PassedControls: 18, // previous had many passing
+		FailedControls: 2,
+		SnapshotDate:   prevDate,
+	}).Error)
+
+	// Current snapshot has fewer passed controls (regression).
+	current := &models.CompliancePostureSnapshot{
+		TotalControls:  20,
+		PassedControls: 10, // fewer passing now
+		FailedControls: 8,
+		SnapshotDate:   time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC),
+	}
+
+	trend := c.computeComplianceTrend(ctx, current)
+	require.NotNil(t, trend)
+	assert.Equal(t, "regressing", trend.Direction,
+		"fewer controls passing now than in the prior snapshot → regressing")
+	require.NotNil(t, trend.PassedDelta)
+	assert.Less(t, *trend.PassedDelta, 0,
+		"PassedDelta must be negative when fewer controls are passing now")
+	require.NotNil(t, trend.FailedDelta)
+	assert.Greater(t, *trend.FailedDelta, 0,
+		"FailedDelta must be positive when more controls are failing now")
+	require.NotNil(t, trend.PreviousDate)
+	assert.Equal(t, prevDate, *trend.PreviousDate)
+}
+
+// TestComputeComplianceTrend_RegressingOnFailedDelta covers the sub-case where
+// passedDelta is zero but failedDelta > 0 (more controls failing with the same
+// passed count — still a regression).
+func TestComputeComplianceTrend_RegressingOnFailedDelta(t *testing.T) {
+	c, db := complianceTrendCore(t)
+	ctx := context.Background()
+
+	prevDate := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&models.CompliancePostureSnapshot{
+		TotalControls:  20,
+		PassedControls: 10,
+		FailedControls: 2, // previously only 2 failing
+		SnapshotDate:   prevDate,
+	}).Error)
+
+	current := &models.CompliancePostureSnapshot{
+		TotalControls:  20,
+		PassedControls: 10, // same passed count
+		FailedControls: 8,  // more failing now
+		SnapshotDate:   time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC),
+	}
+
+	trend := c.computeComplianceTrend(ctx, current)
+	require.NotNil(t, trend)
+	assert.Equal(t, "regressing", trend.Direction,
+		"same passed count but more controls failing → regressing")
+	require.NotNil(t, trend.PassedDelta)
+	assert.Equal(t, 0, *trend.PassedDelta)
+	require.NotNil(t, trend.FailedDelta)
+	assert.Greater(t, *trend.FailedDelta, 0)
+}
+
+// TestComputeComplianceTrend_ErrorPathReturnsNoData verifies that when
+// GetPreviousCompliancePostureSnapshot returns an error, computeComplianceTrend
+// returns a "no_data" trend rather than propagating the error.
+func TestComputeComplianceTrend_ErrorPathReturnsNoData(t *testing.T) {
+	c, db := complianceTrendCore(t)
+	ctx := context.Background()
+
+	// Build a current snapshot to pass into computeComplianceTrend directly.
+	current := &models.CompliancePostureSnapshot{
+		TotalControls:  10,
+		PassedControls: 7,
+		FailedControls: 3,
+		SnapshotDate:   time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC),
+	}
+
+	// Force the DB to return an error by closing the underlying sql.DB.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	// computeComplianceTrend must fall back to "no_data" on a storage error.
+	trend := c.computeComplianceTrend(ctx, current)
+	require.NotNil(t, trend)
+	assert.Equal(t, "no_data", trend.Direction,
+		"a storage error from GetPreviousCompliancePostureSnapshot must yield no_data, not an error response")
+	assert.Nil(t, trend.PreviousDate)
+	assert.Nil(t, trend.PassedDelta)
+	assert.Nil(t, trend.FailedDelta)
+}
+
+// TestBuildCompliancePostureSnapshot_DegradedControlsCounter verifies that when a
+// CompliancePosture has sub-rollup failures (Degraded=true with matching reasons),
+// EvaluateControls produces ControlStatusUnknown entries and buildCompliancePostureSnapshot
+// correctly increments DegradedControls rather than counting those controls as passed
+// or failed.
+func TestBuildCompliancePostureSnapshot_DegradedControlsCounter(t *testing.T) {
+	// Construct a posture with a degraded identity sub-rollup. "identity" is the
+	// DegradedArea prefix checked by the second-factor control in EvaluateControls,
+	// so that control will evaluate to ControlStatusUnknown.
+	p := &CompliancePosture{
+		Degraded:        true,
+		DegradedReasons: []string{"identity: sql: database is closed"},
+	}
+	snapshotDate := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+
+	snap := buildCompliancePostureSnapshot(p, snapshotDate)
+
+	require.NotNil(t, snap)
+	assert.Equal(t, snapshotDate, snap.SnapshotDate)
+	assert.Greater(t, snap.DegradedControls, 0,
+		"a posture with a degraded sub-rollup must produce at least one DegradedControls entry in the snapshot")
+	assert.Equal(t, len(EvaluateControls(p)), snap.TotalControls,
+		"TotalControls must equal the number of controls EvaluateControls returns")
+
+	// The degraded count must be consistent: total = passed + failed + degraded.
+	assert.Equal(t, snap.TotalControls, snap.PassedControls+snap.FailedControls+snap.DegradedControls,
+		"passed + failed + degraded must sum to total controls")
 }
