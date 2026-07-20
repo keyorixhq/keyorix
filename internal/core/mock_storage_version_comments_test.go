@@ -6,14 +6,20 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-func (m *MockStorage) CreateSecretVersionComment(_ context.Context, c *models.SecretVersionComment) error {
-	return nil
+func (m *MockStorage) CreateSecretVersionComment(ctx context.Context, c *models.SecretVersionComment) error {
+	args := m.Called(ctx, c)
+	return args.Error(0)
 }
 
-func (m *MockStorage) ListSecretVersionComments(_ context.Context, _ uint) ([]models.SecretVersionComment, error) {
-	return nil, nil
+func (m *MockStorage) ListSecretVersionComments(ctx context.Context, versionID uint) ([]models.SecretVersionComment, error) {
+	args := m.Called(ctx, versionID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.SecretVersionComment), args.Error(1)
 }
 
-func (m *MockStorage) DeleteSecretVersionComment(_ context.Context, _ uint) error {
-	return nil
+func (m *MockStorage) DeleteSecretVersionComment(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
 }
