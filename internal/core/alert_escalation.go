@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/bits"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,7 +73,7 @@ func minEscalateDelay(active []models.AlertEscalationPolicy) int {
 func (c *KeyorixCore) dispatchPolicyChannels(ctx context.Context, alert *models.AnomalyAlert, policy *models.AlertEscalationPolicy) bool {
 	sent := false
 	for _, cidStr := range splitChannelIDs(policy.ChannelIDs) {
-		cid, err := strconv.ParseUint(cidStr, 10, 32)
+		cid, err := strconv.ParseUint(cidStr, 10, bits.UintSize)
 		if err != nil {
 			log.Printf("alert escalation: policy %d: invalid channel ID %q: %v", policy.ID, cidStr, err)
 			continue
