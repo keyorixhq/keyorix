@@ -42,8 +42,6 @@ func seedAuditEvent(t *testing.T, db *gorm.DB, e *models.AuditEvent) uint {
 	return e.ID
 }
 
-func strPtrAudit(s string) *string { return &s }
-
 // ── IPAddress filter ──────────────────────────────────────────────────────────
 
 func TestGetAuditLogs_FilterByIPAddress(t *testing.T) {
