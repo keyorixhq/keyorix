@@ -26,7 +26,7 @@ var tokenCmd = &cobra.Command{
 	Long:  "Issue, list, and revoke bearer tokens for a machine identity (ADR-030).",
 }
 
-const tokenProjectFlagUsage = "Project name (defaults to the active project)"
+const tokenProjectFlagUsage = "Project name (defaults to the active project)" // #nosec G101 -- flag usage string, not a credential
 
 // ── flag variables ────────────────────────────────────────────────────────────
 
