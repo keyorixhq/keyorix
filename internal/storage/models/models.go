@@ -1314,6 +1314,24 @@ type MachineIdentityOIDCBinding struct {
 // used in the migration guard and the GetMachineByOIDCSubject join.
 func (MachineIdentityOIDCBinding) TableName() string { return "machine_identity_oidc_bindings" }
 
+// AlertEscalationPolicy defines when and how to escalate unacknowledged anomaly alerts.
+// After EscalateAfterMinutes of no acknowledgement, alerts at or above MinSeverity
+// are dispatched to the NotificationChannels listed in ChannelIDs.
+type AlertEscalationPolicy struct {
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"not null;uniqueIndex" json:"name"`
+	// MinSeverity: only escalate alerts at or above this severity ("low","medium","high","critical")
+	MinSeverity string `json:"min_severity"`
+	// EscalateAfterMinutes: escalate if alert unacknowledged for this many minutes
+	EscalateAfterMinutes int `json:"escalate_after_minutes"`
+	// ChannelIDs: comma-separated NotificationChannel IDs to deliver to
+	ChannelIDs string    `json:"channel_ids"`
+	Enabled    bool      `gorm:"default:true" json:"enabled"`
+	CreatedBy  uint      `json:"created_by"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // NotificationChannel is a runtime-managed outbound notification destination.
 // Channel types: "webhook", "slack", "teams", "email".
 type NotificationChannel struct {
