@@ -1825,6 +1825,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Persist today's credential-hygiene counts for trend queries.
 			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
 			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
+			r.Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted
