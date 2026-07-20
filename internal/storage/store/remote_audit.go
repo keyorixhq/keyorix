@@ -80,6 +80,9 @@ func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	params.addTime("start_time", filter.StartTime)
 	params.addTime("end_time", filter.EndTime)
 	params.addUint("after_id", filter.AfterID)
+	params.addString("ip_address", filter.IPAddress)
+	params.addString("actor_username", filter.ActorUsername)
+	params.addString("resource_type", filter.ResourceType)
 	params.addPage(filter.Page, filter.PageSize)
 	return apiAuditEventsPath + params.String()
 }

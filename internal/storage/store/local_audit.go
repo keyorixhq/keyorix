@@ -314,7 +314,7 @@ func (ls *LocalStorage) AuditRetentionStats(ctx context.Context) (*storage.Audit
 }
 
 // GetAuditLogs retrieves audit events with optional filtering and pagination.
-func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) { // NOSONAR -- cognitive complexity 30, suppress go:S3776
+func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) { // NOSONAR -- cognitive complexity 38, suppress go:S3776
 	query := ls.db.WithContext(ctx).Model(&models.AuditEvent{})
 	page, pageSize := 1, 20
 
@@ -348,6 +348,23 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		}
 		if filter.AfterID != nil {
 			query = query.Where("id > ?", *filter.AfterID)
+		}
+		if filter.IPAddress != nil {
+			query = query.Where("ip_address = ?", *filter.IPAddress)
+		}
+		if filter.ActorUsername != nil {
+			// Resolve username → user_id via a subquery so we stay on the
+			// audit_events table (no JOIN needed for the count query too).
+			query = query.Where(
+				"user_id IN (SELECT id FROM users WHERE username LIKE ? AND deleted_at IS NULL)",
+				"%"+*filter.ActorUsername+"%",
+			)
+		}
+		if filter.ResourceType != nil {
+			// event_type is "resource_type.action" — match rows whose event_type
+			// starts with "<resource_type>." so "secret" catches "secret.read",
+			// "secret.created", etc.
+			query = query.Where("event_type LIKE ?", *filter.ResourceType+".%")
 		}
 		if filter.Page > 1 {
 			page = filter.Page
