@@ -1794,6 +1794,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// same disclosure family as /compliance/evidence.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/permission-baseline", dashboardHandler.GetPermissionBaseline)
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/permission-baseline.csv", dashboardHandler.GetPermissionBaselineCSV)
+		// Permission change audit trail — structured before/after diff of role grants/
+		// revokes from the existing audit event trail. Gated on audit.read: it
+		// discloses the full role-assignment history deployment-wide, same disclosure
+		// family as /compliance/evidence.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/permission-changes", dashboardHandler.GetPermissionChangeAudit)
 		// Risk register (ISO A.5.8): list discloses free-text Reference/Justification
 		// (which may itself name a secret) deployment-wide, so reads need audit.read;
 		// create/revoke stay system.write.
