@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"math/bits"
 	"strconv"
 	"strings"
 	"time"
@@ -98,7 +99,7 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 			}
 			// Dispatch to each channel in this policy.
 			for _, cidStr := range splitChannelIDs(policy.ChannelIDs) {
-				cid, err := strconv.ParseUint(cidStr, 10, 64)
+				cid, err := strconv.ParseUint(cidStr, 10, bits.UintSize)
 				if err != nil {
 					log.Printf("alert escalation: policy %d: invalid channel ID %q: %v", policy.ID, cidStr, err)
 					continue
