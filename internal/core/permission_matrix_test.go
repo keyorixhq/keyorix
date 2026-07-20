@@ -189,3 +189,45 @@ func TestGetPermissionMatrix_MultiplePermissions(t *testing.T) {
 		assert.Equal(t, "project", r.Scope)
 	}
 }
+
+// TestGetPermissionMatrix_EnvScoped covers getEnvName and grantScope("environment").
+func TestGetPermissionMatrix_EnvScoped(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Project{ID: 7, Name: "proj-g"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 3, Name: "staging", ProjectID: 7}).Error)
+	seedMatrixUser(t, db, 20, "eve", "eve@example.com")
+	seedMatrixRole(t, db, 50, "dev")
+	seedMatrixPerm(t, db, 500, "secrets.read", "secrets", "read")
+	seedMatrixRolePerm(t, db, 50, 500)
+	// environment-scoped grant
+	require.NoError(t, db.Create(&models.UserRole{UserID: 20, RoleID: 50, ProjectID: 7, EnvironmentID: 3}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	r := rows[0]
+	assert.Equal(t, "environment", r.Scope)
+	assert.Equal(t, "staging", r.EnvironmentName)
+	assert.Equal(t, "proj-g", r.ProjectName)
+}
+
+// TestGetPermissionMatrix_MissingProject covers getProjectName error path (soft-deleted project).
+func TestGetPermissionMatrix_MissingProject(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	seedMatrixUser(t, db, 30, "frank", "frank@example.com")
+	seedMatrixRole(t, db, 60, "ops")
+	seedMatrixPerm(t, db, 600, "secrets.read", "secrets", "read")
+	seedMatrixRolePerm(t, db, 60, 600)
+	// grant references project 999 which does not exist in the DB (soft-deleted)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 30, RoleID: 60, ProjectID: 999, EnvironmentID: 0}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	// getProjectName falls back to "project-999" placeholder
+	assert.Contains(t, rows[0].ProjectName, "999")
+}

@@ -110,3 +110,35 @@ func TestWriteDotenv_NormalNamesUnaffected(t *testing.T) {
 	assert.Contains(t, out, `DB_PASSWORD="hello world"`)
 	assert.Contains(t, out, "API_KEY=plain")
 }
+
+// TestWriteSecrets_JSONFormat verifies that writeSecrets dispatches to JSON correctly.
+func TestWriteSecrets_JSONFormat(t *testing.T) {
+	var buf bytes.Buffer
+	secrets := []exportedSecret{{ID: 1, Name: "KEY", Value: "val"}}
+	require.NoError(t, writeSecrets(&buf, "json", secrets, "", ""))
+	assert.Contains(t, buf.String(), `"KEY"`)
+}
+
+// TestWriteSecrets_VaultFormat verifies that writeSecrets dispatches to Vault YAML correctly.
+func TestWriteSecrets_VaultFormat(t *testing.T) {
+	var buf bytes.Buffer
+	secrets := []exportedSecret{{ID: 2, Name: "DB_PASS", Value: "secret"}}
+	require.NoError(t, writeSecrets(&buf, "vault", secrets, "", "production"))
+	assert.Contains(t, buf.String(), "DB_PASS")
+}
+
+// TestWriteSecrets_EncryptedJSON_NoKey verifies that an empty --encrypt-for returns an error.
+func TestWriteSecrets_EncryptedJSON_NoKey(t *testing.T) {
+	var buf bytes.Buffer
+	err := writeSecrets(&buf, "encrypted-json", nil, "", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--encrypt-for")
+}
+
+// TestWriteSecrets_UnknownFormat verifies that an unknown format returns an error.
+func TestWriteSecrets_UnknownFormat(t *testing.T) {
+	var buf bytes.Buffer
+	err := writeSecrets(&buf, "toml", nil, "", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown format")
+}
