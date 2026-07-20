@@ -1308,6 +1308,15 @@ type Storage interface {
 	// whose created_at (detected_at) is older than the given threshold.
 	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
 
+	// Secret Template Management — reusable metadata presets for secret creation.
+	// Templates pre-fill classification, tags, and description hints at create time.
+	CreateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error
+	GetSecretTemplate(ctx context.Context, id uint) (*models.SecretTemplate, error)
+	GetSecretTemplateByName(ctx context.Context, name string) (*models.SecretTemplate, error)
+	ListSecretTemplates(ctx context.Context) ([]*models.SecretTemplate, error)
+	UpdateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error
+	DeleteSecretTemplate(ctx context.Context, id uint) error
+
 }
 
 // SecretFilter defines filtering options for secret queries
