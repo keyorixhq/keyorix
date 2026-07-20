@@ -128,6 +128,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	}
 
 	catalogHandler := handlers.NewCatalogHandler(coreService)
+	machineAuditHandler := handlers.NewMachineAuditHandler(coreService)
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
 	adminUsageHandler := handlers.NewAdminUsageHandler(coreService)
 	auditHandler := handlers.NewAuditHandler(coreService)
@@ -1727,6 +1728,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// credentials an admin should revoke (non-human token sprawl). Same calibration
 		// as /pat-hygiene: audit.read, not the baseline.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/machine-token-hygiene", catalogHandler.MachineTokenHygiene)
+		// Machine identity audit report — deployment-wide identity inventory with
+		// credential counts, last-used timestamps, stale status, and revocation status.
+		// Same disclosure family as /pat-hygiene and /machine-token-hygiene: audit.read.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/machine-identities/audit", machineAuditHandler.GetMachineAuditReport)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/machine-identities/audit.csv", machineAuditHandler.GetMachineAuditReportCSV)
 		// Secret-hygiene rollup — deployment-wide totals of every project's posture
 		// (orphaned / unused / expiring / stale-MI / rotation-overdue) + per-project
 		// breakdown identified by project name. Same calibration: audit.read.
