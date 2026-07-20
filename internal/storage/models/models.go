@@ -1061,6 +1061,20 @@ type DeploymentStatsSnapshot struct {
 	CreatedAt      time.Time
 }
 
+// HygieneTrendSnapshot captures one day's credential-hygiene counts for
+// per-day trend queries (stale PATs, expired PATs, stale machine credentials).
+// One row per UTC calendar day (SnapshotDate is truncated to midnight).
+type HygieneTrendSnapshot struct {
+	ID            uint      `gorm:"primarykey"`
+	StalePATs     int       `json:"stale_pats"`     // non-revoked, active PATs unused > 30 days
+	ExpiredPATs   int       `json:"expired_pats"`   // non-revoked PATs where ExpiresAt < now
+	StaleMachines int       `json:"stale_machines"` // machine identities with no credential used in 30 days
+	TotalPATs     int       `json:"total_pats"`
+	TotalMachines int       `json:"total_machines"`
+	SnapshotDate  time.Time `gorm:"uniqueIndex" json:"snapshot_date"` // UTC midnight
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 // CompliancePostureSnapshot captures daily deployment compliance posture counts
 // for week-over-week trend computation.
 type CompliancePostureSnapshot struct {

@@ -140,6 +140,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	notificationHandler := handlers.NewNotificationHandler(coreService)
 	connectHandler := handlers.NewConnectHandler(coreService)
 	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
+	hygieneTrendsHandler := handlers.NewHygieneTrendsHandler(coreService)
 	folderHandler := handlers.NewFolderHandler(coreService)
 	versionCommentHandler := handlers.NewSecretVersionCommentHandler(coreService)
 
@@ -1742,6 +1743,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// the same disclosure family as /compliance/evidence (SoD-violation counts,
 		// legal-hold reason, risk-register counts): gated on audit.read, not the
 		// universal system_viewer baseline.
+		// Credential hygiene trends — 30/60/90-day per-day counts of stale/expired PATs
+		// and stale machine credentials. Same disclosure family as /compliance/evidence;
+		// gated on audit.read.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/credential-trends", hygieneTrendsHandler.GetCredentialTrends)
+
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
 		// Compliance control matrix — controls mapped to ISO/SOC2/NIS2/DORA + status.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/controls", dashboardHandler.GetComplianceControls)
@@ -1806,6 +1812,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/rotation-reminders", adminJobsHandler.RunRotationReminders)
 			r.Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
 			r.Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
+			// Persist today's credential-hygiene counts for trend queries.
+			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
 			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
 		})
 
