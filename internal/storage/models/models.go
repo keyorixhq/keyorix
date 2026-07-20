@@ -106,6 +106,18 @@ type AccessRequestApproval struct {
 	CreatedAt  time.Time
 }
 
+// RejectionReasonTemplate is a reusable pre-defined reason for rejecting access
+// requests. Admins create named templates so common rejection reasons can be
+// selected from a list rather than typed each time.
+type RejectionReasonTemplate struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"not null;uniqueIndex" json:"name"`    // short label
+	Reason    string    `gorm:"not null" json:"reason"`              // full text
+	CreatedBy uint      `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // SoDPolicy is a separation-of-duties rule (ISO 27001 A.5.3 / SOX): two permissions
 // that one principal must not hold together (a "toxic combination"). A user whose
 // effective permissions include BOTH PermissionA and PermissionB violates it. The

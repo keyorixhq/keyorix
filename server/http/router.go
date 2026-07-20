@@ -427,6 +427,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/projects/{id}/access-requests", catalogHandler.CreateAccessRequest)
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Put("/projects/{id}/access-requests/{requestId}", catalogHandler.ResolveAccessRequest)
 		r.Post("/projects/{id}/access-requests/{requestId}/withdraw", catalogHandler.WithdrawAccessRequest)
+			// Bulk approve/reject: process multiple pending access requests in one call.
+			// Require roles.assign (same gate as the per-request ResolveAccessRequest).
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-approve", catalogHandler.BulkApproveAccessRequests)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-reject", catalogHandler.BulkRejectAccessRequests)
+			// Rejection reason templates: pre-defined reasons for rejecting access requests.
+			// Creating/deleting requires roles.assign; listing is accessible to all admins.
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/rejection-reason-templates", catalogHandler.CreateRejectionReasonTemplate)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Get("/rejection-reason-templates", catalogHandler.ListRejectionReasonTemplates)
+			r.With(customMiddleware.RequirePermission(permRolesAssign)).Delete("/rejection-reason-templates/{id}", catalogHandler.DeleteRejectionReasonTemplate)
 		// Break-glass emergency access: activation is self-service (un-gated — the
 		// point is access the caller lacks; controlled by config + justification +
 		// audit + auto-expiry). Listing/revoking are review actions (roles.read/assign).
