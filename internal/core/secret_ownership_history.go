@@ -65,8 +65,8 @@ func (c *KeyorixCore) GetSecretOwnershipHistory(ctx context.Context, secretID, a
 		}
 		// Parse "from user X to user Y" from the description.
 		if m := ownershipDescRe.FindStringSubmatch(e.Description); len(m) == 3 {
-			fromID, err1 := strconv.ParseUint(m[1], 10, 64)
-			toID, err2 := strconv.ParseUint(m[2], 10, 64)
+			fromID, err1 := strconv.ParseUint(m[1], 10, 32)
+			toID, err2 := strconv.ParseUint(m[2], 10, 32)
 			if err1 == nil && err2 == nil {
 				rec.FromID = uint(fromID)
 				rec.ToID = uint(toID)
