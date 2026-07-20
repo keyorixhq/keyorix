@@ -128,7 +128,7 @@ func TestGetCompliancePosture_HasTrendField(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -160,7 +160,7 @@ func TestGetCompliancePosture_TrendNoData_FirstCall(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -187,7 +187,7 @@ func TestGetCompliancePosture_Unauthenticated(t *testing.T) {
 
 	resp, err := http.Get(srv.URL + "/api/v1/compliance/posture")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
@@ -232,7 +232,7 @@ func TestGetCompliancePosture_TrendDirection_AfterTwoCalls(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var body map[string]interface{}
