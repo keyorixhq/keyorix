@@ -104,75 +104,8 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 		return fmt.Errorf("rotate KEK: wrap DEK with new KEK: %w", err)
 	}
 
-	// Write pending files. On any failure here the original files are untouched:
-	//   salt:    saltPath.pending → saltPath   (atomic rename)
-	//   dek.key: dekPath.pending  → dekPath    (atomic rename, matches RewrapDEK)
-	//
-	// We write the salt pending first so that if we crash between the two renames,
-	// the DEK pending file doesn't exist yet and the original DEK is still valid
-	// under the original salt.
-	pendingSaltPath := km.saltPath + ".pending"
-	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingSaltPath, newSalt, 0600); err != nil {
-		return fmt.Errorf("rotate KEK: write pending salt: %w", err)
-	}
-
-	pendingDEKPath := km.dekPath + ".pending"
-	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, newWrappedDEK, 0600); err != nil {
-		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
-		return fmt.Errorf("rotate KEK: write pending DEK: %w", err)
-	}
-
-	// Atomic rename: salt first, then DEK. A crash between the two renames leaves
-	// the new salt on disk with the OLD wrapped DEK — the old passphrase still
-	// unwraps it (old salt was renamed away but the old DEK is still under the old
-	// KEK). To allow recovery, we keep the old salt in .bak until after the DEK
-	// rename succeeds.
-	//
-	// Actually: safer approach — rename salt.pending → salt, then DEK.pending → DEK.
-	// If we crash after the salt rename but before the DEK rename, the new salt is
-	// on disk but the DEK is still wrapped under the OLD KEK (which uses the OLD
-	// salt). The operator would be stuck. To avoid this, we rename DEK first, then
-	// salt — if we crash after the DEK rename but before the salt rename, the DEK is
-	// wrapped under the new KEK derived from the new salt, but the new salt hasn't
-	// been written. However, the pending salt file still exists and the operator can
-	// recover by completing the rename.
-	//
-	// The safest ordering for durability is:
-	//   1. pending salt written and fsynced
-	//   2. pending DEK written and fsynced
-	//   3. rename DEK.pending → DEK  (DEK is now wrapped under new KEK; old salt still active)
-	//   4. fsync dir (make rename durable)
-	//   5. rename salt.pending → salt (now both files are consistent under new KEK)
-	//   6. fsync dir
-	//
-	// If we crash at step 3 or 4: the new DEK is active but wrapped under new KEK.
-	// The old salt file is still there. The operator runs rotate-kek again with the
-	// same new passphrase to complete. The pending salt file is still on disk.
-	//
-	// This is the same as what RewrapDEK does for the DEK: write pending, rename,
-	// fsync dir. We apply the same pattern for both files, DEK first.
-	pendingDEKFull := filepath.Join(km.baseDir, pendingDEKPath)
-	activeDEKFull := filepath.Join(km.baseDir, km.dekPath)
-	if err := os.Rename(pendingDEKFull, activeDEKFull); err != nil {
-		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
-		_ = os.Remove(pendingDEKFull)
-		return fmt.Errorf("rotate KEK: promote pending DEK to active: %w", err)
-	}
-	if err := securefiles.SyncDir(filepath.Dir(activeDEKFull)); err != nil {
-		// DEK rename is durable; log the sync failure but continue to salt rename.
-		// The system is in a safe (if not fully durable) state.
-		_ = err // best-effort; continue
-	}
-
-	pendingSaltFull := filepath.Join(km.baseDir, pendingSaltPath)
-	activeSaltFull := filepath.Join(km.baseDir, km.saltPath)
-	if err := os.Rename(pendingSaltFull, activeSaltFull); err != nil {
-		// DEK is already renamed (wrapped under new KEK derived from newSalt).
-		// The salt file is still old — the operator must complete the rename manually.
-		return fmt.Errorf("rotate KEK: promote pending salt to active (DEK rename already succeeded — manually rename %s to %s to complete): %w", pendingSaltPath, km.saltPath, err)
-	}
-	if err := securefiles.SyncDir(filepath.Dir(activeSaltFull)); err != nil {
-		_ = err // best-effort
+	if err := km.commitNewKEKFiles(newSalt, newWrappedDEK); err != nil {
+		return err
 	}
 
 	// Derive new evidence-signing and audit-checkpoint keys from the new KEK,
@@ -198,5 +131,40 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 
 	km.dekSnapshot = append([]byte(nil), newWrappedDEK...)
 
+	return nil
+}
+
+// commitNewKEKFiles writes newSalt and newWrappedDEK as pending files and then
+// atomically renames them into place (DEK first, then salt). On any write/rename
+// failure the original files are untouched. The pending DEK file is cleaned up on
+// partial failure so the next retry starts clean.
+//
+// Ordering: DEK is renamed before salt so that a crash between the two renames
+// leaves the new DEK (wrapped under the new KEK + new salt) with the old salt still
+// on disk. The pending salt file allows the operator to complete the rename manually.
+func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
+	pendingSaltPath := km.saltPath + ".pending"
+	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingSaltPath, newSalt, 0600); err != nil {
+		return fmt.Errorf("rotate KEK: write pending salt: %w", err)
+	}
+	pendingDEKPath := km.dekPath + ".pending"
+	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, newWrappedDEK, 0600); err != nil {
+		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
+		return fmt.Errorf("rotate KEK: write pending DEK: %w", err)
+	}
+	pendingDEKFull := filepath.Join(km.baseDir, pendingDEKPath)
+	activeDEKFull := filepath.Join(km.baseDir, km.dekPath)
+	if err := os.Rename(pendingDEKFull, activeDEKFull); err != nil {
+		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
+		_ = os.Remove(pendingDEKFull)
+		return fmt.Errorf("rotate KEK: promote pending DEK to active: %w", err)
+	}
+	_ = securefiles.SyncDir(filepath.Dir(activeDEKFull)) // best-effort
+	pendingSaltFull := filepath.Join(km.baseDir, pendingSaltPath)
+	activeSaltFull := filepath.Join(km.baseDir, km.saltPath)
+	if err := os.Rename(pendingSaltFull, activeSaltFull); err != nil {
+		return fmt.Errorf("rotate KEK: promote pending salt to active (DEK rename already succeeded — manually rename %s to %s to complete): %w", pendingSaltPath, km.saltPath, err)
+	}
+	_ = securefiles.SyncDir(filepath.Dir(activeSaltFull)) // best-effort
 	return nil
 }

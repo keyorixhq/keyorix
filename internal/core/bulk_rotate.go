@@ -81,61 +81,7 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, req BulkRotateReque
 	}
 
 	if len(req.SecretIDs) > 0 {
-		// Explicit ID list — load all in one batch query.
-		secrets, err := c.storage.GetSecretsByIDs(ctx, req.SecretIDs)
-		if err != nil {
-			return nil, fmt.Errorf("load secrets: %w", err)
-		}
-		// Build a set for fast lookup.
-		found := make(map[uint]bool, len(secrets))
-		for _, s := range secrets {
-			found[s.ID] = true
-		}
-		// Report IDs that were not found.
-		for _, id := range req.SecretIDs {
-			if !found[id] {
-				result.Failed = append(result.Failed, BulkRotateError{
-					SecretID: id,
-					Error:    "secret not found",
-				})
-				result.Total++
-			}
-		}
-		// Process found secrets.
-		for _, s := range secrets {
-			result.Total++
-			if s.ProjectID != req.ProjectID {
-				result.Failed = append(result.Failed, BulkRotateError{
-					SecretID: s.ID,
-					Name:     s.Name,
-					Error:    "secret does not belong to this project",
-				})
-				continue
-			}
-			if !s.IsSecret {
-				result.Failed = append(result.Failed, BulkRotateError{
-					SecretID: s.ID,
-					Name:     s.Name,
-					Error:    "not a secret (folder nodes cannot be rotated)",
-				})
-				continue
-			}
-			if !s.AutoRotate {
-				result.Failed = append(result.Failed, BulkRotateError{
-					SecretID: s.ID,
-					Name:     s.Name,
-					Error:    "no rotation config",
-				})
-				continue
-			}
-			if err := c.bulkRotateOne(ctx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result); err != nil {
-				// bulkRotateOne already appended to result.Failed; err signals a
-				// generate-value failure (very unlikely) which is still per-secret.
-				_ = err
-				continue
-			}
-		}
-		return result, nil
+		return result, c.bulkRotateExplicit(ctx, req, result)
 	}
 
 	// Project-wide: list all matching secrets. Use the storage ceiling page size (10 000)
@@ -174,6 +120,42 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, req BulkRotateReque
 		_ = c.bulkRotateOne(ctx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result)
 	}
 	return result, nil
+}
+
+// bulkRotateExplicit processes an explicit list of secret IDs, checking project membership
+// and rotation eligibility before triggering each one.
+func (c *KeyorixCore) bulkRotateExplicit(ctx context.Context, req BulkRotateRequest, result *BulkRotateResult) error {
+	secrets, err := c.storage.GetSecretsByIDs(ctx, req.SecretIDs)
+	if err != nil {
+		return fmt.Errorf("load secrets: %w", err)
+	}
+	found := make(map[uint]bool, len(secrets))
+	for _, s := range secrets {
+		found[s.ID] = true
+	}
+	for _, id := range req.SecretIDs {
+		if !found[id] {
+			result.Failed = append(result.Failed, BulkRotateError{SecretID: id, Error: "secret not found"})
+			result.Total++
+		}
+	}
+	for _, s := range secrets {
+		result.Total++
+		if s.ProjectID != req.ProjectID {
+			result.Failed = append(result.Failed, BulkRotateError{SecretID: s.ID, Name: s.Name, Error: "secret does not belong to this project"})
+			continue
+		}
+		if !s.IsSecret {
+			result.Failed = append(result.Failed, BulkRotateError{SecretID: s.ID, Name: s.Name, Error: "not a secret (folder nodes cannot be rotated)"})
+			continue
+		}
+		if !s.AutoRotate {
+			result.Failed = append(result.Failed, BulkRotateError{SecretID: s.ID, Name: s.Name, Error: "no rotation config"})
+			continue
+		}
+		_ = c.bulkRotateOne(ctx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result)
+	}
+	return nil
 }
 
 // bulkRotateOne generates a fresh value and rotates a single secret via RotateSecretOnDemand.

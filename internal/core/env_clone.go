@@ -10,6 +10,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 const cloneEnvPageSize = 500
@@ -68,16 +69,7 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 			return result, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), lerr)
 		}
 
-		for _, s := range secrets {
-			// CopySecret handles name-clash detection internally (CreateSecret fails if
-			// the name already exists in dstEnvID) and records read + create audit events.
-			if _, cerr := c.CopySecret(ctx, s.ID, dstEnvID, "", clonedBy, actorID, "", ""); cerr != nil {
-				result.SecretsSkipped++
-				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", s.Name, cerr))
-				continue
-			}
-			result.SecretsCloned++
-		}
+		c.cloneSecretPage(ctx, secrets, dstEnvID, clonedBy, actorID, result)
 
 		if len(secrets) < cloneEnvPageSize || int64(page*cloneEnvPageSize) >= total {
 			break
@@ -85,4 +77,16 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 	}
 
 	return result, nil
+}
+
+// cloneSecretPage copies one page of secrets into dstEnvID, recording skips on failure.
+func (c *KeyorixCore) cloneSecretPage(ctx context.Context, secrets []*models.SecretNode, dstEnvID uint, clonedBy string, actorID uint, result *EnvCloneResult) {
+	for _, s := range secrets {
+		if _, cerr := c.CopySecret(ctx, s.ID, dstEnvID, "", clonedBy, actorID, "", ""); cerr != nil {
+			result.SecretsSkipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", s.Name, cerr))
+			continue
+		}
+		result.SecretsCloned++
+	}
 }

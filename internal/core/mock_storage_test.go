@@ -2141,7 +2141,7 @@ func (m *MockStorage) SaveCompliancePostureSnapshot(_ context.Context, _ *models
 	return nil
 }
 
-func (m *MockStorage) GetPreviousCompliancePostureSnapshot(_ context.Context) (*models.CompliancePostureSnapshot, error) {
+func (m *MockStorage) GetPreviousCompliancePostureSnapshot(_ context.Context, _ time.Time) (*models.CompliancePostureSnapshot, error) {
 	return nil, nil
 }
 

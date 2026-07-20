@@ -11,6 +11,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -22,6 +23,6 @@ func (rs *RemoteStorage) SaveCompliancePostureSnapshot(_ context.Context, _ *mod
 }
 
 // GetPreviousCompliancePostureSnapshot is not supported in remote mode.
-func (rs *RemoteStorage) GetPreviousCompliancePostureSnapshot(_ context.Context) (*models.CompliancePostureSnapshot, error) {
+func (rs *RemoteStorage) GetPreviousCompliancePostureSnapshot(_ context.Context, _ time.Time) (*models.CompliancePostureSnapshot, error) {
 	return nil, remoteUnsupported("GetPreviousCompliancePostureSnapshot")
 }

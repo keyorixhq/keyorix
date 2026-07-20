@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const groupFlagUsage = "Group name or numeric ID (required)"
+
 // ── flag variables (prefixed to avoid collision with user-role flags) ──────────
 
 var (
@@ -50,7 +52,7 @@ connection (run 'keyorix connect <server>').`,
 }
 
 func init() {
-	assignRoleToGroupCmd.Flags().StringVar(&groupRoleGroupFlag, "group", "", "Group name or numeric ID (required)")
+	assignRoleToGroupCmd.Flags().StringVar(&groupRoleGroupFlag, "group", "", groupFlagUsage)
 	assignRoleToGroupCmd.Flags().StringVar(&groupRoleName, "role", "", "Role name to assign (required)")
 	assignRoleToGroupCmd.Flags().StringVar(&groupRoleProjectFlag, "project", "", "Scope the grant to this project (optional)")
 	assignRoleToGroupCmd.Flags().StringVar(&groupRoleEnvFlag, "environment", "", "Scope the grant to this environment within --project (optional; requires --project)")
@@ -121,7 +123,7 @@ the project (--project must also be supplied).`,
 }
 
 func init() {
-	removeRoleFromGroupCmd.Flags().StringVar(&removeGroupRoleGroupFlag, "group", "", "Group name or numeric ID (required)")
+	removeRoleFromGroupCmd.Flags().StringVar(&removeGroupRoleGroupFlag, "group", "", groupFlagUsage)
 	removeRoleFromGroupCmd.Flags().StringVar(&removeGroupRoleName, "role", "", "Role name to remove (required)")
 	removeRoleFromGroupCmd.Flags().StringVar(&removeGroupRoleProjectFlag, "project", "", "Remove the grant scoped to this project (optional)")
 	removeRoleFromGroupCmd.Flags().StringVar(&removeGroupRoleEnvFlag, "environment", "", "Remove the grant scoped to this environment within --project (optional; requires --project)")
@@ -179,7 +181,7 @@ var listGroupRolesCmd = &cobra.Command{
 }
 
 func init() {
-	listGroupRolesCmd.Flags().StringVar(&listGroupRoleGroupFlag, "group", "", "Group name or numeric ID (required)")
+	listGroupRolesCmd.Flags().StringVar(&listGroupRoleGroupFlag, "group", "", groupFlagUsage)
 	_ = listGroupRolesCmd.MarkFlagRequired("group")
 }
 

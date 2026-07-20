@@ -15,6 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const fmtEncryptedJSON = "encrypted-json"
+
 var (
 	exportFormat     string
 	exportOutput     string
@@ -112,9 +114,9 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 
 	// If --encrypt-for is set and format was not explicitly chosen as
 	// encrypted-json, auto-switch and inform the operator.
-	if exportEncryptFor != "" && strings.ToLower(exportFormat) != "encrypted-json" {
+	if exportEncryptFor != "" && strings.ToLower(exportFormat) != fmtEncryptedJSON {
 		fmt.Fprintf(os.Stderr, "NOTE: --encrypt-for is set; switching format to encrypted-json.\n")
-		exportFormat = "encrypted-json"
+		exportFormat = fmtEncryptedJSON
 	}
 
 	var out io.Writer = os.Stdout
@@ -131,31 +133,35 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 		out = f
 	}
 
-	if strings.ToLower(exportFormat) != "encrypted-json" {
+	if strings.ToLower(exportFormat) != fmtEncryptedJSON {
 		fmt.Fprintln(os.Stderr, "WARNING: exported secrets are in plaintext. Handle with care.")
 	}
 
-	switch strings.ToLower(exportFormat) {
-	case "dotenv", "env":
-		err = writeDotenv(out, fetched)
-	case "json":
-		err = writeExportJSON(out, fetched)
-	case "vault":
-		err = writeVault(out, fetched, exportEnv)
-	case "encrypted-json":
-		if exportEncryptFor == "" {
-			return fmt.Errorf("--encrypt-for <pubkey.pem> is required for the encrypted-json format")
-		}
-		err = writeEncryptedJSON(out, fetched, exportEncryptFor)
-	default:
-		return fmt.Errorf("unknown format %q (supported: dotenv, json, vault, encrypted-json)", exportFormat)
-	}
-	if err != nil {
+	if err = writeSecrets(out, exportFormat, fetched, exportEncryptFor, exportEnv); err != nil {
 		return fmt.Errorf("failed to write output: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Exported %d secrets\n", len(fetched))
 	return nil
+}
+
+// writeSecrets dispatches to the appropriate format writer.
+func writeSecrets(out io.Writer, format string, fetched []exportedSecret, encryptFor, env string) error {
+	switch strings.ToLower(format) {
+	case "dotenv", "env":
+		return writeDotenv(out, fetched)
+	case "json":
+		return writeExportJSON(out, fetched)
+	case "vault":
+		return writeVault(out, fetched, env)
+	case fmtEncryptedJSON:
+		if encryptFor == "" {
+			return fmt.Errorf("--encrypt-for <pubkey.pem> is required for the encrypted-json format")
+		}
+		return writeEncryptedJSON(out, fetched, encryptFor)
+	default:
+		return fmt.Errorf("unknown format %q (supported: dotenv, json, vault, encrypted-json)", format)
+	}
 }
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────

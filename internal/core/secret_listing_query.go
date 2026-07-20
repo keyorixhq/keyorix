@@ -413,6 +413,10 @@ const secretListingMaxRows = 10000
 
 // convertToStorageFilter converts SecretListFilter to storage.SecretFilter. It
 // deliberately ignores the caller's Page/PageSize — see secretListingMaxRows.
+// Search is intentionally NOT forwarded: the storage layer's LIKE filter only
+// matches by name, while the in-memory applySecretFilters / secretMatchesSearch
+// covers name + description + tags. Pushing Search into SQL would exclude
+// description/tag matches before they ever reach the in-memory pass.
 func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
 	return &storage.SecretFilter{
 		Page:           1,
@@ -425,7 +429,6 @@ func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *s
 		IncludeDeleted: filter.IncludeDeleted,
 		ParentID:       filter.ParentID,
 		FolderOnly:     filter.FolderOnly,
-		Search:         filter.Search,
 	}
 }
 
@@ -449,48 +452,7 @@ func (c *KeyorixCore) getACLGrantedSecretsWithSharingInfo(ctx context.Context, u
 	var result []*models.SecretWithSharingInfo
 
 	for _, acl := range acls {
-		// Normalise the first ACL permission to the sharing-style format
-		// ("read"/"write") so SharingIndicators.CanWrite and the common
-		// UserPermission field remain consistent with ShareRecord-based grants.
-		perm := ""
-		if perms := DecodeSecretACLPerms(acl.Permissions); len(perms) > 0 {
-			perm = normaliseACLPerm(perms[0])
-		}
-
-		node, err := c.storage.GetSecret(ctx, acl.SecretID)
-		if err != nil || node == nil {
-			continue
-		}
-
-		// Apply project/environment filter on the grant's target node.
-		if filter.ProjectID != nil && node.ProjectID != *filter.ProjectID {
-			continue
-		}
-		if filter.EnvironmentID != nil && node.EnvironmentID != *filter.EnvironmentID {
-			continue
-		}
-
-		var leaves []*models.SecretNode
-		if node.IsSecret {
-			leaves = []*models.SecretNode{node}
-		} else {
-			// Folder node: collect all descendant leaf secrets (BFS, capped at aclFolderMaxDepth).
-			leaves = c.collectFolderDescendants(ctx, node.ID, filter, 0)
-		}
-
-		for _, leaf := range leaves {
-			if seen[leaf.ID] {
-				continue
-			}
-			seen[leaf.ID] = true
-			result = append(result, &models.SecretWithSharingInfo{
-				SecretNode:        leaf,
-				IsShared:          false,
-				IsOwnedByUser:     false,
-				UserPermission:    perm,
-				SharingIndicators: c.buildSharingIndicators(leaf, nil, false, perm),
-			})
-		}
+		c.applyACLGrant(ctx, acl, filter, seen, &result)
 	}
 
 	return result, nil
@@ -525,6 +487,47 @@ func (c *KeyorixCore) collectFolderDescendants(ctx context.Context, folderID uin
 		}
 	}
 	return result
+}
+
+// applyACLGrant processes a single ACL grant, expanding folder nodes to leaf
+// secrets and appending any un-seen entries to result.
+func (c *KeyorixCore) applyACLGrant(ctx context.Context, acl *models.SecretACL, filter *models.SecretListFilter, seen map[uint]bool, result *[]*models.SecretWithSharingInfo) {
+	perm := ""
+	if perms := DecodeSecretACLPerms(acl.Permissions); len(perms) > 0 {
+		perm = normaliseACLPerm(perms[0])
+	}
+
+	node, err := c.storage.GetSecret(ctx, acl.SecretID)
+	if err != nil || node == nil {
+		return
+	}
+	if filter.ProjectID != nil && node.ProjectID != *filter.ProjectID {
+		return
+	}
+	if filter.EnvironmentID != nil && node.EnvironmentID != *filter.EnvironmentID {
+		return
+	}
+
+	var leaves []*models.SecretNode
+	if node.IsSecret {
+		leaves = []*models.SecretNode{node}
+	} else {
+		leaves = c.collectFolderDescendants(ctx, node.ID, filter, 0)
+	}
+
+	for _, leaf := range leaves {
+		if seen[leaf.ID] {
+			continue
+		}
+		seen[leaf.ID] = true
+		*result = append(*result, &models.SecretWithSharingInfo{
+			SecretNode:        leaf,
+			IsShared:          false,
+			IsOwnedByUser:     false,
+			UserPermission:    perm,
+			SharingIndicators: c.buildSharingIndicators(leaf, nil, false, perm),
+		})
+	}
 }
 
 // normaliseACLPerm maps an RBAC-style ACL permission name ("secrets.read",

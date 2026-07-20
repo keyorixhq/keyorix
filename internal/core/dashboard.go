@@ -174,27 +174,37 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	stats.RecentActivity = recent
 	stats.ExpiringSecrets = expiringSecrets
 
-	// Save today's deployment stats snapshot (once per UTC day) and compute trends.
-	// Only meaningful when the caller holds audit.read and the admin stats were fetched.
 	if hasAuditRead {
-		todayDate := time.Now().UTC().Truncate(24 * time.Hour)
-		prevSnap, snapErr := c.storage.GetPreviousDeploymentStatsSnapshot(ctx)
-		if snapErr == nil { // tolerate failure — trends are best-effort
-			newSnap := &models.DeploymentStatsSnapshot{
-				ActiveUsers:    stats.ActiveUsers,
-				AuditEvents30d: stats.AuditEvents30d,
-				SnapshotDate:   todayDate,
-			}
-			_ = c.storage.SaveDeploymentStatsSnapshot(ctx, newSnap) // best-effort
-			if prevSnap != nil {
-				stats.PrevActiveUsers = &prevSnap.ActiveUsers
-				stats.ActiveUsersTrend = computeTrend(float64(prevSnap.ActiveUsers), float64(stats.ActiveUsers))
-				stats.PrevAuditEvents30d = &prevSnap.AuditEvents30d
-				stats.AuditEvents30dTrend = computeTrend(float64(prevSnap.AuditEvents30d), float64(stats.AuditEvents30d))
-			}
-		}
+		c.saveDeploymentSnapshot(ctx, stats)
 	}
+	c.saveUserSnapshot(ctx, userID, stats, total, sharedSecrets, sharedWithMe)
 
+	return stats, nil
+}
+
+// saveDeploymentSnapshot persists today's admin-level stats and back-fills trend fields.
+func (c *KeyorixCore) saveDeploymentSnapshot(ctx context.Context, stats *DashboardStats) {
+	todayDate := time.Now().UTC().Truncate(24 * time.Hour)
+	prevSnap, snapErr := c.storage.GetPreviousDeploymentStatsSnapshot(ctx)
+	if snapErr != nil {
+		return // best-effort; tolerate failure
+	}
+	newSnap := &models.DeploymentStatsSnapshot{
+		ActiveUsers:    stats.ActiveUsers,
+		AuditEvents30d: stats.AuditEvents30d,
+		SnapshotDate:   todayDate,
+	}
+	_ = c.storage.SaveDeploymentStatsSnapshot(ctx, newSnap)
+	if prevSnap != nil {
+		stats.PrevActiveUsers = &prevSnap.ActiveUsers
+		stats.ActiveUsersTrend = computeTrend(float64(prevSnap.ActiveUsers), float64(stats.ActiveUsers))
+		stats.PrevAuditEvents30d = &prevSnap.AuditEvents30d
+		stats.AuditEvents30dTrend = computeTrend(float64(prevSnap.AuditEvents30d), float64(stats.AuditEvents30d))
+	}
+}
+
+// saveUserSnapshot persists per-user stats and back-fills trend fields.
+func (c *KeyorixCore) saveUserSnapshot(ctx context.Context, userID uint, stats *DashboardStats, total int64, sharedSecrets, sharedWithMe int) {
 	prev, err := c.storage.GetPreviousStatsSnapshot(ctx, userID)
 	if err == nil && prev != nil {
 		stats.TotalSecretsTrend = computeTrend(float64(prev.TotalSecrets), float64(total))
@@ -202,7 +212,6 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		stats.SharedWithMeTrend = computeTrend(float64(prev.SecretsSharedWithMe), float64(sharedWithMe))
 		stats.PrevTotalSecrets = &prev.TotalSecrets
 	}
-
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	existing, _ := c.storage.GetPreviousStatsSnapshot(ctx, userID)
 	if existing == nil || existing.SnapshotDate.Before(today) {
@@ -214,8 +223,6 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 			SnapshotDate:        today,
 		})
 	}
-
-	return stats, nil
 }
 
 // fetchAdminDashboardStats fetches the deployment-wide aggregates visible only to

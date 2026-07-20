@@ -22,7 +22,7 @@ func freshFolderCoreDB(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	n := folderCoreDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxcore_folder_%d?mode=memory&cache=shared&_timeout=30000", n)
+	dsn := fmt.Sprintf("file:kxcore_cfoldr_%d?mode=memory&cache=shared&_timeout=30000", n)
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
