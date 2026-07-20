@@ -323,6 +323,7 @@ func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, u
 
 const sqlWhereExpiredPAT = "user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?"
 
+
 // ListExpiredPATsByUser returns all non-revoked PATs for userID whose ExpiresAt is in
 // the past (expired but never explicitly revoked). Ordered newest-created first.
 func (ls *LocalStorage) ListExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]*models.PersonalAccessToken, error) {
