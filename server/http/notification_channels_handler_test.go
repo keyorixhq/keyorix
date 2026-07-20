@@ -131,7 +131,7 @@ func TestNotificationChannelList_Empty(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -168,7 +168,7 @@ func TestNotificationChannelCreate_Webhook(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
@@ -204,7 +204,7 @@ func TestNotificationChannelCreate_InvalidType(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
@@ -228,7 +228,7 @@ func TestNotificationChannelCreate_WebhookMissingURL(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
@@ -254,7 +254,7 @@ func TestNotificationChannelDelete(t *testing.T) {
 
 	createResp, err := http.DefaultClient.Do(createReq)
 	require.NoError(t, err)
-	defer createResp.Body.Close()
+	defer func() { _ = createResp.Body.Close() }()
 	require.Equal(t, http.StatusCreated, createResp.StatusCode)
 
 	var createBody map[string]interface{}
@@ -273,7 +273,7 @@ func TestNotificationChannelDelete(t *testing.T) {
 
 	delResp, err := http.DefaultClient.Do(delReq)
 	require.NoError(t, err)
-	defer delResp.Body.Close()
+	defer func() { _ = delResp.Body.Close() }()
 	assert.Equal(t, http.StatusOK, delResp.StatusCode)
 
 	// GET must now return 404.
@@ -283,7 +283,7 @@ func TestNotificationChannelDelete(t *testing.T) {
 
 	getResp, err := http.DefaultClient.Do(getReq)
 	require.NoError(t, err)
-	defer getResp.Body.Close()
+	defer func() { _ = getResp.Body.Close() }()
 	assert.Equal(t, http.StatusNotFound, getResp.StatusCode)
 }
 
@@ -298,7 +298,7 @@ func TestNotificationChannels_Unauthenticated(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
