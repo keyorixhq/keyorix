@@ -42,7 +42,6 @@ func seedAuditEvent(t *testing.T, db *gorm.DB, e *models.AuditEvent) uint {
 	return e.ID
 }
 
-
 // ── IPAddress filter ──────────────────────────────────────────────────────────
 
 func TestGetAuditLogs_FilterByIPAddress(t *testing.T) {
