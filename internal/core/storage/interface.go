@@ -1182,6 +1182,12 @@ type Storage interface {
 	// reset so PATs die with the password.
 	RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error)
 	TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
+	// ListExpiredPATsByUser returns all non-revoked PATs for userID whose ExpiresAt
+	// is in the past (expired but never explicitly revoked). Ordered newest first.
+	ListExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]*models.PersonalAccessToken, error)
+	// BulkRevokeExpiredPATsByUser revokes every non-revoked, expired PAT belonging to
+	// userID (ExpiresAt < now) and returns their token hashes for cache eviction.
+	BulkRevokeExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]string, error)
 
 	// Setup Token Management (ADR-028) — single-use, hashed-at-rest credential-delivery tokens.
 	CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error)

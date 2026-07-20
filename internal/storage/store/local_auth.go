@@ -321,6 +321,39 @@ func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, u
 		UpdateColumn("last_used_at", usedAt).Error
 }
 
+// ListExpiredPATsByUser returns all non-revoked PATs for userID whose ExpiresAt is in
+// the past (expired but never explicitly revoked). Ordered newest-created first.
+func (ls *LocalStorage) ListExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]*models.PersonalAccessToken, error) {
+	var tokens []*models.PersonalAccessToken
+	if err := ls.db.WithContext(ctx).
+		Where("user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, false, now).
+		Order(sqlOrderCreatedAtDesc).
+		Find(&tokens).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return tokens, nil
+}
+
+// BulkRevokeExpiredPATsByUser revokes every non-revoked, expired PAT belonging to
+// userID and returns their token hashes so the caller can evict them from the auth cache.
+func (ls *LocalStorage) BulkRevokeExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]string, error) {
+	var hashes []string
+	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
+		Where("user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, false, now).
+		Pluck("token_hash", &hashes).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
+		Where("user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, false, now).
+		Update("revoked", true).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return hashes, nil
+}
+
 // --- Setup Tokens (ADR-028) ---
 
 func (ls *LocalStorage) CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error) {

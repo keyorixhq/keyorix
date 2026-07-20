@@ -173,6 +173,14 @@ func (rs *RemoteStorage) TouchPersonalAccessToken(_ context.Context, _ uint, _ t
 	return nil // best-effort; no-op on remote storage
 }
 
+func (rs *RemoteStorage) ListExpiredPATsByUser(_ context.Context, _ uint, _ time.Time) ([]*models.PersonalAccessToken, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) BulkRevokeExpiredPATsByUser(_ context.Context, _ uint, _ time.Time) ([]string, error) {
+	return nil, errUnsupportedRemote
+}
+
 // Setup Token Management (ADR-028, #510).
 //
 // A remote CLI client does not mint or consume setup tokens — but a DOWNSTREAM

@@ -133,8 +133,9 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	if pat.Revoked {
 		return nil, nil, nil, fmt.Errorf("token revoked")
 	}
-	if pat.ExpiresAt != nil && c.now().After(*pat.ExpiresAt) {
-		return nil, nil, nil, fmt.Errorf("token expired")
+	if IsPATExpired(pat, c.now()) {
+		c.emitPATExpiredNotification(ctx, pat)
+		return nil, nil, nil, ErrPATExpired
 	}
 	user, err := c.storage.GetUser(ctx, pat.UserID)
 	if err != nil {

@@ -115,7 +115,9 @@ func TestValidatePATToken(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
 		past := time.Now().Add(-time.Hour)
-		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1, ExpiresAt: &past}, nil)
+		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1, Name: "old-ci", ExpiresAt: &past}, nil)
+		// emitPATExpiredNotification is called best-effort before the error is returned.
+		ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{ID: 1}, nil)
 		_, _, _, err := c.ValidatePATToken(ctx, raw)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expired")
