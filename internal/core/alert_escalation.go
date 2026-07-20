@@ -112,6 +112,7 @@ func (c *KeyorixCore) escalateAlert(ctx context.Context, alert *models.AnomalyAl
 	return dispatched
 }
 
+
 // RunAlertEscalation scans unacknowledged AnomalyAlerts, matches them against
 // enabled AlertEscalationPolicies, and delivers to configured NotificationChannels.
 // It is safe to call repeatedly (idempotent at the delivery layer; each call
@@ -132,6 +133,7 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 	// one policy.
 	minDelay := minEscalateDelay(active)
 	threshold := c.now().Add(-time.Duration(minDelay) * time.Minute)
+
 
 	alerts, err := c.storage.ListUnacknowledgedAnomalyAlertsBefore(ctx, threshold)
 	if err != nil {

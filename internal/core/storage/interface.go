@@ -1308,6 +1308,17 @@ type Storage interface {
 	// whose created_at (detected_at) is older than the given threshold.
 	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
 
+	// AlertEscalationPolicy CRUD
+	CreateAlertEscalationPolicy(ctx context.Context, p *models.AlertEscalationPolicy) error
+	GetAlertEscalationPolicy(ctx context.Context, id uint) (*models.AlertEscalationPolicy, error)
+	ListAlertEscalationPolicies(ctx context.Context) ([]models.AlertEscalationPolicy, error)
+	UpdateAlertEscalationPolicy(ctx context.Context, p *models.AlertEscalationPolicy) error
+	DeleteAlertEscalationPolicy(ctx context.Context, id uint) error
+
+	// ListUnacknowledgedAnomalyAlertsBefore returns unacknowledged anomaly alerts
+	// whose created_at (detected_at) is older than the given threshold.
+	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
+
 }
 
 // SecretFilter defines filtering options for secret queries
