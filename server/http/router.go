@@ -1761,6 +1761,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/credential-trends", hygieneTrendsHandler.GetCredentialTrends)
 
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
+		// Rotation-overdue report grouped by backend: per-backend counts of overdue /
+		// up-to-date / never-rotated secrets deployment-wide. Discloses backend labels
+		// and secret counts across the whole deployment, so audit.read (not the
+		// baseline) applies â same disclosure family as /compliance/evidence.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/rotation-by-backend", secretHandler.RotationByBackend)
 		// Compliance control matrix — controls mapped to ISO/SOC2/NIS2/DORA + status.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/controls", dashboardHandler.GetComplianceControls)
 		// Control matrix as CSV — the same matrix for an auditor's spreadsheet; same gate
