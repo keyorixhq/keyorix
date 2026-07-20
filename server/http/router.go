@@ -324,11 +324,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/notifications/{id}/read", notificationHandler.MarkRead)
 
 		// Notification channel management — admin-only (system.write).
+		const pathNotifChannelID = "/notification-channels/{id}"
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels", notificationChannelHandler.List)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/notification-channels", notificationChannelHandler.Create)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels/{id}", notificationChannelHandler.Get)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}", notificationChannelHandler.Update)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/notification-channels/{id}", notificationChannelHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathNotifChannelID, notificationChannelHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathNotifChannelID, notificationChannelHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathNotifChannelID, notificationChannelHandler.Delete)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,

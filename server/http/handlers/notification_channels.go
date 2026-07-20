@@ -107,8 +107,8 @@ func (h *NotificationChannelHandler) Get(w http.ResponseWriter, r *http.Request)
 	}
 	ch, err := h.coreService.GetNotificationChannel(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Notification channel not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error getting notification channel %d: %v", id, err)
@@ -131,8 +131,8 @@ func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Reque
 	}
 	updated, err := h.coreService.UpdateNotificationChannel(r.Context(), id, body)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Notification channel not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
 			return
 		}
 		if isValidationError(err) {
@@ -153,8 +153,8 @@ func (h *NotificationChannelHandler) Delete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.coreService.DeleteNotificationChannel(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Notification channel not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error deleting notification channel %d: %v", id, err)

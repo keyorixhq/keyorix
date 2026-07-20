@@ -34,6 +34,7 @@ const (
 	errMachineCredentialNotFound = "machine credential not found"
 	errNotAuthorized = "not authorized"
 	errNotFound = "not found"
+	errNotificationChannelNotFound = "Notification channel not found"
 	errOnlyPending = "only a pending"
 	errPermissionDenied = "permission denied"
 	errProjectNotFound = "project not found"
