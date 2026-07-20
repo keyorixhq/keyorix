@@ -303,6 +303,168 @@ func TestNotificationChannels_Unauthenticated(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
+// TestNotificationChannelCreate_BadJSON verifies that a malformed JSON body returns 400.
+func TestNotificationChannelCreate_BadJSON(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader([]byte("not-json")))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// TestNotificationChannelList_WithChannels verifies that a non-empty list is returned correctly.
+func TestNotificationChannelList_WithChannels(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	createPayload, err := json.Marshal(map[string]interface{}{
+		"name": "list-test", "type": "slack", "url": "https://hooks.slack.com/test",
+	})
+	require.NoError(t, err)
+	createReq, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(createPayload))
+	require.NoError(t, err)
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	_ = createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	listReq, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/notification-channels", nil)
+	require.NoError(t, err)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	listResp, err := http.DefaultClient.Do(listReq)
+	require.NoError(t, err)
+	defer func() { _ = listResp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, listResp.StatusCode)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&body))
+	data := body["data"].(map[string]interface{})
+	channels := data["channels"].([]interface{})
+	assert.Len(t, channels, 1)
+}
+
+// TestNotificationChannelGet_Found verifies that GET /{id} returns the channel.
+func TestNotificationChannelGet_Found(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	createPayload, err := json.Marshal(map[string]interface{}{
+		"name": "get-test", "type": "webhook", "url": "https://hook.example.com",
+	})
+	require.NoError(t, err)
+	createReq, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(createPayload))
+	require.NoError(t, err)
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	var createBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&createBody))
+	_ = createResp.Body.Close()
+	id := int(createBody["data"].(map[string]interface{})["id"].(float64))
+
+	getReq, err := http.NewRequest(http.MethodGet,
+		srv.URL+"/api/v1/notification-channels/"+itoa(id), nil)
+	require.NoError(t, err)
+	getReq.Header.Set("Authorization", "Bearer "+token)
+	getResp, err := http.DefaultClient.Do(getReq)
+	require.NoError(t, err)
+	defer func() { _ = getResp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, getResp.StatusCode)
+}
+
+// TestNotificationChannelUpdate_Success verifies that PUT updates the channel.
+func TestNotificationChannelUpdate_Success(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	createPayload, err := json.Marshal(map[string]interface{}{
+		"name": "upd-test", "type": "webhook", "url": "https://original.example.com",
+	})
+	require.NoError(t, err)
+	createReq, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/notification-channels",
+		bytes.NewReader(createPayload))
+	require.NoError(t, err)
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	var createBody map[string]interface{}
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&createBody))
+	_ = createResp.Body.Close()
+	id := int(createBody["data"].(map[string]interface{})["id"].(float64))
+
+	updatePayload, err := json.Marshal(map[string]interface{}{"events": "secret.rotated"})
+	require.NoError(t, err)
+	updateReq, err := http.NewRequest(http.MethodPut,
+		srv.URL+"/api/v1/notification-channels/"+itoa(id),
+		bytes.NewReader(updatePayload))
+	require.NoError(t, err)
+	updateReq.Header.Set("Authorization", "Bearer "+token)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp, err := http.DefaultClient.Do(updateReq)
+	require.NoError(t, err)
+	defer func() { _ = updateResp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
+}
+
+// TestNotificationChannelUpdate_NotFound verifies that PUT on a non-existent channel returns 404.
+func TestNotificationChannelUpdate_NotFound(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	updatePayload, err := json.Marshal(map[string]interface{}{"events": "anomaly.detected"})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPut,
+		srv.URL+"/api/v1/notification-channels/9999",
+		bytes.NewReader(updatePayload))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// TestNotificationChannelUpdate_BadJSON verifies that a malformed PUT body returns 400.
+func TestNotificationChannelUpdate_BadJSON(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	req, err := http.NewRequest(http.MethodPut,
+		srv.URL+"/api/v1/notification-channels/1",
+		bytes.NewReader([]byte("not-json")))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// TestNotificationChannelDelete_NotFound verifies that deleting a non-existent channel returns 404.
+func TestNotificationChannelDelete_NotFound(t *testing.T) {
+	srv, token := notificationChannelTestSetup(t)
+
+	req, err := http.NewRequest(http.MethodDelete,
+		srv.URL+"/api/v1/notification-channels/9999", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
 // itoa converts an int to its decimal string representation. Used to build URL
 // path segments without importing strconv or fmt in every test.
 func itoa(n int) string {
