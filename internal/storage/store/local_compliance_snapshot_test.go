@@ -55,7 +55,7 @@ func TestGetPreviousCompliancePostureSnapshot_ReturnsNilWhenNone(t *testing.T) {
 	ls := newComplianceSnapshotStore(t)
 	ctx := context.Background()
 
-	got, err := ls.GetPreviousCompliancePostureSnapshot(ctx)
+	got, err := ls.GetPreviousCompliancePostureSnapshot(ctx, time.Now())
 	require.NoError(t, err)
 	assert.Nil(t, got, "expected nil when no prior snapshot exists")
 }
@@ -75,7 +75,7 @@ func TestGetPreviousCompliancePostureSnapshot_SkipsRecentSnapshot(t *testing.T) 
 		SnapshotDate:   todayMidnight,
 	}).Error)
 
-	got, err := ls.GetPreviousCompliancePostureSnapshot(ctx)
+	got, err := ls.GetPreviousCompliancePostureSnapshot(ctx, now)
 	require.NoError(t, err)
 	assert.Nil(t, got, "today's snapshot must not be returned as a prior snapshot")
 
@@ -86,7 +86,7 @@ func TestGetPreviousCompliancePostureSnapshot_SkipsRecentSnapshot(t *testing.T) 
 		SnapshotDate:   yesterdayMidnight,
 	}).Error)
 
-	got, err = ls.GetPreviousCompliancePostureSnapshot(ctx)
+	got, err = ls.GetPreviousCompliancePostureSnapshot(ctx, now)
 	require.NoError(t, err)
 	require.NotNil(t, got, "expected yesterday's snapshot to be returned")
 	assert.Equal(t, 8, got.PassedControls)

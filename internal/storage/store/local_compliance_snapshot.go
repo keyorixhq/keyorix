@@ -25,13 +25,13 @@ func (ls *LocalStorage) SaveCompliancePostureSnapshot(ctx context.Context, snap 
 }
 
 // GetPreviousCompliancePostureSnapshot returns the most recent snapshot whose
-// snapshot_date is strictly before today's UTC midnight — i.e., from a prior
+// snapshot_date is strictly before before's UTC midnight — i.e., from a prior
 // calendar day. This avoids same-day self-comparison regardless of the time of
 // day the posture endpoint is called.
 // Returns nil, nil when no prior snapshot exists.
-func (ls *LocalStorage) GetPreviousCompliancePostureSnapshot(ctx context.Context) (*models.CompliancePostureSnapshot, error) {
-	now := time.Now().UTC()
-	todayMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+func (ls *LocalStorage) GetPreviousCompliancePostureSnapshot(ctx context.Context, before time.Time) (*models.CompliancePostureSnapshot, error) {
+	b := before.UTC()
+	todayMidnight := time.Date(b.Year(), b.Month(), b.Day(), 0, 0, 0, 0, time.UTC)
 	var snap models.CompliancePostureSnapshot
 	err := ls.db.WithContext(ctx).
 		Where("snapshot_date < ?", todayMidnight).

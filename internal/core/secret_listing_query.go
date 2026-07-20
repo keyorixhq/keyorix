@@ -413,6 +413,10 @@ const secretListingMaxRows = 10000
 
 // convertToStorageFilter converts SecretListFilter to storage.SecretFilter. It
 // deliberately ignores the caller's Page/PageSize — see secretListingMaxRows.
+// Search is intentionally NOT forwarded: the storage layer's LIKE filter only
+// matches by name, while the in-memory applySecretFilters / secretMatchesSearch
+// covers name + description + tags. Pushing Search into SQL would exclude
+// description/tag matches before they ever reach the in-memory pass.
 func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
 	return &storage.SecretFilter{
 		Page:           1,
@@ -425,7 +429,6 @@ func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *s
 		IncludeDeleted: filter.IncludeDeleted,
 		ParentID:       filter.ParentID,
 		FolderOnly:     filter.FolderOnly,
-		Search:         filter.Search,
 	}
 }
 

@@ -447,7 +447,7 @@ func buildCompliancePostureSnapshot(p *CompliancePosture, snapshotDate time.Time
 // computeComplianceTrend fetches the previous snapshot and computes trend direction.
 // Best-effort: a storage error returns a "no_data" trend rather than an error.
 func (c *KeyorixCore) computeComplianceTrend(ctx context.Context, current *models.CompliancePostureSnapshot) *ComplianceTrend {
-	prev, err := c.storage.GetPreviousCompliancePostureSnapshot(ctx)
+	prev, err := c.storage.GetPreviousCompliancePostureSnapshot(ctx, c.now())
 	if err != nil || prev == nil {
 		return &ComplianceTrend{Direction: "no_data"}
 	}

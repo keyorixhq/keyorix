@@ -904,7 +904,7 @@ type Storage interface {
 	// snapshot_date is strictly before today's UTC midnight (i.e., from a prior
 	// calendar day), to avoid same-day self-comparison.
 	// Returns nil, nil when no prior snapshot exists.
-	GetPreviousCompliancePostureSnapshot(ctx context.Context) (*models.CompliancePostureSnapshot, error)
+	GetPreviousCompliancePostureSnapshot(ctx context.Context, before time.Time) (*models.CompliancePostureSnapshot, error)
 
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
