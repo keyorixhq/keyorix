@@ -601,6 +601,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/copy", secretHandler.CopySecret)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
+			// Rotation dry-run / simulation (ADR-047): validates the rotation config without
+			// making any live change. Read-only — requires only secrets.read.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/rotation/simulate", secretHandler.SimulateRotation)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/move", secretHandler.MoveSecret)
@@ -891,6 +894,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/audit", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission(permAuditRead))
 			r.Get("/logs", auditHandler.GetAuditLogs)
+			r.Get("/search", auditHandler.SearchAuditLogs)
 			r.Get("/export", auditHandler.ExportAuditLogs)
 			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
@@ -1836,6 +1840,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
 			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
 			r.Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
+			r.Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted

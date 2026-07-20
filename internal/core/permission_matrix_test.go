@@ -2,9 +2,12 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -12,6 +15,29 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// matrixStorageOverride wraps MockStorage and lets individual tests override
+// ListAllUserRoleGrants and GetRolePermissions without touching the shared mock.
+type matrixStorageOverride struct {
+	corestorage.Storage
+	listGrantsErr  error
+	listGrantsRows []*models.UserRole
+	getRolePermsErr error
+}
+
+func (o *matrixStorageOverride) ListAllUserRoleGrants(_ context.Context) ([]*models.UserRole, error) {
+	if o.listGrantsErr != nil {
+		return nil, o.listGrantsErr
+	}
+	return o.listGrantsRows, nil
+}
+
+func (o *matrixStorageOverride) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
+	if o.getRolePermsErr != nil {
+		return nil, o.getRolePermsErr
+	}
+	return o.Storage.GetRolePermissions(ctx, roleID)
+}
 
 func newMatrixCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
@@ -190,44 +216,220 @@ func TestGetPermissionMatrix_MultiplePermissions(t *testing.T) {
 	}
 }
 
-// TestGetPermissionMatrix_EnvScoped covers getEnvName and grantScope("environment").
-func TestGetPermissionMatrix_EnvScoped(t *testing.T) {
+// TestGetPermissionMatrix_EnvironmentScoped — a grant with both project_id and
+// environment_id set yields Scope="environment" and records both names.
+func TestGetPermissionMatrix_EnvironmentScoped(t *testing.T) {
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
-	require.NoError(t, db.Create(&models.Project{ID: 7, Name: "proj-g"}).Error)
-	require.NoError(t, db.Create(&models.Environment{ID: 3, Name: "staging", ProjectID: 7}).Error)
-	seedMatrixUser(t, db, 20, "eve", "eve@example.com")
-	seedMatrixRole(t, db, 50, "dev")
+	require.NoError(t, db.Create(&models.Project{ID: 7, Name: "proj-gamma"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 3, ProjectID: 7, Name: "staging"}).Error)
+	seedMatrixUser(t, db, 20, "frank", "frank@example.com")
+	seedMatrixRole(t, db, 50, "env-reader")
 	seedMatrixPerm(t, db, 500, "secrets.read", "secrets", "read")
 	seedMatrixRolePerm(t, db, 50, 500)
-	// environment-scoped grant
-	require.NoError(t, db.Create(&models.UserRole{UserID: 20, RoleID: 50, ProjectID: 7, EnvironmentID: 3}).Error)
+	// environment-scoped grant: both project_id and environment_id are non-zero
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: 20, RoleID: 50, ProjectID: 7, EnvironmentID: 3,
+	}).Error)
 
 	rows, err := c.GetPermissionMatrix(ctx, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
+
 	r := rows[0]
-	assert.Equal(t, "environment", r.Scope)
+	assert.Equal(t, "frank", r.Username)
+	assert.Equal(t, "environment", r.Scope, "scope should be 'environment' when both project_id and environment_id are set")
+	assert.Equal(t, uint(7), r.ProjectID)
+	assert.Equal(t, "proj-gamma", r.ProjectName)
+	assert.Equal(t, uint(3), r.EnvironmentID)
 	assert.Equal(t, "staging", r.EnvironmentName)
-	assert.Equal(t, "proj-g", r.ProjectName)
 }
 
-// TestGetPermissionMatrix_MissingProject covers getProjectName error path (soft-deleted project).
-func TestGetPermissionMatrix_MissingProject(t *testing.T) {
+// TestGetPermissionMatrix_SoftDeletedProjectFallback — a grant that references a
+// project that no longer exists (soft-deleted or missing) falls back to the
+// "project-<id>" synthetic name rather than failing.
+func TestGetPermissionMatrix_SoftDeletedProjectFallback(t *testing.T) {
 	c, db := newMatrixCore(t)
 	ctx := context.Background()
 
-	seedMatrixUser(t, db, 30, "frank", "frank@example.com")
-	seedMatrixRole(t, db, 60, "ops")
+	// seed user + role + permission, but deliberately omit the project row
+	seedMatrixUser(t, db, 30, "grace", "grace@example.com")
+	seedMatrixRole(t, db, 60, "viewer")
 	seedMatrixPerm(t, db, 600, "secrets.read", "secrets", "read")
 	seedMatrixRolePerm(t, db, 60, 600)
-	// grant references project 999 which does not exist in the DB (soft-deleted)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 30, RoleID: 60, ProjectID: 999, EnvironmentID: 0}).Error)
+	// grant references project_id=99 which does not exist
+	require.NoError(t, db.Create(&models.UserRole{UserID: 30, RoleID: 60, ProjectID: 99, EnvironmentID: 0}).Error)
 
 	rows, err := c.GetPermissionMatrix(ctx, 0)
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	// getProjectName falls back to "project-999" placeholder
-	assert.Contains(t, rows[0].ProjectName, "999")
+	require.Len(t, rows, 1, "missing project must not drop the row")
+
+	r := rows[0]
+	assert.Equal(t, "project", r.Scope)
+	assert.Equal(t, fmt.Sprintf("project-%d", 99), r.ProjectName,
+		"project name must fall back to 'project-<id>' for missing projects")
+}
+
+// TestGetPermissionMatrix_MissingEnvironmentFallback — a grant with a valid project
+// but a missing environment falls back to the "env-<id>" synthetic name.
+func TestGetPermissionMatrix_MissingEnvironmentFallback(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Project{ID: 8, Name: "proj-delta"}).Error)
+	// no environment row for env_id=77 — intentionally absent
+	seedMatrixUser(t, db, 31, "heidi", "heidi@example.com")
+	seedMatrixRole(t, db, 61, "env-writer")
+	seedMatrixPerm(t, db, 601, "secrets.write", "secrets", "write")
+	seedMatrixRolePerm(t, db, 61, 601)
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: 31, RoleID: 61, ProjectID: 8, EnvironmentID: 77,
+	}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "missing environment must not drop the row")
+
+	r := rows[0]
+	assert.Equal(t, "environment", r.Scope)
+	assert.Equal(t, "proj-delta", r.ProjectName)
+	assert.Equal(t, fmt.Sprintf("env-%d", 77), r.EnvironmentName,
+		"environment name must fall back to 'env-<id>' for missing environments")
+}
+
+// TestGetPermissionMatrix_UnknownUserSkipped — a grant whose user_id has no matching
+// user row is silently skipped (stale JIT grant scenario).
+func TestGetPermissionMatrix_UnknownUserSkipped(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	seedMatrixUser(t, db, 40, "ivan", "ivan@example.com")
+	seedMatrixRole(t, db, 70, "admin")
+	seedMatrixPerm(t, db, 700, "secrets.read", "secrets", "read")
+	seedMatrixRolePerm(t, db, 70, 700)
+
+	// valid grant
+	require.NoError(t, db.Create(&models.UserRole{UserID: 40, RoleID: 70, ProjectID: 0}).Error)
+	// grant for non-existent user_id=999 (SQLite does not enforce FK by default)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 999, RoleID: 70, ProjectID: 0}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	// Only the valid grant should produce a row; the stale one is skipped.
+	require.Len(t, rows, 1, "stale grant with unknown user must be skipped")
+	assert.Equal(t, uint(40), rows[0].UserID)
+}
+
+// TestGetPermissionMatrix_MissingRoleSkipped — a grant whose role_id has no matching
+// role row causes the entire grant to be skipped (defensive: stale/orphaned grant).
+func TestGetPermissionMatrix_MissingRoleSkipped(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	seedMatrixUser(t, db, 41, "judy", "judy@example.com")
+	seedMatrixRole(t, db, 80, "real-role")
+	seedMatrixPerm(t, db, 800, "secrets.read", "secrets", "read")
+	seedMatrixRolePerm(t, db, 80, 800)
+
+	// valid grant
+	require.NoError(t, db.Create(&models.UserRole{UserID: 41, RoleID: 80, ProjectID: 0}).Error)
+	// grant referencing a role that doesn't exist in the roles table
+	require.NoError(t, db.Create(&models.UserRole{UserID: 41, RoleID: 9999, ProjectID: 0}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "grant with missing role must be skipped")
+	assert.Equal(t, uint(80), rows[0].RoleID)
+}
+
+// TestGetPermissionMatrix_EmptyDB — an empty deployment returns an empty slice.
+func TestGetPermissionMatrix_EmptyDB(t *testing.T) {
+	c, _ := newMatrixCore(t)
+	rows, err := c.GetPermissionMatrix(context.Background(), 0)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+// TestGetPermissionMatrix_ListGrantsError — storage failure in ListAllUserRoleGrants
+// propagates as an error.
+func TestGetPermissionMatrix_ListGrantsError(t *testing.T) {
+	base := &MockStorage{}
+	override := &matrixStorageOverride{
+		Storage:       base,
+		listGrantsErr: errors.New("db connection lost"),
+	}
+	c := NewKeyorixCore(override)
+	_, err := c.GetPermissionMatrix(context.Background(), 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list grants")
+}
+
+// TestGetPermissionMatrix_GetRolePermsError — a storage failure in GetRolePermissions
+// causes that grant to be silently skipped (continue path at line 152-154).
+func TestGetPermissionMatrix_GetRolePermsError(t *testing.T) {
+	// Build a LocalStorage-backed core that has a valid user + role, then wrap it
+	// with the override that injects an error from GetRolePermissions.
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Project{}, &models.Environment{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{},
+		&models.UserRole{}, &models.User{},
+	))
+	local := store.NewLocalStorage(db)
+	require.NoError(t, db.Create(&models.User{ID: 50, Username: "kate", Email: "kate@example.com"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 90, Name: "the-role"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 50, RoleID: 90, ProjectID: 0}).Error)
+
+	override := &matrixStorageOverride{
+		Storage:         local,
+		getRolePermsErr: errors.New("permissions table gone"),
+	}
+	c := NewKeyorixCore(override)
+
+	// The grant is silently skipped: no error returned, but no rows produced.
+	rows, err := c.GetPermissionMatrix(context.Background(), 0)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "grant with GetRolePermissions failure must be skipped silently")
+}
+
+// TestGetPermissionMatrix_RoleWithNoPermissions — a role that has zero permissions
+// contributes no rows (empty perms slice, inner loop never executes).
+func TestGetPermissionMatrix_RoleWithNoPermissions(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	seedMatrixUser(t, db, 42, "lena", "lena@example.com")
+	seedMatrixRole(t, db, 85, "empty-role") // no permissions assigned
+	require.NoError(t, db.Create(&models.UserRole{UserID: 42, RoleID: 85, ProjectID: 0}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "a role with zero permissions must produce no matrix rows")
+}
+
+// TestGetPermissionMatrix_ProjectNameCache — the same project_id resolved twice
+// uses the cache; only one DB lookup occurs (indirectly verified by result
+// correctness across multiple grants for the same project).
+func TestGetPermissionMatrix_ProjectNameCache(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "cached-proj"}).Error)
+	seedMatrixUser(t, db, 43, "mike", "mike@example.com")
+	seedMatrixUser(t, db, 44, "nina", "nina@example.com")
+	seedMatrixRole(t, db, 86, "viewer")
+	seedMatrixPerm(t, db, 860, "secrets.read", "secrets", "read")
+	seedMatrixRolePerm(t, db, 86, 860)
+	// two grants for the same project — project name should be resolved once and cached
+	require.NoError(t, db.Create(&models.UserRole{UserID: 43, RoleID: 86, ProjectID: 10}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 44, RoleID: 86, ProjectID: 10}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	for _, r := range rows {
+		assert.Equal(t, "cached-proj", r.ProjectName)
+	}
 }
