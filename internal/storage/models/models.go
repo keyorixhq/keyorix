@@ -1340,3 +1340,15 @@ type ProjectMembership struct {
 	RevokedAt   *time.Time
 	UpdatedAt   time.Time
 }
+
+// SecretVersionComment is a free-text annotation on a specific secret version,
+// providing a human-readable audit trail of why a version was created or changed.
+type SecretVersionComment struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	VersionID uint      `gorm:"not null;index" json:"version_id"`
+	SecretID  uint      `gorm:"not null;index" json:"secret_id"`
+	UserID    uint      `gorm:"not null" json:"user_id"`
+	Username  string    `gorm:"not null" json:"username"`
+	Comment   string    `gorm:"not null" json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
+}

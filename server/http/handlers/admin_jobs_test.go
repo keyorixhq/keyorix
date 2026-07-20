@@ -59,6 +59,14 @@ func TestAdminJobsHandlers_HappyPath(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.EqualValues(t, 0, decodeData(t, w)["sent"])
 	})
+
+	t.Run("role-expiry-check returns zero counters on empty state", func(t *testing.T) {
+		w := postJob(h.RunRoleExpiryCheck, "/api/v1/admin/jobs/role-expiry-check", true)
+		require.Equal(t, http.StatusOK, w.Code)
+		d := decodeData(t, w)
+		assert.EqualValues(t, 0, d["warnings"])
+		assert.EqualValues(t, 0, d["criticals"])
+	})
 }
 
 func TestAdminJobsHandlers_RequireUserContext(t *testing.T) {
@@ -68,6 +76,7 @@ func TestAdminJobsHandlers_RequireUserContext(t *testing.T) {
 		"rotation-reminders": h.RunRotationReminders,
 		"expiry-reminders":   h.RunExpiryReminders,
 		"compliance-digest":  h.RunComplianceDigest,
+		"role-expiry-check":  h.RunRoleExpiryCheck,
 	}
 	for name, fn := range cases {
 		t.Run(name+" is unauthorized without a user context", func(t *testing.T) {

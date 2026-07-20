@@ -68,5 +68,6 @@ func AllTestModels() []any {
 		&CompliancePostureSnapshot{},
 		&SecretAccessSchedule{},
 		&HygieneTrendSnapshot{},
+		&SecretVersionComment{},
 	}
 }

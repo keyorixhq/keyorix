@@ -824,6 +824,10 @@ type Storage interface {
 	// including scoped (project/environment) and global (project_id=0) grants.
 	// Includes time-bound (JIT) grants; callers filter by ExpiresAt if needed.
 	ListAllUserRoleGrants(ctx context.Context) ([]*models.UserRole, error)
+	// ListExpiringUserRoles returns every UserRole whose ExpiresAt is non-nil and
+	// before the given cutoff (i.e. expiring or already expired). Used by
+	// CheckRoleExpiry to find grants approaching their deadline.
+	ListExpiringUserRoles(ctx context.Context, before time.Time) ([]models.UserRole, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	// IsProjectMember reports whether the user holds a LIVE role grant scoped to the
@@ -1211,6 +1215,12 @@ type Storage interface {
 	// over the past windowDays days. Passing nil for projectIDs returns stats for
 	// ALL projects. The result may omit projects with zero activity and zero secrets.
 	GetProjectUsageStats(ctx context.Context, projectIDs []uint, windowDays int) ([]ProjectUsageStat, error)
+
+	// Secret version comments — free-text annotations on a specific secret version,
+	// providing a human-readable audit trail of why a version was created or changed.
+	CreateSecretVersionComment(ctx context.Context, c *models.SecretVersionComment) error
+	ListSecretVersionComments(ctx context.Context, versionID uint) ([]models.SecretVersionComment, error)
+	DeleteSecretVersionComment(ctx context.Context, id uint) error
 
 }
 

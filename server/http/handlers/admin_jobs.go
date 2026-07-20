@@ -95,3 +95,21 @@ func (h *AdminJobsHandler) RunComplianceDigest(w http.ResponseWriter, r *http.Re
 	}
 	sendSuccess(w, map[string]interface{}{"sent": sent}, "")
 }
+
+// RunRoleExpiryCheck handles POST /api/v1/system/admin/jobs/role-expiry-check —
+// scans all time-bound role grants and emits in-app notifications for those
+// expiring within 7 days (warning) or 1 day (critical). Returns {warnings, criticals}.
+// Requires system.write (enforced by the router).
+func (h *AdminJobsHandler) RunRoleExpiryCheck(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	result, err := h.coreService.CheckRoleExpiry(r.Context())
+	if err != nil {
+		log.Printf("Error running role-expiry-check job: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"warnings": result.Warnings, "criticals": result.Criticals}, "")
+}
