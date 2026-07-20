@@ -593,6 +593,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/copy", secretHandler.CopySecret)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
+			// Rotation dry-run / simulation (ADR-047): validates the rotation config without
+			// making any live change. Read-only — requires only secrets.read.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/rotation/simulate", secretHandler.SimulateRotation)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/move", secretHandler.MoveSecret)
