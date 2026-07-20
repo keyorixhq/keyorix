@@ -20,7 +20,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const errTmplNotConnected = "not connected to a server — run: keyorix connect <server>"
+const (
+	errTmplNotConnected  = "not connected to a server — run: keyorix connect <server>"
+	apiSecretTemplates   = "/api/v1/secret-templates"
+)
 
 var (
 	tmplName           string
@@ -55,7 +58,7 @@ func runTemplateList(ctx context.Context, c *common.RemoteClient) error {
 	var result struct {
 		Templates []*models.SecretTemplate `json:"templates"`
 	}
-	if err := c.Get(ctx, "/api/v1/secret-templates", &result); err != nil {
+	if err := c.Get(ctx, apiSecretTemplates, &result); err != nil {
 		return fmt.Errorf("list templates: %w", err)
 	}
 	if len(result.Templates) == 0 {
@@ -87,7 +90,7 @@ func runTemplateGet(ctx context.Context, c *common.RemoteClient, name string) er
 	var result struct {
 		Templates []*models.SecretTemplate `json:"templates"`
 	}
-	if err := c.Get(ctx, "/api/v1/secret-templates", &result); err != nil {
+	if err := c.Get(ctx, apiSecretTemplates, &result); err != nil {
 		return fmt.Errorf("get template: %w", err)
 	}
 	for _, t := range result.Templates {
@@ -129,7 +132,7 @@ func runTemplateCreate(ctx context.Context, c *common.RemoteClient) error {
 		"rotation_hint_days":     tmplRotationDays,
 	}
 	var tmpl models.SecretTemplate
-	if err := c.Post(ctx, "/api/v1/secret-templates", body, &tmpl); err != nil {
+	if err := c.Post(ctx, apiSecretTemplates, body, &tmpl); err != nil {
 		return fmt.Errorf("create template: %w", err)
 	}
 	fmt.Printf("Template %q created (ID %d).\n", tmpl.Name, tmpl.ID)
@@ -155,7 +158,7 @@ func runTemplateDelete(ctx context.Context, c *common.RemoteClient, name string)
 	var result struct {
 		Templates []*models.SecretTemplate `json:"templates"`
 	}
-	if err := c.Get(ctx, "/api/v1/secret-templates", &result); err != nil {
+	if err := c.Get(ctx, apiSecretTemplates, &result); err != nil {
 		return fmt.Errorf("list templates: %w", err)
 	}
 	var id uint
