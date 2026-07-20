@@ -1314,6 +1314,25 @@ type MachineIdentityOIDCBinding struct {
 // used in the migration guard and the GetMachineByOIDCSubject join.
 func (MachineIdentityOIDCBinding) TableName() string { return "machine_identity_oidc_bindings" }
 
+// NotificationChannel is a runtime-managed outbound notification destination.
+// Channel types: "webhook", "slack", "teams", "email".
+type NotificationChannel struct {
+	ID      uint   `gorm:"primarykey" json:"id"`
+	Name    string `gorm:"uniqueIndex;not null" json:"name"`
+	Type    string `gorm:"not null" json:"type"` // webhook|slack|teams|email
+	Enabled bool   `gorm:"default:true" json:"enabled"`
+	// URL is the webhook endpoint (for webhook/slack/teams types)
+	URL string `json:"url,omitempty"`
+	// Email is the recipient address (for email type)
+	Email string `json:"email,omitempty"`
+	// Events is a comma-separated list of event types this channel receives
+	// e.g. "secret.rotated,anomaly.detected,secret.expiring"
+	Events    string    `json:"events"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CreatedBy string    `json:"created_by"`
+}
+
 // ProjectMembership tracks the onboarding lifecycle of a user into a project
 // (ADR-022), separate from the actual role grant (user_roles). It carries a
 // 5-state machine: invited → identity_verified → provisioned → active, with
