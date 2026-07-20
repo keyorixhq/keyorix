@@ -113,3 +113,26 @@ func (h *AdminJobsHandler) RunRoleExpiryCheck(w http.ResponseWriter, r *http.Req
 	}
 	sendSuccess(w, map[string]interface{}{"warnings": result.Warnings, "criticals": result.Criticals}, "")
 }
+
+// RunReadQuotaCheck handles POST /api/v1/system/admin/jobs/check-read-quotas —
+// scans all secrets with MaxReads > 0 and emits in-app notifications for those
+// approaching or reaching their read limit. Returns {warnings, criticals, exhausted, checked}.
+// Requires system.write (enforced by the router).
+func (h *AdminJobsHandler) RunReadQuotaCheck(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	result, err := h.coreService.CheckReadQuotas(r.Context())
+	if err != nil {
+		log.Printf("Error running check-read-quotas job: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"warnings":  result.Warnings,
+		"criticals": result.Criticals,
+		"exhausted": result.Exhausted,
+		"checked":   result.Checked,
+	}, "")
+}

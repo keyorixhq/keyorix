@@ -524,6 +524,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Usage analytics (static paths, before /{id}).
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/usage/most-accessed", secretHandler.UsageMostAccessed)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/usage/unused", secretHandler.UsageUnused)
+			// Read-quota report — deployment-wide secrets approaching MaxReads cap.
+			// Gated on global secrets.read (same level as listing all projects).
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/quota-report", secretHandler.GetQuotaReport)
 			// Org-wide secret asset inventory (ISO 27001 A.5.9) — CSV manifest of every
 			// project's secrets, metadata only (no values), but it DOES disclose every
 			// secret's real NAME/classification/owner deployment-wide, so it is gated on
@@ -1827,6 +1830,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Persist today's credential-hygiene counts for trend queries.
 			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
 			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
+			r.Post("/check-read-quotas", adminJobsHandler.RunReadQuotaCheck)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted
