@@ -57,6 +57,23 @@ func TestCreateComment_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
+func TestCreateComment_EmptyComment(t *testing.T) {
+	h := newVersionCommentTestHandler(t)
+	body := bytes.NewBufferString(`{"comment":""}`)
+	r := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", body), map[string]string{"id": "1", "versionId": "1"}))
+	w := httptest.NewRecorder()
+	h.CreateComment(w, r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestListComments_InvalidVersionID(t *testing.T) {
+	h := newVersionCommentTestHandler(t)
+	r := withUserCtx(withChiParams(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"id": "1", "versionId": "bad"}))
+	w := httptest.NewRecorder()
+	h.ListComments(w, r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestListComments_Unauthorized(t *testing.T) {
 	h := newVersionCommentTestHandler(t)
 	w := httptest.NewRecorder()
