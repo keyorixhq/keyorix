@@ -11,6 +11,7 @@ package secret
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
+
+const errTmplNotConnected = "not connected to a server — run: keyorix connect <server>"
 
 var (
 	tmplName           string
@@ -42,7 +45,7 @@ var templateListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, ok := common.NewRemoteClient()
 		if !ok {
-			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+			return errors.New(errTmplNotConnected)
 		}
 		return runTemplateList(context.Background(), c)
 	},
@@ -73,7 +76,7 @@ var templateGetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, ok := common.NewRemoteClient()
 		if !ok {
-			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+			return errors.New(errTmplNotConnected)
 		}
 		return runTemplateGet(context.Background(), c, args[0])
 	},
@@ -110,7 +113,7 @@ var templateCreateCmd = &cobra.Command{
 		}
 		c, ok := common.NewRemoteClient()
 		if !ok {
-			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+			return errors.New(errTmplNotConnected)
 		}
 		return runTemplateCreate(context.Background(), c)
 	},
@@ -141,7 +144,7 @@ var templateDeleteCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, ok := common.NewRemoteClient()
 		if !ok {
-			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+			return errors.New(errTmplNotConnected)
 		}
 		return runTemplateDelete(context.Background(), c, args[0])
 	},

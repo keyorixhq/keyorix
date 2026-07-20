@@ -97,13 +97,13 @@ func (h *SecretTemplateHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *SecretTemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid template ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidTemplateID, http.StatusBadRequest, nil)
 		return
 	}
 	tmpl, err := h.coreService.GetSecretTemplate(r.Context(), uint(id))
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Secret template not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errSecretTemplateNotFound, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error getting secret template: %v", err)
@@ -117,7 +117,7 @@ func (h *SecretTemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *SecretTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid template ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidTemplateID, http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
@@ -145,7 +145,7 @@ func (h *SecretTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
-		case strings.Contains(msg, "not found"):
+		case strings.Contains(msg, errNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "name is required"), strings.Contains(msg, "invalid classification"):
 			status = http.StatusBadRequest
@@ -163,12 +163,12 @@ func (h *SecretTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *SecretTemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid template ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidTemplateID, http.StatusBadRequest, nil)
 		return
 	}
 	if err := h.coreService.DeleteSecretTemplate(r.Context(), uint(id)); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Secret template not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errSecretTemplateNotFound, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error deleting secret template: %v", err)
@@ -184,7 +184,7 @@ func (h *SecretTemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *SecretTemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid template ID", http.StatusBadRequest, nil)
+		sendError(w, "InvalidParameter", errInvalidTemplateID, http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
@@ -198,8 +198,8 @@ func (h *SecretTemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.coreService.ApplyTemplate(r.Context(), uint(id), body.Classification, body.Description, body.Tags)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Secret template not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errSecretTemplateNotFound, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error applying secret template: %v", err)
