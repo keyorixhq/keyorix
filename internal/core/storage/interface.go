@@ -746,6 +746,11 @@ type Storage interface {
 	// ListUsersInStateBefore returns users whose account_state equals state and
 	// who were created before the cutoff (ADR-025 stale-account warnings).
 	ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error)
+	// ListInactiveUsers returns all live (non-deleted) users who have not logged
+	// in since threshold: specifically, those whose last_login_at IS NULL AND
+	// created_at < threshold, OR whose last_login_at < threshold. Used by the
+	// inactivity auto-suspension job (SuspendInactiveUsers).
+	ListInactiveUsers(ctx context.Context, threshold time.Time) ([]*models.User, error)
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	// GetUserByExternalID resolves a SCIM-provisioned user by the IdP's externalId
 	// (RFC 7644). Returns the not-found error when no user carries that external id.
