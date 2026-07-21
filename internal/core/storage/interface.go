@@ -924,6 +924,9 @@ type Storage interface {
 	// calendar day), to avoid same-day self-comparison.
 	// Returns nil, nil when no prior snapshot exists.
 	GetPreviousCompliancePostureSnapshot(ctx context.Context, before time.Time) (*models.CompliancePostureSnapshot, error)
+	// ListCompliancePostureSnapshots returns snapshots ordered by snapshot_date
+	// descending (most recent first). limit ≤ 0 returns the default cap (90 rows).
+	ListCompliancePostureSnapshots(ctx context.Context, limit int) ([]*models.CompliancePostureSnapshot, error)
 
 	// Credential Hygiene Trend Snapshots — daily counts of stale/expired PATs and
 	// stale machine credentials for per-day trend queries.

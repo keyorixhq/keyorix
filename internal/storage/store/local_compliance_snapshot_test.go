@@ -91,3 +91,50 @@ func TestGetPreviousCompliancePostureSnapshot_SkipsRecentSnapshot(t *testing.T) 
 	require.NotNil(t, got, "expected yesterday's snapshot to be returned")
 	assert.Equal(t, 8, got.PassedControls)
 }
+
+func TestListCompliancePostureSnapshots_EmptyTable(t *testing.T) {
+	ls := newComplianceSnapshotStore(t)
+	snaps, err := ls.ListCompliancePostureSnapshots(context.Background(), 0)
+	require.NoError(t, err)
+	assert.Empty(t, snaps)
+}
+
+func TestListCompliancePostureSnapshots_OrderedDescending(t *testing.T) {
+	ls := newComplianceSnapshotStore(t)
+	ctx := context.Background()
+
+	d1 := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC)
+	d3 := time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC)
+	for _, d := range []time.Time{d2, d1, d3} {
+		require.NoError(t, ls.db.Create(&models.CompliancePostureSnapshot{SnapshotDate: d}).Error)
+	}
+
+	snaps, err := ls.ListCompliancePostureSnapshots(ctx, 0) // 0 → default limit
+	require.NoError(t, err)
+	require.Len(t, snaps, 3)
+	assert.True(t, snaps[0].SnapshotDate.Equal(d3), "most recent first")
+	assert.True(t, snaps[2].SnapshotDate.Equal(d1), "oldest last")
+}
+
+func TestListCompliancePostureSnapshots_RespectsLimit(t *testing.T) {
+	ls := newComplianceSnapshotStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		d := time.Date(2026, 7, i+1, 0, 0, 0, 0, time.UTC)
+		require.NoError(t, ls.db.Create(&models.CompliancePostureSnapshot{SnapshotDate: d}).Error)
+	}
+
+	snaps, err := ls.ListCompliancePostureSnapshots(ctx, 2)
+	require.NoError(t, err)
+	assert.Len(t, snaps, 2)
+}
+
+func TestListCompliancePostureSnapshots_DBError(t *testing.T) {
+	ls := newComplianceSnapshotStore(t)
+	// Drop the table so Find returns a DB error.
+	require.NoError(t, ls.db.Exec("DROP TABLE compliance_posture_snapshots").Error)
+	_, err := ls.ListCompliancePostureSnapshots(context.Background(), 0)
+	require.Error(t, err)
+}

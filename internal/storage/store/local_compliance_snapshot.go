@@ -1,6 +1,7 @@
 // local_compliance_snapshot.go — CompliancePostureSnapshot persistence for LocalStorage.
 //
-// Covers: SaveCompliancePostureSnapshot, GetPreviousCompliancePostureSnapshot.
+// Covers: SaveCompliancePostureSnapshot, GetPreviousCompliancePostureSnapshot,
+// ListCompliancePostureSnapshots.
 //
 // For the remote (stub) equivalent see remote_compliance.go.
 package store
@@ -22,6 +23,24 @@ func (ls *LocalStorage) SaveCompliancePostureSnapshot(ctx context.Context, snap 
 		Where(models.CompliancePostureSnapshot{SnapshotDate: snap.SnapshotDate}).
 		Assign(*snap).
 		FirstOrCreate(snap).Error
+}
+
+const defaultSnapshotLimit = 90
+
+// ListCompliancePostureSnapshots returns up to limit snapshots ordered by
+// snapshot_date descending. If limit ≤ 0, defaultSnapshotLimit (90) is used.
+func (ls *LocalStorage) ListCompliancePostureSnapshots(ctx context.Context, limit int) ([]*models.CompliancePostureSnapshot, error) {
+	if limit <= 0 {
+		limit = defaultSnapshotLimit
+	}
+	var snaps []*models.CompliancePostureSnapshot
+	if err := ls.db.WithContext(ctx).
+		Order("snapshot_date DESC").
+		Limit(limit).
+		Find(&snaps).Error; err != nil {
+		return nil, err
+	}
+	return snaps, nil
 }
 
 // GetPreviousCompliancePostureSnapshot returns the most recent snapshot whose
