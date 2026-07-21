@@ -53,7 +53,7 @@ func freshCoreRBHClosed(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	sqlDB.Close()
+	_ = sqlDB.Close()
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 

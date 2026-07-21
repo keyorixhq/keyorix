@@ -53,13 +53,13 @@ the whole deployment. Requires audit.read permission.`,
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "BACKEND\tTOTAL\tOVERDUE\tUP-TO-DATE\tNEVER ROTATED")
+		_, _ = fmt.Fprintln(tw, "BACKEND\tTOTAL\tOVERDUE\tUP-TO-DATE\tNEVER ROTATED")
 		for _, b := range report.Backends {
 			backend := b.Backend
 			if backend == "" {
 				backend = "(keyorix-internal)"
 			}
-			fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\n",
+			_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\n",
 				backend, b.Total, b.Overdue, b.UpToDate, b.NeverRotated)
 		}
 		_ = tw.Flush()
