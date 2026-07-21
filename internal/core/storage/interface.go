@@ -600,6 +600,9 @@ type Storage interface {
 	// SetSecretCertNotAfter caches a certificate-typed secret's parsed leaf expiry
 	// (ADR-056), a targeted column update with no other side effects.
 	SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error
+	// SetRetentionOverride sets the RetentionOverrideDays on a SecretNode row.
+	// days = 0 clears the override (reverts to the global policy).
+	SetRetentionOverride(ctx context.Context, secretID uint, days int) error
 	IncrementSecretReadCount(ctx context.Context, versionID uint) error
 	// TryIncrementSecretReadCount atomically increments a version's read count only
 	// while it is still below maxReads, in a single conditional UPDATE. Returns true
