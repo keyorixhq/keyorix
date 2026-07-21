@@ -91,7 +91,7 @@ func runTokenIssue(cmd *cobra.Command, args []string) error {
 		t := time.Now().AddDate(0, 0, tokenIssueExpiryDays)
 		expiresAt = &t
 	}
-	result, err := svc.IssueMachineToken(ctx, projectID, m.ID, tokenIssueName, expiresAt, tokenIssueClass, 0)
+	result, err := svc.IssueMachineToken(ctx, projectID, m.ID, tokenIssueName, expiresAt, tokenIssueClass, 0, nil)
 	if err != nil {
 		return fmt.Errorf("failed to issue machine token: %w", err)
 	}

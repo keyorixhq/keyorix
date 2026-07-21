@@ -1314,10 +1314,15 @@ type MachineIdentityCredential struct {
 	Name              string // operator-facing label
 	TokenHash         string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex (never the plaintext)
 	TokenPrefix       string `gorm:"index"`                         // leading chars for display ("kx_machine_ab12cd")
-	LastUsedAt        *time.Time
-	ExpiresAt         *time.Time // nil = never expires
-	Revoked           bool       `gorm:"default:false"`
-	CreatedAt         time.Time
+	// AllowedCIDRs is a JSON-encoded []string of CIDR blocks the token may be used
+	// from (e.g. ["10.0.0.0/8","192.0.2.4/32"]). Empty/null = no network restriction.
+	// When set, a request presenting this token from a source IP outside every listed
+	// CIDR is denied — a stolen token is useless off the allowed network.
+	AllowedCIDRs string `gorm:"type:text"`
+	LastUsedAt   *time.Time
+	ExpiresAt    *time.Time // nil = never expires
+	Revoked      bool       `gorm:"default:false"`
+	CreatedAt    time.Time
 	// Classification is the data-sensitivity tier of what this credential can reach
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
 	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.

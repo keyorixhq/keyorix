@@ -502,7 +502,7 @@ func TestStreamAuthInterceptor_S22_MachineTokenAuthenticates(t *testing.T) {
 
 	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "stream-bot", "service", "", "", 1)
 	require.NoError(t, err)
-	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, "tok", nil, "", 1)
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, "tok", nil, "", 1, nil)
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
 

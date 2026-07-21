@@ -306,16 +306,23 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 }
 
 func validateGRPCMachineToken(ctx context.Context, coreService *core.KeyorixCore, token string) (*UserContext, *core.PATRestriction, error) {
-	machine, roles, err := coreService.ValidateMachineToken(ctx, token)
+	machine, roles, restriction, err := coreService.ValidateMachineToken(ctx, token)
 	if err != nil {
 		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
 	}
-	return &UserContext{
+	uc := &UserContext{
 		Username:          machine.Name,
 		Roles:             roles,
 		ActorType:         core.ActorTypeMachine,
 		MachineIdentityID: machine.ID,
-	}, nil, nil
+	}
+	// Enforce machine token IP allowlist via gRPC peer IP.
+	if restriction != nil && len(restriction.AllowedCIDRs) > 0 {
+		if !core.IPInCIDRs(PeerIP(ctx), restriction.AllowedCIDRs) {
+			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
+		}
+	}
+	return uc, nil, nil
 }
 
 func enforceGRPCAccessPolicy(ctx context.Context, user *models.User, restriction *core.PATRestriction, requireMFA, viaSession bool) error {

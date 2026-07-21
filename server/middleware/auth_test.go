@@ -78,15 +78,15 @@ func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.
 	return nil, nil, nil, fmt.Errorf("invalid token")
 }
 
-func (fakeValidator) ValidateMachineToken(_ context.Context, token string) (*models.MachineIdentity, []string, error) {
+func (fakeValidator) ValidateMachineToken(_ context.Context, token string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, error) {
 	if token == "kx_machine_validtoken" {
 		return &models.MachineIdentity{
 			ID:    9,
 			Name:  "ci-bot",
 			State: "active",
-		}, []string{"project_viewer"}, nil
+		}, []string{"project_viewer"}, nil, nil
 	}
-	return nil, nil, fmt.Errorf("invalid token")
+	return nil, nil, nil, fmt.Errorf("invalid token")
 }
 
 func (fakeValidator) OIDCEnabled() bool { return true }
@@ -363,6 +363,7 @@ func TestRequireRole_DeniesMachinePrincipal(t *testing.T) {
 	userCtx := machineUserContext(
 		&models.MachineIdentity{ID: machineID, Name: "ci-deployer"},
 		[]string{"deployer"}, // GetMachineRoles' unscoped flattening of a project-A-only grant
+		nil,
 	)
 	require.NotNil(t, userCtx.MachineIdentityID)
 	require.Equal(t, machineID, *userCtx.MachineIdentityID)

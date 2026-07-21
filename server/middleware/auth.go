@@ -37,7 +37,7 @@ const (
 type sessionValidator interface {
 	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
 	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, *core.PATRestriction, error)
-	ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
+	ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, error)
 	ValidateOIDCToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
 	OIDCEnabled() bool
 }
@@ -78,6 +78,9 @@ type UserContext struct {
 	// the identity and tagged onto the request context by buildRequestContext so
 	// core.Authorize enforces it at the single authorization chokepoint.
 	PATRestriction *core.PATRestriction `json:"-"`
+	// MachineTokenRestriction carries the network-level IP allowlist for a machine
+	// token credential, or nil when none is set. Enforced at the auth boundary.
+	MachineTokenRestriction *core.MachineTokenRestriction `json:"-"`
 }
 
 // cloneUserContextWithRestriction returns a shallow copy of base with
@@ -761,15 +764,18 @@ func GetUserFromContext(ctx context.Context) *UserContext {
 // machineUserContext builds the request principal for a machine identity (used
 // by both opaque machine tokens and federated OIDC tokens) — UserID 0, the
 // machine id, and ActorType machine_identity so RBAC and audit are identical.
-func machineUserContext(m *models.MachineIdentity, roleNames []string) *UserContext {
+// restriction is nil for OIDC tokens (no per-credential allowlist) and for
+// opaque tokens that carry no AllowedCIDRs.
+func machineUserContext(m *models.MachineIdentity, roleNames []string, restriction *core.MachineTokenRestriction) *UserContext {
 	mid := m.ID
 	return &UserContext{
-		UserID:            0,
-		MachineIdentityID: &mid,
-		ActorType:         core.ActorTypeMachine,
-		Username:          m.Name,
-		Roles:             roleNames,
-		AccountState:      core.AccountActive,
+		UserID:                  0,
+		MachineIdentityID:       &mid,
+		ActorType:               core.ActorTypeMachine,
+		Username:                m.Name,
+		Roles:                   roleNames,
+		AccountState:            core.AccountActive,
+		MachineTokenRestriction: restriction,
 	}
 }
 
@@ -791,11 +797,11 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	}
 	// Machine tokens (ADR-030) authenticate AS a machine identity, not a user.
 	if strings.HasPrefix(token, machineTokenPrefix) {
-		m, roleNames, err := validator.ValidateMachineToken(ctx, token)
+		m, roleNames, restriction, err := validator.ValidateMachineToken(ctx, token)
 		if err != nil {
 			return nil, err
 		}
-		return machineUserContext(m, roleNames), nil
+		return machineUserContext(m, roleNames, restriction), nil
 	}
 
 	// Federated OIDC / Kubernetes-JWT tokens (ADR-031) also authenticate AS a
@@ -806,7 +812,7 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		if err != nil {
 			return nil, err
 		}
-		return machineUserContext(m, roleNames), nil
+		return machineUserContext(m, roleNames, nil), nil
 	}
 
 	// Route by prefix: PATs authenticate AS their owning user, resolving to the same
@@ -841,17 +847,24 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	}, nil
 }
 
-// tokenNetworkAllowed enforces a token's IP allowlist (ADR: PAT network restriction). It
-// returns true when the token has no allowlist; otherwise the request's source IP must fall
-// within one of the allowed CIDRs. It fails CLOSED — an undeterminable/unparseable source
-// IP is denied. The source IP is the TCP peer (r.RemoteAddr), never a client-supplied
-// header, so the control cannot be spoofed; a deployment behind a proxy must terminate so
-// RemoteAddr is the real client (e.g. PROXY protocol) for per-client allowlists to apply.
+// tokenNetworkAllowed enforces a token's IP allowlist. It returns true when the
+// token has no allowlist; otherwise the request's source IP must fall within one
+// of the allowed CIDRs. Covers both PATs and machine tokens. It fails CLOSED —
+// an undeterminable/unparseable source IP is denied. The source IP is the TCP
+// peer (r.RemoteAddr), never a client-supplied header, so the control cannot be
+// spoofed; a deployment behind a proxy must terminate so RemoteAddr is the real
+// client (e.g. PROXY protocol) for per-client allowlists to apply.
 func tokenNetworkAllowed(r *http.Request, userCtx *UserContext) bool {
-	if userCtx == nil || userCtx.PATRestriction == nil || len(userCtx.PATRestriction.AllowedCIDRs) == 0 {
+	if userCtx == nil {
 		return true
 	}
-	return core.IPInCIDRs(clientIP(r), userCtx.PATRestriction.AllowedCIDRs)
+	if userCtx.PATRestriction != nil && len(userCtx.PATRestriction.AllowedCIDRs) > 0 {
+		return core.IPInCIDRs(clientIP(r), userCtx.PATRestriction.AllowedCIDRs)
+	}
+	if userCtx.MachineTokenRestriction != nil && len(userCtx.MachineTokenRestriction.AllowedCIDRs) > 0 {
+		return core.IPInCIDRs(clientIP(r), userCtx.MachineTokenRestriction.AllowedCIDRs)
+	}
+	return true
 }
 
 // clientIP returns the source IP of the request from its TCP peer address.
