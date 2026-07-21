@@ -93,6 +93,31 @@ func (k *KeyorixCore) checkPATExpiry(ctx context.Context, now time.Time, cutoff 
 	return nil
 }
 
+// notifyMachineCredAdmins delivers or upgrades a machine-cred expiry notification
+// to each admin. It counts the credential only once per credential (not per admin).
+// Returns true when a bump was recorded for result.
+func (k *KeyorixCore) notifyMachineCredAdmins(ctx context.Context, credName string, title, msg string, severity models.NotificationSeverity, admins []uint, result *TokenExpiryCheckResult) {
+	counted := false
+	for _, uid := range admins {
+		existing := k.unreadMachineCredExpiryReminder(ctx, uid, credName)
+		if existing != nil {
+			if severity <= existing.Severity {
+				continue
+			}
+			if k.upgradeReminder(ctx, existing, title, msg, severity) && !counted {
+				bumpTokenExpiryCount(result, severity, false)
+				counted = true
+			}
+			continue
+		}
+		k.notifyWithSeverity(ctx, uid, NotificationMachineCredExpiry, title, msg, nil, "/system/machines", severity)
+		if !counted {
+			bumpTokenExpiryCount(result, severity, false)
+			counted = true
+		}
+	}
+}
+
 // checkMachineCredExpiry handles the machine-credential half of CheckTokenExpiry.
 func (k *KeyorixCore) checkMachineCredExpiry(ctx context.Context, now time.Time, cutoff time.Time, result *TokenExpiryCheckResult) error {
 	creds, err := k.storage.ListExpiringMachineCredentials(ctx, cutoff)
@@ -110,36 +135,12 @@ func (k *KeyorixCore) checkMachineCredExpiry(ctx context.Context, now time.Time,
 
 	for i := range creds {
 		c := &creds[i]
-		if c.ExpiresAt == nil {
-			continue
-		}
-		if !c.ExpiresAt.After(now) {
+		if c.ExpiresAt == nil || !c.ExpiresAt.After(now) {
 			continue
 		}
 		severity := tokenExpirySeverity(c.ExpiresAt, now)
 		title, msg := machineCredExpiryMessage(c.Name, c.ExpiresAt)
-
-		counted := false
-		for _, uid := range admins {
-			existing := k.unreadMachineCredExpiryReminder(ctx, uid, c.Name)
-			if existing != nil {
-				if severity <= existing.Severity {
-					continue
-				}
-				if k.upgradeReminder(ctx, existing, title, msg, severity) {
-					if !counted {
-						bumpTokenExpiryCount(result, severity, false)
-						counted = true
-					}
-				}
-				continue
-			}
-			k.notifyWithSeverity(ctx, uid, NotificationMachineCredExpiry, title, msg, nil, "/system/machines", severity)
-			if !counted {
-				bumpTokenExpiryCount(result, severity, false)
-				counted = true
-			}
-		}
+		k.notifyMachineCredAdmins(ctx, c.Name, title, msg, severity, admins, result)
 	}
 	return nil
 }

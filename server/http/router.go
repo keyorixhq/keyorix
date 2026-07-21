@@ -31,7 +31,9 @@ const (
 	pathIDRestore = "/{id}/restore"
 	pathIDRoles = "/{id}/roles"
 	pathIDSchedule = "/{id}/schedule"
-	pathInvitations = "/invitations"
+	pathInvitations              = "/invitations"
+	pathNotificationChannelsID    = "/notification-channels/{id}"
+	pathAlertEscalationPoliciesID = "/alert-escalation-policies/{id}"
 	pathLegalHold = "/legal-hold"
 	pathMetrics = "/metrics"
 	pathProjectEnvs = "/projects/{id}/environments"
@@ -333,16 +335,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Notification channel management — admin-only (system.write).
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels", notificationChannelHandler.List)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/notification-channels", notificationChannelHandler.Create)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels/{id}", notificationChannelHandler.Get)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}", notificationChannelHandler.Update)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/notification-channels/{id}", notificationChannelHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathNotificationChannelsID, notificationChannelHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathNotificationChannelsID, notificationChannelHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathNotificationChannelsID, notificationChannelHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}/retry-policy", notificationChannelHandler.SetRetryPolicy)
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/notification-channels/{id}/retry-policy", notificationChannelHandler.GetRetryPolicy)
 
 		// Alert escalation policy management — admin-only (system.write).
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/alert-escalation-policies", alertEscalationHandler.Create)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies", alertEscalationHandler.List)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies/{id}", alertEscalationHandler.Get)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/alert-escalation-policies/{id}", alertEscalationHandler.Update)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/alert-escalation-policies/{id}", alertEscalationHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathAlertEscalationPoliciesID, alertEscalationHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathAlertEscalationPoliciesID, alertEscalationHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathAlertEscalationPoliciesID, alertEscalationHandler.Delete)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,
@@ -600,6 +604,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/read-summary", secretHandler.GetSecretReadSummary)
 			// Impact preview: flat cascade-delete count/summary before committing a delete.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact-preview", secretHandler.GetSecretImpactPreview)
+
+			// Rotation state — per-policy execution state (idle/pending/rotating/succeeded/failed).
+			// Gated on secrets.read because it exposes metadata (when rotation last ran, any error)
+			// without disclosing the secret value.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/rotation-state", rotationPolicyHandler.GetRotationState)
 
 			// Per-secret ACLs (RBAC Phase 3): fine-grained user grants independent of project RBAC.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/acl", secretHandler.ListSecretACLs)
@@ -1895,6 +1904,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
 			r.Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
 			r.Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
+			r.Post("/purge-audit-logs", adminJobsHandler.PurgeAuditLogsJob)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted

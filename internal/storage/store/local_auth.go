@@ -321,12 +321,14 @@ func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, u
 		UpdateColumn("last_used_at", usedAt).Error
 }
 
+const sqlWhereExpiredPAT = "user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?"
+
 // ListExpiredPATsByUser returns all non-revoked PATs for userID whose ExpiresAt is in
 // the past (expired but never explicitly revoked). Ordered newest-created first.
 func (ls *LocalStorage) ListExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]*models.PersonalAccessToken, error) {
 	var tokens []*models.PersonalAccessToken
 	if err := ls.db.WithContext(ctx).
-		Where("user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, false, now).
+		Where(sqlWhereExpiredPAT, userID, false, now).
 		Order(sqlOrderCreatedAtDesc).
 		Find(&tokens).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -339,7 +341,7 @@ func (ls *LocalStorage) ListExpiredPATsByUser(ctx context.Context, userID uint, 
 func (ls *LocalStorage) BulkRevokeExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]string, error) {
 	var hashes []string
 	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
-		Where("user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, false, now).
+		Where(sqlWhereExpiredPAT, userID, false, now).
 		Pluck("token_hash", &hashes).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -347,7 +349,7 @@ func (ls *LocalStorage) BulkRevokeExpiredPATsByUser(ctx context.Context, userID 
 		return nil, nil
 	}
 	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
-		Where("user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, false, now).
+		Where(sqlWhereExpiredPAT, userID, false, now).
 		Update("revoked", true).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

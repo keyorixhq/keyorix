@@ -44,3 +44,8 @@ func (m *MockStorage) DeleteNotificationChannel(ctx context.Context, id uint) er
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
+
+func (m *MockStorage) UpdateNotificationRetryPolicy(ctx context.Context, channelID uint, maxRetries, backoffMs int) error {
+	args := m.Called(ctx, channelID, maxRetries, backoffMs)
+	return args.Error(0)
+}

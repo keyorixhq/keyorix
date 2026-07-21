@@ -1009,6 +1009,9 @@ type Storage interface {
 	// (NIS2 mandates 12 months of retention). Oldest/Newest are nil on an empty
 	// table.
 	AuditRetentionStats(ctx context.Context) (*AuditRetentionStats, error)
+	// DeleteAuditLogsBefore hard-deletes AuditEvent rows with created_at < cutoff.
+	// Returns the number of rows deleted.
+	DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error)
 	// VerifyAuditChain re-walks the tamper-evidence hash chain (ADR-029) over
 	// audit_events and reports whether it is intact. The first divergence —
 	// modified field, deleted/inserted row, or broken linkage — is reported
@@ -1232,9 +1235,16 @@ type Storage interface {
 	// Rotation Policy Management
 	CreateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
 	GetRotationPolicy(ctx context.Context, id uint) (*models.RotationPolicy, error)
+	// GetRotationPolicyBySecret returns the first active rotation policy that covers
+	// the secret (by matching the secret's project_id and/or environment_id). Returns
+	// ErrNotFound (via the store package) when no policy exists for the secret.
+	GetRotationPolicyBySecret(ctx context.Context, secretID uint) (*models.RotationPolicy, error)
 	ListRotationPolicies(ctx context.Context, projectID *uint, environmentID *uint) ([]*models.RotationPolicy, error)
 	UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
 	DeleteRotationPolicy(ctx context.Context, id uint) error
+	// UpdateRotationState stamps the execution state on a RotationPolicy row.
+	// state must be one of: idle, pending, rotating, succeeded, failed.
+	UpdateRotationState(ctx context.Context, policyID uint, state, errMsg string) error
 
 	// Health and Maintenance
 	HealthCheck(ctx context.Context) error
@@ -1260,6 +1270,8 @@ type Storage interface {
 	CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
 	UpdateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
 	DeleteNotificationChannel(ctx context.Context, id uint) error
+	// UpdateNotificationRetryPolicy updates the retry fields on a NotificationChannel row.
+	UpdateNotificationRetryPolicy(ctx context.Context, channelID uint, maxRetries, backoffMs int) error
 
 	// Rejection reason templates — pre-defined reasons for rejecting access
 	// requests. The REST API is the remote surface; these methods only run

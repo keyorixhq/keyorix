@@ -383,3 +383,31 @@ func (h *RotationPolicyHandler) Status(w http.ResponseWriter, r *http.Request) {
 
 	h.sendSuccess(w, entries, "")
 }
+
+// GetRotationState handles GET /api/v1/secrets/{id}/rotation-state.
+// Returns the per-policy execution state (idle/pending/rotating/succeeded/failed)
+// for the secret's covering rotation policy. Secrets with no active policy return
+// state="idle" with a 200 (not a 404) — absence of a policy is a normal case.
+func (h *RotationPolicyHandler) GetRotationState(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+
+	idStr := chi.URLParam(r, "id")
+	secretID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
+		return
+	}
+
+	info, err := h.coreService.GetRotationState(r.Context(), uint(secretID))
+	if err != nil {
+		log.Printf("Error getting rotation state for secret %d: %v", secretID, err)
+		h.sendError(w, "InternalError", "Failed to get rotation state", http.StatusInternalServerError, nil)
+		return
+	}
+
+	h.sendSuccess(w, info, "")
+}

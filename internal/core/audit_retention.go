@@ -8,6 +8,45 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
+// minRetentionDays is the minimum allowed retention window for a purge.
+// Enforced to prevent accidental mass-deletion of recent audit events.
+const minRetentionDays = 7
+
+// AuditLogRetentionConfig controls how old an audit event must be before it
+// can be purged. RetentionDays of 0 means "keep forever" (no purge).
+type AuditLogRetentionConfig struct {
+	RetentionDays int // 0 = no purge
+}
+
+// PurgeAuditLogsResult summarises how many rows were deleted.
+type PurgeAuditLogsResult struct {
+	DeletedCount int64
+	CutoffTime   time.Time
+}
+
+// PurgeAuditLogs deletes audit events older than cfg.RetentionDays days.
+// Returns ErrInvalidAuditRetentionDays if RetentionDays < minRetentionDays (7).
+// A minimum of 7 days is enforced to prevent accidental mass-deletion.
+func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionConfig) (*PurgeAuditLogsResult, error) {
+	if cfg.RetentionDays < minRetentionDays {
+		return nil, fmt.Errorf("%w: retention_days must be at least %d (got %d)",
+			ErrInvalidAuditRetentionDays, minRetentionDays, cfg.RetentionDays)
+	}
+
+	cutoff := c.now().UTC().AddDate(0, 0, -cfg.RetentionDays)
+	n, err := c.storage.DeleteAuditLogsBefore(ctx, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("failed to purge audit logs: %w", err)
+	}
+
+	sysCtx := WithActorType(ctx, ActorTypeSystem)
+	c.writeAuditEvent(sysCtx, "system.audit_purge", nil, nil,
+		fmt.Sprintf("audit log retention purge: removed %d event(s) older than %d days (cutoff %s)",
+			n, cfg.RetentionDays, cutoff.Format(time.RFC3339)))
+
+	return &PurgeAuditLogsResult{DeletedCount: n, CutoffTime: cutoff}, nil
+}
+
 // nis2RetentionDays is the audit-log retention window NIS2 (and DORA) expect an
 // operator to be able to demonstrate: 12 months.
 const nis2RetentionDays = 365

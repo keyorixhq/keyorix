@@ -25,6 +25,8 @@ func NewSecretVersionCommentHandler(coreService *core.KeyorixCore) *SecretVersio
 	return &SecretVersionCommentHandler{coreService: coreService}
 }
 
+const errInvalidVersionID = "Invalid version ID"
+
 // createVersionCommentRequest is the JSON body for POST .../comments.
 type createVersionCommentRequest struct {
 	Comment string `json:"comment"`
@@ -41,7 +43,7 @@ func (h *SecretVersionCommentHandler) CreateComment(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	versionID, ok := mustParseUintParam(w, r, "versionId", "InvalidParameter", "Invalid version ID")
+	versionID, ok := mustParseUintParam(w, r, "versionId", "InvalidParameter", errInvalidVersionID)
 	if !ok {
 		return
 	}
@@ -85,7 +87,7 @@ func (h *SecretVersionCommentHandler) ListComments(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	versionID, ok := mustParseUintParam(w, r, "versionId", "InvalidParameter", "Invalid version ID")
+	versionID, ok := mustParseUintParam(w, r, "versionId", "InvalidParameter", errInvalidVersionID)
 	if !ok {
 		return
 	}
@@ -111,7 +113,7 @@ func (h *SecretVersionCommentHandler) DeleteComment(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	_, ok = mustParseUintParam(w, r, "versionId", "InvalidParameter", "Invalid version ID")
+	_, ok = mustParseUintParam(w, r, "versionId", "InvalidParameter", errInvalidVersionID)
 	if !ok {
 		return
 	}

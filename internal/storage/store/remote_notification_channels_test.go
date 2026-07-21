@@ -34,4 +34,7 @@ func TestRemoteNotificationChannelStubs_Unsupported(t *testing.T) {
 
 	err = rs.DeleteNotificationChannel(ctx, 1)
 	assert.Error(t, err)
+
+	err = rs.UpdateNotificationRetryPolicy(ctx, 1, 3, 1000)
+	assert.Error(t, err)
 }

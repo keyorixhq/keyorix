@@ -163,6 +163,11 @@ func (rs *RemoteStorage) AuditRetentionStats(_ context.Context) (*storage.AuditR
 	return nil, fmt.Errorf("AuditRetentionStats not available in remote mode")
 }
 
+// DeleteAuditLogsBefore is not available in remote mode; audit purge runs server-side.
+func (rs *RemoteStorage) DeleteAuditLogsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, fmt.Errorf("DeleteAuditLogsBefore not available in remote mode")
+}
+
 // VerifyAuditChain is not available in remote mode; chain verification runs server-side.
 func (rs *RemoteStorage) VerifyAuditChain(_ context.Context) (*storage.AuditChainVerification, error) {
 	return nil, fmt.Errorf("VerifyAuditChain not available in remote mode")

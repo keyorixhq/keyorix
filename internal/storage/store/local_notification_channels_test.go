@@ -167,3 +167,43 @@ func TestGetNotificationChannel_DBError(t *testing.T) {
 	// Should NOT be "not found" — the generic retrieval error wraps the real DB err.
 	assert.NotContains(t, err.Error(), "not found")
 }
+
+// TestUpdateNotificationRetryPolicy_HappyPath verifies that the retry fields
+// are updated correctly.
+func TestUpdateNotificationRetryPolicy_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	ls := newNotificationChannelTestStore(t)
+
+	ch := &models.NotificationChannel{Name: "retry-ch", Type: "webhook", URL: "https://example.com/hook", Enabled: true}
+	require.NoError(t, ls.CreateNotificationChannel(ctx, ch))
+
+	require.NoError(t, ls.UpdateNotificationRetryPolicy(ctx, ch.ID, 7, 3000))
+
+	got, err := ls.GetNotificationChannel(ctx, ch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 7, got.MaxRetries)
+	assert.Equal(t, 3000, got.RetryBackoffMs)
+}
+
+// TestUpdateNotificationRetryPolicy_NotFound verifies the RowsAffected==0 path.
+func TestUpdateNotificationRetryPolicy_NotFound(t *testing.T) {
+	ctx := context.Background()
+	ls := newNotificationChannelTestStore(t)
+
+	err := ls.UpdateNotificationRetryPolicy(ctx, 9999, 3, 1000)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestUpdateNotificationRetryPolicy_DBError verifies the generic DB error path.
+func TestUpdateNotificationRetryPolicy_DBError(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	ls := NewLocalStorage(db)
+	// No AutoMigrate — table missing.
+
+	err = ls.UpdateNotificationRetryPolicy(ctx, 1, 3, 1000)
+	require.Error(t, err)
+}
