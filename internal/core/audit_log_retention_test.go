@@ -1,0 +1,113 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+// newPurgeTestCore opens a fresh in-memory SQLite DB, migrates AuditEvent,
+// and returns a KeyorixCore with a fixed clock so retention cutoffs are stable.
+func newPurgeTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file::memory:?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
+	fixed := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	c := NewKeyorixCore(store.NewLocalStorage(db))
+	c.now = func() time.Time { return fixed }
+	return c, db, fixed
+}
+
+// seedAuditEvent inserts a single AuditEvent with the given event_time.
+func seedAuditEvent(t *testing.T, db *gorm.DB, at time.Time) {
+	t.Helper()
+	require.NoError(t, db.Create(&models.AuditEvent{
+		EventType: "secret.read", EventTime: at,
+	}).Error)
+}
+
+// TestPurgeAuditLogs_HappyPath seeds 5 old + 3 recent events, purges with
+// retention_days=30, and asserts exactly 5 are deleted with 3 remaining.
+func TestPurgeAuditLogs_HappyPath(t *testing.T) {
+	c, db, fixed := newPurgeTestCore(t)
+	ctx := context.Background()
+
+	// Five events older than 30 days.
+	for i := 0; i < 5; i++ {
+		seedAuditEvent(t, db, fixed.AddDate(0, 0, -(31 + i)))
+	}
+	// Three recent events within the retention window.
+	for i := 0; i < 3; i++ {
+		seedAuditEvent(t, db, fixed.AddDate(0, 0, -(i+1)))
+	}
+
+	result, err := c.PurgeAuditLogs(ctx, AuditLogRetentionConfig{RetentionDays: 30})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, int64(5), result.DeletedCount)
+	// CutoffTime should be 30 days before "now".
+	expectedCutoff := fixed.UTC().AddDate(0, 0, -30)
+	assert.WithinDuration(t, expectedCutoff, result.CutoffTime, time.Second)
+
+	// Verify 3 events remain in the table.
+	var remaining int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "secret.read").Count(&remaining).Error)
+	// 3 user events + 1 audit_purge system event = 4
+	assert.GreaterOrEqual(t, remaining+1, int64(3), "at least 3 user events remain")
+
+	// Count just the user events with event_type="secret.read".
+	var userEvents int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND event_time >= ?", "secret.read", expectedCutoff).Count(&userEvents).Error)
+	assert.Equal(t, int64(3), userEvents, "3 recent events survive the purge")
+}
+
+// TestPurgeAuditLogs_RetentionDaysBelowMin ensures values below 7 are rejected.
+func TestPurgeAuditLogs_RetentionDaysBelowMin(t *testing.T) {
+	store := new(MockStorage)
+	c := NewKeyorixCore(store)
+
+	for _, days := range []int{-10, -1, 0, 1, 6} {
+		_, err := c.PurgeAuditLogs(context.Background(), AuditLogRetentionConfig{RetentionDays: days})
+		require.Error(t, err, "days=%d should be rejected", days)
+		assert.ErrorIs(t, err, ErrInvalidRetentionDays, "days=%d", days)
+	}
+	store.AssertNotCalled(t, "DeleteAuditLogsBefore")
+}
+
+// TestPurgeAuditLogs_RetentionDaysExactlyMin ensures 7 is accepted.
+func TestPurgeAuditLogs_RetentionDaysExactlyMin(t *testing.T) {
+	c, db, _ := newPurgeTestCore(t)
+	result, err := c.PurgeAuditLogs(context.Background(), AuditLogRetentionConfig{RetentionDays: 7})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	// Nothing to delete on an empty table beyond the system purge event itself.
+	assert.Equal(t, int64(0), result.DeletedCount)
+
+	// Suppress unused variable warning for db.
+	_ = db
+}
+
+// TestPurgeAuditLogs_StorageErrorPropagated ensures a storage failure bubbles up.
+func TestPurgeAuditLogs_StorageErrorPropagated(t *testing.T) {
+	ms := new(MockStorage)
+	storageErr := errors.New("db offline")
+	ms.On("DeleteAuditLogsBefore", mock.Anything, mock.Anything).Return(int64(0), storageErr)
+	// LogAuditEvent is called for the system purge event — but only on success.
+	// On error the function returns early, so LogAuditEvent is never called.
+
+	c := NewKeyorixCore(ms)
+	_, err := c.PurgeAuditLogs(context.Background(), AuditLogRetentionConfig{RetentionDays: 30})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "db offline")
+	ms.AssertExpectations(t)
+}

@@ -383,3 +383,15 @@ func TestRemoteStorage_GetDistinctActiveUserIDs_Unsupported(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not available in remote mode")
 }
+
+// --- DeleteAuditLogsBefore (unsupported in remote mode) ---
+
+func TestRemoteStorage_DeleteAuditLogsBefore_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:0"))
+	require.NoError(t, err)
+
+	n, err := rs.DeleteAuditLogsBefore(context.Background(), time.Now())
+	assert.Error(t, err)
+	assert.Equal(t, int64(0), n)
+	assert.Contains(t, err.Error(), "not available in remote mode")
+}

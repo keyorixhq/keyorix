@@ -289,6 +289,15 @@ func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, project
 	return counts, nil
 }
 
+// DeleteAuditLogsBefore hard-deletes all AuditEvent rows whose event_time is
+// before cutoff. It returns the number of rows deleted.
+func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	result := ls.db.WithContext(ctx).
+		Where("event_time < ?", cutoff).
+		Delete(&models.AuditEvent{})
+	return result.RowsAffected, result.Error
+}
+
 // AuditRetentionStats returns the total audit event count plus the oldest and
 // newest event_time in a single aggregate query. Keyorix applies no retention
 // cap, so MIN(event_time) is the true start of the trail — the basis for the

@@ -1898,6 +1898,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
 			r.Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
 			r.Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
+			r.Post("/purge-audit-logs", adminJobsHandler.PurgeAuditLogsJob)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted
