@@ -80,12 +80,25 @@ func (k *KeyorixCore) SearchAuditLogs(ctx context.Context, req AuditSearchReques
 		return nil, fmt.Errorf("until must not be before since")
 	}
 
+	filter := buildAuditFilter(req, limit)
+
+	events, total, err := k.storage.GetAuditLogs(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("SearchAuditLogs: %w", err)
+	}
+	if events == nil {
+		events = []*models.AuditEvent{}
+	}
+	return &AuditSearchResult{Events: events, Total: total}, nil
+}
+
+// buildAuditFilter maps an AuditSearchRequest onto an AuditFilter.
+func buildAuditFilter(req AuditSearchRequest, limit int) *storage.AuditFilter {
 	filter := &storage.AuditFilter{
 		PageSize: limit,
 		// Offset-based pagination: page = offset/limit + 1.
 		Page: req.Offset/limit + 1,
 	}
-
 	if req.ActorUsername != "" {
 		filter.ActorUsername = &req.ActorUsername
 	}
@@ -116,13 +129,5 @@ func (k *KeyorixCore) SearchAuditLogs(ctx context.Context, req AuditSearchReques
 	if !req.Until.IsZero() {
 		filter.EndTime = &req.Until
 	}
-
-	events, total, err := k.storage.GetAuditLogs(ctx, filter)
-	if err != nil {
-		return nil, fmt.Errorf("SearchAuditLogs: %w", err)
-	}
-	if events == nil {
-		events = []*models.AuditEvent{}
-	}
-	return &AuditSearchResult{Events: events, Total: total}, nil
+	return filter
 }

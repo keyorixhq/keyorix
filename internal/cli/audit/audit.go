@@ -511,22 +511,30 @@ func runAuditSearch() error {
 	return nil
 }
 
-func buildAuditSearchQuery() (url.Values, error) {
+// validateAuditSearchParams checks user-supplied CLI flag values before building
+// the query string. Returns an error describing the first invalid value found.
+func validateAuditSearchParams() error {
 	if searchLimit < 1 || searchLimit > 1000 {
-		return nil, fmt.Errorf("--limit must be between 1 and 1000")
+		return fmt.Errorf("--limit must be between 1 and 1000")
 	}
-	for label, v := range map[string]string{"--since": searchSince, "--until": searchUntil} {
-		if v != "" {
-			if _, err := time.Parse(time.RFC3339, v); err != nil {
-				return nil, fmt.Errorf("invalid %s %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", label, v, err)
-			}
+	if searchSince != "" {
+		if _, err := time.Parse(time.RFC3339, searchSince); err != nil {
+			return fmt.Errorf("invalid --since %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", searchSince, err)
+		}
+	}
+	if searchUntil != "" {
+		if _, err := time.Parse(time.RFC3339, searchUntil); err != nil {
+			return fmt.Errorf("invalid --until %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", searchUntil, err)
 		}
 	}
 	if searchSuccess != "" && searchSuccess != "true" && searchSuccess != "false" {
-		return nil, fmt.Errorf("--success must be true or false")
+		return fmt.Errorf("--success must be true or false")
 	}
-	q := url.Values{}
-	q.Set("limit", strconv.Itoa(searchLimit))
+	return nil
+}
+
+// populateAuditSearchQuery fills q with non-zero optional filter values.
+func populateAuditSearchQuery(q url.Values) {
 	if searchOffset > 0 {
 		q.Set("offset", strconv.Itoa(searchOffset))
 	}
@@ -560,6 +568,15 @@ func buildAuditSearchQuery() (url.Values, error) {
 	if searchUntil != "" {
 		q.Set("until", searchUntil)
 	}
+}
+
+func buildAuditSearchQuery() (url.Values, error) {
+	if err := validateAuditSearchParams(); err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(searchLimit))
+	populateAuditSearchQuery(q)
 	return q, nil
 }
 
