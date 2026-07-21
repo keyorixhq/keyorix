@@ -600,6 +600,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/blast-radius", secretHandler.GetBlastRadius)
 			// Secret read aggregation report: top readers of a secret over a time window.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/read-summary", secretHandler.GetSecretReadSummary)
+			// Impact preview: flat cascade-delete count/summary before committing a delete.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact-preview", secretHandler.GetSecretImpactPreview)
 
 			// Rotation state — per-policy execution state (idle/pending/rotating/succeeded/failed).
 			// Gated on secrets.read because it exposes metadata (when rotation last ran, any error)
