@@ -42,7 +42,7 @@ func (h *AdminJobsHandler) PurgeAuditLogsJob(w http.ResponseWriter, r *http.Requ
 		RetentionDays: req.RetentionDays,
 	})
 	if err != nil {
-		if errors.Is(err, core.ErrInvalidRetentionDays) {
+		if errors.Is(err, core.ErrInvalidAuditRetentionDays) {
 			sendError(w, "Bad Request", clientSafe(err), http.StatusBadRequest, nil)
 			return
 		}
