@@ -50,6 +50,14 @@ type PATRestriction struct {
 	AllowedCIDRs []string
 }
 
+// MachineTokenRestriction carries the network-level constraints a machine
+// identity credential may impose. When AllowedCIDRs is non-empty, the
+// request source IP must fall within one of the listed blocks; a stolen
+// machine token is therefore useless from outside the allowed network.
+type MachineTokenRestriction struct {
+	AllowedCIDRs []string
+}
+
 // IPInCIDRs reports whether ip (a bare host like "203.0.113.7") falls within any of the
 // given CIDR blocks. It is the network gate for IP-allowlisted tokens and fails CLOSED:
 // an unparseable ip, an empty cidr list passed as a gate, or a malformed CIDR yields false

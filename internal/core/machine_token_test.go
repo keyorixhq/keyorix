@@ -19,13 +19,13 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineSuspended}, nil).Once()
 	c := NewKeyorixCore(store)
 	c.now = func() time.Time { return fixed }
-	_, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, "", 7)
+	_, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, "", 7, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "must be active")
 
 	// Wrong project → not found (cross-project IDOR guard).
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
-	_, err = c.IssueMachineToken(context.Background(), 999, 1, "ci", nil, "", 7)
+	_, err = c.IssueMachineToken(context.Background(), 999, 1, "ci", nil, "", 7, nil)
 	require.ErrorContains(t, err, "not found")
 
 	// Active machine → token minted with the kx_machine_ prefix, hash stored.
@@ -34,7 +34,7 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 		Return(&models.MachineIdentityCredential{ID: 5}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	res, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, "", 7)
+	res, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, "", 7, nil)
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(res.PlainToken, "kx_machine_"))
 
@@ -80,10 +80,11 @@ func TestValidateMachineToken(t *testing.T) {
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
 
-		m, roles, err := c.ValidateMachineToken(context.Background(), raw)
+		m, roles, restriction, err := c.ValidateMachineToken(context.Background(), raw)
 		require.NoError(t, err)
 		require.Equal(t, uint(1), m.ID)
 		require.Equal(t, []string{"project_viewer"}, roles)
+		require.Nil(t, restriction)
 	})
 
 	t.Run("revoked credential rejected", func(t *testing.T) {
@@ -91,7 +92,7 @@ func TestValidateMachineToken(t *testing.T) {
 		store.On("GetMachineIdentityCredentialByHash", mock.Anything, hash).Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, Revoked: true}, nil)
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
-		_, _, err := c.ValidateMachineToken(context.Background(), raw)
+		_, _, _, err := c.ValidateMachineToken(context.Background(), raw)
 		require.ErrorContains(t, err, "revoked")
 	})
 
@@ -101,7 +102,7 @@ func TestValidateMachineToken(t *testing.T) {
 		store.On("GetMachineIdentityCredentialByHash", mock.Anything, hash).Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, ExpiresAt: &past}, nil)
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
-		_, _, err := c.ValidateMachineToken(context.Background(), raw)
+		_, _, _, err := c.ValidateMachineToken(context.Background(), raw)
 		require.ErrorContains(t, err, "expired")
 	})
 
@@ -111,7 +112,7 @@ func TestValidateMachineToken(t *testing.T) {
 		store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, State: MachineSuspended}, nil)
 		c := NewKeyorixCore(store)
 		c.now = func() time.Time { return fixed }
-		_, _, err := c.ValidateMachineToken(context.Background(), raw)
+		_, _, _, err := c.ValidateMachineToken(context.Background(), raw)
 		require.ErrorContains(t, err, "suspended")
 	})
 }

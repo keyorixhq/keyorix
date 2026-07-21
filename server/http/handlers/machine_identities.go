@@ -219,9 +219,10 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Name           string `json:"name"`
-		ExpiresInDays  int    `json:"expires_in_days"`
-		Classification string `json:"classification"`
+		Name           string   `json:"name"`
+		ExpiresInDays  int      `json:"expires_in_days"`
+		Classification string   `json:"classification"`
+		AllowedCIDRs   []string `json:"allowed_cidrs"`
 	}
 	if !mustDecodeBody(w, r, &body) {
 		return
@@ -231,7 +232,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		t := time.Now().AddDate(0, 0, body.ExpiresInDays)
 		expiresAt = &t
 	}
-	result, err := h.coreService.IssueMachineToken(r.Context(), projectID, uint(machineID), body.Name, expiresAt, body.Classification, actor.UserID)
+	result, err := h.coreService.IssueMachineToken(r.Context(), projectID, uint(machineID), body.Name, expiresAt, body.Classification, actor.UserID, body.AllowedCIDRs)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
@@ -254,6 +255,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		"prefix":         result.Credential.TokenPrefix,
 		"expires_at":     result.Credential.ExpiresAt,
 		"classification": result.Credential.Classification,
+		"allowed_cidrs":  body.AllowedCIDRs,
 	}, "Machine token issued — copy it now; it will not be shown again")
 }
 

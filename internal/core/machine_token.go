@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -46,8 +47,9 @@ func (c *KeyorixCore) machineInProject(ctx context.Context, projectID, machineID
 
 // IssueMachineToken mints an opaque bearer token for an active machine identity.
 // The raw token is returned once for out-of-band delivery; only its SHA-256 hash
-// is stored. Issuing requires the machine to be active and in the given project.
-func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID uint, name string, expiresAt *time.Time, classification string, actorID uint) (*IssueMachineTokenResult, error) {
+// is stored. allowedCIDRs, when non-nil and non-empty, restricts the token to
+// requests whose source IP falls within one of the listed CIDR blocks.
+func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID uint, name string, expiresAt *time.Time, classification string, actorID uint, allowedCIDRs []string) (*IssueMachineTokenResult, error) {
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
 		return nil, err
@@ -69,11 +71,17 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	}
 	raw := machineTokenPrefix + base64.RawURLEncoding.EncodeToString(b)
 
+	var cidrJSON string
+	if len(allowedCIDRs) > 0 {
+		b, _ := json.Marshal(allowedCIDRs)
+		cidrJSON = string(b)
+	}
 	cred := &models.MachineIdentityCredential{
 		MachineIdentityID: machineID,
 		Name:              strings.TrimSpace(name),
 		TokenHash:         sha256Hex(raw),
 		TokenPrefix:       raw[:len(machineTokenPrefix)+6], // "kx_machine_ab12cd"
+		AllowedCIDRs:      cidrJSON,
 		ExpiresAt:         expiresAt,
 		Classification:    classification,
 		CreatedAt:         c.now(),
@@ -163,30 +171,30 @@ func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machi
 	return cred, nil
 }
 
-// ValidateMachineToken resolves a raw machine token to its identity and granted
-// role names. It rejects revoked/expired credentials and any machine not in the
-// active state, and best-effort throttled-updates last_used_at. The middleware
-// gates on the machineTokenPrefix before calling this.
-func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, error) {
+// ValidateMachineToken resolves a raw machine token to its identity, granted
+// role names, and network restriction. It rejects revoked/expired credentials
+// and any machine not in the active state, and best-effort throttled-updates
+// last_used_at. The middleware gates on the machineTokenPrefix before calling this.
+func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, *MachineTokenRestriction, error) {
 	if !strings.HasPrefix(raw, machineTokenPrefix) {
-		return nil, nil, fmt.Errorf("not a machine token")
+		return nil, nil, nil, fmt.Errorf("not a machine token")
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByHash(ctx, sha256Hex(raw))
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid token")
+		return nil, nil, nil, fmt.Errorf("invalid token")
 	}
 	if cred.Revoked {
-		return nil, nil, fmt.Errorf("token revoked")
+		return nil, nil, nil, fmt.Errorf("token revoked")
 	}
 	if cred.ExpiresAt != nil && c.now().After(*cred.ExpiresAt) {
-		return nil, nil, fmt.Errorf("token expired")
+		return nil, nil, nil, fmt.Errorf("token expired")
 	}
 	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("machine identity not found")
+		return nil, nil, nil, fmt.Errorf("machine identity not found")
 	}
 	if m.State != MachineActive {
-		return nil, nil, fmt.Errorf("machine identity is %s", m.State)
+		return nil, nil, nil, fmt.Errorf("machine identity is %s", m.State)
 	}
 
 	// Best-effort, throttled last-used stamp — never fails the request.
@@ -194,13 +202,26 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
 	if err != nil {
-		return m, []string{}, nil
+		return m, []string{}, machineRestrictionFrom(cred), nil
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {
 		roleNames[i] = r.Name
 	}
-	return m, roleNames, nil
+	return m, roleNames, machineRestrictionFrom(cred), nil
+}
+
+// machineRestrictionFrom decodes the JSON AllowedCIDRs on a credential into a
+// MachineTokenRestriction. Returns nil when no CIDRs are set.
+func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineTokenRestriction {
+	if cred.AllowedCIDRs == "" {
+		return nil
+	}
+	var cidrs []string
+	if err := json.Unmarshal([]byte(cred.AllowedCIDRs), &cidrs); err != nil || len(cidrs) == 0 {
+		return nil
+	}
+	return &MachineTokenRestriction{AllowedCIDRs: cidrs}
 }
 
 // AssignMachineRole grants a role to a machine identity at the given scope and
