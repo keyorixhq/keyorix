@@ -35,6 +35,9 @@ const (
 	NotificationSecretShared               = "secret.shared"
 	NotificationSecretShareRevoked         = "secret.share_revoked"
 	NotificationSecretOwnershipTransferred = "secret.ownership_transferred"
+	// NotificationPATExpiredUsed fires when an expired PAT is presented at the
+	// auth boundary, so the owner knows to revoke or replace it.
+	NotificationPATExpiredUsed = "pat.expired_used"
 )
 
 // approverRoleNames are the project/system roles whose holders can approve access

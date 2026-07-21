@@ -116,6 +116,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	authHandler := handlers.NewAuthHandler(coreService, cfg.Server.HTTP.TLS.Enabled)
 	patHandler := handlers.NewPATHandler(coreService)
+	patExpiryHandler := handlers.NewPATExpiryHandler(coreService)
 	impersonationHandler := handlers.NewImpersonationHandler(coreService, cfg.Server.HTTP.TLS.Enabled)
 
 	secretHandler, err := handlers.NewSecretHandler(coreService)
@@ -318,6 +319,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// target that outlives the session — block it.
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/tokens", patHandler.CreatePAT)
 		r.Delete("/auth/tokens/{id}", patHandler.RevokePAT)
+		// Expired-token self-service: list and bulk-revoke the caller's own expired PATs.
+		r.Get("/auth/tokens/expired", patExpiryHandler.ListExpiredPATs)
+		r.Delete("/auth/tokens/expired", patExpiryHandler.BulkRevokeExpiredPATs)
 		// Self-scoped: end the current impersonation session (no permission gate).
 		r.Post("/auth/end-impersonation", impersonationHandler.End)
 
