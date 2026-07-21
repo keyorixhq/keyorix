@@ -14,7 +14,10 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-const errNotificationChannelNotFound = "Notification channel not found"
+const (
+	channelNotFound        = "not found"
+	channelNotFoundMessage = "Notification channel not found"
+)
 
 // NotificationChannelHandler serves the notification-channel CRUD endpoints.
 type NotificationChannelHandler struct {
@@ -109,8 +112,8 @@ func (h *NotificationChannelHandler) Get(w http.ResponseWriter, r *http.Request)
 	}
 	ch, err := h.coreService.GetNotificationChannel(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), channelNotFound) {
+			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error getting notification channel %d: %v", id, err)
@@ -133,8 +136,8 @@ func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Reque
 	}
 	updated, err := h.coreService.UpdateNotificationChannel(r.Context(), id, body)
 	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), channelNotFound) {
+			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		if isValidationError(err) {
@@ -155,8 +158,8 @@ func (h *NotificationChannelHandler) Delete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.coreService.DeleteNotificationChannel(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), channelNotFound) {
+			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error deleting notification channel %d: %v", id, err)
@@ -196,8 +199,8 @@ func (h *NotificationChannelHandler) SetRetryPolicy(w http.ResponseWriter, r *ht
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 			return
 		}
-		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), channelNotFound) {
+			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error setting retry policy for notification channel %d: %v", id, err)
@@ -220,8 +223,8 @@ func (h *NotificationChannelHandler) GetRetryPolicy(w http.ResponseWriter, r *ht
 	}
 	policy, err := h.coreService.GetNotificationRetryPolicy(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), channelNotFound) {
+			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error getting retry policy for notification channel %d: %v", id, err)
