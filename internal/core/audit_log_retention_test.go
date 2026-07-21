@@ -79,7 +79,7 @@ func TestPurgeAuditLogs_RetentionDaysBelowMin(t *testing.T) {
 	for _, days := range []int{-10, -1, 0, 1, 6} {
 		_, err := c.PurgeAuditLogs(context.Background(), AuditLogRetentionConfig{RetentionDays: days})
 		require.Error(t, err, "days=%d should be rejected", days)
-		assert.ErrorIs(t, err, ErrInvalidRetentionDays, "days=%d", days)
+		assert.ErrorIs(t, err, ErrInvalidAuditRetentionDays, "days=%d", days)
 	}
 	store.AssertNotCalled(t, "DeleteAuditLogsBefore")
 }

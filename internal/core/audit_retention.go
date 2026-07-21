@@ -25,12 +25,12 @@ type PurgeAuditLogsResult struct {
 }
 
 // PurgeAuditLogs deletes audit events older than cfg.RetentionDays days.
-// Returns ErrInvalidRetentionDays if RetentionDays < minRetentionDays (7).
+// Returns ErrInvalidAuditRetentionDays if RetentionDays < minRetentionDays (7).
 // A minimum of 7 days is enforced to prevent accidental mass-deletion.
 func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionConfig) (*PurgeAuditLogsResult, error) {
 	if cfg.RetentionDays < minRetentionDays {
 		return nil, fmt.Errorf("%w: retention_days must be at least %d (got %d)",
-			ErrInvalidRetentionDays, minRetentionDays, cfg.RetentionDays)
+			ErrInvalidAuditRetentionDays, minRetentionDays, cfg.RetentionDays)
 	}
 
 	cutoff := c.now().UTC().AddDate(0, 0, -cfg.RetentionDays)
