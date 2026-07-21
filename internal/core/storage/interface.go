@@ -1231,6 +1231,8 @@ type Storage interface {
 	CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
 	UpdateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
 	DeleteNotificationChannel(ctx context.Context, id uint) error
+	// UpdateNotificationRetryPolicy updates the retry fields on a NotificationChannel row.
+	UpdateNotificationRetryPolicy(ctx context.Context, channelID uint, maxRetries, backoffMs int) error
 
 }
 

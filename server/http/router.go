@@ -330,6 +330,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathNotifChannelID, notificationChannelHandler.Get)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathNotifChannelID, notificationChannelHandler.Update)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathNotifChannelID, notificationChannelHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathNotifChannelID+"/retry-policy", notificationChannelHandler.SetRetryPolicy)
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get(pathNotifChannelID+"/retry-policy", notificationChannelHandler.GetRetryPolicy)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,

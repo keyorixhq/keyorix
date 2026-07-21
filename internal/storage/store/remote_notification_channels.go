@@ -34,3 +34,7 @@ func (rs *RemoteStorage) UpdateNotificationChannel(_ context.Context, _ *models.
 func (rs *RemoteStorage) DeleteNotificationChannel(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteNotificationChannel")
 }
+
+func (rs *RemoteStorage) UpdateNotificationRetryPolicy(_ context.Context, _ uint, _, _ int) error {
+	return remoteUnsupported("UpdateNotificationRetryPolicy")
+}

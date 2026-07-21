@@ -74,6 +74,24 @@ func (ls *LocalStorage) UpdateNotificationChannel(ctx context.Context, ch *model
 	return nil
 }
 
+// UpdateNotificationRetryPolicy updates only the retry policy fields on the
+// channel row identified by channelID.
+func (ls *LocalStorage) UpdateNotificationRetryPolicy(ctx context.Context, channelID uint, maxRetries, backoffMs int) error {
+	res := ls.db.WithContext(ctx).Model(&models.NotificationChannel{}).
+		Where("id = ?", channelID).
+		Updates(map[string]interface{}{
+			"max_retries":      maxRetries,
+			"retry_backoff_ms": backoffMs,
+		})
+	if res.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	return nil
+}
+
 // DeleteNotificationChannel performs a hard delete of the channel with the given id.
 func (ls *LocalStorage) DeleteNotificationChannel(ctx context.Context, id uint) error {
 	res := ls.db.WithContext(ctx).Delete(&models.NotificationChannel{}, id)
