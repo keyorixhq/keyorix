@@ -150,6 +150,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	versionCommentHandler := handlers.NewSecretVersionCommentHandler(coreService)
 	secretTemplateHandler := handlers.NewSecretTemplateHandler(coreService)
 	alertEscalationHandler := handlers.NewAlertEscalationHandler(coreService)
+	rotationCalendarHandler := handlers.NewRotationCalendarHandler(coreService)
 
 	// Auth endpoints (no authentication middleware). Several of these mint or hand back a
 	// session token (login, refresh, MFA/WebAuthn verify, the SSO/SAML callbacks) or
@@ -680,6 +681,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/", folderHandler.CreateFolder)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, folderScope)).Delete("/{id}", folderHandler.DeleteFolder)
 		})
+
+		// Rotation calendar — deployment-wide view of upcoming / overdue rotations.
+		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/rotation-calendar", rotationCalendarHandler.Get)
 
 		// Rotation policies endpoints. List/evaluate take an optional scope
 		// filter; per-policy routes resolve scope from the policy; create
