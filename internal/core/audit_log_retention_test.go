@@ -28,8 +28,8 @@ func newPurgeTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	return c, db, fixed
 }
 
-// seedAuditEvent inserts a single AuditEvent with the given event_time.
-func seedAuditEvent(t *testing.T, db *gorm.DB, at time.Time) {
+// seedRetentionAuditEvent inserts a single AuditEvent with the given event_time.
+func seedRetentionAuditEvent(t *testing.T, db *gorm.DB, at time.Time) {
 	t.Helper()
 	require.NoError(t, db.Create(&models.AuditEvent{
 		EventType: "secret.read", EventTime: at,
@@ -44,11 +44,11 @@ func TestPurgeAuditLogs_HappyPath(t *testing.T) {
 
 	// Five events older than 30 days.
 	for i := 0; i < 5; i++ {
-		seedAuditEvent(t, db, fixed.AddDate(0, 0, -(31 + i)))
+		seedRetentionAuditEvent(t, db, fixed.AddDate(0, 0, -(31 + i)))
 	}
 	// Three recent events within the retention window.
 	for i := 0; i < 3; i++ {
-		seedAuditEvent(t, db, fixed.AddDate(0, 0, -(i+1)))
+		seedRetentionAuditEvent(t, db, fixed.AddDate(0, 0, -(i+1)))
 	}
 
 	result, err := c.PurgeAuditLogs(ctx, AuditLogRetentionConfig{RetentionDays: 30})
