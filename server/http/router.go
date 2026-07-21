@@ -599,6 +599,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Secret read aggregation report: top readers of a secret over a time window.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/read-summary", secretHandler.GetSecretReadSummary)
 
+			// Rotation state — per-policy execution state (idle/pending/rotating/succeeded/failed).
+			// Gated on secrets.read because it exposes metadata (when rotation last ran, any error)
+			// without disclosing the secret value.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/rotation-state", rotationPolicyHandler.GetRotationState)
+
 			// Per-secret ACLs (RBAC Phase 3): fine-grained user grants independent of project RBAC.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/acl", secretHandler.ListSecretACLs)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Post("/{id}/acl", secretHandler.GrantSecretACL)

@@ -101,3 +101,18 @@ func (rs *RemoteStorage) DeleteRotationPolicy(ctx context.Context, id uint) erro
 	}
 	return nil
 }
+
+// GetRotationPolicyBySecret is a server-side-only operation: the rotation state
+// endpoint (GET /api/v1/secrets/{id}/rotation-state) is served by the HTTP handler
+// which always runs against LocalStorage. A remote-storage caller reaches the state
+// via the REST endpoint, not this raw storage method.
+func (rs *RemoteStorage) GetRotationPolicyBySecret(_ context.Context, _ uint) (*models.RotationPolicy, error) {
+	return nil, remoteUnsupported("GetRotationPolicyBySecret")
+}
+
+// UpdateRotationState is a server-side-only operation: the rotation executor runs
+// exclusively in the server process (LocalStorage). No REST route exposes this
+// mutation to remote callers.
+func (rs *RemoteStorage) UpdateRotationState(_ context.Context, _ uint, _, _ string) error {
+	return remoteUnsupported("UpdateRotationState")
+}
