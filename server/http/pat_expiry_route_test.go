@@ -7,12 +7,10 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -40,15 +38,6 @@ func newPATExpiryRouterSetup(t *testing.T) (serverURL string, sessionToken strin
 	}
 }
 
-// seedExpiredPATViaCore inserts an expired PAT for the logged-in admin using
-// the core directly (bypasses the creation API's future-date validation, if any).
-func seedExpiredPATViaCore(t *testing.T, c interface {
-	GetUserByEmail(context.Context, string) (interface{ GetID() uint }, error)
-}, past time.Time) {
-	t.Helper()
-	// We can't import core here; the test seeds PATs in a different helper.
-}
-
 // TestPATExpiryRoute_ListExpiredPATs_Unauthenticated_Returns401 verifies the
 // route is protected.
 func TestPATExpiryRoute_ListExpiredPATs_Unauthenticated_Returns401(t *testing.T) {
@@ -59,7 +48,7 @@ func TestPATExpiryRoute_ListExpiredPATs_Unauthenticated_Returns401(t *testing.T)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -74,7 +63,7 @@ func TestPATExpiryRoute_ListExpiredPATs_EmptyList_Returns200(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var body struct {
@@ -94,7 +83,7 @@ func TestPATExpiryRoute_BulkRevokeExpiredPATs_Unauthenticated_Returns401(t *test
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
@@ -109,6 +98,6 @@ func TestPATExpiryRoute_BulkRevokeExpiredPATs_NoneExpired_Returns204(t *testing.
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
