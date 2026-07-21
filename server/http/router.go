@@ -145,6 +145,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	hygieneTrendsHandler := handlers.NewHygieneTrendsHandler(coreService)
 	folderHandler := handlers.NewFolderHandler(coreService)
 	versionCommentHandler := handlers.NewSecretVersionCommentHandler(coreService)
+	secretTemplateHandler := handlers.NewSecretTemplateHandler(coreService)
 	alertEscalationHandler := handlers.NewAlertEscalationHandler(coreService)
 
 	// Auth endpoints (no authentication middleware). Several of these mint or hand back a
@@ -654,6 +655,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/", rotationPolicyHandler.Create)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, policyScope)).Put("/{id}", rotationPolicyHandler.Update)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, policyScope)).Delete("/{id}", rotationPolicyHandler.Delete)
+		})
+
+		// Secret templates — reusable metadata presets for secret creation (tags,
+		// classification, description hints). Read/list: secrets.read; mutations:
+		// secrets.write. Authorization is global (templates are deployment-wide).
+		r.Route("/secret-templates", func(r chi.Router) {
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/", secretTemplateHandler.List)
+			r.With(customMiddleware.RequirePermission(permSecretsWrite)).Post("/", secretTemplateHandler.Create)
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}", secretTemplateHandler.Get)
+			r.With(customMiddleware.RequirePermission(permSecretsWrite)).Put("/{id}", secretTemplateHandler.Update)
+			r.With(customMiddleware.RequirePermission(permSecretsWrite)).Delete("/{id}", secretTemplateHandler.Delete)
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Post("/{id}/apply", secretTemplateHandler.Apply)
 		})
 
 		// Dynamic secrets (ADR-035). Authorization is in-handler against each

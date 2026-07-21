@@ -647,6 +647,26 @@ type SecretDependency struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+// SecretTemplate is a reusable metadata preset for secret creation.
+// Applying a template pre-fills classification, tags, and description on new secrets.
+type SecretTemplate struct {
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"not null;uniqueIndex" json:"name"`
+	// Description is a human-readable note about what this template is for.
+	Description string `json:"description,omitempty"`
+	// DefaultClassification pre-fills the secret's classification level.
+	DefaultClassification string `json:"default_classification,omitempty"`
+	// DefaultTags is a comma-separated list of tag names to apply.
+	DefaultTags string `json:"default_tags,omitempty"`
+	// DescriptionPattern is a freetext hint for the description field.
+	DescriptionPattern string `json:"description_pattern,omitempty"`
+	// RotationHintDays suggests a rotation interval in days (informational only).
+	RotationHintDays int       `json:"rotation_hint_days,omitempty"`
+	CreatedBy        uint      `json:"created_by"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 // SecretACL grants a specific user fine-grained access to one secret (RBAC Phase 3).
 // When a SecretACL entry exists for (UserID, SecretID), the listed Permissions are
 // granted regardless of project-level RBAC — the user need not hold a project role.
