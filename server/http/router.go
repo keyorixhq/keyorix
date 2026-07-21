@@ -146,6 +146,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	hygieneTrendsHandler := handlers.NewHygieneTrendsHandler(coreService)
 	folderHandler := handlers.NewFolderHandler(coreService)
 	versionCommentHandler := handlers.NewSecretVersionCommentHandler(coreService)
+	secretTemplateHandler := handlers.NewSecretTemplateHandler(coreService)
+	alertEscalationHandler := handlers.NewAlertEscalationHandler(coreService)
 
 	// Auth endpoints (no authentication middleware). Several of these mint or hand back a
 	// session token (login, refresh, MFA/WebAuthn verify, the SSO/SAML callbacks) or
@@ -334,6 +336,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels/{id}", notificationChannelHandler.Get)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}", notificationChannelHandler.Update)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/notification-channels/{id}", notificationChannelHandler.Delete)
+
+		// Alert escalation policy management — admin-only (system.write).
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/alert-escalation-policies", alertEscalationHandler.Create)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies", alertEscalationHandler.List)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies/{id}", alertEscalationHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/alert-escalation-policies/{id}", alertEscalationHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/alert-escalation-policies/{id}", alertEscalationHandler.Delete)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,
@@ -573,6 +582,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
+			// Blast-radius report: richer impact view with OwnerID, ProjectID, and risk level.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/blast-radius", secretHandler.GetBlastRadius)
 
 			// Per-secret ACLs (RBAC Phase 3): fine-grained user grants independent of project RBAC.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/acl", secretHandler.ListSecretACLs)
@@ -597,6 +608,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/copy", secretHandler.CopySecret)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
+			// Rotation dry-run / simulation (ADR-047): validates the rotation config without
+			// making any live change. Read-only — requires only secrets.read.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/rotation/simulate", secretHandler.SimulateRotation)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/move", secretHandler.MoveSecret)
@@ -647,6 +661,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/", rotationPolicyHandler.Create)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, policyScope)).Put("/{id}", rotationPolicyHandler.Update)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, policyScope)).Delete("/{id}", rotationPolicyHandler.Delete)
+		})
+
+		// Secret templates — reusable metadata presets for secret creation (tags,
+		// classification, description hints). Read/list: secrets.read; mutations:
+		// secrets.write. Authorization is global (templates are deployment-wide).
+		r.Route("/secret-templates", func(r chi.Router) {
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/", secretTemplateHandler.List)
+			r.With(customMiddleware.RequirePermission(permSecretsWrite)).Post("/", secretTemplateHandler.Create)
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/{id}", secretTemplateHandler.Get)
+			r.With(customMiddleware.RequirePermission(permSecretsWrite)).Put("/{id}", secretTemplateHandler.Update)
+			r.With(customMiddleware.RequirePermission(permSecretsWrite)).Delete("/{id}", secretTemplateHandler.Delete)
+			r.With(customMiddleware.RequirePermission(permSecretsRead)).Post("/{id}/apply", secretTemplateHandler.Apply)
 		})
 
 		// Dynamic secrets (ADR-035). Authorization is in-handler against each
@@ -887,6 +913,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/audit", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission(permAuditRead))
 			r.Get("/logs", auditHandler.GetAuditLogs)
+			r.Get("/search", auditHandler.SearchAuditLogs)
 			r.Get("/export", auditHandler.ExportAuditLogs)
 			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
@@ -1831,6 +1858,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Persist today's credential-hygiene counts for trend queries.
 			r.Post("/record-hygiene-snapshot", hygieneTrendsHandler.RecordHygieneSnapshot)
 			r.Post("/role-expiry-check", adminJobsHandler.RunRoleExpiryCheck)
+			r.Post("/run-alert-escalation", alertEscalationHandler.RunEscalation)
+			r.Post("/token-expiry-check", adminJobsHandler.RunTokenExpiryCheck)
+			r.Post("/suspend-inactive-users", adminJobsHandler.SuspendInactiveUsers)
 		})
 
 		// Runtime anomaly detection configuration — read/write the DB-persisted

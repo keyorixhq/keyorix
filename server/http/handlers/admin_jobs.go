@@ -113,3 +113,27 @@ func (h *AdminJobsHandler) RunRoleExpiryCheck(w http.ResponseWriter, r *http.Req
 	}
 	sendSuccess(w, map[string]interface{}{"warnings": result.Warnings, "criticals": result.Criticals}, "")
 }
+
+// RunTokenExpiryCheck handles POST /api/v1/system/admin/jobs/token-expiry-check —
+// scans all PersonalAccessTokens and MachineIdentityCredentials and emits in-app
+// notifications for those expiring within 7 days (warning) or 1 day (critical).
+// Returns {pat_warnings, pat_criticals, machine_warnings, machine_criticals}.
+// Requires system.write (enforced by the router).
+func (h *AdminJobsHandler) RunTokenExpiryCheck(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	result, err := h.coreService.CheckTokenExpiry(r.Context())
+	if err != nil {
+		log.Printf("Error running token-expiry-check job: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"pat_warnings":      result.PATWarnings,
+		"pat_criticals":     result.PATCriticals,
+		"machine_warnings":  result.MachineWarnings,
+		"machine_criticals": result.MachineCriticals,
+	}, "")
+}

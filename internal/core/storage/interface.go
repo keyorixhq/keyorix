@@ -456,6 +456,9 @@ type Storage interface {
 	// keyed by classification label ("" = unclassified) for the compliance posture.
 	CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error)
 	TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
+	// ListExpiringMachineCredentials returns every non-revoked MachineIdentityCredential
+	// whose ExpiresAt is non-nil and strictly before before. Used by CheckTokenExpiry.
+	ListExpiringMachineCredentials(ctx context.Context, before time.Time) ([]models.MachineIdentityCredential, error)
 
 	// Machine-identity role grants (ADR-030) — mirror the user_roles surface.
 	AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
@@ -746,6 +749,11 @@ type Storage interface {
 	// ListUsersInStateBefore returns users whose account_state equals state and
 	// who were created before the cutoff (ADR-025 stale-account warnings).
 	ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error)
+	// ListInactiveUsers returns all live (non-deleted) users who have not logged
+	// in since threshold: specifically, those whose last_login_at IS NULL AND
+	// created_at < threshold, OR whose last_login_at < threshold. Used by the
+	// inactivity auto-suspension job (SuspendInactiveUsers).
+	ListInactiveUsers(ctx context.Context, threshold time.Time) ([]*models.User, error)
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	// GetUserByExternalID resolves a SCIM-provisioned user by the IdP's externalId
 	// (RFC 7644). Returns the not-found error when no user carries that external id.
@@ -1188,6 +1196,10 @@ type Storage interface {
 	// BulkRevokeExpiredPATsByUser revokes every non-revoked, expired PAT belonging to
 	// userID (ExpiresAt < now) and returns their token hashes for cache eviction.
 	BulkRevokeExpiredPATsByUser(ctx context.Context, userID uint, now time.Time) ([]string, error)
+	// ListExpiringPATs returns every non-revoked PersonalAccessToken whose ExpiresAt
+	// is non-nil and strictly before before (i.e. will expire before that instant).
+	// Used by CheckTokenExpiry to find tokens approaching their deadline.
+	ListExpiringPATs(ctx context.Context, before time.Time) ([]models.PersonalAccessToken, error)
 
 	// Setup Token Management (ADR-028) — single-use, hashed-at-rest credential-delivery tokens.
 	CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error)
@@ -1237,6 +1249,26 @@ type Storage interface {
 	CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
 	UpdateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error
 	DeleteNotificationChannel(ctx context.Context, id uint) error
+
+	// Secret Template Management — reusable metadata presets for secret creation.
+	// Templates pre-fill classification, tags, and description hints at create time.
+	CreateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error
+	GetSecretTemplate(ctx context.Context, id uint) (*models.SecretTemplate, error)
+	GetSecretTemplateByName(ctx context.Context, name string) (*models.SecretTemplate, error)
+	ListSecretTemplates(ctx context.Context) ([]*models.SecretTemplate, error)
+	UpdateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error
+	DeleteSecretTemplate(ctx context.Context, id uint) error
+
+	// AlertEscalationPolicy CRUD
+	CreateAlertEscalationPolicy(ctx context.Context, p *models.AlertEscalationPolicy) error
+	GetAlertEscalationPolicy(ctx context.Context, id uint) (*models.AlertEscalationPolicy, error)
+	ListAlertEscalationPolicies(ctx context.Context) ([]models.AlertEscalationPolicy, error)
+	UpdateAlertEscalationPolicy(ctx context.Context, p *models.AlertEscalationPolicy) error
+	DeleteAlertEscalationPolicy(ctx context.Context, id uint) error
+
+	// ListUnacknowledgedAnomalyAlertsBefore returns unacknowledged anomaly alerts
+	// whose created_at (detected_at) is older than the given threshold.
+	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
 
 }
 
@@ -1361,6 +1393,15 @@ type AuditFilter struct {
 	// forward cursor), ignoring Page. Use with the /audit/export endpoint.
 	AfterID   *uint
 	Ascending bool
+
+	// IPAddress filters events by the exact IP address that originated the request.
+	IPAddress *string
+	// ActorUsername filters events by a partial match on the actor's username
+	// (resolved via a LEFT JOIN on the users table). Nil = no username filter.
+	ActorUsername *string
+	// ResourceType filters events by the resource type embedded in the event_type
+	// (the prefix before the first dot, e.g. "secret" from "secret.read").
+	ResourceType *string
 }
 
 // RBACAuditFilter defines filtering options for RBAC audit log queries
