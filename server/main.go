@@ -188,6 +188,7 @@ const (
 	schedLockRecertify    int64 = 0x4B455953_52454354 // "KEYSRECT"
 	schedLockDigest       int64 = 0x4B455953_44494753 // "KEYSDIGS"
 	schedLockLicenseExp   int64 = 0x4B455953_4C494345 // "KEYSLICE"
+	schedLockReadQuota    int64 = 0x4B455953_52445154 // "KEYSRDQT"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -1296,6 +1297,28 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 			return perr
 		})
 	})
+
+	// Start the read-quota alert scheduler — opt-in. Scans all secrets with MaxReads > 0
+	// and sends in-app notifications to their owners when usage reaches 80 % (Warning)
+	// or 95 % / 100 % (Critical / Exhausted). Single-replica-gated (ADR-039).
+	if cfg.ReadQuotaAlerts.Enabled {
+		interval := cfg.ReadQuotaAlerts.GetInterval()
+		log.Printf("Read-quota alert scheduler enabled: every %s", interval)
+		runScheduler(ctx, "read_quota_alerts", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockReadQuota, "Read-quota alerts", func() error {
+				result, rerr := coreService.CheckReadQuotas(ctx)
+				if rerr != nil {
+					log.Printf("Read-quota alert scan error: %v", rerr)
+					return rerr
+				}
+				if result.Warnings+result.Criticals > 0 {
+					log.Printf("Read-quota alert scan: %d warning(s), %d critical(s), %d exhausted",
+						result.Warnings, result.Criticals, result.Exhausted)
+				}
+				return nil
+			})
+		})
+	}
 
 	// Create HTTP server
 	server := &http.Server{
