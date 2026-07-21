@@ -401,6 +401,48 @@ func (ls *LocalStorage) GetRBACAuditLogs(_ context.Context, _ *storage.RBACAudit
 	return nil, 0, nil
 }
 
+// GetSecretReadCounts aggregates "secret.read" audit events for the given secret
+// in [since, until), returning the top-N actors sorted by read count descending.
+// Actor identity is taken from user_id; a LEFT JOIN on users resolves usernames.
+// Machine-identity reads (actor_type="machine_identity") have no user row — their
+// username column is empty in the result, consistent with the description column.
+func (ls *LocalStorage) GetSecretReadCounts(ctx context.Context, secretID uint, since, until time.Time, limit int) ([]storage.SecretReadEntry, error) {
+	type row struct {
+		ActorID       string
+		ActorUsername string
+		ReadCount     int64
+		LastReadAt    scanTime
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).
+		Table("audit_events ae").
+		Select("CAST(ae.user_id AS TEXT) AS actor_id, COALESCE(u.username, '') AS actor_username, COUNT(*) AS read_count, MAX(ae.event_time) AS last_read_at").
+		Joins("LEFT JOIN users u ON u.id = ae.user_id AND u.deleted_at IS NULL").
+		Where("ae.secret_node_id = ? AND ae.event_type = ? AND ae.event_time >= ? AND ae.event_time < ?", secretID, "secret.read", since, until).
+		Group("ae.user_id").
+		Order("read_count DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("GetSecretReadCounts: %w", err)
+	}
+
+	out := make([]storage.SecretReadEntry, 0, len(rows))
+	for _, r := range rows {
+		var lastReadAt time.Time
+		if r.LastReadAt.t != nil {
+			lastReadAt = *r.LastReadAt.t
+		}
+		out = append(out, storage.SecretReadEntry{
+			ActorID:       r.ActorID,
+			ActorUsername: r.ActorUsername,
+			ReadCount:     r.ReadCount,
+			LastReadAt:    lastReadAt,
+		})
+	}
+	return out, nil
+}
+
 // CountImpersonatedActions counts impersonated audit events for actingAs by
 // impersonator since `since`, excluding the impersonation.start/.end markers.
 func (ls *LocalStorage) CountImpersonatedActions(ctx context.Context, actingAs, impersonator uint, since time.Time) (int64, error) {

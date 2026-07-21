@@ -580,6 +580,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
 			// Blast-radius report: richer impact view with OwnerID, ProjectID, and risk level.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/blast-radius", secretHandler.GetBlastRadius)
+			// Secret read aggregation report: top readers of a secret over a time window.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/read-summary", secretHandler.GetSecretReadSummary)
 
 			// Per-secret ACLs (RBAC Phase 3): fine-grained user grants independent of project RBAC.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/acl", secretHandler.ListSecretACLs)

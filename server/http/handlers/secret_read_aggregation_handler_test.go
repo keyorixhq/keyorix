@@ -1,0 +1,189 @@
+// secret_read_aggregation_handler_test.go — tests for GET /api/v1/secrets/{id}/read-summary.
+package handlers
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+var secretReadAggDBCounter atomic.Int64
+
+// newSecretReadAggCore opens a fresh in-memory SQLite DB with all tables needed
+// by the read-aggregation handler and returns the core + raw DB for seeding.
+func newSecretReadAggCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	n := secretReadAggDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhdlr_readagg_%d?mode=memory&cache=shared", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.AuditEvent{},
+		&models.Role{},
+		&models.UserRole{},
+		&models.Permission{},
+		&models.RolePermission{},
+		&models.Group{},
+		&models.UserGroup{},
+		&models.GroupRole{},
+		&models.Project{},
+		&models.Environment{},
+		&models.SecretNode{},
+	))
+	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
+}
+
+// seedReadAuditEvent inserts a "secret.read" audit event for a given secret and user.
+func seedReadAuditEvent(t *testing.T, db *gorm.DB, secretID, userID uint, at time.Time) {
+	t.Helper()
+	evt := &models.AuditEvent{
+		EventType:    "secret.read",
+		UserID:       &userID,
+		SecretNodeID: &secretID,
+		EventTime:    at,
+	}
+	success := true
+	evt.Success = &success
+	require.NoError(t, db.Create(evt).Error)
+}
+
+// ── 401 Unauthorized ──────────────────────────────────────────────────────────
+
+func TestGetSecretReadSummary_Unauthorized(t *testing.T) {
+	h := newSecretHandlerS4(t)
+	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// ── 400 invalid ID ────────────────────────────────────────────────────────────
+
+func TestGetSecretReadSummary_BadID(t *testing.T) {
+	h := newSecretHandlerS4(t)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "not-a-number"))
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── 400 since >= until ────────────────────────────────────────────────────────
+
+func TestGetSecretReadSummary_InvalidTimeRange(t *testing.T) {
+	c, _ := newSecretReadAggCore(t)
+	h, err := NewSecretHandler(c)
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	url := fmt.Sprintf("/?since=%s&until=%s",
+		now.Format(time.RFC3339),
+		now.Add(-time.Hour).Format(time.RFC3339),
+	)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, url, nil), "id", "1"))
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── 200 happy path — no reads ─────────────────────────────────────────────────
+
+func TestGetSecretReadSummary_NoReads(t *testing.T) {
+	c, _ := newSecretReadAggCore(t)
+	h, err := NewSecretHandler(c)
+	require.NoError(t, err)
+
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "total_reads")
+	assert.Contains(t, w.Body.String(), "entries")
+}
+
+// ── 200 happy path — seeded reads ────────────────────────────────────────────
+
+func TestGetSecretReadSummary_HappyPath(t *testing.T) {
+	c, db := newSecretReadAggCore(t)
+	h, err := NewSecretHandler(c)
+	require.NoError(t, err)
+
+	secretID := uint(7)
+	userID := uint(1)
+	now := time.Now().UTC()
+
+	// Seed 3 reads for user 1 in the last hour.
+	for i := 0; i < 3; i++ {
+		seedReadAuditEvent(t, db, secretID, userID, now.Add(-time.Duration(i+1)*time.Minute))
+	}
+
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", fmt.Sprintf("%d", secretID)))
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, "total_reads")
+	// The 3 reads should be reflected.
+	assert.Contains(t, body, `"secret_id":7`)
+}
+
+// ── limit=60 is silently capped at 50 by core ────────────────────────────────
+
+func TestGetSecretReadSummary_LimitCappedAt50(t *testing.T) {
+	c, _ := newSecretReadAggCore(t)
+	h, err := NewSecretHandler(c)
+	require.NoError(t, err)
+
+	// limit=60 in URL; core caps it at 50 transparently — still 200.
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodGet, "/?limit=60", nil), "id", "1"))
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ── 500 storage error ─────────────────────────────────────────────────────────
+
+// failingReadAggStore wraps LocalStorage and fails GetSecretReadCounts.
+type failingReadAggStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingReadAggStore) GetSecretReadCounts(_ context.Context, _ uint, _, _ time.Time, _ int) ([]storage.SecretReadEntry, error) {
+	return nil, errors.New("simulated read-agg outage")
+}
+
+func TestGetSecretReadSummary_StorageError(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	n := secretReadAggDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhdlr_readagg_fail_%d?mode=memory&cache=shared", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
+
+	c := core.NewKeyorixCore(&failingReadAggStore{store.NewLocalStorage(db)})
+	h, err := NewSecretHandler(c)
+	require.NoError(t, err)
+
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
+	w := httptest.NewRecorder()
+	h.GetSecretReadSummary(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}

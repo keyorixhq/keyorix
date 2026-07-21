@@ -168,6 +168,12 @@ func (rs *RemoteStorage) VerifyAuditChain(_ context.Context) (*storage.AuditChai
 	return nil, fmt.Errorf("VerifyAuditChain not available in remote mode")
 }
 
+// GetSecretReadCounts is server-side only; read aggregation runs against the
+// local audit table and is never proxied over a remote HTTP call.
+func (rs *RemoteStorage) GetSecretReadCounts(_ context.Context, _ uint, _, _ time.Time, _ int) ([]storage.SecretReadEntry, error) {
+	return nil, remoteUnsupported("GetSecretReadCounts")
+}
+
 // CreateAuditCheckpoint is not available in remote mode; checkpointing is server-side.
 func (rs *RemoteStorage) CreateAuditCheckpoint(_ context.Context, _ *models.AuditCheckpoint) error {
 	return fmt.Errorf("CreateAuditCheckpoint not available in remote mode")
