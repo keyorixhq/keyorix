@@ -30,7 +30,6 @@ type PermissionMatrixRow struct {
 // GetPermissionMatrix's cognitive complexity within bounds.
 type permMatrixCache struct {
 	core           *KeyorixCore
-	ctx            context.Context
 	userCache      map[uint]pmUserInfo
 	rolePermsCache map[uint][]pmPermInfo
 	roleNameCache  map[uint]string
@@ -49,10 +48,9 @@ type pmPermInfo struct {
 	Action   string
 }
 
-func newPermMatrixCache(c *KeyorixCore, ctx context.Context) *permMatrixCache {
+func newPermMatrixCache(c *KeyorixCore) *permMatrixCache {
 	return &permMatrixCache{
 		core:           c,
-		ctx:            ctx,
 		userCache:      make(map[uint]pmUserInfo),
 		rolePermsCache: make(map[uint][]pmPermInfo),
 		roleNameCache:  make(map[uint]string),
@@ -61,11 +59,11 @@ func newPermMatrixCache(c *KeyorixCore, ctx context.Context) *permMatrixCache {
 	}
 }
 
-func (h *permMatrixCache) getUser(userID uint) (pmUserInfo, error) {
+func (h *permMatrixCache) getUser(ctx context.Context, userID uint) (pmUserInfo, error) {
 	if u, ok := h.userCache[userID]; ok {
 		return u, nil
 	}
-	u, err := h.core.storage.GetUser(h.ctx, userID)
+	u, err := h.core.storage.GetUser(ctx, userID)
 	if err != nil {
 		return pmUserInfo{}, fmt.Errorf("get user %d: %w", userID, err)
 	}
@@ -74,11 +72,11 @@ func (h *permMatrixCache) getUser(userID uint) (pmUserInfo, error) {
 	return info, nil
 }
 
-func (h *permMatrixCache) getRolePerms(roleID uint) ([]pmPermInfo, error) {
+func (h *permMatrixCache) getRolePerms(ctx context.Context, roleID uint) ([]pmPermInfo, error) {
 	if perms, ok := h.rolePermsCache[roleID]; ok {
 		return perms, nil
 	}
-	perms, err := h.core.storage.GetRolePermissions(h.ctx, roleID)
+	perms, err := h.core.storage.GetRolePermissions(ctx, roleID)
 	if err != nil {
 		return nil, fmt.Errorf("get permissions for role %d: %w", roleID, err)
 	}
@@ -90,11 +88,11 @@ func (h *permMatrixCache) getRolePerms(roleID uint) ([]pmPermInfo, error) {
 	return result, nil
 }
 
-func (h *permMatrixCache) getRoleName(roleID uint) (string, error) {
+func (h *permMatrixCache) getRoleName(ctx context.Context, roleID uint) (string, error) {
 	if name, ok := h.roleNameCache[roleID]; ok {
 		return name, nil
 	}
-	role, err := h.core.storage.GetRole(h.ctx, roleID)
+	role, err := h.core.storage.GetRole(ctx, roleID)
 	if err != nil {
 		return "", fmt.Errorf("get role %d: %w", roleID, err)
 	}
@@ -102,14 +100,14 @@ func (h *permMatrixCache) getRoleName(roleID uint) (string, error) {
 	return role.Name, nil
 }
 
-func (h *permMatrixCache) getProjectName(projID uint) string {
+func (h *permMatrixCache) getProjectName(ctx context.Context, projID uint) string {
 	if projID == 0 {
 		return ""
 	}
 	if name, ok := h.projectCache[projID]; ok {
 		return name
 	}
-	proj, err := h.core.storage.GetProject(h.ctx, projID)
+	proj, err := h.core.storage.GetProject(ctx, projID)
 	if err != nil {
 		// Soft-deleted projects may still have grants; return ID-as-name rather than failing.
 		name := fmt.Sprintf("project-%d", projID)
@@ -120,14 +118,14 @@ func (h *permMatrixCache) getProjectName(projID uint) string {
 	return proj.Name
 }
 
-func (h *permMatrixCache) getEnvName(envID uint) string {
+func (h *permMatrixCache) getEnvName(ctx context.Context, envID uint) string {
 	if envID == 0 {
 		return ""
 	}
 	if name, ok := h.envCache[envID]; ok {
 		return name
 	}
-	env, err := h.core.storage.GetEnvironment(h.ctx, envID)
+	env, err := h.core.storage.GetEnvironment(ctx, envID)
 	if err != nil {
 		name := fmt.Sprintf("env-%d", envID)
 		h.envCache[envID] = name
@@ -156,7 +154,7 @@ func (c *KeyorixCore) GetPermissionMatrix(ctx context.Context, projectID uint) (
 		return nil, fmt.Errorf("permission matrix: list grants: %w", err)
 	}
 
-	cache := newPermMatrixCache(c, ctx)
+	cache := newPermMatrixCache(c)
 
 	var rows []*PermissionMatrixRow
 	for _, grant := range grants {
@@ -164,24 +162,24 @@ func (c *KeyorixCore) GetPermissionMatrix(ctx context.Context, projectID uint) (
 			continue
 		}
 
-		uInfo, err := cache.getUser(grant.UserID)
+		uInfo, err := cache.getUser(ctx, grant.UserID)
 		if err != nil {
 			// Unknown/deleted user — skip silently; the row may be a stale JIT grant.
 			continue
 		}
 
-		roleName, err := cache.getRoleName(grant.RoleID)
+		roleName, err := cache.getRoleName(ctx, grant.RoleID)
 		if err != nil {
 			continue
 		}
 
-		perms, err := cache.getRolePerms(grant.RoleID)
+		perms, err := cache.getRolePerms(ctx, grant.RoleID)
 		if err != nil {
 			continue
 		}
 
-		projName := cache.getProjectName(grant.ProjectID)
-		envName := cache.getEnvName(grant.EnvironmentID)
+		projName := cache.getProjectName(ctx, grant.ProjectID)
+		envName := cache.getEnvName(ctx, grant.EnvironmentID)
 		scope := grantScope(grant.ProjectID, grant.EnvironmentID)
 
 		for _, perm := range perms {
