@@ -1246,6 +1246,11 @@ func (m *MockStorage) AuditRetentionStats(ctx context.Context) (*storage.AuditRe
 	return args.Get(0).(*storage.AuditRetentionStats), args.Error(1)
 }
 
+func (m *MockStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	args := m.Called(ctx, cutoff)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditChainVerification, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {

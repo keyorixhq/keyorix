@@ -20,4 +20,8 @@ var (
 	// ErrInvalidInput is returned when a caller supplies a logically inconsistent
 	// or out-of-range parameter (e.g. a time range where Since >= Until).
 	ErrInvalidInput = errors.New("invalid input")
+
+	// ErrInvalidAuditRetentionDays is returned by PurgeAuditLogs when the caller
+	// supplies a retention window that is below the minimum 7-day floor.
+	ErrInvalidAuditRetentionDays = errors.New("invalid retention_days")
 )

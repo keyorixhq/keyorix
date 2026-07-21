@@ -53,3 +53,66 @@ func TestAuditRetentionStats_OldestNewestAndCount(t *testing.T) {
 	assert.WithinDuration(t, oldest, *stats.Oldest, time.Second)
 	assert.WithinDuration(t, newest, *stats.Newest, time.Second)
 }
+
+// TestDeleteAuditLogsBefore_DeletesOldRows verifies the hard-delete removes
+// events strictly before the cutoff and leaves newer ones intact.
+func TestDeleteAuditLogsBefore_DeletesOldRows(t *testing.T) {
+	ls := newAuditRetentionTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	cutoff := now.AddDate(0, 0, -30)
+
+	// Three events older than the cutoff.
+	for i := 0; i < 3; i++ {
+		require.NoError(t, ls.db.WithContext(ctx).Create(&models.AuditEvent{
+			EventType: "secret.read", EventTime: now.AddDate(0, 0, -(31 + i)),
+		}).Error)
+	}
+	// Two events newer than the cutoff.
+	for i := 0; i < 2; i++ {
+		require.NoError(t, ls.db.WithContext(ctx).Create(&models.AuditEvent{
+			EventType: "secret.read", EventTime: now.AddDate(0, 0, -(i + 1)),
+		}).Error)
+	}
+
+	n, err := ls.DeleteAuditLogsBefore(ctx, cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), n, "three old events deleted")
+
+	stats, err := ls.AuditRetentionStats(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), stats.TotalEvents, "two recent events remain")
+}
+
+// TestDeleteAuditLogsBefore_EmptyTable returns 0 rows deleted on an empty table.
+func TestDeleteAuditLogsBefore_EmptyTable(t *testing.T) {
+	ls := newAuditRetentionTestStore(t)
+	ctx := context.Background()
+
+	n, err := ls.DeleteAuditLogsBefore(ctx, time.Now().UTC())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n)
+}
+
+// TestDeleteAuditLogsBefore_NoneBeforeCutoff returns 0 when all events are newer.
+func TestDeleteAuditLogsBefore_NoneBeforeCutoff(t *testing.T) {
+	ls := newAuditRetentionTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	// All events are 1 day old; cutoff is 30 days ago.
+	for i := 0; i < 3; i++ {
+		require.NoError(t, ls.db.WithContext(ctx).Create(&models.AuditEvent{
+			EventType: "secret.read", EventTime: now.AddDate(0, 0, -1),
+		}).Error)
+	}
+
+	n, err := ls.DeleteAuditLogsBefore(ctx, now.AddDate(0, 0, -30))
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n, "no events old enough to delete")
+
+	stats, err := ls.AuditRetentionStats(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), stats.TotalEvents, "all 3 events remain")
+}

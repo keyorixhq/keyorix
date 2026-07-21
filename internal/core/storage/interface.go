@@ -1009,6 +1009,9 @@ type Storage interface {
 	// (NIS2 mandates 12 months of retention). Oldest/Newest are nil on an empty
 	// table.
 	AuditRetentionStats(ctx context.Context) (*AuditRetentionStats, error)
+	// DeleteAuditLogsBefore hard-deletes AuditEvent rows with created_at < cutoff.
+	// Returns the number of rows deleted.
+	DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error)
 	// VerifyAuditChain re-walks the tamper-evidence hash chain (ADR-029) over
 	// audit_events and reports whether it is intact. The first divergence —
 	// modified field, deleted/inserted row, or broken linkage — is reported
