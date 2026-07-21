@@ -261,3 +261,76 @@ func TestGetRetryPolicy_BadID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// TestSetRetryPolicy_InternalError — storage error that is neither a validation
+// error nor a not-found error returns 500.
+func TestSetRetryPolicy_InternalError(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, i18n.InitializeForTesting())
+
+	n := retryPolicyDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kx_retry_set_ie_%d?mode=memory&cache=shared&_timeout=30000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.AuditEvent{},
+		&models.NotificationChannel{},
+	))
+	chanID := seedChannel(t, db)
+
+	// Close the underlying connection to provoke a real DB error (not not-found).
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h := NewNotificationChannelHandler(cs)
+
+	body, _ := json.Marshal(map[string]any{"max_retries": 3, "retry_backoff_ms": 1000})
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", chanID),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SetRetryPolicy(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestGetRetryPolicy_InternalError — storage error that is not a not-found
+// error returns 500.
+func TestGetRetryPolicy_InternalError(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, i18n.InitializeForTesting())
+
+	n := retryPolicyDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kx_retry_get_ie_%d?mode=memory&cache=shared&_timeout=30000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.AuditEvent{},
+		&models.NotificationChannel{},
+	))
+	chanID := seedChannel(t, db)
+
+	// Close the underlying connection so GetNotificationChannel returns a real
+	// DB error (not ErrRecordNotFound) instead of 404.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h := NewNotificationChannelHandler(cs)
+
+	req := withChiParam(
+		httptest.NewRequest(http.MethodGet, "/", nil),
+		"id", fmt.Sprintf("%d", chanID),
+	)
+	w := httptest.NewRecorder()
+	h.GetRetryPolicy(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
