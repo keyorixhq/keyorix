@@ -336,6 +336,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels/{id}", notificationChannelHandler.Get)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}", notificationChannelHandler.Update)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/notification-channels/{id}", notificationChannelHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}/retry-policy", notificationChannelHandler.SetRetryPolicy)
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/notification-channels/{id}/retry-policy", notificationChannelHandler.GetRetryPolicy)
 
 		// Alert escalation policy management — admin-only (system.write).
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/alert-escalation-policies", alertEscalationHandler.Create)
