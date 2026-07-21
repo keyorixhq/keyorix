@@ -164,6 +164,81 @@ func (h *NotificationChannelHandler) Delete(w http.ResponseWriter, r *http.Reque
 	sendSuccess(w, map[string]interface{}{"id": id, "deleted": true}, "")
 }
 
+// SetRetryPolicy handles PUT /api/v1/notification-channels/{id}/retry-policy.
+// Body: {"max_retries": 5, "retry_backoff_ms": 2000}
+// Response 200: {"data": {"channel_id": N, "max_retries": 5, "retry_backoff_ms": 2000}}
+func (h *NotificationChannelHandler) SetRetryPolicy(w http.ResponseWriter, r *http.Request) {
+	u := middleware.GetUserFromContext(r.Context())
+	if u == nil {
+		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	var body struct {
+		MaxRetries     int `json:"max_retries"`
+		RetryBackoffMs int `json:"retry_backoff_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	cfg := core.NotificationRetryConfig{
+		MaxRetries:     body.MaxRetries,
+		RetryBackoffMs: body.RetryBackoffMs,
+	}
+	if err := h.coreService.SetNotificationRetryPolicy(r.Context(), u.UserID, id, cfg); err != nil {
+		if isRetryPolicyValidationError(err) {
+			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
+			return
+		}
+		log.Printf("Error setting retry policy for notification channel %d: %v", id, err)
+		sendError(w, "InternalError", "Failed to set retry policy", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"channel_id":       id,
+		"max_retries":      body.MaxRetries,
+		"retry_backoff_ms": body.RetryBackoffMs,
+	}, "")
+}
+
+// GetRetryPolicy handles GET /api/v1/notification-channels/{id}/retry-policy.
+// Response 200: {"data": {"channel_id": N, "max_retries": 3, "retry_backoff_ms": 1000}}
+func (h *NotificationChannelHandler) GetRetryPolicy(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	policy, err := h.coreService.GetNotificationRetryPolicy(r.Context(), id)
+	if err != nil {
+		if strings.Contains(err.Error(), errNotFound) {
+			sendError(w, "NotFound", errNotificationChannelNotFound, http.StatusNotFound, nil)
+			return
+		}
+		log.Printf("Error getting retry policy for notification channel %d: %v", id, err)
+		sendError(w, "InternalError", "Failed to get retry policy", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"channel_id":       id,
+		"max_retries":      policy.MaxRetries,
+		"retry_backoff_ms": policy.RetryBackoffMs,
+	}, "")
+}
+
+// isRetryPolicyValidationError reports whether the error is a validation error
+// from SetNotificationRetryPolicy (safe to return verbatim to the client).
+func isRetryPolicyValidationError(err error) bool {
+	return strings.HasPrefix(err.Error(), "invalid notification channel retry policy")
+}
+
 // isValidationError reports whether the error comes from the core validation layer
 // (as opposed to a storage/infrastructure error). Validation messages are
 // short, human-readable strings crafted in validateNotificationChannel; they are

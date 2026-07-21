@@ -1380,7 +1380,10 @@ type NotificationChannel struct {
 	Email string `json:"email,omitempty"`
 	// Events is a comma-separated list of event types this channel receives
 	// e.g. "secret.rotated,anomaly.detected,secret.expiring"
-	Events    string    `json:"events"`
+	Events string `json:"events"`
+	// Retry policy for failed deliveries.
+	MaxRetries     int `gorm:"default:3" json:"max_retries"`      // 0 = no retry, max 10
+	RetryBackoffMs int `gorm:"default:1000" json:"retry_backoff_ms"` // base backoff in ms, min 100, max 60000
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	CreatedBy string    `json:"created_by"`
