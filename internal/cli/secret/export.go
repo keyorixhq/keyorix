@@ -114,10 +114,7 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 
 	// If --encrypt-for is set and format was not explicitly chosen as
 	// encrypted-json, auto-switch and inform the operator.
-	if exportEncryptFor != "" && strings.ToLower(exportFormat) != fmtEncryptedJSON {
-		fmt.Fprintf(os.Stderr, "NOTE: --encrypt-for is set; switching format to encrypted-json.\n")
-		exportFormat = fmtEncryptedJSON
-	}
+	exportFormat = applyEncryptForDefault(exportFormat, exportEncryptFor)
 
 	var out io.Writer = os.Stdout
 	if exportOutput != "" {
@@ -143,6 +140,16 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 
 	fmt.Fprintf(os.Stderr, "Exported %d secrets\n", len(fetched))
 	return nil
+}
+
+// applyEncryptForDefault switches format to encrypted-json when --encrypt-for is
+// set but the operator did not explicitly choose that format.
+func applyEncryptForDefault(format, encryptFor string) string {
+	if encryptFor != "" && strings.ToLower(format) != fmtEncryptedJSON {
+		fmt.Fprintf(os.Stderr, "NOTE: --encrypt-for is set; switching format to encrypted-json.\n")
+		return fmtEncryptedJSON
+	}
+	return format
 }
 
 // writeSecrets dispatches to the appropriate format writer.
