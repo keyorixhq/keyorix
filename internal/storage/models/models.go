@@ -659,6 +659,26 @@ type SecretDependency struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+// SecretTemplate is a reusable metadata preset for secret creation.
+// Applying a template pre-fills classification, tags, and description on new secrets.
+type SecretTemplate struct {
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"not null;uniqueIndex" json:"name"`
+	// Description is a human-readable note about what this template is for.
+	Description string `json:"description,omitempty"`
+	// DefaultClassification pre-fills the secret's classification level.
+	DefaultClassification string `json:"default_classification,omitempty"`
+	// DefaultTags is a comma-separated list of tag names to apply.
+	DefaultTags string `json:"default_tags,omitempty"`
+	// DescriptionPattern is a freetext hint for the description field.
+	DescriptionPattern string `json:"description_pattern,omitempty"`
+	// RotationHintDays suggests a rotation interval in days (informational only).
+	RotationHintDays int       `json:"rotation_hint_days,omitempty"`
+	CreatedBy        uint      `json:"created_by"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 // SecretACL grants a specific user fine-grained access to one secret (RBAC Phase 3).
 // When a SecretACL entry exists for (UserID, SecretID), the listed Permissions are
 // granted regardless of project-level RBAC — the user need not hold a project role.
@@ -1325,6 +1345,24 @@ type MachineIdentityOIDCBinding struct {
 // initialism, so its default pluralization would not match the explicit name
 // used in the migration guard and the GetMachineByOIDCSubject join.
 func (MachineIdentityOIDCBinding) TableName() string { return "machine_identity_oidc_bindings" }
+
+// AlertEscalationPolicy defines when and how to escalate unacknowledged anomaly alerts.
+// After EscalateAfterMinutes of no acknowledgement, alerts at or above MinSeverity
+// are dispatched to the NotificationChannels listed in ChannelIDs.
+type AlertEscalationPolicy struct {
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"not null;uniqueIndex" json:"name"`
+	// MinSeverity: only escalate alerts at or above this severity ("low","medium","high","critical")
+	MinSeverity string `json:"min_severity"`
+	// EscalateAfterMinutes: escalate if alert unacknowledged for this many minutes
+	EscalateAfterMinutes int `json:"escalate_after_minutes"`
+	// ChannelIDs: comma-separated NotificationChannel IDs to deliver to
+	ChannelIDs string    `json:"channel_ids"`
+	Enabled    bool      `gorm:"default:true" json:"enabled"`
+	CreatedBy  uint      `json:"created_by"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
 
 // NotificationChannel is a runtime-managed outbound notification destination.
 // Channel types: "webhook", "slack", "teams", "email".

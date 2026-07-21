@@ -64,6 +64,7 @@ func AllTestModels() []any {
 		&SecretACL{},
 		&RotationPolicy{},
 		&NotificationChannel{},
+		&AlertEscalationPolicy{},
 		&AnomalyConfigRecord{},
 		&StatsSnapshot{},
 		&DeploymentStatsSnapshot{},
@@ -72,5 +73,6 @@ func AllTestModels() []any {
 		&HygieneTrendSnapshot{},
 		&SecretVersionComment{},
 		&RejectionReasonTemplate{},
+		&SecretTemplate{},
 	}
 }
