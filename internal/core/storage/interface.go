@@ -615,6 +615,10 @@ type Storage interface {
 	// TryIncrementSecretReadCount remains for the per-version read_count DISPLAY
 	// field only.
 	TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error)
+	// ListSecretsWithQuota returns every live secret (IsSecret=true, not
+	// soft-deleted) whose MaxReads pointer is set and greater than zero —
+	// the full candidate set for the read-quota alert job. No values are read.
+	ListSecretsWithQuota(ctx context.Context) ([]models.SecretNode, error)
 
 	// Secret Sharing Management
 	CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
