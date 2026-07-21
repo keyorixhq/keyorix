@@ -1219,9 +1219,16 @@ type Storage interface {
 	// Rotation Policy Management
 	CreateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
 	GetRotationPolicy(ctx context.Context, id uint) (*models.RotationPolicy, error)
+	// GetRotationPolicyBySecret returns the first active rotation policy that covers
+	// the secret (by matching the secret's project_id and/or environment_id). Returns
+	// ErrNotFound (via the store package) when no policy exists for the secret.
+	GetRotationPolicyBySecret(ctx context.Context, secretID uint) (*models.RotationPolicy, error)
 	ListRotationPolicies(ctx context.Context, projectID *uint, environmentID *uint) ([]*models.RotationPolicy, error)
 	UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
 	DeleteRotationPolicy(ctx context.Context, id uint) error
+	// UpdateRotationState stamps the execution state on a RotationPolicy row.
+	// state must be one of: idle, pending, rotating, succeeded, failed.
+	UpdateRotationState(ctx context.Context, policyID uint, state, errMsg string) error
 
 	// Health and Maintenance
 	HealthCheck(ctx context.Context) error

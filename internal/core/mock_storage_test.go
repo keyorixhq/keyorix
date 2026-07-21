@@ -1688,6 +1688,19 @@ func (m *MockStorage) DeleteRotationPolicy(_ context.Context, _ uint) error {
 	return nil
 }
 
+func (m *MockStorage) GetRotationPolicyBySecret(ctx context.Context, secretID uint) (*models.RotationPolicy, error) {
+	args := m.Called(ctx, secretID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.RotationPolicy), args.Error(1)
+}
+
+func (m *MockStorage) UpdateRotationState(ctx context.Context, policyID uint, state, errMsg string) error {
+	args := m.Called(ctx, policyID, state, errMsg)
+	return args.Error(0)
+}
+
 // Machine identities (ADR-023).
 func (m *MockStorage) CreateMachineIdentity(ctx context.Context, mi *models.MachineIdentity) (*models.MachineIdentity, error) {
 	args := m.Called(ctx, mi)

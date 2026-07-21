@@ -1224,6 +1224,10 @@ type RotationPolicy struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	DeletedAt       gorm.DeletedAt `gorm:"index"`
+	// Rotation execution state — stamped by the rotation job.
+	RotationState     string     `gorm:"default:'idle'" json:"rotation_state"` // idle | pending | rotating | succeeded | failed
+	LastRotationError string     `gorm:"default:''" json:"last_rotation_error,omitempty"`
+	LastStateAt       *time.Time `json:"last_state_at,omitempty"`
 }
 
 // AnomalyAlert represents a detected anomaly in secret access patterns.
