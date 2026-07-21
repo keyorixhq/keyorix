@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // permChangeEventTypes is the subset of RBAC audit event types that represent
@@ -52,13 +53,9 @@ type PermissionChangeReport struct {
 	Total   int                     `json:"total"`
 }
 
-// GetPermissionChangeAudit returns structured permission change events between
-// since and until, limited to at most limit entries (default 100, max 1000).
-// If since is zero it defaults to 30 days ago; if until is zero it defaults to
-// now. Results are returned chronologically (oldest first).
-func (k *KeyorixCore) GetPermissionChangeAudit(ctx context.Context, since, until time.Time, limit int) (*PermissionChangeReport, error) {
+// normPermChangeWindow normalises the since/until/limit parameters, filling in defaults.
+func normPermChangeWindow(since, until time.Time, limit int) (time.Time, time.Time, int) {
 	now := time.Now()
-
 	if since.IsZero() {
 		since = now.Add(-permChangeDefaultWindow)
 	}
@@ -71,6 +68,74 @@ func (k *KeyorixCore) GetPermissionChangeAudit(ctx context.Context, since, until
 	if limit > permChangeMaxLimit {
 		limit = permChangeMaxLimit
 	}
+	return since, until, limit
+}
+
+// resolvePermChangeActorName resolves the actor username for an audit event.
+// Returns an empty string when the actor is the system or unknown.
+func (k *KeyorixCore) resolvePermChangeActorName(ctx context.Context, userID *uint) string {
+	if userID == nil || *userID == 0 {
+		return ""
+	}
+	if u, err := k.storage.GetUser(ctx, *userID); err == nil {
+		return u.Username
+	}
+	return ""
+}
+
+// resolvePermChangeTarget resolves the target user name from detail.TargetUserID.
+// Falls back to "user:<id>" when the user row is gone.
+func (k *KeyorixCore) resolvePermChangeTarget(ctx context.Context, targetUserID uint) string {
+	if targetUserID == 0 {
+		return ""
+	}
+	if u, err := k.storage.GetUser(ctx, targetUserID); err == nil {
+		return u.Username
+	}
+	return fmt.Sprintf("user:%d", targetUserID)
+}
+
+// resolvePermChangeRole resolves the role name from detail.RoleID.
+// Falls back to "role:<id>" when the role row is gone.
+func (k *KeyorixCore) resolvePermChangeRole(ctx context.Context, roleID uint) string {
+	if roleID == 0 {
+		return ""
+	}
+	if r, err := k.storage.GetRole(ctx, roleID); err == nil {
+		return r.Name
+	}
+	return fmt.Sprintf("role:%d", roleID)
+}
+
+// buildPermChangeEvent converts a raw audit event into a PermissionChangeEvent.
+func (k *KeyorixCore) buildPermChangeEvent(ctx context.Context, e *models.AuditEvent) PermissionChangeEvent {
+	var detail rbacAuditDetail
+	if e.Diff != "" {
+		_ = json.Unmarshal([]byte(e.Diff), &detail)
+	}
+
+	scope := "global"
+	if detail.ProjectID != 0 {
+		scope = fmt.Sprintf("project:%d", detail.ProjectID)
+	}
+
+	return PermissionChangeEvent{
+		EventID:    e.ID,
+		Action:     e.EventType,
+		ActorName:  k.resolvePermChangeActorName(ctx, e.UserID),
+		TargetUser: k.resolvePermChangeTarget(ctx, detail.TargetUserID),
+		RoleName:   k.resolvePermChangeRole(ctx, detail.RoleID),
+		Scope:      scope,
+		ChangedAt:  e.EventTime,
+	}
+}
+
+// GetPermissionChangeAudit returns structured permission change events between
+// since and until, limited to at most limit entries (default 100, max 1000).
+// If since is zero it defaults to 30 days ago; if until is zero it defaults to
+// now. Results are returned chronologically (oldest first).
+func (k *KeyorixCore) GetPermissionChangeAudit(ctx context.Context, since, until time.Time, limit int) (*PermissionChangeReport, error) {
+	since, until, limit = normPermChangeWindow(since, until, limit)
 
 	filter := &storage.AuditFilter{
 		Actions:   permChangeEventTypes,
@@ -88,55 +153,7 @@ func (k *KeyorixCore) GetPermissionChangeAudit(ctx context.Context, since, until
 
 	changes := make([]PermissionChangeEvent, 0, len(events))
 	for _, e := range events {
-		var detail rbacAuditDetail
-		if e.Diff != "" {
-			// Ignore unmarshal error: we fall back to empty detail fields below.
-			_ = json.Unmarshal([]byte(e.Diff), &detail)
-		}
-
-		// Resolve actor name.
-		actorName := ""
-		if e.UserID != nil && *e.UserID != 0 {
-			if u, err := k.storage.GetUser(ctx, *e.UserID); err == nil {
-				actorName = u.Username
-			}
-		}
-
-		// Resolve target user name.
-		targetUser := ""
-		if detail.TargetUserID != 0 {
-			if u, err := k.storage.GetUser(ctx, detail.TargetUserID); err == nil {
-				targetUser = u.Username
-			} else {
-				targetUser = fmt.Sprintf("user:%d", detail.TargetUserID)
-			}
-		}
-
-		// Resolve role name.
-		roleName := ""
-		if detail.RoleID != 0 {
-			if r, err := k.storage.GetRole(ctx, detail.RoleID); err == nil {
-				roleName = r.Name
-			} else {
-				roleName = fmt.Sprintf("role:%d", detail.RoleID)
-			}
-		}
-
-		// Build scope string.
-		scope := "global"
-		if detail.ProjectID != 0 {
-			scope = fmt.Sprintf("project:%d", detail.ProjectID)
-		}
-
-		changes = append(changes, PermissionChangeEvent{
-			EventID:    e.ID,
-			Action:     e.EventType,
-			ActorName:  actorName,
-			TargetUser: targetUser,
-			RoleName:   roleName,
-			Scope:      scope,
-			ChangedAt:  e.EventTime,
-		})
+		changes = append(changes, k.buildPermChangeEvent(ctx, e))
 	}
 
 	return &PermissionChangeReport{

@@ -8,6 +8,8 @@ package core
 import (
 	"context"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // MachineAuditRow is one row in the machine identity audit report.
@@ -33,6 +35,22 @@ type MachineAuditReport struct {
 
 const machineAuditStaleDays = 30
 
+// machineCredMostRecent derives the most recent LastUsedAt across creds.
+// Returns nil when no credential has a non-nil LastUsedAt.
+func machineCredMostRecent(creds []*models.MachineIdentityCredential) *time.Time {
+	var lastUsedAt *time.Time
+	for _, cred := range creds {
+		if cred.LastUsedAt == nil {
+			continue
+		}
+		if lastUsedAt == nil || cred.LastUsedAt.After(*lastUsedAt) {
+			t := *cred.LastUsedAt
+			lastUsedAt = &t
+		}
+	}
+	return lastUsedAt
+}
+
 // GetMachineAuditReport returns an audit report of all machine identities across
 // the deployment. For each identity it counts credentials (all, not only active),
 // derives LastUsedAt from the most recent credential's LastUsedAt, and marks an
@@ -56,17 +74,7 @@ func (c *KeyorixCore) GetMachineAuditReport(ctx context.Context) (*MachineAuditR
 			return nil, err
 		}
 
-		// Derive last-used from the most recent credential LastUsedAt.
-		var lastUsedAt *time.Time
-		for _, cred := range creds {
-			if cred.LastUsedAt == nil {
-				continue
-			}
-			if lastUsedAt == nil || cred.LastUsedAt.After(*lastUsedAt) {
-				t := *cred.LastUsedAt
-				lastUsedAt = &t
-			}
-		}
+		lastUsedAt := machineCredMostRecent(creds)
 
 		// An identity is stale when it has never been used OR its last use predates the threshold.
 		isStale := lastUsedAt == nil || lastUsedAt.Before(staleThreshold)

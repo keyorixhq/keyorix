@@ -44,6 +44,74 @@ type EscalationResult struct {
 	Skipped   int // already acknowledged or no matching policy
 }
 
+// activePolicies filters policies to those that are enabled with a positive delay.
+func activePolicies(policies []models.AlertEscalationPolicy) []models.AlertEscalationPolicy {
+	var active []models.AlertEscalationPolicy
+	for _, p := range policies {
+		if p.Enabled && p.EscalateAfterMinutes > 0 {
+			active = append(active, p)
+		}
+	}
+	return active
+}
+
+// minEscalateDelay returns the smallest EscalateAfterMinutes across active policies.
+// Caller must ensure active is non-empty.
+func minEscalateDelay(active []models.AlertEscalationPolicy) int {
+	min := active[0].EscalateAfterMinutes
+	for _, p := range active[1:] {
+		if p.EscalateAfterMinutes < min {
+			min = p.EscalateAfterMinutes
+		}
+	}
+	return min
+}
+
+// dispatchPolicyChannels delivers an escalation to every enabled channel in policy.
+// Returns true if at least one channel received the notification successfully.
+func (c *KeyorixCore) dispatchPolicyChannels(ctx context.Context, alert *models.AnomalyAlert, policy *models.AlertEscalationPolicy) bool {
+	sent := false
+	for _, cidStr := range splitChannelIDs(policy.ChannelIDs) {
+		cid, err := strconv.ParseUint(cidStr, 10, 32)
+		if err != nil {
+			log.Printf("alert escalation: policy %d: invalid channel ID %q: %v", policy.ID, cidStr, err)
+			continue
+		}
+		ch, err := c.storage.GetNotificationChannel(ctx, uint(cid))
+		if err != nil {
+			log.Printf("alert escalation: policy %d: channel %d: %v", policy.ID, cid, err)
+			continue
+		}
+		if !ch.Enabled {
+			continue
+		}
+		if derr := c.dispatchToChannel(ctx, ch, alert, policy); derr != nil {
+			log.Printf("alert escalation: policy %d: channel %d: dispatch failed: %v", policy.ID, cid, derr)
+		} else {
+			sent = true
+		}
+	}
+	return sent
+}
+
+// escalateAlert checks alert against every active policy and dispatches to matching channels.
+// Returns true if alert was dispatched to at least one channel.
+func (c *KeyorixCore) escalateAlert(ctx context.Context, alert *models.AnomalyAlert, active []models.AlertEscalationPolicy, age time.Duration) bool {
+	dispatched := false
+	for _, policy := range active {
+		if age < time.Duration(policy.EscalateAfterMinutes)*time.Minute {
+			continue
+		}
+		if !severityAtLeast(alert.Severity, policy.MinSeverity) {
+			continue
+		}
+		if c.dispatchPolicyChannels(ctx, alert, &policy) {
+			dispatched = true
+		}
+	}
+	return dispatched
+}
+
 // RunAlertEscalation scans unacknowledged AnomalyAlerts, matches them against
 // enabled AlertEscalationPolicies, and delivers to configured NotificationChannels.
 // It is safe to call repeatedly (idempotent at the delivery layer; each call
@@ -54,13 +122,7 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 		return nil, fmt.Errorf("alert escalation: list policies: %w", err)
 	}
 
-	// Only keep enabled policies with a positive delay.
-	var active []models.AlertEscalationPolicy
-	for _, p := range policies {
-		if p.Enabled && p.EscalateAfterMinutes > 0 {
-			active = append(active, p)
-		}
-	}
+	active := activePolicies(policies)
 	if len(active) == 0 {
 		return &EscalationResult{}, nil
 	}
@@ -68,57 +130,18 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 	// Determine the earliest threshold: the minimum EscalateAfterMinutes across all
 	// active policies. Any alert older than that threshold is a candidate for at least
 	// one policy.
-	minDelay := active[0].EscalateAfterMinutes
-	for _, p := range active[1:] {
-		if p.EscalateAfterMinutes < minDelay {
-			minDelay = p.EscalateAfterMinutes
-		}
-	}
-
+	minDelay := minEscalateDelay(active)
 	threshold := c.now().Add(-time.Duration(minDelay) * time.Minute)
+
 	alerts, err := c.storage.ListUnacknowledgedAnomalyAlertsBefore(ctx, threshold)
 	if err != nil {
 		return nil, fmt.Errorf("alert escalation: list alerts: %w", err)
 	}
 
 	result := &EscalationResult{Evaluated: len(alerts)}
-	alertAge := func(a models.AnomalyAlert) time.Duration {
-		return c.now().Sub(a.DetectedAt)
-	}
-
 	for _, alert := range alerts {
-		age := alertAge(alert)
-		dispatched := false
-		for _, policy := range active {
-			if age < time.Duration(policy.EscalateAfterMinutes)*time.Minute {
-				continue
-			}
-			if !severityAtLeast(alert.Severity, policy.MinSeverity) {
-				continue
-			}
-			// Dispatch to each channel in this policy.
-			for _, cidStr := range splitChannelIDs(policy.ChannelIDs) {
-				cid, err := strconv.ParseUint(cidStr, 10, 32)
-				if err != nil {
-					log.Printf("alert escalation: policy %d: invalid channel ID %q: %v", policy.ID, cidStr, err)
-					continue
-				}
-				ch, err := c.storage.GetNotificationChannel(ctx, uint(cid))
-				if err != nil {
-					log.Printf("alert escalation: policy %d: channel %d: %v", policy.ID, cid, err)
-					continue
-				}
-				if !ch.Enabled {
-					continue
-				}
-				if derr := c.dispatchToChannel(ctx, ch, &alert, &policy); derr != nil {
-					log.Printf("alert escalation: policy %d: channel %d: dispatch failed: %v", policy.ID, cid, derr)
-				} else {
-					dispatched = true
-				}
-			}
-		}
-		if dispatched {
+		age := c.now().Sub(alert.DetectedAt)
+		if c.escalateAlert(ctx, &alert, active, age) {
 			result.Escalated++
 		} else {
 			result.Skipped++

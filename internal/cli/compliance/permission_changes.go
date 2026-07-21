@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const permChangeTimeFormat = "2006-01-02T15:04:05Z"
+
 // permChangeReport mirrors core.PermissionChangeReport for JSON decoding.
 type permChangeReport struct {
 	Since   time.Time         `json:"since"`
@@ -79,8 +81,8 @@ Requires audit.read.`,
 
 		fmt.Printf("Permission change audit trail (%d events, %s – %s)\n\n",
 			report.Total,
-			report.Since.UTC().Format("2006-01-02T15:04:05Z"),
-			report.Until.UTC().Format("2006-01-02T15:04:05Z"),
+			report.Since.UTC().Format(permChangeTimeFormat),
+			report.Until.UTC().Format(permChangeTimeFormat),
 		)
 
 		if report.Total == 0 {
@@ -95,7 +97,7 @@ Requires audit.read.`,
 			"----------------", "--------------------", "------")
 		for _, e := range report.Changes {
 			fmt.Printf("%-22s  %-16s  %-16s  %-16s  %-20s  %s\n",
-				e.ChangedAt.UTC().Format("2006-01-02T15:04:05Z"),
+				e.ChangedAt.UTC().Format(permChangeTimeFormat),
 				truncate(e.ActorName, 16),
 				truncate(e.Action, 16),
 				truncate(e.TargetUser, 16),

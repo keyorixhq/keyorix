@@ -39,6 +39,45 @@ type BlastRadiusReport struct {
 	MaxDepth         int               `json:"max_depth"`
 }
 
+// blastBFSNode is an internal BFS traversal node.
+type blastBFSNode struct {
+	id    uint
+	depth int
+}
+
+// blastBFS performs a bounded BFS over the dependents adjacency map starting
+// from rootID, returning nodes ordered by (depth, id). Max depth is 10.
+func blastBFS(rootID uint, adj map[uint][]uint) []blastBFSNode {
+	const maxDepth = 10
+	visited := map[uint]bool{rootID: true}
+	queue := []blastBFSNode{{id: rootID, depth: 0}}
+	var ordered []blastBFSNode
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, dep := range adj[cur.id] {
+			if visited[dep] {
+				continue
+			}
+			visited[dep] = true
+			next := blastBFSNode{id: dep, depth: cur.depth + 1}
+			ordered = append(ordered, next)
+			if next.depth < maxDepth {
+				queue = append(queue, next)
+			}
+		}
+	}
+	// Sort by (depth, id) for stable, readable output.
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].depth != ordered[j].depth {
+			return ordered[i].depth < ordered[j].depth
+		}
+		return ordered[i].id < ordered[j].id
+	})
+	return ordered
+}
+
 // GetBlastRadius returns the full dependency tree downstream of secretID,
 // up to a maximum depth of 10 to prevent cycles causing infinite loops.
 // Each node carries OwnerID, ProjectID, and a RiskLevel assessment.
@@ -58,43 +97,8 @@ func (k *KeyorixCore) GetBlastRadius(ctx context.Context, secretID uint) (*Blast
 	info := k.resolveSecretInfo(ctx, edges)
 	edges = edgesWithinEnvironment(edges, info, source.EnvironmentID)
 
-	// BFS with max depth 10 and a visited set to handle any cycles that
-	// somehow exist in storage (they are rejected at add, but we defend here).
 	adj := dependentsAdjacency(edges)
-	const maxDepth = 10
-
-	type bfsNode struct {
-		id    uint
-		depth int
-	}
-	visited := map[uint]bool{secretID: true}
-	queue := []bfsNode{{id: secretID, depth: 0}}
-	var ordered []bfsNode
-
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for _, dep := range adj[cur.id] {
-			if visited[dep] {
-				continue
-			}
-			visited[dep] = true
-			next := bfsNode{id: dep, depth: cur.depth + 1}
-			ordered = append(ordered, next)
-			if next.depth < maxDepth {
-				queue = append(queue, next)
-			}
-		}
-	}
-
-	// Sort by (depth, secret_name) for stable, readable output.
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].depth != ordered[j].depth {
-			return ordered[i].depth < ordered[j].depth
-		}
-		// fall back to ID for determinism when names haven't been resolved yet
-		return ordered[i].id < ordered[j].id
-	})
+	ordered := blastBFS(secretID, adj)
 
 	maxDepthSeen := 0
 	nodes := make([]BlastRadiusNode, 0, len(ordered))

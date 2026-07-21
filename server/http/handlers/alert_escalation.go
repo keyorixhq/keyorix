@@ -13,6 +13,11 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+const (
+	escalationNotFound        = "not found"
+	escalationNotFoundMessage = "Alert escalation policy not found"
+)
+
 // AlertEscalationHandler serves the alert escalation policy CRUD endpoints and the
 // run-alert-escalation admin job trigger.
 type AlertEscalationHandler struct {
@@ -113,8 +118,8 @@ func (h *AlertEscalationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.coreService.GetAlertEscalationPolicy(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Alert escalation policy not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), escalationNotFound) {
+			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error getting alert escalation policy %d: %v", id, err)
@@ -137,8 +142,8 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 	}
 	updated, err := h.coreService.UpdateAlertEscalationPolicy(r.Context(), id, body)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Alert escalation policy not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), escalationNotFound) {
+			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		if isEscalationValidationError(err) {
@@ -159,8 +164,8 @@ func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.DeleteAlertEscalationPolicy(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			sendError(w, "NotFound", "Alert escalation policy not found", http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), escalationNotFound) {
+			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error deleting alert escalation policy %d: %v", id, err)

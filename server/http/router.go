@@ -31,7 +31,9 @@ const (
 	pathIDRestore = "/{id}/restore"
 	pathIDRoles = "/{id}/roles"
 	pathIDSchedule = "/{id}/schedule"
-	pathInvitations = "/invitations"
+	pathInvitations              = "/invitations"
+	pathNotificationChannelsID    = "/notification-channels/{id}"
+	pathAlertEscalationPoliciesID = "/alert-escalation-policies/{id}"
 	pathLegalHold = "/legal-hold"
 	pathMetrics = "/metrics"
 	pathProjectEnvs = "/projects/{id}/environments"
@@ -333,18 +335,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Notification channel management — admin-only (system.write).
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels", notificationChannelHandler.List)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/notification-channels", notificationChannelHandler.Create)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/notification-channels/{id}", notificationChannelHandler.Get)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}", notificationChannelHandler.Update)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/notification-channels/{id}", notificationChannelHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathNotificationChannelsID, notificationChannelHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathNotificationChannelsID, notificationChannelHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathNotificationChannelsID, notificationChannelHandler.Delete)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/notification-channels/{id}/retry-policy", notificationChannelHandler.SetRetryPolicy)
 		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/notification-channels/{id}/retry-policy", notificationChannelHandler.GetRetryPolicy)
 
 		// Alert escalation policy management — admin-only (system.write).
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/alert-escalation-policies", alertEscalationHandler.Create)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies", alertEscalationHandler.List)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies/{id}", alertEscalationHandler.Get)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/alert-escalation-policies/{id}", alertEscalationHandler.Update)
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/alert-escalation-policies/{id}", alertEscalationHandler.Delete)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get(pathAlertEscalationPoliciesID, alertEscalationHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathAlertEscalationPoliciesID, alertEscalationHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathAlertEscalationPoliciesID, alertEscalationHandler.Delete)
 
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,
