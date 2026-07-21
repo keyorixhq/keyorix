@@ -983,6 +983,10 @@ type Storage interface {
 	// hygiene rollup (#393) instead of calling UnusedSecrets once per project. A
 	// project absent from the result has zero unused secrets.
 	CountUnusedSecretsByProject(ctx context.Context, projectIDs []uint, notReadSince time.Time) (map[uint]int, error)
+	// GetSecretReadCounts aggregates "secret.read" audit events for the given
+	// secret in the time window [since, until), returning the top-N actors sorted
+	// by read count desc. Used by the secret read aggregation report.
+	GetSecretReadCounts(ctx context.Context, secretID uint, since, until time.Time, limit int) ([]SecretReadEntry, error)
 	// GetAnomalyConfig retrieves the single anomaly config row, or returns sensible
 	// defaults if no row has been saved yet.
 	GetAnomalyConfig(ctx context.Context) (*models.AnomalyConfigRecord, error)
@@ -1597,6 +1601,19 @@ type UnusedSecretStat struct {
 	SecretName    string     `json:"secret_name"`
 	EnvironmentID uint       `json:"environment_id"`
 	LastRead      *time.Time `json:"last_read"`
+}
+
+// SecretReadEntry is one row in the secret read aggregation report, representing
+// the total reads by a single actor (user or machine identity) within a window.
+type SecretReadEntry struct {
+	// ActorID is the actor identifier: a user's numeric ID rendered as a string,
+	// or a machine identity name (from actor_type="machine_identity" rows).
+	ActorID string `json:"actor_id"`
+	// ActorUsername is the resolved display name for the actor, empty when the
+	// user row is absent (e.g. deleted users or machine identities).
+	ActorUsername string `json:"actor_username,omitempty"`
+	ReadCount     int64  `json:"read_count"`
+	LastReadAt    time.Time `json:"last_read_at"`
 }
 
 // ProjectMember is a user who holds a role at a project's scope (ADR-021).

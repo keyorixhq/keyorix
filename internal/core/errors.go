@@ -16,4 +16,8 @@ var (
 	// ErrInvalidBootstrapToken is returned when the supplied bootstrap token is
 	// missing, empty, or does not match the server's configured token.
 	ErrInvalidBootstrapToken = errors.New("invalid bootstrap token")
+
+	// ErrInvalidInput is returned when a caller supplies a logically inconsistent
+	// or out-of-range parameter (e.g. a time range where Since >= Until).
+	ErrInvalidInput = errors.New("invalid input")
 )
