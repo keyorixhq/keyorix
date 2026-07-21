@@ -164,6 +164,29 @@ func TestGetRotationState_401_NoUser(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+// TestGetRotationState_500_DBError verifies that when the underlying DB is
+// unavailable (closed) the handler returns HTTP 500 rather than panicking or
+// returning a misleading 404/200.
+func TestGetRotationState_500_DBError(t *testing.T) {
+	handler, db := setupRotationStateTest(t)
+	secretID, _ := seedRotationStateFixtures(t, db)
+
+	// Close the underlying *sql.DB so the next query fails with a real error
+	// (not a "not found" — which would map to idle/200).
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/v1/secrets/%d/rotation-state", secretID), nil)
+	req = withUserCtx(withChiParam(req, "id", fmt.Sprintf("%d", secretID)))
+
+	w := httptest.NewRecorder()
+	handler.GetRotationState(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
 // TestGetRotationState_StateAfterStamp verifies that after SetRotationState is called
 // the GET endpoint reflects the updated state.
 func TestGetRotationState_StateAfterStamp(t *testing.T) {
