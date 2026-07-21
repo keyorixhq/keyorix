@@ -468,6 +468,17 @@ func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint
 	return nil
 }
 
+// SetRetentionOverride sets the per-secret retention override. days = 0 clears
+// the override (reverts to the global policy). The caller is responsible for
+// validating the minimum floor before invoking this method.
+func (ls *LocalStorage) SetRetentionOverride(ctx context.Context, secretID uint, days int) error {
+	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where(sqlWhereID, secretID).Update("retention_override_days", days).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 // DeleteSecret deletes a secret by ID. #370: ShareRecord rows are a fully
 // independent lifecycle from SecretNode's — left untouched, a share grant would
 // silently reactivate (via CheckSharePermission) the instant the secret is later

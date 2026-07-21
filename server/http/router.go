@@ -607,6 +607,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Put(pathIDSchedule, secretHandler.SetSecretSchedule)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete(pathIDSchedule, secretHandler.DeleteSecretSchedule)
 
+			// Per-secret retention policy override: allows operators to give a
+			// specific secret a longer (or shorter) retention window than the global
+			// data-retention policy (ADR-032). Gated by secrets.manage because it
+			// changes how long the secret persists after deletion — a privileged
+			// policy decision, not a routine write.
+			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Patch("/{id}/retention", secretHandler.SetRetentionOverride)
+
 			// Certificate inspection (ADR-054) — public X.509 metadata, no value/key.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
 

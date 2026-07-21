@@ -627,6 +627,9 @@ type SecretNode struct {
 	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins
 	// queries on secret_nodes must filter it explicitly.
 	DeletedAt gorm.DeletedAt `gorm:"index"`
+	// RetentionOverrideDays overrides the global retention window for this secret.
+	// 0 means "use global setting". Must be >= 7 if non-zero.
+	RetentionOverrideDays int `gorm:"default:0" json:"retention_override_days,omitempty"`
 	// ValueStored is a transient, in-process-only signal (#499): never persisted
 	// (`gorm:"-"`) and never serialized (`json:"-"`). storage.Storage.CreateSecret
 	// sets it true on the node it returns ONLY when the backend already durably
