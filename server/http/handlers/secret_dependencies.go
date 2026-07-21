@@ -6,6 +6,7 @@
 //	POST   /{id}/dependencies            — declare that {id} depends on another secret
 //	DELETE /{id}/dependencies/{depId}    — remove one dependency edge
 //	GET    /{id}/impact                  — blast radius (transitive dependents)
+//	GET    /{id}/impact-preview          — flat count/summary of cascade-delete impact
 //
 // Plus, under /api/v1/projects (project-scoped):
 //
@@ -134,6 +135,28 @@ func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.sendSuccess(w, impact, "")
+}
+
+// GetSecretImpactPreview handles GET /api/v1/secrets/{id}/impact-preview.
+// It returns a flat count/summary of how many secrets would be cascade-affected
+// if the given secret were soft-deleted: direct dependent count, total transitive
+// count, all affected IDs, and the maximum dependency chain depth reached.
+func (h *SecretHandler) GetSecretImpactPreview(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
+		return
+	}
+	preview, err := h.coreService.GetSecretImpactPreview(r.Context(), uint(id))
+	if err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, preview, "")
 }
 
 // GetProjectRotationOrder handles GET /api/v1/projects/{id}/rotation-order
