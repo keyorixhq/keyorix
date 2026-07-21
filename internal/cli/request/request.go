@@ -32,6 +32,9 @@ func init() {
 	RequestCmd.AddCommand(listCmd)
 	RequestCmd.AddCommand(withdrawCmd)
 	RequestCmd.AddCommand(reviewCmd)
+	RequestCmd.AddCommand(bulkApproveCmd)
+	RequestCmd.AddCommand(bulkRejectCmd)
+	RequestCmd.AddCommand(rejectionTemplatesCmd)
 }
 
 // resolveUserID resolves an email address to a user ID via the core service.

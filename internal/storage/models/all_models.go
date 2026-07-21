@@ -72,6 +72,7 @@ func AllTestModels() []any {
 		&SecretAccessSchedule{},
 		&HygieneTrendSnapshot{},
 		&SecretVersionComment{},
+		&RejectionReasonTemplate{},
 		&SecretTemplate{},
 	}
 }

@@ -781,6 +781,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	invitationsExists := tableExists(db, "project_invitations")
 	accessReqExists := tableExists(db, "access_requests")
 	accessReqApprovalsExists := tableExists(db, "access_request_approvals")
+	rejectionReasonTemplateExists := tableExists(db, "rejection_reason_templates")
 	campaignExists := tableExists(db, "access_review_campaigns")
 	breakGlassExists := tableExists(db, "break_glass_activations")
 	legalHoldExists := tableExists(db, "legal_holds")
@@ -987,6 +988,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !accessReqApprovalsExists {
 		if err := db.AutoMigrate(&models.AccessRequestApproval{}); err != nil {
 			return fmt.Errorf("failed to migrate access_request_approvals table: %w", err)
+		}
+	}
+
+	// Create rejection-reason templates table if missing (ADR-024 extension, additive).
+	if !rejectionReasonTemplateExists {
+		if err := db.AutoMigrate(&models.RejectionReasonTemplate{}); err != nil {
+			return fmt.Errorf("failed to migrate rejection_reason_templates table: %w", err)
 		}
 	}
 
