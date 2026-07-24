@@ -187,6 +187,22 @@ func TestDeleteSecretSchedule(t *testing.T) {
 	assert.Nil(t, retrieved)
 }
 
+func TestSetSecretSchedule_ValidationError(t *testing.T) {
+	c, _ := newScheduleCore(t)
+	// start_hour > end_hour triggers validateScheduleParams error before storage is reached.
+	_, err := c.SetSecretSchedule(context.Background(), 999, "*", 17, 9, "UTC")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "end_hour")
+}
+
+func TestSetSecretSchedule_StorageError(t *testing.T) {
+	c, db := newScheduleCore(t)
+	// Drop the table so storage.SetSecretAccessSchedule returns an error.
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS secret_access_schedules").Error)
+	_, err := c.SetSecretSchedule(context.Background(), 999, "*", 0, 24, "UTC")
+	require.Error(t, err)
+}
+
 // ── validateScheduleParams ───────────────────────────────────────────────────
 
 func TestValidateScheduleParams_Valid(t *testing.T) {

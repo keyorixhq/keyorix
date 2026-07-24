@@ -1134,6 +1134,38 @@ func TestReleaseSchedulerLockProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+// TestAcquireSchedulerLockProxy_StorageError_S13 — a broken storage (no
+// scheduler_lock_leases table) must return 500 with a STORAGE_ERROR code.
+func TestAcquireSchedulerLockProxy_StorageError_S13(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewAuthHandler(cs, false)
+	// Break the storage so TryAcquireSchedulerLock fails.
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS scheduler_lock_leases").Error)
+	body := proxyJSON(map[string]interface{}{"key": 1, "holder": "node-1", "ttl_millis": 5000})
+	req := httptest.NewRequest(http.MethodPost, "/system/scheduler-lock/acquire", body)
+	w := httptest.NewRecorder()
+	h.AcquireSchedulerLockProxy(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "STORAGE_ERROR", resp.Error.Code)
+}
+
+// TestReleaseSchedulerLockProxy_StorageError_S13 — a broken storage (no
+// scheduler_lock_leases table) must return 500 with a STORAGE_ERROR code.
+func TestReleaseSchedulerLockProxy_StorageError_S13(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewAuthHandler(cs, false)
+	// Break the storage so ReleaseSchedulerLock fails.
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS scheduler_lock_leases").Error)
+	body := proxyJSON(map[string]interface{}{"key": 1, "holder": "node-1"})
+	req := httptest.NewRequest(http.MethodPost, "/system/scheduler-lock/release", body)
+	w := httptest.NewRecorder()
+	h.ReleaseSchedulerLockProxy(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "STORAGE_ERROR", resp.Error.Code)
+}
+
 // ── setup_tokens_proxy.go ─────────────────────────────────────────────────────
 
 // TestCreateSetupTokenProxy_BadBody_S13 — malformed JSON → 400.
