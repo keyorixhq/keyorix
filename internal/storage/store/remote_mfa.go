@@ -482,3 +482,16 @@ func (rs *RemoteStorage) VerifyMFALoginCredentials(ctx context.Context, challeng
 	}
 	return wire.toModel(), wire.UsedRecovery, nil
 }
+
+// UpsertMFAStepupToken and HasActiveMFAStepup are intentional stubs: the step-up
+// token is created by VerifyMFALogin and checked by the classification gate on the
+// same server node that holds the LocalStorage. RemoteStorage (a spoke CLI node) is
+// never the node making these calls — the HTTP request for a restricted secret value
+// goes straight to the upstream server, which checks its own local table.
+func (rs *RemoteStorage) UpsertMFAStepupToken(_ context.Context, _ uint, _ time.Time) error {
+	return remoteUnsupported("UpsertMFAStepupToken")
+}
+
+func (rs *RemoteStorage) HasActiveMFAStepup(_ context.Context, _ uint) (bool, error) {
+	return false, remoteUnsupported("HasActiveMFAStepup")
+}

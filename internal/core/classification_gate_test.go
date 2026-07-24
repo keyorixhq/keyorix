@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -338,5 +339,110 @@ func TestClassificationPermissionGate_Combined_BothRequired(t *testing.T) {
 	// grantedUser has the secrets.read.restricted permission but no approved request.
 	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, grantedUserID)
 	require.Error(t, err, "both gates active: permission alone is insufficient without approval")
+	assert.Contains(t, err.Error(), "access request")
+}
+
+// ── restricted_requires_mfa_stepup tests ─────────────────────────────────────
+
+// Requirement: off by default — no change even for a user without a step-up token.
+func TestClassificationMFAStepUp_OffByDefault_OwnerCanRead(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+
+	val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.NoError(t, err, "MFA step-up gate off: owner must read unrestricted")
+	assert.Equal(t, "s3cr3t-value", string(val))
+}
+
+// Requirement: when on, a user without an active step-up token is denied.
+func TestClassificationMFAStepUp_On_NoToken_Denied(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
+
+	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restricted")
+	assert.Contains(t, err.Error(), "MFA")
+}
+
+// Requirement: machine/no-user read is always denied when the gate is active.
+func TestClassificationMFAStepUp_On_NoUser_Denied(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, _, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
+
+	_, err := c.GetSecretValue(ctx, secretID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restricted")
+}
+
+// Requirement: a user with an active (non-expired) step-up token can read.
+func TestClassificationMFAStepUp_On_ActiveToken_Allowed(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
+
+	// Directly seed the step-up token (as VerifyMFALogin would).
+	expiresAt := c.now().Add(15 * time.Minute)
+	require.NoError(t, st.UpsertMFAStepupToken(ctx, ownerID, expiresAt))
+
+	val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.NoError(t, err, "active MFA step-up token must allow the read")
+	assert.Equal(t, "s3cr3t-value", string(val))
+}
+
+// Requirement: an expired step-up token is treated as absent — denied.
+func TestClassificationMFAStepUp_On_ExpiredToken_Denied(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
+
+	// Seed an already-expired token.
+	expiredAt := c.now().Add(-1 * time.Minute)
+	require.NoError(t, st.UpsertMFAStepupToken(ctx, ownerID, expiredAt))
+
+	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.Error(t, err, "expired step-up token must not grant access")
+	assert.Contains(t, err.Error(), "MFA")
+}
+
+// Requirement: lower-tier secrets are never gated by the MFA step-up check.
+func TestClassificationMFAStepUp_On_LowerTierUnaffected(t *testing.T) {
+	for _, level := range []string{ClassificationPublic, ClassificationInternal, ClassificationConfidential, ""} {
+		level := level
+		t.Run("classification="+level, func(t *testing.T) {
+			c, st := newBootstrappedCore(t)
+			secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, level)
+			ctx := context.Background()
+			c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
+
+			val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+			require.NoError(t, err, "MFA step-up gate must not affect non-restricted secrets")
+			assert.Equal(t, "s3cr3t-value", string(val))
+		})
+	}
+}
+
+// Requirement: combined with approval gate — both must pass. A user with a valid
+// step-up token but no approved access request is still denied.
+func TestClassificationMFAStepUp_Combined_BothRequired(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresApproval(true)
+	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
+
+	// Give the owner an active step-up token.
+	require.NoError(t, st.UpsertMFAStepupToken(ctx, ownerID, c.now().Add(15*time.Minute)))
+
+	// No approved access request yet → denied.
+	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.Error(t, err, "approval gate must still deny even with a valid MFA step-up token")
 	assert.Contains(t, err.Error(), "access request")
 }

@@ -1494,6 +1494,14 @@ type ClassificationConfig struct {
 	// (purely additive: only tightens access, never removes it). Can be combined
 	// with RestrictedRequiresApproval — when both are on, BOTH must be satisfied.
 	RestrictedRequiresPermission bool `yaml:"restricted_requires_permission"`
+	// RestrictedRequiresMFAStepUp, when true, requires the acting user to have
+	// completed a second-factor MFA verification within RestrictedMFAStepUpWindowMinutes
+	// before a "restricted"-classified secret's value may be read. Off by default.
+	// Can be combined with the other gate flags — when multiple are on, all must pass.
+	RestrictedRequiresMFAStepUp bool `yaml:"restricted_requires_mfa_stepup"`
+	// RestrictedMFAStepUpWindowMinutes is how long (in minutes) a completed MFA
+	// verification remains valid for restricted-secret reads. 0 = default (15 min).
+	RestrictedMFAStepUpWindowMinutes int `yaml:"restricted_mfa_stepup_window_minutes"`
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the

@@ -1130,6 +1130,18 @@ type Storage interface {
 	// challenge is consumed later, atomically, at login-finish).
 	GetActiveMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error)
 
+	// UpsertMFAStepupToken records (or refreshes) the MFA step-up window for
+	// userID. expiresAt is set by the caller (core) from the configured window. One
+	// row per user; the previous row is replaced on re-verification so re-login
+	// extends the window cleanly. Intentional no-op stub on RemoteStorage — the
+	// step-up token is always created and checked server-side.
+	UpsertMFAStepupToken(ctx context.Context, userID uint, expiresAt time.Time) error
+	// HasActiveMFAStepup reports whether userID has a non-expired MFA step-up
+	// record, confirming a recent second-factor verification. Intentional stub on
+	// RemoteStorage (always false, ErrUnsupportedByBackend) — the classification
+	// gate and MFA step-up token both live on the same server node.
+	HasActiveMFAStepup(ctx context.Context, userID uint) (bool, error)
+
 	// WebAuthn / passkeys (ADR-036).
 	CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
 	ListWebAuthnCredentials(ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
