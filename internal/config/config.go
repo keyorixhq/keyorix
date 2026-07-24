@@ -130,6 +130,11 @@ type Config struct {
 	// LicenseExpiry configures the opt-in background reminder that notifies install-wide
 	// admins when the offline license is approaching or past expiry (ADR-065 Phase 2c).
 	LicenseExpiry LicenseExpiryConfig `yaml:"license_expiry"`
+
+	// ReadQuotaAlerts configures the opt-in background scheduler that scans all
+	// secrets with MaxReads > 0 and sends in-app notifications to their owners
+	// when the read count approaches or reaches the limit.
+	ReadQuotaAlerts ReadQuotaAlertsConfig `yaml:"read_quota_alerts"`
 }
 
 // LicenseConfig points at an installed offline license token and tunes its evaluation
@@ -1751,4 +1756,22 @@ type SecretNamePolicyConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Pattern   string `yaml:"pattern"`    // RE2 regex the name must match (anchor with ^…$); empty = no regex check
 	MaxLength int    `yaml:"max_length"` // reject names longer than this (0 = no maximum)
+}
+
+// ReadQuotaAlertsConfig configures the opt-in background scheduler that scans all
+// secrets with MaxReads set and notifies their owners when the read count approaches
+// or reaches the limit (80 % → Warning, 95 % → Critical).
+type ReadQuotaAlertsConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"` // Go duration (e.g. "24h"); defaults to 24h
+}
+
+// GetInterval returns the read-quota alert scan interval; defaults to 24h.
+func (c ReadQuotaAlertsConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }

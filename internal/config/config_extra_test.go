@@ -419,6 +419,16 @@ func TestResolvedPath_Default(t *testing.T) {
 	assert.Equal(t, "keyorix.yaml", got)
 }
 
+// TestReadQuotaAlertsConfig_GetInterval validates the read-quota alert scan
+// interval; defaults to 24h and falls back for bad input.
+func TestReadQuotaAlertsConfig_GetInterval(t *testing.T) {
+	assert.Equal(t, 24*time.Hour, ReadQuotaAlertsConfig{}.GetInterval())
+	assert.Equal(t, 24*time.Hour, ReadQuotaAlertsConfig{Schedule: "bad"}.GetInterval())
+	assert.Equal(t, 24*time.Hour, ReadQuotaAlertsConfig{Schedule: "-1h"}.GetInterval())
+	assert.Equal(t, 12*time.Hour, ReadQuotaAlertsConfig{Schedule: "12h"}.GetInterval())
+	assert.Equal(t, 6*time.Hour, ReadQuotaAlertsConfig{Schedule: "6h"}.GetInterval())
+}
+
 // TestGRPCKeepaliveConfig_Defaults validates that missing/invalid values fall
 // back to the documented defaults.
 func TestGRPCKeepaliveConfig_Defaults(t *testing.T) {
