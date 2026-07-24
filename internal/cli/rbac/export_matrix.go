@@ -197,19 +197,15 @@ func writeEmbeddedTable(out io.Writer, rows []*core.PermissionMatrixRow) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES"); err != nil {
-		return err
-	}
+	_, _ = fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES")
 	for _, r := range rows {
 		expiresAt := "never"
 		if r.ExpiresAt != nil {
 			expiresAt = r.ExpiresAt.UTC().Format(time.RFC3339)
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Username, r.Email, r.RoleName, r.PermissionName,
-			r.Scope, r.ProjectName, expiresAt); err != nil {
-			return err
-		}
+			r.Scope, r.ProjectName, expiresAt)
 	}
 	return tw.Flush()
 }
@@ -220,19 +216,15 @@ func writeRemoteTable(out io.Writer, rows []remoteMatrixRow) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES"); err != nil {
-		return err
-	}
+	_, _ = fmt.Fprintln(tw, "USERNAME\tEMAIL\tROLE\tPERMISSION\tSCOPE\tPROJECT\tEXPIRES")
 	for _, r := range rows {
 		expiresAt := "never"
 		if r.ExpiresAt != nil {
 			expiresAt = r.ExpiresAt.UTC().Format(time.RFC3339)
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Username, r.Email, r.RoleName, r.PermissionName,
-			r.Scope, r.ProjectName, expiresAt); err != nil {
-			return err
-		}
+			r.Scope, r.ProjectName, expiresAt)
 	}
 	return tw.Flush()
 }

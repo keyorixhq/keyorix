@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -114,6 +115,29 @@ func TestGetPermissionMatrixHandler_ProjectFilter(t *testing.T) {
 	h.GetPermissionMatrix(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestGetPermissionMatrixHandler_CSVWithExpiry — CSV response includes an ExpiresAt
+// value when the grant has a non-nil expiry, exercising the time-format branch.
+func TestGetPermissionMatrixHandler_CSVWithExpiry(t *testing.T) {
+	h, db := newMatrixHandlerCore(t)
+
+	exp := time.Date(2028, 6, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: 1, RoleID: 1, ProjectID: 0, EnvironmentID: 0, ExpiresAt: &exp,
+	}).Error)
+
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/system/rbac/permission-matrix?format=csv", nil))
+	w := httptest.NewRecorder()
+	h.GetPermissionMatrix(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.Contains(t, body, "2028-06-01T12:00:00Z", "CSV must contain formatted ExpiresAt")
 }
 
 // TestGetPermissionMatrixHandler_StorageError — a storage failure produces HTTP 500.
