@@ -82,14 +82,14 @@ func (f *failWriter) Write(p []byte) (int, error) {
 func newExportTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/projects":
+		switch r.URL.Path {
+		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case r.URL.Path == "/api/v1/environments":
+		case "/api/v1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"production"}]}}`))
-		case r.URL.Path == "/api/v1/secrets" || r.URL.Query().Get("project_id") != "":
+		case "/api/v1/secrets":
 			_, _ = w.Write([]byte(`{"data":{"secrets":[{"id":5,"name":"DB_PASSWORD"}]}}`))
-		case r.URL.Path == "/api/v1/secrets/5":
+		case "/api/v1/secrets/5":
 			_, _ = w.Write([]byte(`{"data":{"value":"hunter2"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -196,10 +196,10 @@ func TestRunExport_EncryptedJSON_ListSecretsError(t *testing.T) {
 
 	// Server returns OK for projects/environments but 500 for the secrets list.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/projects":
+		switch r.URL.Path {
+		case "/api/v1/projects":
 			_, _ = w.Write([]byte(`{"data":{"projects":[{"id":1,"name":"default"}]}}`))
-		case r.URL.Path == "/api/v1/environments":
+		case "/api/v1/environments":
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"id":1,"name":"production"}]}}`))
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
