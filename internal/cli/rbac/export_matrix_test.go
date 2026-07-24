@@ -3,6 +3,7 @@ package rbac
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -370,4 +373,336 @@ func TestWriteMatrixRemote_CSVFormat(t *testing.T) {
 	assert.True(t, strings.HasPrefix(out, "username,"))
 	assert.Contains(t, out, "frank")
 	assert.Contains(t, out, "never")
+}
+
+// ── writeRemoteTable expiry + I/O error coverage ──────────────────────────────
+
+// TestWriteRemoteTable_ExpiresAt — a time-bound remote row formats the expiry in
+// table mode, exercising the ExpiresAt != nil branch.
+func TestWriteRemoteTable_ExpiresAt(t *testing.T) {
+	exp := time.Date(2030, 5, 20, 9, 0, 0, 0, time.UTC)
+	rows := []remoteMatrixRow{
+		{
+			Username: "quentin", Email: "q@example.com",
+			RoleName: "jit", PermissionName: "secrets.read",
+			Scope: "global", ExpiresAt: &exp,
+		},
+	}
+	var buf bytes.Buffer
+	err := writeRemoteTable(&buf, rows)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "2030-05-20T09:00:00Z")
+}
+
+// failWriter is an io.Writer that always returns an error after n successful bytes.
+type failWriter struct {
+	written int
+	failAt  int // fail when total written reaches this threshold (0 = fail immediately)
+	err     error
+}
+
+func (f *failWriter) Write(p []byte) (int, error) {
+	if f.written >= f.failAt {
+		return 0, f.err
+	}
+	n := len(p)
+	if f.written+n > f.failAt {
+		n = f.failAt - f.written
+	}
+	f.written += n
+	return n, nil
+}
+
+// TestWriteRemoteTable_HeaderWriteError — verifies that a write failure on the header
+// line is propagated correctly.
+func TestWriteRemoteTable_HeaderWriteError(t *testing.T) {
+	rows := []remoteMatrixRow{
+		{Username: "z", RoleName: "r", PermissionName: "p", Scope: "global"},
+	}
+	fw := &failWriter{failAt: 0, err: errors.New("disk full")}
+	err := writeRemoteTable(fw, rows)
+	require.Error(t, err)
+}
+
+// TestWriteEmbeddedTable_HeaderWriteError — verifies that a write failure on the
+// header line is propagated from writeEmbeddedTable.
+func TestWriteEmbeddedTable_HeaderWriteError(t *testing.T) {
+	rows := []*core.PermissionMatrixRow{
+		{Username: "z", RoleName: "r", PermissionName: "p", Scope: "global"},
+	}
+	fw := &failWriter{failAt: 0, err: errors.New("disk full")}
+	err := writeEmbeddedTable(fw, rows)
+	require.Error(t, err)
+}
+
+// ── runExportMatrixRemote error paths ─────────────────────────────────────────
+
+// TestExportMatrix_RemoteGetError — rc.Get failure propagates when no project filter.
+func TestExportMatrix_RemoteGetError(t *testing.T) {
+	// Server closes the connection immediately to force an HTTP error.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/rbac/permission-matrix", func(w http.ResponseWriter, _ *http.Request) {
+		// Return invalid JSON to trigger a decode error in rc.Get.
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"oops"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	rc := remoteClientFor(t, srv)
+	ctx := context.Background()
+
+	exportMatrixFormat = "json"
+	exportMatrixProject = ""
+
+	var buf bytes.Buffer
+	err := runExportMatrixRemote(ctx, rc, &buf)
+	require.Error(t, err, "HTTP 500 from server must propagate as error")
+}
+
+// TestExportMatrix_RemoteCSVNoProjectGetRawError — CSV (no project) GetRaw failure.
+func TestExportMatrix_RemoteCSVNoProjectGetRawError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/rbac/permission-matrix", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"oops"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	rc := remoteClientFor(t, srv)
+	ctx := context.Background()
+
+	exportMatrixFormat = "csv"
+	exportMatrixProject = ""
+	defer func() { exportMatrixProject = "" }()
+
+	var buf bytes.Buffer
+	err := runExportMatrixRemote(ctx, rc, &buf)
+	require.Error(t, err, "GetRaw failure must propagate")
+	assert.Contains(t, err.Error(), "permission matrix")
+}
+
+// TestExportMatrix_RemoteCSVWithProjectGetRawError — CSV + project, GetRaw failure.
+func TestExportMatrix_RemoteCSVWithProjectGetRawError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/rbac/permission-matrix", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"oops"}`))
+	})
+	mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"projects":[{"id":7,"name":"proj-err"}]}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	rc := remoteClientFor(t, srv)
+	ctx := context.Background()
+
+	exportMatrixFormat = "csv"
+	exportMatrixProject = "proj-err"
+	defer func() { exportMatrixProject = "" }()
+
+	var buf bytes.Buffer
+	err := runExportMatrixRemote(ctx, rc, &buf)
+	require.Error(t, err, "GetRaw failure with project+csv must propagate")
+	assert.Contains(t, err.Error(), "permission matrix")
+}
+
+// ── runExportMatrix embedded-mode coverage ────────────────────────────────────
+
+// TestExportMatrix_EmbeddedTableEmpty — embedded mode with no grants prints "No
+// permission grants found." in table format.
+func TestExportMatrix_EmbeddedTableEmpty(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "table"
+	exportMatrixProject = ""
+	exportMatrixOutput = ""
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	require.NoError(t, err)
+}
+
+// TestExportMatrix_EmbeddedJSON — embedded mode returns JSON for empty DB.
+func TestExportMatrix_EmbeddedJSON(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "json"
+	exportMatrixProject = ""
+	exportMatrixOutput = ""
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	require.NoError(t, err)
+}
+
+// TestExportMatrix_EmbeddedCSV — embedded mode returns CSV for empty DB.
+func TestExportMatrix_EmbeddedCSV(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "csv"
+	exportMatrixProject = ""
+	exportMatrixOutput = ""
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	require.NoError(t, err)
+}
+
+// TestExportMatrix_EmbeddedOutputFile — embedded mode writes JSON to a file path.
+func TestExportMatrix_EmbeddedOutputFile(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	dir := t.TempDir()
+	outPath := dir + "/matrix-embedded.json"
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "json"
+	exportMatrixProject = ""
+	exportMatrixOutput = outPath
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	// Empty DB → JSON array "null" or "[]".
+	assert.NotEmpty(t, string(content))
+}
+
+// TestExportMatrix_EmbeddedOutputFileCreateError — os.Create failure propagates.
+func TestExportMatrix_EmbeddedOutputFileCreateError(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "json"
+	exportMatrixProject = ""
+	// A path that cannot be created (non-existent parent dir).
+	exportMatrixOutput = "/nonexistent-dir/matrix.json"
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	require.Error(t, err, "invalid output path must cause an error")
+	assert.Contains(t, err.Error(), "failed to open output file")
+}
+
+// TestExportMatrix_EmbeddedProjectNotFound — project filter with a missing project
+// returns an error in embedded mode.
+func TestExportMatrix_EmbeddedProjectNotFound(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "table"
+	exportMatrixProject = "does-not-exist"
+	exportMatrixOutput = ""
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	require.Error(t, err, "missing project must cause error in embedded mode")
+	assert.Contains(t, err.Error(), "failed to resolve project")
+}
+
+// TestExportMatrix_EmbeddedInitStorageError — when no remote client and no config,
+// InitializeStorage fails and the error is propagated.
+func TestExportMatrix_EmbeddedInitStorageError(t *testing.T) {
+	// Use a temp dir without a keyorix.yaml so config.Load("") fails.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	// Do NOT write keyorix.yaml → config.Load("") returns an error.
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "table"
+	exportMatrixProject = ""
+	exportMatrixOutput = ""
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	// The error may come from config.Load or factory.CreateStorage.
+	require.Error(t, err, "missing config must cause InitializeStorage error")
+}
+
+// TestExportMatrix_EmbeddedProjectFound — project filter resolves successfully when
+// the project exists, covering the LookupProjectIDByName happy path.
+func TestExportMatrix_EmbeddedProjectFound(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	// Pre-seed a project by initializing the storage directly.
+	st, err := common.InitializeStorage()
+	require.NoError(t, err)
+	ctx := context.Background()
+	_, err = st.CreateProject(ctx, &models.Project{Name: "alpha-proj"})
+	require.NoError(t, err)
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "table"
+	exportMatrixProject = "alpha-proj"
+	exportMatrixOutput = ""
+
+	err = runExportMatrix(exportMatrixCmd, nil)
+	require.NoError(t, err)
 }

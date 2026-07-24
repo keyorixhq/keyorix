@@ -25,11 +25,16 @@ type matrixStorageOverride struct {
 	getRolePermsErr error
 }
 
-func (o *matrixStorageOverride) ListAllUserRoleGrants(_ context.Context) ([]*models.UserRole, error) {
+func (o *matrixStorageOverride) ListAllUserRoleGrants(ctx context.Context) ([]*models.UserRole, error) {
 	if o.listGrantsErr != nil {
 		return nil, o.listGrantsErr
 	}
-	return o.listGrantsRows, nil
+	if o.listGrantsRows != nil {
+		return o.listGrantsRows, nil
+	}
+	// Fall through to the embedded storage so callers that only need to override
+	// GetRolePermissions still get real grants from the DB.
+	return o.Storage.ListAllUserRoleGrants(ctx)
 }
 
 func (o *matrixStorageOverride) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
@@ -431,5 +436,35 @@ func TestGetPermissionMatrix_ProjectNameCache(t *testing.T) {
 	require.Len(t, rows, 2)
 	for _, r := range rows {
 		assert.Equal(t, "cached-proj", r.ProjectName)
+	}
+}
+
+// TestGetPermissionMatrix_EnvNameCache — the same environment_id resolved twice
+// exercises the envCache hit path in getEnvName (the second lookup returns from cache).
+func TestGetPermissionMatrix_EnvNameCache(t *testing.T) {
+	c, db := newMatrixCore(t)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Project{ID: 11, Name: "proj-env-cache"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 4, ProjectID: 11, Name: "prod"}).Error)
+	seedMatrixUser(t, db, 45, "oscar", "oscar@example.com")
+	seedMatrixUser(t, db, 46, "petra", "petra@example.com")
+	seedMatrixRole(t, db, 87, "env-reader")
+	seedMatrixPerm(t, db, 870, "secrets.read", "secrets", "read")
+	seedMatrixRolePerm(t, db, 87, 870)
+	// Two grants for the same environment: second lookup must hit the envCache.
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: 45, RoleID: 87, ProjectID: 11, EnvironmentID: 4,
+	}).Error)
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: 46, RoleID: 87, ProjectID: 11, EnvironmentID: 4,
+	}).Error)
+
+	rows, err := c.GetPermissionMatrix(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	for _, r := range rows {
+		assert.Equal(t, "prod", r.EnvironmentName, "cached env name must match DB value")
+		assert.Equal(t, "environment", r.Scope)
 	}
 }
