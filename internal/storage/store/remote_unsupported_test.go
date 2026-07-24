@@ -123,6 +123,34 @@ func TestRemoteStorage_RemovePermissionFromRole(t *testing.T) {
 	require.NoError(t, rs.RemovePermissionFromRole(context.Background(), 2, 8))
 }
 
+// TestRemoteStorage_TokenExpiryListsUnsupported verifies that ListExpiringPATs and
+// ListExpiringMachineCredentials return ErrRemoteUnsupported on RemoteStorage —
+// token-expiry scanning is a server-internal background job that always runs
+// against LocalStorage only (see remote_token_expiry.go).
+func TestRemoteStorage_TokenExpiryListsUnsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("https://unused.example"))
+	require.NoError(t, err)
+	ctx := context.Background()
+	cutoff := time.Now().Add(7 * 24 * time.Hour)
+
+	calls := map[string]func() error{
+		"ListExpiringPATs": func() error {
+			_, e := rs.ListExpiringPATs(ctx, cutoff)
+			return e
+		},
+		"ListExpiringMachineCredentials": func() error {
+			_, e := rs.ListExpiringMachineCredentials(ctx, cutoff)
+			return e
+		},
+	}
+	for name, call := range calls {
+		err := call()
+		require.Error(t, err, "%s should error", name)
+		assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
+			"%s should wrap ErrRemoteUnsupported, got %v", name, err)
+	}
+}
+
 // TestRemoteStorage_HygieneCountsUnsupported verifies that all five
 // credential-hygiene trend functions return ErrRemoteUnsupported on RemoteStorage
 // (they run server-side only — see remote_hygiene_counts.go).
