@@ -251,3 +251,43 @@ func TestSetRetentionOverride_ExactMin_200(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
+
+// ── 500 — storage error (not a validation error) ──────────────────────────────
+
+// TestSetRetentionOverride_StorageError_500 verifies that when the underlying
+// storage returns a non-validation error the handler responds 500 InternalError.
+// Closing the DB before the call forces a storage-layer failure that is not
+// core.ErrInvalidRetentionDays, so the handler must fall through to the
+// InternalError branch rather than the ValidationError branch.
+func TestSetRetentionOverride_StorageError_500(t *testing.T) {
+	cfg := &config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}
+	require.NoError(t, i18n.Initialize(cfg))
+
+	n := retentionOverrideDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhandlers_ret_500_%d?mode=memory&cache=shared&_timeout=30000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
+
+	st := store.NewLocalStorage(db)
+	cs := core.NewKeyorixCore(st)
+
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	// Close the underlying connection to force a storage error on Update.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	body, _ := json.Marshal(map[string]int{"retention_override_days": 30})
+	req := withRetentionUserCtx(withChiParamS14(
+		httptest.NewRequest(http.MethodPatch, "/api/v1/secrets/1/retention", bytes.NewReader(body)),
+		"id", "1",
+	))
+	w := httptest.NewRecorder()
+	h.SetRetentionOverride(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "InternalError")
+}
