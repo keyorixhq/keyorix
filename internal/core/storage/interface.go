@@ -1308,17 +1308,6 @@ type Storage interface {
 	// whose created_at (detected_at) is older than the given threshold.
 	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
 
-	// Rejection reason templates — pre-defined reasons for rejecting access
-	// requests. The REST API is the remote surface; these methods only run
-	// server-side via LocalStorage.
-	CreateRejectionReasonTemplate(ctx context.Context, t *models.RejectionReasonTemplate) error
-	ListRejectionReasonTemplates(ctx context.Context) ([]models.RejectionReasonTemplate, error)
-	DeleteRejectionReasonTemplate(ctx context.Context, id uint) error
-
-	// ListAccessRequestsByIDs returns the access requests matching the given IDs.
-	// Used by the bulk-approve/reject operations to pre-fetch all requests in one
-	// query and provide per-item errors without N individual GetAccessRequest calls.
-	ListAccessRequestsByIDs(ctx context.Context, ids []uint) ([]*models.AccessRequest, error)
 
 }
 
