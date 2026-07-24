@@ -2,14 +2,17 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -197,4 +200,83 @@ func TestGetProjectHealthSummary_WrongProject(t *testing.T) {
 	assert.Equal(t, p2.ID, summary.ProjectID)
 	assert.Equal(t, 0, summary.TotalSecrets)
 	assert.Empty(t, summary.TopRiskSecrets)
+}
+
+// TestGetProjectHealthSummary_LimitClamping ensures that limit values that are
+// out of range (<=0 or >100) are silently clamped to the default of 20.
+func TestGetProjectHealthSummary_LimitClamping(t *testing.T) {
+	db := newHealthTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
+	p, err := c.storage.CreateProject(ctx, &models.Project{Name: "clamp-project"})
+	require.NoError(t, err)
+	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: p.ID})
+	require.NoError(t, err)
+
+	// Create 25 secrets so we can verify the clamp to defaultHealthLimit (20).
+	for i := 0; i < 25; i++ {
+		makeHealthSecret(t, c, fmt.Sprintf("clamp-s%d", i), p.ID, e.ID, 1)
+	}
+
+	// limit=0 → clamped to 20.
+	summary, err := c.GetProjectHealthSummary(ctx, p.ID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 25, summary.TotalSecrets)
+	assert.LessOrEqual(t, len(summary.TopRiskSecrets), 20, "limit=0 should clamp to defaultHealthLimit=20")
+
+	// limit=-1 → clamped to 20.
+	summary, err = c.GetProjectHealthSummary(ctx, p.ID, -1)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(summary.TopRiskSecrets), 20, "limit=-1 should clamp to defaultHealthLimit=20")
+
+	// limit=200 → clamped to 20.
+	summary, err = c.GetProjectHealthSummary(ctx, p.ID, 200)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(summary.TopRiskSecrets), 20, "limit=200 should clamp to defaultHealthLimit=20")
+}
+
+// TestGetProjectHealthSummary_ListSecretsError verifies that a storage failure
+// on ListSecrets propagates as an error rather than producing a partial result.
+func TestGetProjectHealthSummary_ListSecretsError(t *testing.T) {
+	db := newHealthTestDB(t)
+	ctx := context.Background()
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+
+	// Close the underlying connection pool to force every query to fail.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	_, err = c.GetProjectHealthSummary(ctx, 1, 20)
+	require.Error(t, err, "expected an error when the database is closed")
+}
+
+// TestGetProjectHealthSummary_BatchScoreError verifies that a failure inside
+// ComputeSecretRiskScoresBatch is propagated as an error by GetProjectHealthSummary.
+//
+// The test wires a MockStorage whose ListSecrets returns one secret (so the IDs
+// slice is non-empty and the batch scorer is called) while GetSecretsByIDs —
+// the first call inside ComputeSecretRiskScoresBatch — returns a synthetic error.
+func TestGetProjectHealthSummary_BatchScoreError(t *testing.T) {
+	const proj = uint(7)
+	ctx := context.Background()
+
+	ms := &MockStorage{}
+	ms.On("ListSecrets", ctx, mock.MatchedBy(func(f *storage.SecretFilter) bool {
+		return f.ProjectID != nil && *f.ProjectID == proj
+	})).Return([]*models.SecretNode{
+		{ID: 42, ProjectID: proj, Name: "a-secret", IsSecret: true},
+	}, int64(1), nil)
+	// GetSecretsByIDs is the first storage call inside ComputeSecretRiskScoresBatch.
+	ms.On("GetSecretsByIDs", ctx, []uint{42}).Return(nil, errors.New("storage error"))
+
+	c := &KeyorixCore{storage: ms, now: time.Now}
+	_, err := c.GetProjectHealthSummary(ctx, proj, 20)
+	require.Error(t, err, "expected error when ComputeSecretRiskScoresBatch fails")
+	assert.Contains(t, err.Error(), "compute risk scores")
+
+	ms.AssertExpectations(t)
 }
