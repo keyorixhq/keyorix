@@ -12,6 +12,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// bulkInitService is the function used by bulk run-commands to obtain a core
+// service. It is a package-level variable so tests can replace it with one
+// that returns a pre-seeded or intentionally-broken service without forking the
+// production code path.
+var bulkInitService = common.InitializeCoreService
+
 // ── bulk-approve ──────────────────────────────────────────────────────────────
 
 var (
@@ -41,7 +47,7 @@ func runBulkApprove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("--ids: %w", err)
 	}
-	service, err := common.InitializeCoreService()
+	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
@@ -99,7 +105,7 @@ func runBulkReject(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("--ids: %w", err)
 	}
-	service, err := common.InitializeCoreService()
+	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
@@ -171,7 +177,7 @@ func init() {
 }
 
 func runTmplList(cmd *cobra.Command, args []string) error {
-	service, err := common.InitializeCoreService()
+	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
@@ -192,7 +198,7 @@ func runTmplList(cmd *cobra.Command, args []string) error {
 }
 
 func runTmplAdd(cmd *cobra.Command, args []string) error {
-	service, err := common.InitializeCoreService()
+	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
@@ -216,7 +222,7 @@ func runTmplDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid template ID %q: %w", args[0], err)
 	}
-	service, err := common.InitializeCoreService()
+	service, err := bulkInitService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
