@@ -207,3 +207,70 @@ func TestUpdateNotificationRetryPolicy_DBError(t *testing.T) {
 	err = ls.UpdateNotificationRetryPolicy(ctx, 1, 3, 1000)
 	require.Error(t, err)
 }
+
+// TestListNotificationChannels_DBError verifies the generic DB error branch in
+// ListNotificationChannels (non-nil res.Error when the table is missing).
+func TestListNotificationChannels_DBError(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	ls := NewLocalStorage(db)
+	// No AutoMigrate — the notification_channels table does not exist.
+
+	_, err = ls.ListNotificationChannels(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such table")
+}
+
+// TestCreateNotificationChannel_DBError verifies the error branch in
+// CreateNotificationChannel when the underlying DB write fails.
+func TestCreateNotificationChannel_DBError(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	ls := NewLocalStorage(db)
+	// No AutoMigrate — the notification_channels table does not exist.
+
+	ch := &models.NotificationChannel{Name: "err-ch", Type: "webhook", URL: "https://example.com"}
+	err = ls.CreateNotificationChannel(ctx, ch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such table")
+}
+
+// TestUpdateNotificationChannel_DBError verifies the res.Error != nil branch in
+// UpdateNotificationChannel (distinct from the RowsAffected==0 not-found branch).
+func TestUpdateNotificationChannel_DBError(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	ls := NewLocalStorage(db)
+	// No AutoMigrate — the notification_channels table does not exist.
+
+	ch := &models.NotificationChannel{
+		ID:   1,
+		Name: "err-ch",
+		Type: "webhook",
+		URL:  "https://example.com",
+	}
+	err = ls.UpdateNotificationChannel(ctx, ch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such table")
+}
+
+// TestDeleteNotificationChannel_DBError verifies the res.Error != nil branch in
+// DeleteNotificationChannel (distinct from the RowsAffected==0 not-found branch).
+func TestDeleteNotificationChannel_DBError(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	ls := NewLocalStorage(db)
+	// No AutoMigrate — the notification_channels table does not exist.
+
+	err = ls.DeleteNotificationChannel(ctx, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such table")
+}
