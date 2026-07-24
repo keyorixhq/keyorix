@@ -67,3 +67,14 @@ func TestScheduleClient_NoServer(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not connected")
 }
+
+// TestScheduleClient_WithServer verifies that scheduleClient returns a
+// non-nil client when KEYORIX_SERVER and KEYORIX_TOKEN are set (ok == true path).
+func TestScheduleClient_WithServer(t *testing.T) {
+	t.Setenv("KEYORIX_SERVER", "http://localhost:9999")
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+
+	c, err := scheduleClient()
+	require.NoError(t, err)
+	assert.NotNil(t, c)
+}
