@@ -184,3 +184,159 @@ func TestApproveSecretAccessRequest_Guards(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only a pending")
 }
+
+// ── restricted_requires_permission tests ─────────────────────────────────────
+
+// seedRestrictedPermissionFixture extends the base fixture with a second user who
+// owns a restricted secret and holds an explicit secrets.read.restricted grant at
+// the project scope — used to verify that the explicit-grant path allows reads.
+func seedRestrictedPermissionFixture(t *testing.T, st *store.LocalStorage) (secretID, ownerID, grantedUserID, projectID uint) {
+	t.Helper()
+	ctx := context.Background()
+
+	secretID, ownerID, _, projectID = seedClassificationGateFixture(t, st, ClassificationRestricted)
+
+	// Create a role with secrets.read.restricted and assign it to grantedUser at
+	// the project scope. The user also needs to pass ValidateSecretAccess, so we
+	// share the secret with them at read level.
+	perm, err := st.CreatePermission(ctx, &models.Permission{Name: PermSecretReadRestricted})
+	require.NoError(t, err)
+
+	role, err := st.CreateRole(ctx, &models.Role{Name: "restricted-reader"})
+	require.NoError(t, err)
+
+	require.NoError(t, st.AssignPermissionToRole(ctx, role.ID, perm.ID))
+
+	grantedUser, err := st.CreateUser(ctx, &models.User{Username: "granted-user", Email: "granted@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	require.NoError(t, st.AssignRole(ctx, grantedUser.ID, role.ID, storage.Scope{ProjectID: projectID}))
+
+	// Share the secret with grantedUser so ValidateSecretAccess passes.
+	secret, err := st.GetSecret(ctx, secretID)
+	require.NoError(t, err)
+	_, err = st.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID:    secretID,
+		OwnerID:     secret.OwnerID,
+		RecipientID: grantedUser.ID,
+		Permission:  "read",
+		IsGroup:     false,
+	})
+	require.NoError(t, err)
+
+	return secretID, ownerID, grantedUser.ID, projectID
+}
+
+// Requirement: off by default — owner (no secrets.read.restricted grant) can still read.
+func TestClassificationPermissionGate_OffByDefault_OwnerCanRead(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+
+	// gate is off (zero value); owner has no secrets.read.restricted grant
+	val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.NoError(t, err, "permission gate off: owner must read unrestricted")
+	assert.Equal(t, "s3cr3t-value", string(val))
+}
+
+// Requirement: when on, a user without secrets.read.restricted is denied.
+func TestClassificationPermissionGate_On_NoPermission_Denied(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresPermission(true)
+
+	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restricted")
+	assert.Contains(t, err.Error(), PermSecretReadRestricted)
+}
+
+// Requirement: machine/no-user read is always denied when the gate is active.
+func TestClassificationPermissionGate_On_NoUser_Denied(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, _, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresPermission(true)
+
+	_, err := c.GetSecretValue(ctx, secretID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restricted")
+}
+
+// Requirement: admin role bypass — an admin who owns the secret passes both
+// ValidateSecretAccess (as owner) and the RBAC check (admin bypass in Authorize).
+func TestClassificationPermissionGate_On_AdminAllowed(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	// Seed a project and an admin who OWNS the restricted secret.
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "admin-restricted-gate-test"})
+	require.NoError(t, err)
+
+	admin, err := st.CreateUser(ctx, &models.User{Username: "admin-owner", Email: "admin-owner@example.com", IsActive: true})
+	require.NoError(t, err)
+	adminRole, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, admin.ID, adminRole.ID, storage.Scope{}))
+
+	secret, err := st.CreateSecret(ctx, &models.SecretNode{
+		Name: "top-secret", ProjectID: proj.ID, EnvironmentID: 1, Type: "password",
+		IsSecret: true, OwnerID: admin.ID, Status: "active", Classification: ClassificationRestricted,
+	})
+	require.NoError(t, err)
+	_, err = st.CreateSecretVersion(ctx, &models.SecretVersion{
+		SecretNodeID: secret.ID, VersionNumber: 1, EncryptedValue: []byte("top-secret-value"),
+	})
+	require.NoError(t, err)
+
+	c.SetClassificationRestrictedRequiresPermission(true)
+
+	val, err := c.GetSecretValueWithPermissionCheck(ctx, secret.ID, admin.ID)
+	require.NoError(t, err, "admin bypass must let an admin owner read a restricted secret")
+	assert.Equal(t, "top-secret-value", string(val))
+}
+
+// Requirement: explicit secrets.read.restricted grant allows the read.
+func TestClassificationPermissionGate_On_ExplicitGrantAllowed(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, _, grantedUserID, _ := seedRestrictedPermissionFixture(t, st)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresPermission(true)
+
+	val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, grantedUserID)
+	require.NoError(t, err, "explicit secrets.read.restricted grant must allow the read")
+	assert.Equal(t, "s3cr3t-value", string(val))
+}
+
+// Requirement: lower-tier secrets are never gated by the permission check.
+func TestClassificationPermissionGate_On_LowerTierUnaffected(t *testing.T) {
+	for _, level := range []string{ClassificationPublic, ClassificationInternal, ClassificationConfidential, ""} {
+		level := level
+		t.Run("classification="+level, func(t *testing.T) {
+			c, st := newBootstrappedCore(t)
+			secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, level)
+			ctx := context.Background()
+			c.SetClassificationRestrictedRequiresPermission(true)
+
+			val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+			require.NoError(t, err, "permission gate must not affect non-restricted secrets")
+			assert.Equal(t, "s3cr3t-value", string(val))
+		})
+	}
+}
+
+// Requirement: when both gates are on, BOTH must be satisfied. A user who holds
+// the permission but lacks an approved access request is still denied.
+func TestClassificationPermissionGate_Combined_BothRequired(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, _, grantedUserID, _ := seedRestrictedPermissionFixture(t, st)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresPermission(true)
+	c.SetClassificationRestrictedRequiresApproval(true)
+
+	// grantedUser has the secrets.read.restricted permission but no approved request.
+	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, grantedUserID)
+	require.Error(t, err, "both gates active: permission alone is insufficient without approval")
+	assert.Contains(t, err.Error(), "access request")
+}

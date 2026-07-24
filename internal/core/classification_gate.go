@@ -37,6 +37,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// PermSecretReadRestricted is the permission a user must hold at the secret's
+// project scope — in addition to the base "secrets.read" RBAC grant — when
+// classification.restricted_requires_permission is enabled. Admin and
+// project_admin roles bypass this check via Authorize's admin-role shortcut;
+// everyone else needs an explicit grant on their role.
+const PermSecretReadRestricted = "secrets.read.restricted"
+
 // SetClassificationRestrictedRequiresApproval mirrors config classification.
 // restricted_requires_approval. false (the default, and the zero value) leaves
 // "restricted" purely informational — identical to today's behaviour. See
@@ -45,42 +52,72 @@ func (c *KeyorixCore) SetClassificationRestrictedRequiresApproval(enabled bool) 
 	c.classificationRestrictedRequiresApproval = enabled
 }
 
+// SetClassificationRestrictedRequiresPermission mirrors config classification.
+// restricted_requires_permission. false (the default) leaves the permission gate
+// inactive — any user who passes the base secrets.read RBAC check can read a
+// "restricted" secret's value. When true, the user must ALSO hold
+// PermSecretReadRestricted at the secret's project scope (or be an admin). Can
+// be combined with SetClassificationRestrictedRequiresApproval.
+func (c *KeyorixCore) SetClassificationRestrictedRequiresPermission(enabled bool) {
+	c.classificationRestrictedRequiresPermission = enabled
+}
+
 // checkRestrictedSecretReadApproval is the fail-closed gate every secret VALUE
 // read path routes through (see versions.go/secret_render.go). It is a no-op
-// (nil, nil) unless BOTH the setting is on AND the secret's own classification is
-// exactly ClassificationRestricted — a lower tier is never gated, regardless of
-// the setting (#128's product decision only concerns the highest tier).
+// unless at least one classification gate setting is active AND the secret's
+// classification is exactly ClassificationRestricted — a lower tier is never
+// gated regardless of configuration (#128's product decision).
+//
+// Two independent guards can be active simultaneously; when both are on, BOTH
+// must be satisfied — defense in depth:
+//
+//  1. restricted_requires_permission: the user must hold PermSecretReadRestricted
+//     at the secret's project scope (or be an admin). Checked first — fast RBAC
+//     lookup, no per-secret DB query.
+//  2. restricted_requires_approval: the user must have an approved, secret-scoped
+//     access request. Checked second.
 //
 // userID identifies the acting human principal, if any. 0 means the read has no
-// identifiable user behind it — a machine/service-account credential (the HTTP
-// handlers' isMachine branch calls the base GetSecretValue with no userID at
-// all), the embedded-mode CLI (which has no user/session concept either), or any
-// other caller that cannot present one. Such a read is ALWAYS denied when the
-// gate is active: there is no "wait for approval" for automation, and — just as
-// importantly — no quiet exemption for it either. A machine identity that
-// legitimately needs a restricted secret goes through the exact same
-// RequestSecretAccess/ApproveSecretAccessRequest flow as a human would, on
-// behalf of a user who then reads it, rather than being carved out as a bypass.
-//
-// Any failure to positively confirm approval — including a storage error while
-// checking — denies the read; this never fails open.
+// identifiable user behind it — a machine/service-account credential, the
+// embedded-mode CLI, or any other caller without a user context. Such a read is
+// ALWAYS denied when any gate is active: no silent bypass for automation. A
+// machine identity that needs a restricted secret goes through the same human
+// flow on behalf of a user. Any failure to positively confirm a gate condition —
+// including a storage error — denies the read; this never fails open.
 func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, secret *models.SecretNode, userID uint) error {
-	if !c.classificationRestrictedRequiresApproval {
+	if !c.classificationRestrictedRequiresApproval && !c.classificationRestrictedRequiresPermission {
 		return nil
 	}
 	if secret == nil || secret.Classification != ClassificationRestricted {
 		return nil
 	}
 	if userID == 0 {
-		return fmt.Errorf("secret %q is restricted: reading its value requires an approved access request, and this read has no identifiable user to check one against", secret.Name)
+		return fmt.Errorf("secret %q is restricted: this read has no identifiable user — automated/machine reads of restricted secrets are always denied when any classification gate is active", secret.Name)
 	}
-	ok, err := c.hasApprovedSecretAccessRequest(ctx, secret.ProjectID, secret.ID, userID)
-	if err != nil {
-		return fmt.Errorf("secret %q is restricted: could not verify an approved access request: %w", secret.Name, err)
+
+	// Gate 1: narrower RBAC permission (fast path — no per-secret DB query).
+	if c.classificationRestrictedRequiresPermission {
+		scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+		ok, err := c.Authorize(ctx, userID, PermSecretReadRestricted, scope)
+		if err != nil {
+			return fmt.Errorf("secret %q is restricted: could not verify the %q permission: %w", secret.Name, PermSecretReadRestricted, err)
+		}
+		if !ok {
+			return fmt.Errorf("secret %q is restricted: the %q permission is required at the project scope to read this secret's value", secret.Name, PermSecretReadRestricted)
+		}
 	}
-	if !ok {
-		return fmt.Errorf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
+
+	// Gate 2: approved secret-scoped access request.
+	if c.classificationRestrictedRequiresApproval {
+		ok, err := c.hasApprovedSecretAccessRequest(ctx, secret.ProjectID, secret.ID, userID)
+		if err != nil {
+			return fmt.Errorf("secret %q is restricted: could not verify an approved access request: %w", secret.Name, err)
+		}
+		if !ok {
+			return fmt.Errorf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
+		}
 	}
+
 	return nil
 }
 
