@@ -26,3 +26,9 @@ func (rs *RemoteStorage) SaveCompliancePostureSnapshot(_ context.Context, _ *mod
 func (rs *RemoteStorage) GetPreviousCompliancePostureSnapshot(_ context.Context, _ time.Time) (*models.CompliancePostureSnapshot, error) {
 	return nil, remoteUnsupported("GetPreviousCompliancePostureSnapshot")
 }
+
+// ListCompliancePostureSnapshots is not supported in remote mode — snapshot
+// reads are server-side only (same reasoning as SaveCompliancePostureSnapshot).
+func (rs *RemoteStorage) ListCompliancePostureSnapshots(_ context.Context, _ int) ([]*models.CompliancePostureSnapshot, error) {
+	return nil, remoteUnsupported("ListCompliancePostureSnapshots")
+}

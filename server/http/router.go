@@ -1846,6 +1846,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// (Slack/Teams/webhook/email). Gated by system.write: it's an active dispatch
 		// action, not a read disclosure, even though the content is the same as the GET.
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/compliance/digest/send", dashboardHandler.SendComplianceDigest)
+		// Compliance snapshots — on-demand posture capture + history list. POST requires
+		// system.write (triggers a full evaluation + persist); GET only reads stored rows.
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/compliance/snapshots", dashboardHandler.TakeComplianceSnapshot)
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/snapshots", dashboardHandler.ListComplianceSnapshots)
 		// Legal hold (ISO A.5.34): status discloses the free-text hold reason
 		// deployment-wide, so reads need audit.read; place/lift stay system.write
 		// (an admin action, not a read disclosure).

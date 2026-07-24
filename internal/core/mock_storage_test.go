@@ -2197,6 +2197,14 @@ func (m *MockStorage) GetPreviousCompliancePostureSnapshot(_ context.Context, _ 
 	return nil, nil
 }
 
+func (m *MockStorage) ListCompliancePostureSnapshots(ctx context.Context, limit int) ([]*models.CompliancePostureSnapshot, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.CompliancePostureSnapshot), args.Error(1)
+}
+
 // Temporal access schedule — stubs return no schedule (nil, nil) by default,
 // which enforces no restriction (fail-open on the check side).
 func (m *MockStorage) GetSecretAccessSchedule(_ context.Context, _ uint) (*models.SecretAccessSchedule, error) {

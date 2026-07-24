@@ -65,6 +65,7 @@ func init() {
 		// Compliance posture snapshots
 		"SaveCompliancePostureSnapshot":        {statusIntentional, "compliance posture snapshot writes are server-side only; GetCompliancePosture is a server-only admin endpoint with no remote caller"},
 		"GetPreviousCompliancePostureSnapshot": {statusIntentional, "compliance posture snapshot reads are server-side only; same reasoning as SaveCompliancePostureSnapshot"},
+		"ListCompliancePostureSnapshots":       {statusIntentional, "compliance posture snapshot list is server-side only; same reasoning as SaveCompliancePostureSnapshot"},
 
 		// Temporal access schedules
 		"GetSecretAccessSchedule":    {statusIntentional, "temporal schedule check runs server-side; schedule management routes are HTTP-proxied via secret_schedule.go"},
