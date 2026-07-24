@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -250,4 +251,32 @@ func TestBuildCompliancePostureSnapshot_DegradedControlsCounter(t *testing.T) {
 	// The degraded count must be consistent: total = passed + failed + degraded.
 	assert.Equal(t, snap.TotalControls, snap.PassedControls+snap.FailedControls+snap.DegradedControls,
 		"passed + failed + degraded must sum to total controls")
+}
+
+// failingListProjectsStore wraps LocalStorage and overrides ListProjects to return
+// an error, driving the fatal-error branch in buildComplianceSnapshot (and therefore
+// GetCompliancePosture).
+type failingListProjectsStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingListProjectsStore) ListProjects(_ context.Context) ([]*models.Project, error) {
+	return nil, errors.New("simulated list-projects failure")
+}
+
+// TestGetCompliancePosture_ReturnsErrorWhenListProjectsFails covers the one statement
+// in GetCompliancePosture that was previously unreachable: the `return nil, err` on the
+// buildComplianceSnapshot error path.  All normal test helpers keep the DB alive so
+// ListProjects always succeeds; this test injects a store that always fails it.
+func TestGetCompliancePosture_ReturnsErrorWhenListProjectsFails(t *testing.T) {
+	c, db := complianceTrendCore(t)
+	// Replace the storage with a wrapper that fails ListProjects.
+	c.storage = &failingListProjectsStore{LocalStorage: c.storage.(*store.LocalStorage)}
+	// Also ensure the DB is still alive so the store wrapper itself is valid.
+	_ = db
+
+	_, err := c.GetCompliancePosture(context.Background())
+	require.Error(t, err, "GetCompliancePosture must propagate a ListProjects failure")
+	assert.Contains(t, err.Error(), "simulated list-projects failure",
+		"the wrapped error message must be preserved in the returned error")
 }
