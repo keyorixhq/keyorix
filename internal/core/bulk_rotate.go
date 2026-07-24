@@ -14,6 +14,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
+// bulkValueGen is the random-value generator used by bulkRotateOne. It is a package-level
+// variable so tests can substitute a failing stub to cover the error path without
+// touching crypto/rand.
+var bulkValueGen = generateRotatedValueSpec
+
 // BulkRotateRequest describes a bulk rotation request. SecretIDs is an explicit list;
 // if empty the operation rotates every matching secret in ProjectID (with optional EnvID
 // and Classification filters). ProjectID is required in all cases.
@@ -162,7 +167,7 @@ func (c *KeyorixCore) bulkRotateExplicit(ctx context.Context, req BulkRotateRequ
 // On success it appends the secret ID to result.Triggered; on failure it appends to
 // result.Failed. Returns a non-nil error only when value generation itself fails.
 func (c *KeyorixCore) bulkRotateOne(ctx context.Context, secretID uint, rotationLength int, rotationCharset, rotatedBy string, result *BulkRotateResult) error {
-	val, err := generateRotatedValueSpec(rotationLength, rotationCharset)
+	val, err := bulkValueGen(rotationLength, rotationCharset)
 	if err != nil {
 		result.Failed = append(result.Failed, BulkRotateError{
 			SecretID: secretID,
