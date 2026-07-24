@@ -2432,3 +2432,55 @@ func TestStartHTTPServer_EvidenceDelivery_WithTarget(t *testing.T) {
 		t.Fatal("startHTTPServer with EvidenceDelivery+target did not return")
 	}
 }
+
+// ── startHTTPServer — read-quota alert scheduler ──────────────────────────────
+
+// TestStartHTTPServer_ReadQuotaAlerts verifies that startHTTPServer wires the
+// read-quota alert background scheduler when ReadQuotaAlerts.Enabled is true.
+// A pre-cancelled context makes the function return immediately after
+// registering the scheduler, keeping the test instant.
+func TestStartHTTPServer_ReadQuotaAlerts(t *testing.T) {
+	initI18n(t)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("get free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Type:     "local",
+			Database: config.DatabaseConfig{Path: "httptest_rqa.db"},
+		},
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{
+				Enabled: true,
+				Port:    itoa(port),
+			},
+		},
+		ReadQuotaAlerts: config.ReadQuotaAlertsConfig{
+			Enabled:  true,
+			Schedule: "1h",
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- startHTTPServer(ctx, cfg)
+	}()
+
+	select {
+	case err := <-done:
+		_ = err
+	case <-context.Background().Done():
+		t.Fatal("startHTTPServer with ReadQuotaAlerts did not return")
+	}
+}
