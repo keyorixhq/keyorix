@@ -23,6 +23,12 @@ var (
 	createBy              string
 )
 
+// readPassword is the function used to read a password from the terminal.
+// It is a variable so tests can inject a mock without requiring a real PTY.
+var readPassword = func(fd int) ([]byte, error) {
+	return term.ReadPassword(fd)
+}
+
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new user",
@@ -230,7 +236,7 @@ func resolveInitialPassword(cmd *cobra.Command) (string, error) {
 		return pw, nil
 	}
 	fmt.Fprint(os.Stderr, "Initial password: ")
-	b, err := term.ReadPassword(int(syscall.Stdin))
+	b, err := readPassword(int(syscall.Stdin))
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("failed to read password: %w", err)
