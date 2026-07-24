@@ -20,6 +20,15 @@ var (
 	healthFormat string
 )
 
+// coreServiceInit is the factory used by runHealthEmbedded to obtain a core
+// service instance. It is a package-level variable so tests can swap it out to
+// inject a mock that triggers specific error paths.
+var coreServiceInit = common.InitializeCoreService
+
+// jsonMarshalFn is the JSON marshal function used by printHealthJSON. It is a
+// package-level variable so tests can swap it out to trigger the error branch.
+var jsonMarshalFn = json.Marshal
+
 var healthCmd = &cobra.Command{
 	Use:   "health <name>",
 	Short: "Show the secret health summary for a project",
@@ -123,7 +132,7 @@ func runHealthRemote(ctx context.Context, rc *common.RemoteClient, name string) 
 // ── Embedded mode ──────────────────────────────────────────────────────────
 
 func runHealthEmbedded(ctx context.Context, name string) error {
-	svc, err := common.InitializeCoreService()
+	svc, err := coreServiceInit()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
@@ -182,7 +191,7 @@ func printHealth(projectName string, s *healthSummary) error {
 }
 
 func printHealthJSON(s *healthSummary) error {
-	b, err := json.Marshal(s)
+	b, err := jsonMarshalFn(s)
 	if err != nil {
 		return fmt.Errorf("failed to marshal health summary: %w", err)
 	}

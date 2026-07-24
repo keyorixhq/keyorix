@@ -21,6 +21,11 @@ var (
 	scoreEnv     uint
 )
 
+// coreServiceInit is the factory used by runScoreEmbedded to obtain a core
+// service instance. It is a package-level variable so tests can swap it out to
+// inject a mock that triggers specific error paths.
+var coreServiceInit = common.InitializeCoreService
+
 var scoreCmd = &cobra.Command{
 	Use:   "score <name>",
 	Short: "Show the risk score for a secret",
@@ -135,7 +140,7 @@ func resolveSecretIDByName(ctx context.Context, rc *common.RemoteClient, name st
 // ── Embedded mode ──────────────────────────────────────────────────────────
 
 func runScoreEmbedded(ctx context.Context, name string) error {
-	svc, err := common.InitializeCoreService()
+	svc, err := coreServiceInit()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
