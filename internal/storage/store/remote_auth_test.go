@@ -219,6 +219,12 @@ func TestRemoteStorage_PATStubs_ReturnError(t *testing.T) {
 
 	_, err = rs.RevokeAllPersonalAccessTokensForUser(ctx, 1)
 	assert.Error(t, err)
+
+	_, err = rs.ListExpiredPATsByUser(ctx, 1, time.Now())
+	assert.Error(t, err)
+
+	_, err = rs.BulkRevokeExpiredPATsByUser(ctx, 1, time.Now())
+	assert.Error(t, err)
 }
 
 // --- TouchPersonalAccessToken (no-op) ---

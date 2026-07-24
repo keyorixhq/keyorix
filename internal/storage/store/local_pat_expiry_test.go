@@ -123,3 +123,63 @@ func TestLocalStorage_BulkRevokeExpiredPATsByUser_DoesNotRevokeDifferentUser(t *
 	require.NoError(t, db.First(&p, 1).Error)
 	assert.False(t, p.Revoked, "other user's token must remain untouched")
 }
+
+// ── error paths (cancelled context / broken DB) ──────────────────────────────
+
+func TestLocalStorage_ListExpiredPATsByUser_CancelledContext_ReturnsError(t *testing.T) {
+	db := newPatExpiryLocalDB(t)
+	ls := store.NewLocalStorage(db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := ls.ListExpiredPATsByUser(ctx, 5, time.Now())
+	require.Error(t, err)
+}
+
+func TestLocalStorage_BulkRevokeExpiredPATsByUser_CancelledContext_ReturnsError(t *testing.T) {
+	db := newPatExpiryLocalDB(t)
+	ls := store.NewLocalStorage(db)
+
+	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+
+	// Seed at least one expired PAT so the Pluck returns rows and the Update path is also
+	// reached. With a cancelled context, the first query (Pluck) should fail immediately.
+	require.NoError(t, db.Create(&models.PersonalAccessToken{ID: 1, UserID: 5, TokenHash: "cx1", Name: "exp", ExpiresAt: &past, Revoked: false}).Error)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := ls.BulkRevokeExpiredPATsByUser(ctx, 5, now)
+	require.Error(t, err)
+}
+
+// TestLocalStorage_BulkRevokeExpiredPATsByUser_UpdateFails covers the error branch
+// when the Pluck succeeds (matching rows exist) but the subsequent UPDATE fails.
+// We inject a before-update callback that returns a sentinel error to simulate a
+// transient DB failure mid-operation.
+func TestLocalStorage_BulkRevokeExpiredPATsByUser_UpdateFails_ReturnsError(t *testing.T) {
+	db := newPatExpiryLocalDB(t)
+	ls := store.NewLocalStorage(db)
+	ctx := context.Background()
+
+	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+
+	// Seed an expired PAT so the Pluck finds at least one hash.
+	require.NoError(t, db.Create(&models.PersonalAccessToken{ID: 1, UserID: 5, TokenHash: "uf1", Name: "exp", ExpiresAt: &past, Revoked: false}).Error)
+
+	// Register a before-update callback that injects a sentinel error.
+	sentinelErr := fmt.Errorf("injected update failure")
+	require.NoError(t, ls.DB().Callback().Update().Before("gorm:before_update").Register(
+		"test:fail_update_pat_expiry",
+		func(d *gorm.DB) { _ = d.AddError(sentinelErr) },
+	))
+	t.Cleanup(func() {
+		_ = ls.DB().Callback().Update().Remove("test:fail_update_pat_expiry")
+	})
+
+	_, err := ls.BulkRevokeExpiredPATsByUser(ctx, 5, now)
+	require.Error(t, err)
+}
