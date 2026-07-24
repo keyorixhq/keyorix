@@ -2,16 +2,40 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// bulkRotateDBRaw sets up an isolated in-memory SQLite DB and returns the core and the
+// raw LocalStorage for tests that need more granular control (cross-project, folder-node,
+// etc.). Each call gets its own database via a unique DSN.
+func bulkRotateDBRaw(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
+	t.Helper()
+	dsn := fmt.Sprintf("file:bulk_rotate_raw_%d?mode=memory&cache=private", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.Project{}, &models.Environment{},
+		&models.SecretNode{}, &models.SecretVersion{},
+		&models.AuditEvent{}, &models.SecretAccessLog{},
+	))
+	ls := store.NewLocalStorage(db)
+	c := &KeyorixCore{storage: ls, now: time.Now}
+	return c, ls
+}
 
 // bulkRotateDB sets up an in-memory SQLite DB with the tables needed for bulk rotation
 // tests and returns a core + a helper to create test secrets.
@@ -218,4 +242,337 @@ func TestBulkRotateSecrets_PartialFailure(t *testing.T) {
 	latest, err := c.storage.GetLatestSecretVersion(ctx, noconf)
 	require.NoError(t, err)
 	assert.Equal(t, 1, latest.VersionNumber)
+}
+
+// TestBulkRotateSecrets_MissingProjectID covers the ProjectID == 0 early-return (line 71-73).
+func TestBulkRotateSecrets_MissingProjectID(t *testing.T) {
+	c, _ := bulkRotateDB(t)
+	ctx := context.Background()
+
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: 0,
+		RotatedBy: "ops",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project ID is required")
+	assert.Nil(t, result)
+}
+
+// TestBulkRotateSecrets_DefaultRotatedBy covers the default RotatedBy assignment (line 74-76).
+func TestBulkRotateSecrets_DefaultRotatedBy(t *testing.T) {
+	c, mk := bulkRotateDB(t)
+	ctx := context.Background()
+
+	id1 := mk("default-rotatedby-secret", "", true)
+	s, err := c.storage.GetSecret(ctx, id1)
+	require.NoError(t, err)
+
+	// RotatedBy is intentionally empty — the code should fill it in with "system:bulk-rotate".
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: s.ProjectID,
+		SecretIDs: []uint{id1},
+		RotatedBy: "",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Len(t, result.Triggered, 1)
+	assert.Empty(t, result.Failed)
+}
+
+// TestBulkRotateSecrets_GetSecretsByIDsError covers the storage error on GetSecretsByIDs
+// (line 86-88) using a mock storage.
+func TestBulkRotateSecrets_GetSecretsByIDsError(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := &KeyorixCore{storage: ms, now: time.Now}
+
+	storageErr := errors.New("db unavailable")
+	ms.On("GetSecretsByIDs", ctx, []uint{1, 2}).Return(nil, storageErr)
+
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: 1,
+		SecretIDs: []uint{1, 2},
+		RotatedBy: "ops",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load secrets")
+	assert.Nil(t, result)
+	ms.AssertExpectations(t)
+}
+
+// TestBulkRotateSecrets_CrossProjectGuard covers the case where a requested secret belongs
+// to a different project than the one in the request (line 107-113).
+func TestBulkRotateSecrets_CrossProjectGuard(t *testing.T) {
+	c, ls := bulkRotateDBRaw(t)
+	ctx := context.Background()
+
+	p1, err := ls.CreateProject(ctx, &models.Project{Name: "project-one"})
+	require.NoError(t, err)
+	p2, err := ls.CreateProject(ctx, &models.Project{Name: "project-two"})
+	require.NoError(t, err)
+
+	env1, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: p1.ID})
+	require.NoError(t, err)
+	env2, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: p2.ID})
+	require.NoError(t, err)
+
+	mkSecret := func(name string, projectID, envID uint) uint {
+		s, serr := ls.CreateSecret(ctx, &models.SecretNode{
+			Name: name, ProjectID: projectID, EnvironmentID: envID,
+			Type: "password", IsSecret: true, Status: "active",
+			AutoRotate: true, OwnerID: 1,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		})
+		require.NoError(t, serr)
+		_, serr = ls.CreateSecretVersion(ctx, &models.SecretVersion{
+			SecretNodeID: s.ID, VersionNumber: 1,
+			EncryptedValue: []byte("v1"), EncryptionMetadata: []byte("{}"),
+			CreatedAt: time.Now(),
+		})
+		require.NoError(t, serr)
+		return s.ID
+	}
+
+	id1 := mkSecret("in-project-one", p1.ID, env1.ID)
+	id2 := mkSecret("in-project-two", p2.ID, env2.ID) // belongs to p2, not p1
+
+	// Request both IDs but scoped to project 1 — id2 must be rejected.
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: p1.ID,
+		SecretIDs: []uint{id1, id2},
+		RotatedBy: "security-team",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Total)
+	assert.Len(t, result.Triggered, 1)
+	assert.Equal(t, id1, result.Triggered[0])
+	require.Len(t, result.Failed, 1)
+	assert.Equal(t, id2, result.Failed[0].SecretID)
+	assert.Contains(t, result.Failed[0].Error, "does not belong to this project")
+}
+
+// TestBulkRotateSecrets_FolderNodeSkipped covers the IsSecret == false guard (line 115-121).
+func TestBulkRotateSecrets_FolderNodeSkipped(t *testing.T) {
+	c, ls := bulkRotateDBRaw(t)
+	ctx := context.Background()
+
+	p, err := ls.CreateProject(ctx, &models.Project{Name: "folder-test-proj"})
+	require.NoError(t, err)
+	env, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: p.ID})
+	require.NoError(t, err)
+
+	// Create a folder node (IsSecret: false).
+	folder, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "my-folder", ProjectID: p.ID, EnvironmentID: env.ID,
+		Type: "folder", IsSecret: false, Status: "active",
+		AutoRotate: true, OwnerID: 1,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	// Create a real secret in the same project.
+	real, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "real-secret", ProjectID: p.ID, EnvironmentID: env.ID,
+		Type: "password", IsSecret: true, Status: "active",
+		AutoRotate: true, OwnerID: 1,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	_, err = ls.CreateSecretVersion(ctx, &models.SecretVersion{
+		SecretNodeID: real.ID, VersionNumber: 1,
+		EncryptedValue: []byte("v1"), EncryptionMetadata: []byte("{}"),
+		CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: p.ID,
+		SecretIDs: []uint{folder.ID, real.ID},
+		RotatedBy: "ops",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Total)
+	assert.Len(t, result.Triggered, 1)
+	assert.Equal(t, real.ID, result.Triggered[0])
+	require.Len(t, result.Failed, 1)
+	assert.Equal(t, folder.ID, result.Failed[0].SecretID)
+	assert.Contains(t, result.Failed[0].Error, "folder nodes cannot be rotated")
+}
+
+// TestBulkRotateSecrets_ListSecretsError covers the ListSecrets storage error (line 160-162)
+// using a mock storage.
+func TestBulkRotateSecrets_ListSecretsError(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := &KeyorixCore{storage: ms, now: time.Now}
+
+	storageErr := errors.New("connection refused")
+	ms.On("ListSecrets", ctx, mock.AnythingOfType("*storage.SecretFilter")).Return(nil, int64(0), storageErr)
+
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: 42,
+		RotatedBy: "ops",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "list secrets for project 42")
+	assert.Nil(t, result)
+	ms.AssertExpectations(t)
+}
+
+// TestBulkRotateSecrets_ByEnvID covers the EnvID filter branch (line 150-152).
+func TestBulkRotateSecrets_ByEnvID(t *testing.T) {
+	c, ls := bulkRotateDBRaw(t)
+	ctx := context.Background()
+
+	p, err := ls.CreateProject(ctx, &models.Project{Name: "env-filter-proj"})
+	require.NoError(t, err)
+	envA, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "staging", ProjectID: p.ID})
+	require.NoError(t, err)
+	envB, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: p.ID})
+	require.NoError(t, err)
+
+	mkInEnv := func(name string, envID uint) uint {
+		s, serr := ls.CreateSecret(ctx, &models.SecretNode{
+			Name: name, ProjectID: p.ID, EnvironmentID: envID,
+			Type: "password", IsSecret: true, Status: "active",
+			AutoRotate: true, OwnerID: 1,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		})
+		require.NoError(t, serr)
+		_, serr = ls.CreateSecretVersion(ctx, &models.SecretVersion{
+			SecretNodeID: s.ID, VersionNumber: 1,
+			EncryptedValue: []byte("v1"), EncryptionMetadata: []byte("{}"),
+			CreatedAt: time.Now(),
+		})
+		require.NoError(t, serr)
+		return s.ID
+	}
+
+	stagingID := mkInEnv("staging-secret", envA.ID)
+	_ = mkInEnv("prod-secret", envB.ID)
+
+	// Rotate only staging environment.
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: p.ID,
+		EnvID:     envA.ID,
+		RotatedBy: "ops",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total, "only staging env secret should be included")
+	assert.Len(t, result.Triggered, 1)
+	assert.Equal(t, stagingID, result.Triggered[0])
+	assert.Empty(t, result.Failed)
+}
+
+// TestBulkRotateSecrets_RotateOnDemandError covers bulkRotateOne when RotateSecretOnDemand
+// fails (line 191-197): the secret is reported in Failed but the operation continues.
+func TestBulkRotateSecrets_RotateOnDemandError(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := &KeyorixCore{storage: ms, now: time.Now}
+
+	projectID := uint(7)
+	secretID := uint(11)
+
+	// GetSecretsByIDs returns a valid rotatable secret.
+	ms.On("GetSecretsByIDs", ctx, []uint{secretID}).Return([]*models.SecretNode{
+		{
+			ID: secretID, Name: "rotate-fail", ProjectID: projectID,
+			IsSecret: true, AutoRotate: true,
+			RotationLength: 32, RotationCharset: "",
+		},
+	}, nil)
+	// RotateSecretOnDemand calls GetSecret first — return an error to make it fail.
+	ms.On("GetSecret", ctx, secretID).Return(nil, errors.New("secret locked"))
+
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: projectID,
+		SecretIDs: []uint{secretID},
+		RotatedBy: "ops",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Empty(t, result.Triggered)
+	require.Len(t, result.Failed, 1)
+	assert.Equal(t, secretID, result.Failed[0].SecretID)
+	assert.Contains(t, result.Failed[0].Error, "secret locked")
+	ms.AssertExpectations(t)
+}
+
+// TestBulkRotateSecrets_ValueGenError covers bulkRotateOne when generateRotatedValueSpec
+// fails (lines 184-190 and 131-135 of bulk_rotate.go). We substitute bulkValueGen with a
+// stub that returns an error to simulate a crypto/rand failure.
+func TestBulkRotateSecrets_ValueGenError(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := &KeyorixCore{storage: ms, now: time.Now}
+
+	projectID := uint(3)
+	secretID := uint(5)
+
+	ms.On("GetSecretsByIDs", ctx, []uint{secretID}).Return([]*models.SecretNode{
+		{
+			ID: secretID, Name: "gen-fail-secret", ProjectID: projectID,
+			IsSecret: true, AutoRotate: true,
+		},
+	}, nil)
+
+	// Substitute the value generator with one that always fails.
+	origGen := bulkValueGen
+	bulkValueGen = func(int, string) (string, error) {
+		return "", errors.New("crypto/rand exhausted")
+	}
+	t.Cleanup(func() { bulkValueGen = origGen })
+
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: projectID,
+		SecretIDs: []uint{secretID},
+		RotatedBy: "ops",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Empty(t, result.Triggered)
+	require.Len(t, result.Failed, 1)
+	assert.Equal(t, secretID, result.Failed[0].SecretID)
+	assert.Contains(t, result.Failed[0].Error, "generate value")
+	ms.AssertExpectations(t)
+}
+
+// TestBulkRotateSecrets_ProjectWideRotateOnDemandError covers bulkRotateOne failure
+// in the project-wide path (no SecretIDs provided).
+func TestBulkRotateSecrets_ProjectWideRotateOnDemandError(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := &KeyorixCore{storage: ms, now: time.Now}
+
+	projectID := uint(9)
+	secretID := uint(21)
+	isSecret := true
+	filter := &storage.SecretFilter{
+		ProjectID: &projectID,
+		Page:      1,
+		PageSize:  10000,
+		IsSecret:  &isSecret,
+	}
+
+	ms.On("ListSecrets", ctx, filter).Return([]*models.SecretNode{
+		{
+			ID: secretID, Name: "proj-wide-fail", ProjectID: projectID,
+			IsSecret: true, AutoRotate: true,
+		},
+	}, int64(1), nil)
+	// RotateSecretOnDemand → GetSecret returns error.
+	ms.On("GetSecret", ctx, secretID).Return(nil, errors.New("disk full"))
+
+	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+		ProjectID: projectID,
+		RotatedBy: "ops",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Empty(t, result.Triggered)
+	require.Len(t, result.Failed, 1)
+	assert.Equal(t, secretID, result.Failed[0].SecretID)
+	assert.Contains(t, result.Failed[0].Error, "disk full")
+	ms.AssertExpectations(t)
 }
