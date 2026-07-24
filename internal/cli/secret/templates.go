@@ -32,6 +32,10 @@ var (
 	tmplDescription    string
 	tmplDescPattern    string
 	tmplRotationDays   int
+
+	// jsonMarshalIndentFn is the json.MarshalIndent implementation used by
+	// runTemplateGet; swapped in tests to exercise the error path.
+	jsonMarshalIndentFn = json.MarshalIndent
 )
 
 // templateCmd is the root "template" sub-command under "secret".
@@ -95,7 +99,7 @@ func runTemplateGet(ctx context.Context, c *common.RemoteClient, name string) er
 	}
 	for _, t := range result.Templates {
 		if t.Name == name {
-			out, err := json.MarshalIndent(t, "", "  ")
+			out, err := jsonMarshalIndentFn(t, "", "  ")
 			if err != nil {
 				return fmt.Errorf("marshal template: %w", err)
 			}

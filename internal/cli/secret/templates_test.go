@@ -3,6 +3,7 @@ package secret
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -194,4 +195,80 @@ func TestRunTemplateDelete_DeleteError(t *testing.T) {
 	err := runTemplateDelete(context.Background(), rc, "api-key")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "delete template")
+}
+
+// ── RunE closure coverage ──────────────────────────────────────────────────────
+//
+// Each cobra command's RunE closure is only executed when cobra dispatches the
+// command.  We invoke cmd.RunE directly so the coverage tool registers those
+// lines without spinning up the full CLI binary.
+
+// TestTemplateListCmd_NoServer exercises the !ok branch in templateListCmd.RunE.
+func TestTemplateListCmd_NoServer(t *testing.T) {
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	err := templateListCmd.RunE(templateListCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected")
+}
+
+// TestTemplateGetCmd_NoServer exercises the !ok branch in templateGetCmd.RunE.
+func TestTemplateGetCmd_NoServer(t *testing.T) {
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	err := templateGetCmd.RunE(templateGetCmd, []string{"some-name"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected")
+}
+
+// TestTemplateCreateCmd_NoName exercises the empty-name guard in templateCreateCmd.RunE.
+func TestTemplateCreateCmd_NoName(t *testing.T) {
+	orig := tmplName
+	defer func() { tmplName = orig }()
+	tmplName = ""
+	err := templateCreateCmd.RunE(templateCreateCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--name is required")
+}
+
+// TestTemplateCreateCmd_NoServer exercises the !ok branch in templateCreateCmd.RunE.
+func TestTemplateCreateCmd_NoServer(t *testing.T) {
+	orig := tmplName
+	defer func() { tmplName = orig }()
+	tmplName = "some-tpl"
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	err := templateCreateCmd.RunE(templateCreateCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected")
+}
+
+// TestTemplateDeleteCmd_NoServer exercises the !ok branch in templateDeleteCmd.RunE.
+func TestTemplateDeleteCmd_NoServer(t *testing.T) {
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	err := templateDeleteCmd.RunE(templateDeleteCmd, []string{"some-name"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not connected")
+}
+
+// TestRunTemplateGet_MarshalError exercises the json.MarshalIndent error path in
+// runTemplateGet. Because models.SecretTemplate contains only serialisable
+// types, this path is dead code in production; we reach it by injecting a
+// failing marshaler via the package-level jsonMarshalIndentFn variable.
+func TestRunTemplateGet_MarshalError(t *testing.T) {
+	orig := jsonMarshalIndentFn
+	jsonMarshalIndentFn = func(_ interface{}, _, _ string) ([]byte, error) {
+		return nil, errors.New("forced marshal failure")
+	}
+	defer func() { jsonMarshalIndentFn = orig }()
+
+	rc, done := tmplStub(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(tmplListJSON))
+	})
+	defer done()
+
+	err := runTemplateGet(context.Background(), rc, "db-secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marshal template")
 }
