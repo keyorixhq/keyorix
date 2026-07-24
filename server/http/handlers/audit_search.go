@@ -81,6 +81,7 @@ func parseAuditSearchRequest(r *http.Request) core.AuditSearchRequest {
 	return req
 }
 
+
 // SearchAuditLogs handles GET /api/v1/audit/search.
 //
 // Supported query parameters:
