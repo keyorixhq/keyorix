@@ -1308,6 +1308,7 @@ type Storage interface {
 	// whose created_at (detected_at) is older than the given threshold.
 	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
 
+
 }
 
 // SecretFilter defines filtering options for secret queries

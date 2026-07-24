@@ -4,11 +4,82 @@
 package request
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
+
+// errInitService is the sentinel error returned by the failing service factory.
+var errInitService = errors.New("simulated service init failure")
+
+// withFailingInitService temporarily replaces bulkInitService with one that
+// always returns errInitService, then restores the original on cleanup.
+func withFailingInitService(t *testing.T) {
+	t.Helper()
+	orig := bulkInitService
+	bulkInitService = func() (*core.KeyorixCore, error) { return nil, errInitService }
+	t.Cleanup(func() { bulkInitService = orig })
+}
+
+// bulkBrokenCounter avoids DSN collisions across parallel tests.
+var bulkBrokenCounter int
+
+// withBrokenDBService replaces bulkInitService with one that returns a
+// KeyorixCore backed by a closed SQLite connection (all storage calls fail).
+func withBrokenDBService(t *testing.T) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	bulkBrokenCounter++
+	dsn := fmt.Sprintf("file:bulk_broken_%d?mode=memory&cache=shared", bulkBrokenCounter)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.AccessRequest{},
+		&models.RejectionReasonTemplate{},
+	))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	svc := core.NewKeyorixCore(store.NewLocalStorage(db))
+	orig := bulkInitService
+	bulkInitService = func() (*core.KeyorixCore, error) { return svc, nil }
+	t.Cleanup(func() { bulkInitService = orig })
+}
+
+// withUserSeededPartialService returns a KeyorixCore backed by a SQLite DB
+// that has ONLY the users table migrated (not access_requests / templates),
+// with an admin user seeded. GetUserByEmail succeeds; bulk-access / template
+// storage calls fail because those tables don't exist.
+func withUserSeededPartialService(t *testing.T, email string) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	bulkBrokenCounter++
+	dsn := fmt.Sprintf("file:bulk_partial_%d?mode=memory&cache=shared", bulkBrokenCounter)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	// Migrate ONLY the users table so GetUserByEmail works.
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+	require.NoError(t, db.Create(&models.User{
+		Username: "admin", Email: email, IsActive: true,
+	}).Error)
+	svc := core.NewKeyorixCore(store.NewLocalStorage(db))
+	orig := bulkInitService
+	bulkInitService = func() (*core.KeyorixCore, error) { return svc, nil }
+	t.Cleanup(func() {
+		bulkInitService = orig
+		sqlDB, _ := db.DB()
+		_ = sqlDB.Close()
+	})
+}
 
 // ── Command structure ─────────────────────────────────────────────────────────
 
@@ -195,4 +266,108 @@ func TestRunTmplDelete_ServiceInitError(t *testing.T) {
 	// Will fail at DeleteRejectionReasonTemplate step with a DB error.
 	err := runTmplDelete(nil, []string{"1"})
 	require.Error(t, err)
+}
+
+// ── InitializeCoreService failure paths (via bulkInitService override) ────────
+
+func TestRunBulkApprove_InitServiceError(t *testing.T) {
+	origIDs, origBy := bulkApproveIDs, bulkApproveBy
+	defer func() { bulkApproveIDs = origIDs; bulkApproveBy = origBy }()
+	bulkApproveIDs = "1"
+	bulkApproveBy = "a@example.com"
+	withFailingInitService(t)
+	err := runBulkApprove(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to initialize service")
+}
+
+func TestRunBulkReject_InitServiceError(t *testing.T) {
+	origIDs, origBy, origReason := bulkRejectIDs, bulkRejectBy, bulkRejectReason
+	defer func() { bulkRejectIDs = origIDs; bulkRejectBy = origBy; bulkRejectReason = origReason }()
+	bulkRejectIDs = "1"
+	bulkRejectBy = "a@example.com"
+	bulkRejectReason = "reason"
+	withFailingInitService(t)
+	err := runBulkReject(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to initialize service")
+}
+
+func TestRunTmplList_InitServiceError(t *testing.T) {
+	withFailingInitService(t)
+	err := runTmplList(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to initialize service")
+}
+
+func TestRunTmplAdd_InitServiceError(t *testing.T) {
+	origName, origReason, origBy := tmplName, tmplReason, tmplBy
+	defer func() { tmplName = origName; tmplReason = origReason; tmplBy = origBy }()
+	tmplName = "x"
+	tmplReason = "y"
+	tmplBy = "a@example.com"
+	withFailingInitService(t)
+	err := runTmplAdd(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to initialize service")
+}
+
+func TestRunTmplDelete_InitServiceError(t *testing.T) {
+	withFailingInitService(t)
+	err := runTmplDelete(nil, []string{"1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to initialize service")
+}
+
+// ── BulkApprove / BulkReject / template storage errors (broken DB) ────────────
+
+func TestRunBulkApprove_BulkApproveError(t *testing.T) {
+	origIDs, origBy := bulkApproveIDs, bulkApproveBy
+	defer func() { bulkApproveIDs = origIDs; bulkApproveBy = origBy }()
+	bulkApproveIDs = "1"
+	bulkApproveBy = "partial@example.com"
+	// Service has only the users table — GetUserByEmail succeeds but
+	// ListAccessRequestsByIDs fails (no access_requests table), triggering
+	// the BulkApproveAccessRequests error branch (lines 62-64).
+	withUserSeededPartialService(t, "partial@example.com")
+	err := runBulkApprove(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk approve failed")
+}
+
+func TestRunBulkReject_BulkRejectError(t *testing.T) {
+	origIDs, origBy, origReason := bulkRejectIDs, bulkRejectBy, bulkRejectReason
+	defer func() { bulkRejectIDs = origIDs; bulkRejectBy = origBy; bulkRejectReason = origReason }()
+	bulkRejectIDs = "1"
+	bulkRejectBy = "partial@example.com"
+	bulkRejectReason = "expired"
+	// Service has only the users table — GetUserByEmail succeeds but
+	// ListAccessRequestsByIDs fails (no access_requests table), triggering
+	// the BulkRejectAccessRequests error branch (lines 120-122).
+	withUserSeededPartialService(t, "partial@example.com")
+	err := runBulkReject(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk reject failed")
+}
+
+func TestRunTmplList_ListError(t *testing.T) {
+	withBrokenDBService(t)
+	err := runTmplList(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list templates")
+}
+
+func TestRunTmplAdd_CreateError(t *testing.T) {
+	origName, origReason, origBy := tmplName, tmplReason, tmplBy
+	defer func() { tmplName = origName; tmplReason = origReason; tmplBy = origBy }()
+	tmplName = "x"
+	tmplReason = "y"
+	tmplBy = "partial@example.com"
+	// Service has only the users table — GetUserByEmail succeeds (user is seeded)
+	// but CreateRejectionReasonTemplate fails (no rejection_reason_templates table),
+	// triggering the error branch at lines 207-209.
+	withUserSeededPartialService(t, "partial@example.com")
+	err := runTmplAdd(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create template")
 }
