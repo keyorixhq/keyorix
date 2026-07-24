@@ -262,3 +262,145 @@ func TestDiffSecretVersions_InvalidVersion(t *testing.T) {
 	_, err := c.DiffSecretVersions(context.Background(), sid, 1, 99)
 	require.Error(t, err, "version 99 does not exist → error expected")
 }
+
+// ── TestDiffSecretVersions_ZeroSecretID ──────────────────────────────────────
+
+// TestDiffSecretVersions_ZeroSecretID confirms that secretID==0 is rejected
+// with a validation error.
+func TestDiffSecretVersions_ZeroSecretID(t *testing.T) {
+	c, _ := newDiffCore(t)
+	_, err := c.DiffSecretVersions(context.Background(), 0, 1, 2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "secret ID is required")
+}
+
+// ── TestDiffSecretVersions_ZeroVersions ──────────────────────────────────────
+
+// TestDiffSecretVersions_ZeroVersions confirms that non-positive version
+// numbers are rejected with a validation error.
+func TestDiffSecretVersions_ZeroVersions(t *testing.T) {
+	c, _ := newDiffCore(t)
+
+	_, err := c.DiffSecretVersions(context.Background(), 1, 0, 2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "version numbers must be positive")
+
+	_, err = c.DiffSecretVersions(context.Background(), 1, 1, 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "version numbers must be positive")
+}
+
+// ── TestDiffSecretVersions_SameVersion ───────────────────────────────────────
+
+// TestDiffSecretVersions_SameVersion confirms that from==to is rejected.
+func TestDiffSecretVersions_SameVersionCore(t *testing.T) {
+	c, _ := newDiffCore(t)
+	_, err := c.DiffSecretVersions(context.Background(), 1, 3, 3)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must differ")
+}
+
+// ── TestDiffSecretVersions_SecretNotFound ─────────────────────────────────────
+
+// TestDiffSecretVersions_SecretNotFound confirms that a missing secret node
+// surfaces as an error.
+func TestDiffSecretVersions_SecretNotFound(t *testing.T) {
+	c, _ := newDiffCore(t)
+	_, err := c.DiffSecretVersions(context.Background(), 9999, 1, 2)
+	require.Error(t, err)
+}
+
+// ── TestDiffSecretVersions_FromVersionNotFound ────────────────────────────────
+
+// TestDiffSecretVersions_FromVersionNotFound confirms that a missing FROM
+// version number returns an error (covers the error path after GetSecretVersion
+// for the from-version).
+func TestDiffSecretVersions_FromVersionNotFound(t *testing.T) {
+	c, db := newDiffCore(t)
+	sid := seedDiffFixture(t, db, "", nil)
+	// Only seed version 2; version 1 does not exist.
+	addVersion(t, db, sid, 2, 0)
+
+	_, err := c.DiffSecretVersions(context.Background(), sid, 1, 2)
+	require.Error(t, err, "from version 1 does not exist → error expected")
+}
+
+// ── TestDiffSecretVersions_WithACLEntries ─────────────────────────────────────
+
+// TestDiffSecretVersions_WithACLEntries seeds an ACL entry for the secret and
+// confirms that the ACLUserIDs slice is populated (covers the ACL loop body).
+func TestDiffSecretVersions_WithACLEntries(t *testing.T) {
+	c, db := newDiffCore(t)
+	sid := seedDiffFixture(t, db, "", nil)
+	addVersion(t, db, sid, 1, 0)
+	addVersion(t, db, sid, 2, 0)
+
+	// Seed an ACL entry for user 42.
+	require.NoError(t, db.Create(&models.SecretACL{
+		SecretID:    sid,
+		UserID:      42,
+		Permissions: `["secrets.read"]`,
+		GrantedBy:   1,
+	}).Error)
+
+	diff, err := c.DiffSecretVersions(context.Background(), sid, 1, 2)
+	require.NoError(t, err)
+	assert.Contains(t, diff.ACLUserIDs, uint(42), "ACL entry for user 42 must appear in the result")
+}
+
+// ── TestDiffSecretVersions_NegativeDelta ─────────────────────────────────────
+
+// TestDiffSecretVersions_NegativeDelta exercises the branch where to.ReadCount <
+// from.ReadCount (delta < 0 → sign should be "" not "+").
+func TestDiffSecretVersions_NegativeDelta(t *testing.T) {
+	c, db := newDiffCore(t)
+
+	past := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "production"}).Error)
+	node := &models.SecretNode{
+		ID:            10,
+		Name:          "my-api-key",
+		ProjectID:     1,
+		EnvironmentID: 1,
+		IsSecret:      true,
+		Type:          "password",
+		Status:        "active",
+		CreatedAt:     past,
+		UpdatedAt:     past, // no node update → no classification/expiry change
+	}
+	require.NoError(t, db.Create(node).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 10, VersionNumber: 1, EncryptedValue: []byte("v1"), ReadCount: 10,
+		CreatedAt: past,
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 10, VersionNumber: 2, EncryptedValue: []byte("v2"), ReadCount: 3,
+		CreatedAt: past,
+	}).Error)
+
+	diff, err := c.DiffSecretVersions(context.Background(), uint(10), 1, 2)
+	require.NoError(t, err)
+
+	var rc *SecretVersionChange
+	for i := range diff.Changes {
+		if diff.Changes[i].Field == "read_count_delta" {
+			rc = &diff.Changes[i]
+			break
+		}
+	}
+	require.NotNil(t, rc, "expected a read_count_delta change")
+	assert.Equal(t, "10", rc.OldValue)
+	// Negative delta: sign should be "" (no "+"), value should start with "3"
+	assert.True(t, len(rc.NewValue) > 0 && rc.NewValue[0] == '3', "new value starts with to.ReadCount")
+	assert.NotContains(t, rc.NewValue, "+", "negative delta must not have a '+' sign")
+}
+
+// ── TestEmptyOr_EmptyString ───────────────────────────────────────────────────
+
+// TestEmptyOr_EmptyString exercises the emptyOr("") branch that returns "(none)".
+func TestEmptyOr_EmptyString(t *testing.T) {
+	assert.Equal(t, "(none)", emptyOr(""))
+	assert.Equal(t, "(none)", emptyOr("   "))
+	assert.Equal(t, "hello", emptyOr("hello"))
+}
