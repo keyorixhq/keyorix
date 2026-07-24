@@ -15,8 +15,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-const snapshotListDefaultLimit = 90
-
 // TakeComplianceSnapshot runs GetCompliancePosture and returns the
 // CompliancePostureSnapshot that was persisted for today's UTC date.
 // Errors from GetCompliancePosture are propagated; a failure to persist the
