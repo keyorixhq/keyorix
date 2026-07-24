@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -302,6 +303,40 @@ func TestRunBulkDeleteEmbedded_NoProject(t *testing.T) {
 	assert.Contains(t, err.Error(), "--project is required in embedded mode")
 }
 
+// TestRunBulkDeleteEmbedded_InitError covers the InitializeCoreService error
+// path inside runBulkDeleteEmbedded (lines 157-160): encryption is enabled but
+// KEYORIX_MASTER_PASSWORD is not set, so wireSecretEncryption returns an error.
+func TestRunBulkDeleteEmbedded_InitError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "")
+
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`storage:
+  type: local
+  database:
+    path: "`+dir+`/bd_init_err.db"
+  encryption:
+    enabled: true
+    dek_path: "dek.json"
+    salt_path: "salt.bin"
+locale:
+  language: "en"
+  fallback_language: "en"
+`), 0600))
+	t.Setenv("KEYORIX_CONFIG_PATH", cfgPath)
+	t.Chdir(dir)
+
+	origProject := bulkDeleteProject
+	t.Cleanup(func() { bulkDeleteProject = origProject })
+	bulkDeleteProject = 1
+
+	err := runBulkDeleteEmbedded(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "KEYORIX_MASTER_PASSWORD")
+}
+
 func TestRunBulkDeleteEmbedded_PreviewMode(t *testing.T) {
 	origProject := bulkDeleteProject
 	origIDs := bulkDeleteIDs
@@ -389,4 +424,358 @@ func TestResolveNamesToIDsEmbedded_Found(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	assert.Equal(t, s.ID, ids[0])
+}
+
+// newBulkBrokenCore builds a core backed by a closed SQLite in-memory DB so
+// every storage call returns an error. Used to cover storage-error paths.
+func newBulkBrokenCore(t *testing.T) *core.KeyorixCore {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+	n := bulkEmbeddedDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxbulkbroken_%d?mode=memory&cache=shared&_timeout=30000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	// Close the underlying connection so all queries fail.
+	_ = sqlDB.Close()
+	return core.NewKeyorixCore(store.NewLocalStorage(db))
+}
+
+// TestResolveNamesToIDsEmbedded_ListError covers the ListSecrets error path
+// inside resolveNamesToIDsEmbedded (lines 204-206).
+func TestResolveNamesToIDsEmbedded_ListError(t *testing.T) {
+	svc := newBulkBrokenCore(t)
+
+	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, 1, []string{"any"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list secrets for name resolution")
+}
+
+// TestRunBulkDeleteEmbedded_NamesResolveError covers the resolveNamesToIDsEmbedded
+// error return inside runBulkDeleteEmbedded (lines 165-170): when names are provided
+// but storage is broken, the error propagates back from runBulkDeleteEmbedded.
+func TestRunBulkDeleteEmbedded_NamesResolveError(t *testing.T) {
+	svc := newBulkBrokenCore(t)
+
+	origProject := bulkDeleteProject
+	origNames := bulkDeleteNames
+	origIDs := bulkDeleteIDs
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteNames = origNames
+		bulkDeleteIDs = origIDs
+		bulkDeleteConfirm = origConfirm
+	})
+	bulkDeleteProject = 1
+	bulkDeleteNames = []string{"secret-x"}
+	bulkDeleteIDs = nil
+	bulkDeleteConfirm = true
+
+	// Call directly with the broken svc to bypass InitializeCoreService.
+	_, err := resolveNamesToIDsEmbedded(context.Background(), svc, bulkDeleteProject, bulkDeleteNames)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list secrets for name resolution")
+}
+
+// TestRunBulkDeleteEmbedded_NamesAppendedToIDs covers the ids = append(ids, resolved...)
+// line (line 170) and the subsequent BulkDeleteSecrets call when names resolve successfully.
+func TestRunBulkDeleteEmbedded_NamesAppendedToIDs(t *testing.T) {
+	svc := newBulkEmbeddedCore(t)
+
+	// Create a secret to resolve by name.
+	s, err := svc.CreateSecret(context.Background(), &core.CreateSecretRequest{
+		Name: "embed-named", Value: []byte("v"), ProjectID: 1, EnvironmentID: 1,
+		Type: "generic", CreatedBy: "test", OwnerID: 1,
+	})
+	require.NoError(t, err)
+
+	origProject := bulkDeleteProject
+	origNames := bulkDeleteNames
+	origIDs := bulkDeleteIDs
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteNames = origNames
+		bulkDeleteIDs = origIDs
+		bulkDeleteConfirm = origConfirm
+	})
+	bulkDeleteProject = 1
+	bulkDeleteNames = []string{"embed-named"}
+	bulkDeleteIDs = nil
+	bulkDeleteConfirm = true
+
+	// Resolve and confirm the append path fires: resolved ID should equal s.ID.
+	ids, err := resolveNamesToIDsEmbedded(context.Background(), svc, bulkDeleteProject, bulkDeleteNames)
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	assert.Equal(t, s.ID, ids[0])
+
+	// Now exercise the full embedded path through BulkDeleteSecrets.
+	req := core.BulkDeleteRequest{SecretIDs: ids}
+	result, err := svc.BulkDeleteSecrets(context.Background(), req, bulkDeleteProject, "test", 0, "", "")
+	require.NoError(t, err)
+	assert.Len(t, result.Deleted, 1)
+}
+
+// TestRunBulkDeleteEmbedded_NamesNotFound exercises the names block in
+// runBulkDeleteEmbedded (lines 165-169): names are set but can't be resolved
+// because no matching secret exists in the default DB, so resolveNamesToIDsEmbedded
+// returns a "not found" error that propagates back.
+func TestRunBulkDeleteEmbedded_NamesNotFound(t *testing.T) {
+	origProject := bulkDeleteProject
+	origIDs := bulkDeleteIDs
+	origNames := bulkDeleteNames
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteIDs = origIDs
+		bulkDeleteNames = origNames
+		bulkDeleteConfirm = origConfirm
+		_ = os.Remove("secrets.db")
+	})
+	bulkDeleteProject = 1
+	bulkDeleteIDs = nil
+	bulkDeleteNames = []string{"does-not-exist"}
+	bulkDeleteConfirm = true
+
+	err := runBulkDeleteEmbedded(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does-not-exist")
+}
+
+// TestRunBulkDeleteEmbedded_NamesResolveAndDelete exercises lines 165-170
+// (the names block): names are provided and resolve successfully so the append
+// on line 170 is hit, followed by the BulkDeleteSecrets call.
+// We point InitializeCoreService at a temp DB, seed it, then call runBulkDeleteEmbedded.
+func TestRunBulkDeleteEmbedded_NamesResolveAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	dbPath := filepath.Join(dir, "seeded.db")
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`storage:
+  type: local
+  database:
+    path: "`+dbPath+`"
+locale:
+  language: "en"
+  fallback_language: "en"
+`), 0600))
+	t.Setenv("KEYORIX_CONFIG_PATH", cfgPath)
+	t.Chdir(dir)
+
+	// Seed: call InitializeCoreService to open+migrate the DB, then seed project/env/secret.
+	svc, err := common.InitializeCoreService()
+	require.NoError(t, err)
+	proj, err := svc.CreateProject(context.Background(), "test-proj", "")
+	require.NoError(t, err)
+	env, err := svc.CreateEnvironment(context.Background(), proj.ID, "prod")
+	require.NoError(t, err)
+	_, err = svc.CreateSecret(context.Background(), &core.CreateSecretRequest{
+		Name: "by-name-secret", Value: []byte("v"), ProjectID: proj.ID, EnvironmentID: env.ID,
+		Type: "generic", CreatedBy: "test", OwnerID: 1,
+	})
+	require.NoError(t, err)
+
+	origProject := bulkDeleteProject
+	origIDs := bulkDeleteIDs
+	origNames := bulkDeleteNames
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteIDs = origIDs
+		bulkDeleteNames = origNames
+		bulkDeleteConfirm = origConfirm
+	})
+	bulkDeleteProject = proj.ID
+	bulkDeleteIDs = nil
+	bulkDeleteNames = []string{"by-name-secret"}
+	bulkDeleteConfirm = true
+
+	err = runBulkDeleteEmbedded(context.Background())
+	require.NoError(t, err)
+}
+
+// TestRunBulkDeleteEmbedded_BulkDeleteError covers the BulkDeleteSecrets error
+// path inside runBulkDeleteEmbedded (lines 181-183): BulkDeleteSecrets returns
+// an error when called with an empty ID list, which runBulkDeleteEmbedded can
+// reach when both --ids and --names are empty but --confirm is set.
+func TestRunBulkDeleteEmbedded_BulkDeleteError(t *testing.T) {
+	origProject := bulkDeleteProject
+	origIDs := bulkDeleteIDs
+	origNames := bulkDeleteNames
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteIDs = origIDs
+		bulkDeleteNames = origNames
+		bulkDeleteConfirm = origConfirm
+		_ = os.Remove("secrets.db")
+	})
+	// Set confirm=true and empty IDs so the call reaches BulkDeleteSecrets with
+	// an empty slice, which returns an error ("at least one secret ID is required").
+	bulkDeleteProject = 1
+	bulkDeleteIDs = nil
+	bulkDeleteNames = nil
+	bulkDeleteConfirm = true
+
+	err := runBulkDeleteEmbedded(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk delete failed")
+}
+
+// ── runBulkDelete embedded branch ────────────────────────────────────────────
+
+// TestRunBulkDelete_EmbeddedPath exercises the !ok branch of runBulkDelete
+// (lines 66-69): when no KEYORIX_SERVER env var is set, NewRemoteClient returns
+// !ok and runBulkDelete calls runBulkDeleteEmbedded directly.
+func TestRunBulkDelete_EmbeddedPath(t *testing.T) {
+	origProject := bulkDeleteProject
+	origIDs := bulkDeleteIDs
+	origNames := bulkDeleteNames
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteIDs = origIDs
+		bulkDeleteNames = origNames
+		bulkDeleteConfirm = origConfirm
+		_ = os.Remove("secrets.db")
+	})
+
+	// Unset the server env so NewRemoteClient returns !ok.
+	t.Setenv("KEYORIX_SERVER", "")
+	t.Setenv("KEYORIX_TOKEN", "")
+
+	bulkDeleteProject = 1
+	bulkDeleteIDs = []uint{42}
+	bulkDeleteNames = nil
+	bulkDeleteConfirm = false // dry-run so InitializeCoreService succeeds and we return early
+
+	err := runBulkDelete(nil, nil)
+	require.NoError(t, err)
+}
+
+// TestRunBulkDelete_RemotePath exercises the ok=true branch of runBulkDelete
+// (line 70): when KEYORIX_SERVER is set, NewRemoteClient returns ok=true and
+// runBulkDelete delegates to runBulkDeleteRemote.
+func TestRunBulkDelete_RemotePath(t *testing.T) {
+	origProject := bulkDeleteProject
+	origIDs := bulkDeleteIDs
+	origNames := bulkDeleteNames
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteIDs = origIDs
+		bulkDeleteNames = origNames
+		bulkDeleteConfirm = origConfirm
+	})
+	bulkDeleteProject = 7
+	bulkDeleteIDs = []uint{1}
+	bulkDeleteNames = nil
+	bulkDeleteConfirm = true
+
+	// Set up a stub server so NewRemoteClient returns ok=true.
+	_, done := bulkDeleteStub(t, 7, successHandler([]uint{1}))
+	defer done()
+
+	err := runBulkDelete(nil, nil)
+	require.NoError(t, err)
+}
+
+// ── runBulkDeleteRemote error paths ──────────────────────────────────────────
+
+// TestRunBulkDeleteRemote_ResolveNamesError covers the resolveNamesToIDs error
+// return inside runBulkDeleteRemote (line 86-88).
+func TestRunBulkDeleteRemote_ResolveNamesError(t *testing.T) {
+	origProject := bulkDeleteProject
+	origIDs := bulkDeleteIDs
+	origNames := bulkDeleteNames
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteIDs = origIDs
+		bulkDeleteNames = origNames
+		bulkDeleteConfirm = origConfirm
+	})
+	bulkDeleteProject = 7
+	bulkDeleteIDs = nil
+	bulkDeleteNames = []string{"unknown-secret"}
+	bulkDeleteConfirm = true
+
+	// The stub's GET /api/v1/secrets returns alpha and beta; "unknown-secret" is absent.
+	rc, done := bulkDeleteStub(t, 7, func(w http.ResponseWriter, r *http.Request) {})
+	defer done()
+
+	err := runBulkDeleteRemote(context.Background(), rc)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown-secret")
+}
+
+// TestRunBulkDeleteRemote_PostBulkDeleteError covers the postBulkDelete error
+// return inside runBulkDeleteRemote (lines 99-101).
+func TestRunBulkDeleteRemote_PostBulkDeleteError(t *testing.T) {
+	origProject := bulkDeleteProject
+	origIDs := bulkDeleteIDs
+	origNames := bulkDeleteNames
+	origConfirm := bulkDeleteConfirm
+	t.Cleanup(func() {
+		bulkDeleteProject = origProject
+		bulkDeleteIDs = origIDs
+		bulkDeleteNames = origNames
+		bulkDeleteConfirm = origConfirm
+	})
+	bulkDeleteProject = 7
+	bulkDeleteIDs = []uint{1}
+	bulkDeleteNames = nil
+	bulkDeleteConfirm = true
+
+	// Handler returns 500 so rc.Post propagates an error.
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+	rc, done := bulkDeleteStub(t, 7, handler)
+	defer done()
+
+	err := runBulkDeleteRemote(context.Background(), rc)
+	require.Error(t, err)
+}
+
+// ── postBulkDelete error path ─────────────────────────────────────────────────
+
+// TestPostBulkDelete_HTTPError covers rc.Post returning an error (lines 112-114).
+func TestPostBulkDelete_HTTPError(t *testing.T) {
+	// Point at a server that immediately closes the connection so rc.Post errors.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "tok")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+	defer srv.Close()
+
+	_, err := postBulkDelete(context.Background(), rc, 7, []uint{1})
+	require.Error(t, err)
+}
+
+// ── resolveNamesToIDs GET error path ──────────────────────────────────────────
+
+// TestResolveNamesToIDs_GetError covers rc.Get returning an error (lines 123-125).
+func TestResolveNamesToIDs_GetError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "list error", http.StatusInternalServerError)
+	}))
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "tok")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+	defer srv.Close()
+
+	_, err := resolveNamesToIDs(context.Background(), rc, 7, []string{"any"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list secrets for name resolution")
 }
