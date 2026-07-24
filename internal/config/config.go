@@ -1483,6 +1483,12 @@ func (c DualControlConfig) GetRequiredApprovals() int {
 // matching this codebase's established posture for ambiguous authorization).
 type ClassificationConfig struct {
 	RestrictedRequiresApproval bool `yaml:"restricted_requires_approval"`
+	// RestrictedRequiresPermission, when true, requires the acting user to hold
+	// the "secrets.read.restricted" permission at the secret's project scope
+	// before a "restricted"-classified secret's value may be read. Off by default
+	// (purely additive: only tightens access, never removes it). Can be combined
+	// with RestrictedRequiresApproval — when both are on, BOTH must be satisfied.
+	RestrictedRequiresPermission bool `yaml:"restricted_requires_permission"`
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the

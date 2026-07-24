@@ -199,6 +199,12 @@ type KeyorixCore struct {
 	// approved, secret-scoped access request (see classification_gate.go). Set from
 	// config at startup via SetClassificationRestrictedRequiresApproval.
 	classificationRestrictedRequiresApproval bool
+	// classificationRestrictedRequiresPermission mirrors config classification.
+	// restricted_requires_permission; false (the default) leaves "restricted" readable
+	// by anyone whose RBAC roles grant secrets.read at the project scope. When true,
+	// the user must ALSO hold the "secrets.read.restricted" permission (or an admin
+	// bypass role). Set at startup via SetClassificationRestrictedRequiresPermission.
+	classificationRestrictedRequiresPermission bool
 	// retentionPolicy holds the configured per-record-type data-retention windows
 	// (ISO A.5.33) so the compliance posture can report them; zero value = no
 	// retention configured. Set from config at startup via SetRetentionPolicy.
