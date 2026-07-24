@@ -174,10 +174,10 @@ func TestLocalStorage_BulkRevokeExpiredPATsByUser_UpdateFails_ReturnsError(t *te
 	sentinelErr := fmt.Errorf("injected update failure")
 	require.NoError(t, ls.DB().Callback().Update().Before("gorm:before_update").Register(
 		"test:fail_update_pat_expiry",
-		func(d *gorm.DB) { d.AddError(sentinelErr) },
+		func(d *gorm.DB) { _ = d.AddError(sentinelErr) },
 	))
 	t.Cleanup(func() {
-		ls.DB().Callback().Update().Remove("test:fail_update_pat_expiry")
+		_ = ls.DB().Callback().Update().Remove("test:fail_update_pat_expiry")
 	})
 
 	_, err := ls.BulkRevokeExpiredPATsByUser(ctx, 5, now)
