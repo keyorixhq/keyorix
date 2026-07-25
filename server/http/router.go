@@ -349,6 +349,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathAlertEscalationPoliciesID, alertEscalationHandler.Update)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathAlertEscalationPoliciesID, alertEscalationHandler.Delete)
 
+		// Alert escalation policy management — admin-only (system.write).
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/alert-escalation-policies", alertEscalationHandler.Create)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies", alertEscalationHandler.List)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/alert-escalation-policies/{id}", alertEscalationHandler.Get)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/alert-escalation-policies/{id}", alertEscalationHandler.Update)
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/alert-escalation-policies/{id}", alertEscalationHandler.Delete)
+
 		// Dashboard endpoints
 		// GetStats is the caller's OWN home dashboard (their secret/share counts,
 		// their expiring secrets) so it stays reachable by any real principal — but it

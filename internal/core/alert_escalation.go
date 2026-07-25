@@ -72,12 +72,17 @@ func minEscalateDelay(active []models.AlertEscalationPolicy) int {
 func (c *KeyorixCore) dispatchPolicyChannels(ctx context.Context, alert *models.AnomalyAlert, policy *models.AlertEscalationPolicy) bool {
 	sent := false
 	for _, cidStr := range splitChannelIDs(policy.ChannelIDs) {
-		cid, err := strconv.ParseUint(cidStr, 10, 32)
+		cid64, err := strconv.ParseUint(cidStr, 10, 64)
 		if err != nil {
 			log.Printf("alert escalation: policy %d: invalid channel ID %q: %v", policy.ID, cidStr, err)
 			continue
 		}
-		ch, err := c.storage.GetNotificationChannel(ctx, uint(cid))
+		cid := uint(cid64)
+		if uint64(cid) != cid64 {
+			log.Printf("alert escalation: policy %d: channel ID %q overflows uint", policy.ID, cidStr)
+			continue
+		}
+		ch, err := c.storage.GetNotificationChannel(ctx, cid)
 		if err != nil {
 			log.Printf("alert escalation: policy %d: channel %d: %v", policy.ID, cid, err)
 			continue
@@ -112,6 +117,7 @@ func (c *KeyorixCore) escalateAlert(ctx context.Context, alert *models.AnomalyAl
 	return dispatched
 }
 
+
 // RunAlertEscalation scans unacknowledged AnomalyAlerts, matches them against
 // enabled AlertEscalationPolicies, and delivers to configured NotificationChannels.
 // It is safe to call repeatedly (idempotent at the delivery layer; each call
@@ -132,6 +138,7 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 	// one policy.
 	minDelay := minEscalateDelay(active)
 	threshold := c.now().Add(-time.Duration(minDelay) * time.Minute)
+
 
 	alerts, err := c.storage.ListUnacknowledgedAnomalyAlertsBefore(ctx, threshold)
 	if err != nil {

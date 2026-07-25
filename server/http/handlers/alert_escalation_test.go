@@ -239,3 +239,103 @@ func TestAlertEscalationHandler_RunEscalation_Success(t *testing.T) {
 	assert.EqualValues(t, 0, d["evaluated"])
 	assert.EqualValues(t, 0, d["escalated"])
 }
+
+// newAlertEscalationHandlerClosedDB returns a handler backed by a migrated but
+// immediately-closed SQLite database, so that all storage calls return errors.
+func newAlertEscalationHandlerClosedDB(t *testing.T) *AlertEscalationHandler {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.AlertEscalationPolicy{},
+		&models.AnomalyAlert{},
+		&models.NotificationChannel{},
+	))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	return NewAlertEscalationHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+}
+
+// ── Create internal error ──────────────────────────────────────────────────────
+
+func TestAlertEscalationHandler_Create_InternalError(t *testing.T) {
+	h := newAlertEscalationHandlerClosedDB(t)
+	body := `{"name":"pol","min_severity":"high","escalate_after_minutes":30}`
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Create(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ── List internal error ────────────────────────────────────────────────────────
+
+func TestAlertEscalationHandler_List_InternalError(t *testing.T) {
+	h := newAlertEscalationHandlerClosedDB(t)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ── Get internal error ─────────────────────────────────────────────────────────
+
+func TestAlertEscalationHandler_Get_InternalError(t *testing.T) {
+	h := newAlertEscalationHandlerClosedDB(t)
+	// ID 1 doesn't exist but DB is closed — any non-"not found" error → 500.
+	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ── Update invalid ID and internal error ──────────────────────────────────────
+
+func TestAlertEscalationHandler_Update_InvalidID(t *testing.T) {
+	h, _ := newAlertEscalationHandlerDB(t)
+	body, _ := json.Marshal(map[string]interface{}{"name": "x"})
+	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)), "id", "abc")
+	w := httptest.NewRecorder()
+	h.Update(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAlertEscalationHandler_Update_InternalError(t *testing.T) {
+	h := newAlertEscalationHandlerClosedDB(t)
+	body, _ := json.Marshal(map[string]interface{}{"name": "x"})
+	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)), "id", "1")
+	w := httptest.NewRecorder()
+	h.Update(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ── Delete invalid ID and internal error ──────────────────────────────────────
+
+func TestAlertEscalationHandler_Delete_InvalidID(t *testing.T) {
+	h, _ := newAlertEscalationHandlerDB(t)
+	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "abc")
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAlertEscalationHandler_Delete_InternalError(t *testing.T) {
+	h := newAlertEscalationHandlerClosedDB(t)
+	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ── RunEscalation internal error ──────────────────────────────────────────────
+
+func TestAlertEscalationHandler_RunEscalation_InternalError(t *testing.T) {
+	h := newAlertEscalationHandlerClosedDB(t)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
+	w := httptest.NewRecorder()
+	h.RunEscalation(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
