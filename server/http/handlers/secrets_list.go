@@ -25,13 +25,18 @@ import (
 // a blanket 403.
 //
 // Decision tree:
-//  1. If a specific project_id or environment_id filter is in the query the
-//     caller must hold secrets.read at that scope; deny 403 otherwise.
+//  1. If a specific project_id or environment_id filter is in the query, call
+//     ListSecretsWithSharingInfo directly — it returns owned + ACL-granted
+//     secrets within the requested scope. Users with no project role but
+//     per-secret ACL grants see exactly their granted secrets; users with
+//     neither see an empty list. No 403 is returned for scoped queries.
 //  2. If no scope filter is given, check for a global (Scope{}) grant first.
 //     Global readers proceed normally (original behaviour).
 //  3. If neither check passes, enumerate every scope where the user holds
 //     secrets.read, fetch secrets for each, union them (deduplicated by ID),
-//     and return the merged page. A user with NO scope returns an empty list.
+//     and return the merged page. A user with NO role scopes calls
+//     ListSecretsWithSharingInfo without a scope filter so that their owned
+//     and ACL-granted secrets are still surfaced.
 //  4. Machine principals skip steps 2–3 and always use ListSecretsInScope
 //     (machines have no user ownership model and are already gated by their
 //     own role assignments).
@@ -162,15 +167,13 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	scopeRequested := requestedScope.ProjectID != 0 || requestedScope.EnvironmentID != 0
 
 	if scopeRequested {
-		// Caller narrowed to a specific scope — enforce secrets.read there.
-		allowed, aerr := h.coreService.AuthorizePrincipal(
-			r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, requestedScope,
-		)
-		if aerr != nil || !allowed {
-			h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
-			return
-		}
-		// Authorized for the requested scope; proceed with normal listing.
+		// Scoped listing: return whatever the caller can access within the
+		// requested project/environment — owned secrets + ACL-granted secrets.
+		// No RBAC gate here: ListSecretsWithSharingInfo already enforces access
+		// through ownership (OwnerID) and per-secret ACL grants, so ACL-only
+		// users (no project role) see their granted secrets and users with no
+		// access see an empty list.  A hard 403 on this path would block ACL-only
+		// principals who hold a valid per-secret grant in the requested scope.
 		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)
@@ -208,14 +211,17 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	}
 
 	if len(scopes) == 0 {
-		// No accessible scopes — return an empty list rather than 403.
-		h.sendSuccess(w, &models.SecretListResponse{
-			Secrets:    []*models.SecretWithSharingInfo{},
-			Total:      0,
-			Page:       filter.Page,
-			PageSize:   filter.PageSize,
-			TotalPages: 1,
-		}, "")
+		// No project-role scopes, but the user may still hold per-secret ACL
+		// grants or own secrets directly.  Call ListSecretsWithSharingInfo with
+		// no scope filter so owned + ACL-granted secrets are surfaced.
+		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
+		if err != nil {
+			log.Printf("Error listing secrets for ACL-only user %d: %v", userCtx.UserID, err)
+			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
+			return
+		}
+		h.resolveSecretNames(r.Context(), response.Secrets)
+		h.sendSuccess(w, response, "")
 		return
 	}
 
