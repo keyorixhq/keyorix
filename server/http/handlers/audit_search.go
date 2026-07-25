@@ -8,6 +8,7 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -15,72 +16,89 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
+func parseQueryUint(q url.Values, key string) (uint, bool) {
+	v := q.Get(key)
+	if v == "" {
+		return 0, false
+	}
+	u, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return uint(u), true
+}
+
+func parseQueryInt(q url.Values, key string) (int, bool) {
+	v := q.Get(key)
+	if v == "" {
+		return 0, false
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+
+func parseQueryTime(q url.Values, key string) (time.Time, bool) {
+	v := q.Get(key)
+	if v == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+func parseQueryBoolPtr(q url.Values, key string) *bool {
+	switch q.Get(key) {
+	case "true":
+		t := true
+		return &t
+	case "false":
+		f := false
+		return &f
+	default:
+		return nil
+	}
+}
+
 // parseAuditSearchRequest extracts and coerces all query-string parameters for the
 // audit search endpoint into a core.AuditSearchRequest.
 func parseAuditSearchRequest(r *http.Request) core.AuditSearchRequest {
 	q := r.URL.Query()
-	req := core.AuditSearchRequest{}
-
-	if v := q.Get("actor"); v != "" {
-		req.ActorUsername = v
+	req := core.AuditSearchRequest{
+		ActorUsername: q.Get("actor"),
+		Action:        q.Get("action"),
+		ResourceType:  q.Get("resource_type"),
+		IPAddress:     q.Get("ip"),
+		Success:       parseQueryBoolPtr(q, "success"),
 	}
-	if v := q.Get("user_id"); v != "" {
-		if uid, err := strconv.ParseUint(v, 10, 32); err == nil {
-			req.UserID = uint(uid)
-		}
+	if uid, ok := parseQueryUint(q, "user_id"); ok {
+		req.UserID = uid
 	}
-	if v := q.Get("project_id"); v != "" {
-		if pid, err := strconv.ParseUint(v, 10, 32); err == nil {
-			req.ProjectID = uint(pid)
-		}
+	if pid, ok := parseQueryUint(q, "project_id"); ok {
+		req.ProjectID = pid
 	}
-	if v := q.Get("action"); v != "" {
-		req.Action = v
+	if rid, ok := parseQueryUint(q, "resource_id"); ok {
+		req.ResourceID = rid
 	}
-	if v := q.Get("resource_type"); v != "" {
-		req.ResourceType = v
+	if t, ok := parseQueryTime(q, "since"); ok {
+		req.Since = t
 	}
-	if v := q.Get("resource_id"); v != "" {
-		if rid, err := strconv.ParseUint(v, 10, 32); err == nil {
-			req.ResourceID = uint(rid)
-		}
+	if t, ok := parseQueryTime(q, "until"); ok {
+		req.Until = t
 	}
-	if v := q.Get("ip"); v != "" {
-		req.IPAddress = v
+	if l, ok := parseQueryInt(q, "limit"); ok {
+		req.Limit = l
 	}
-	if v := q.Get("success"); v != "" {
-		switch v {
-		case "true":
-			t := true
-			req.Success = &t
-		case "false":
-			f := false
-			req.Success = &f
-		}
-	}
-	if v := q.Get("since"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			req.Since = t
-		}
-	}
-	if v := q.Get("until"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			req.Until = t
-		}
-	}
-	if v := q.Get("limit"); v != "" {
-		if l, err := strconv.Atoi(v); err == nil {
-			req.Limit = l
-		}
-	}
-	if v := q.Get("offset"); v != "" {
-		if o, err := strconv.Atoi(v); err == nil && o >= 0 {
-			req.Offset = o
-		}
+	if o, ok := parseQueryInt(q, "offset"); ok && o >= 0 {
+		req.Offset = o
 	}
 	return req
 }
-
 
 // SearchAuditLogs handles GET /api/v1/audit/search.
 //
