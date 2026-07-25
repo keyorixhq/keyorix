@@ -10,7 +10,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -417,36 +416,36 @@ func TestCreateUserWithOTP_Success_S21(t *testing.T) {
 }
 
 // TestCreateUserWithOTP_ConflictDuplicate_S21 verifies the 409 branch in
-// createUserWithOTP when the user already exists (pre-seeded in DB).
+// createUserWithOTP when the user already exists (pre-seeded via first HTTP call).
 // This complements the S12 test in a separate DB.
 func TestCreateUserWithOTP_ConflictDuplicate_S21(t *testing.T) {
-	uh, cs := freshUserHandlerS21(t)
+	uh, _ := freshUserHandlerS21(t)
 
-	// Pre-seed the user via core so it exists in storage.
-	_, _, err := cs.CreateUserWithOneTimePassword(context.Background(), &core.CreateUserRequest{
-		Username:    "otp-dup-s21",
-		Email:       "otp-dup-s21@example.com",
-		DisplayName: "OTP Dup S21",
-	}, 1)
-	// If pre-seeding fails for any reason, fall through to the body call below
-	// and accept either a 409 (user was seeded by a previous run) or a 201.
-	_ = err
+	// Username/display-name chosen so all 3+-char words contain 'o' or 'l',
+	// which are excluded from the OTP charset — OTP can never match them.
+	makeBody := func() *bytes.Reader {
+		b, _ := json.Marshal(map[string]interface{}{
+			"username":                   "otp-loop-s21",
+			"email":                      "otp-loop-s21@example.com",
+			"display_name":               "OTP Loop S21",
+			"generate_one_time_password": true,
+		})
+		return bytes.NewReader(b)
+	}
 
-	body, _ := json.Marshal(map[string]interface{}{
-		"username":                   "otp-dup-s21",
-		"email":                      "otp-dup-s21@example.com",
-		"display_name":               "OTP Dup S21",
-		"generate_one_time_password": true,
-	})
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	uh.CreateUser(w, req)
+	// First call creates the user.
+	req1 := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", makeBody()))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	uh.CreateUser(w1, req1)
+	require.Equal(t, http.StatusCreated, w1.Code, "first OTP create should succeed")
 
-	// Expect 409 (user already exists) or 201 (first call; both paths exercise the
-	// createUserWithOTP function).
-	assert.True(t, w.Code == http.StatusConflict || w.Code == http.StatusCreated,
-		"expected 409 or 201, got %d", w.Code)
+	// Second call hits the duplicate-user branch → 409.
+	req2 := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", makeBody()))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	uh.CreateUser(w2, req2)
+	assert.Equal(t, http.StatusConflict, w2.Code)
 }
 
 // TestCreateUserWithOTP_SecondCallConflict_S21 creates the same user twice via
