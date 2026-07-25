@@ -10,6 +10,31 @@ _(nothing claimed)_
 
 ## Done
 
+- **Scoped list UX** — ACL-only users (no project role) now see their
+  per-secret / per-folder ACL-granted secrets on both scoped
+  (`?project_id=X`) and unfiltered `GET /secrets` requests. Previously
+  the scoped path returned 403 and the unfiltered path returned an empty
+  list; both now call `ListSecretsWithSharingInfo` which already enforces
+  access through owned + ACL-granted filtering. PR #1151.
+- **RBAC Phase 3 — per-folder / per-secret ACLs** — `internal/core/secret_acl.go`:
+  `SecretACL` model + `GrantSecretACL` / `RevokeSecretACL` / `ListSecretACLs` /
+  `HasSecretACL`; folder-grant inheritance walks the ancestor chain
+  (`GetSecretAncestors`). Storage: `ListSecretACLsByUser` inverse query. Listing
+  integration in `getACLGrantedSecretsWithSharingInfo` with BFS folder expansion.
+  HTTP handlers in `secret_acl_handler.go`. ADR-066.
+- **RBAC Phase 3 — project-scoped Group membership** — `UserGroup.ProjectID`
+  scopes memberships to a project (`0` = global). `RemoveUserFromGroup` and
+  `applyGroupMembershipChanges` carry the scope; authz inheritance already
+  resolves correctly.
+- **CLI scope flags** — `--project` / `--environment` on `keyorix rbac assign-role`
+  and `remove-role`; `--environment` requires `--project`. Group role commands
+  carry the same flags.
+- **Rotation policy execution** — background sweep (`rotation_reminders.go`)
+  calls `EvaluateRotationPolicies` on a schedule wired in `server/main.go:1016`;
+  `RunAutoRotation` executes wave-ordered auto-rotate jobs.
+- **gRPC services** — all 13 services in `server/grpc/services/` are fully
+  implemented; `UnimplementedXxxServer` embedding is the Go forward-compat
+  pattern, not a stub.
 - **RBAC PK rebuild migration** — `migrateDatabase` now detects when
   `user_roles`/`group_roles` carry the old `(user_id, role_id)` or
   `(user_id, role_id, project_id)` primary key (from GORM-created pre-Phase-2
@@ -32,26 +57,12 @@ _(nothing claimed)_
 ## Backlog
 
 ### RBAC follow-ups (from Phase 2)
-- **CLI scope flags** — add `--project` / `--environment` to the `keyorix rbac`
-  assign/remove commands. The HTTP API and remote storage client already carry
-  scope in the payload; only the CLI surface is missing.
 - **OpenAPI sync** — document the new optional `project_id` / `environment_id`
   fields on `POST /user-roles`, `PUT /users/{id}/roles`, and
   `POST /groups/{id}/roles`.
-- **Scoped list UX** — an unscoped `GET /secrets` by a non-global reader returns
-  403; consider instead returning the union of secrets across the scopes they can
-  read (requires a readable-scopes query + result filtering, with a log line when
-  results are truncated).
-
-### RBAC Phase 3 (proposed)
-- Per-folder / per-secret ACLs (Vault-path-style depth).
-- Scope `Group` membership itself to a project.
 
 ### Other
-- **Rotation policy execution** — `EvaluateRotationPolicies` is reachable only via
-  a GET endpoint; nothing runs it on a schedule, and the `Notification` model is
-  never written. Wire a background sweep that flags overdue secrets and emits
-  notifications.
-- **gRPC services** — `server/grpc/services/*` are `codes.Unimplemented` stubs;
-  implement against the core service if/when gRPC is on the roadmap.
 - **ADR-020** — project detail page (frontend, `keyorix-web`), still Proposed.
+- **FinOps / billing** — no `internal/billing/` or equivalent; no
+  chargeback / usage-by-team reporting. Required for enterprise multi-team
+  deployments.
