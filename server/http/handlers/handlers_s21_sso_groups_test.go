@@ -423,19 +423,23 @@ func TestCreateUserWithOTP_ConflictDuplicate_S21(t *testing.T) {
 	uh, cs := freshUserHandlerS21(t)
 
 	// Pre-seed the user via core so it exists in storage.
+	// Username/email/display_name chosen so all 3-char+ substrings in the
+	// display name contain 'o' (excluded from the OTP charset) — prevents the
+	// generated OTP from ever matching the personal-info check and producing a
+	// spurious 400 instead of the expected 409 or 201.
 	_, _, err := cs.CreateUserWithOneTimePassword(context.Background(), &core.CreateUserRequest{
-		Username:    "otp-dup-s21",
-		Email:       "otp-dup-s21@example.com",
-		DisplayName: "OTP Dup S21",
+		Username:    "oop-dop-s01",
+		Email:       "oop-dop-s01@example.com",
+		DisplayName: "OOP Dop S01",
 	}, 1)
 	// If pre-seeding fails for any reason, fall through to the body call below
 	// and accept either a 409 (user was seeded by a previous run) or a 201.
 	_ = err
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"username":                   "otp-dup-s21",
-		"email":                      "otp-dup-s21@example.com",
-		"display_name":               "OTP Dup S21",
+		"username":                   "oop-dop-s01",
+		"email":                      "oop-dop-s01@example.com",
+		"display_name":               "OOP Dop S01",
 		"generate_one_time_password": true,
 	})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(body)))
