@@ -1,0 +1,210 @@
+// secrets_list_cov_test.go — coverage top-up for secrets_list.go error and
+// edge-case paths not reached by secrets_list_scoped_test.go or secrets_list_s38_test.go.
+//
+// Covers:
+//   - Machine identity ListSecretsInScope error → 500 (line 147–151)
+//   - Scoped request ListSecretsWithSharingInfo error → 500 (line 178–182)
+//   - GetReadableScopes error → 500 (line 207–211)
+//   - Env-scoped role (EnvironmentID != 0) in the union loop (line 236–239)
+//   - Page beyond total results → start > totalInt clamp (line 260–262)
+//   - Zero secrets in union → totalPages == 0 → set to 1 (line 267–269)
+package handlers
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/middleware"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+var covListDBCounter atomic.Int64
+
+func freshCovListFixture(t *testing.T) (*SecretHandler, *gorm.DB) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	n := covListDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhandlers_cov_list_%d?mode=memory&cache=shared&_timeout=30000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.Role{},
+		&models.UserRole{},
+		&models.Permission{},
+		&models.RolePermission{},
+		&models.Group{},
+		&models.UserGroup{},
+		&models.GroupRole{},
+		&models.Project{},
+		&models.Environment{},
+		&models.SecretNode{},
+		&models.SecretACL{},
+		&models.AuditEvent{},
+		&models.SecretVersion{},
+		&models.SecretAccessLog{},
+		&models.ShareRecord{},
+	))
+
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+	return h, db
+}
+
+func withMachineCtx(r *http.Request) *http.Request {
+	machineID := uint(42)
+	uc := &middleware.UserContext{
+		UserID:            0,
+		ActorType:         core.ActorTypeMachine,
+		MachineIdentityID: &machineID,
+	}
+	return r.WithContext(context.WithValue(r.Context(), middleware.GetUserContextKey(), uc))
+}
+
+func withCovUserCtx(r *http.Request, userID uint) *http.Request {
+	uc := &middleware.UserContext{
+		UserID:    userID,
+		Username:  fmt.Sprintf("cov-user-%d", userID),
+		ActorType: core.ActorTypeUser,
+	}
+	return r.WithContext(context.WithValue(r.Context(), middleware.GetUserContextKey(), uc))
+}
+
+// TestListSecrets_MachineIdentity_ListError closes the DB so ListSecretsInScope
+// fails and the machine-principal path returns 500 (line 147–151).
+func TestListSecrets_MachineIdentity_ListError(t *testing.T) {
+	h, db := freshCovListFixture(t)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	req := withMachineCtx(httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil))
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestListSecrets_ScopedRequest_ListError closes the DB so ListSecretsWithSharingInfo
+// fails on the scoped path and the handler returns 500 (line 178–182).
+func TestListSecrets_ScopedRequest_ListError(t *testing.T) {
+	h, db := freshCovListFixture(t)
+
+	// Seed a project so the project_id query param resolves (not strictly needed;
+	// the scope check path is entered regardless of project existence).
+	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "scoped-err-proj"}).Error)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	req := withCovUserCtx(
+		httptest.NewRequest(http.MethodGet, "/api/v1/secrets?project_id=10", nil), 20)
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestListSecrets_GetReadableScopesError closes the DB so GetReadableScopes
+// fails for a non-global user (AuthorizePrincipal also fails, making globalOK
+// false and falling through to GetReadableScopes), returning 500 (line 207–211).
+func TestListSecrets_GetReadableScopesError(t *testing.T) {
+	h, db := freshCovListFixture(t)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	// No scope filter; non-machine user with no global role (both conditions
+	// fall through to GetReadableScopes which fails with the closed DB).
+	req := withCovUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil), 30)
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestListSecrets_EnvScopedRole_Union verifies that a user whose secrets.read
+// grant is scoped to a specific environment (EnvironmentID != 0) triggers the
+// env-scoped branch of the union loop (line 236–239) and returns their secrets.
+func TestListSecrets_EnvScopedRole_Union(t *testing.T) {
+	h, db := freshCovListFixture(t)
+
+	proj := &models.Project{Name: "proj-env-scoped"}
+	require.NoError(t, db.Create(proj).Error)
+	env := &models.Environment{Name: "env-env-scoped", ProjectID: proj.ID}
+	require.NoError(t, db.Create(env).Error)
+	secret := &models.SecretNode{
+		Name: "env-scoped-secret", ProjectID: proj.ID, EnvironmentID: env.ID,
+		OwnerID: 50, Type: "static", IsSecret: true,
+	}
+	require.NoError(t, db.Create(secret).Error)
+
+	// User 50: secrets.read scoped to (proj, env) — EnvironmentID != 0.
+	require.NoError(t, db.Create(&models.User{ID: 50, Username: "env-scoped-user", AccountState: "active"}).Error)
+	role := &models.Role{Name: "env_viewer"}
+	require.NoError(t, db.Create(role).Error)
+	perm := &models.Permission{Name: "secrets.read", Resource: "secrets", Action: "read"}
+	require.NoError(t, db.Create(perm).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: 50, RoleID: role.ID, ProjectID: proj.ID, EnvironmentID: env.ID,
+	}).Error)
+
+	req := withCovUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil), 50)
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeListResponse(t, w.Body.Bytes())
+	assert.GreaterOrEqual(t, resp.Total, int64(1), "env-scoped user should see at least their scoped secret")
+}
+
+// TestListSecrets_PageBeyondTotal_Clamp verifies that requesting a page beyond
+// the available results clamps start to totalInt (line 260–262) and sets
+// totalPages to 1 when the union is empty (line 267–269).
+func TestListSecrets_PageBeyondTotal_Clamp(t *testing.T) {
+	h, db := freshCovListFixture(t)
+
+	proj := &models.Project{Name: "proj-page-clamp"}
+	require.NoError(t, db.Create(proj).Error)
+
+	// User 60: project-scoped role but the project has no secrets → union is empty.
+	require.NoError(t, db.Create(&models.User{ID: 60, Username: "page-clamp-user", AccountState: "active"}).Error)
+	role := &models.Role{Name: "viewer_page_clamp"}
+	require.NoError(t, db.Create(role).Error)
+	perm := &models.Permission{Name: "secrets.read", Resource: "secrets", Action: "read"}
+	if err := db.Where("name = ?", "secrets.read").First(perm).Error; err != nil {
+		require.NoError(t, db.Create(perm).Error)
+	}
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{
+		UserID: 60, RoleID: role.ID, ProjectID: proj.ID, EnvironmentID: 0,
+	}).Error)
+
+	// page=2, page_size=1 → start = (2-1)*1 = 1. With 0 secrets, start > totalInt=0 → clamped.
+	req := withCovUserCtx(
+		httptest.NewRequest(http.MethodGet, "/api/v1/secrets?page=2&page_size=1", nil), 60)
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeListResponse(t, w.Body.Bytes())
+	assert.Equal(t, int64(0), resp.Total)
+	assert.Equal(t, 1, resp.TotalPages, "totalPages should be at least 1 even with 0 results")
+}
