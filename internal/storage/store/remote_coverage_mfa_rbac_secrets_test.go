@@ -9,6 +9,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -971,4 +972,27 @@ func TestRemoteCov_IncrementSecretReadCount_APIError(t *testing.T) {
 	err = rs.IncrementSecretReadCount(context.Background(), 999)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "increment read count failed")
+}
+
+// --------------------------------------------------------------------------
+// remote_mfa.go — MFA step-up stubs (intentionally unsupported in remote mode)
+// --------------------------------------------------------------------------
+
+func TestRemoteCov_UpsertMFAStepupToken_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:1"))
+	require.NoError(t, err)
+
+	err = rs.UpsertMFAStepupToken(context.Background(), 1, time.Now().Add(time.Hour))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
+}
+
+func TestRemoteCov_HasActiveMFAStepup_Unsupported(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("http://127.0.0.1:1"))
+	require.NoError(t, err)
+
+	ok, err := rs.HasActiveMFAStepup(context.Background(), 1)
+	require.Error(t, err)
+	assert.False(t, ok)
+	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
 }

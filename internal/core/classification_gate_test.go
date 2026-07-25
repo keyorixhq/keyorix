@@ -446,3 +446,17 @@ func TestClassificationMFAStepUp_Combined_BothRequired(t *testing.T) {
 	require.Error(t, err, "approval gate must still deny even with a valid MFA step-up token")
 	assert.Contains(t, err.Error(), "access request")
 }
+
+// Requirement: when windowMinutes > 0 the custom duration is applied and surfaced in
+// the denial message, exercising the positive-windowMinutes branch of
+// SetClassificationRestrictedRequiresMFAStepUp.
+func TestClassificationMFAStepUp_On_CustomWindow_Denied(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresMFAStepUp(true, 5) // positive windowMinutes
+
+	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "5m0s", "denial must mention the custom 5-minute window")
+}
