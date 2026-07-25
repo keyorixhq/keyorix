@@ -225,6 +225,7 @@ export const useAuthStore = create<AuthStore>()(
                 // Always attempt the profile fetch — under cookie auth there is no
                 // client-visible token to gate on; a 401 from the request itself is
                 // the only way to know the session is gone.
+                if (get().isLoading) return;
                 set({ isLoading: true });
                 try {
                     const profile = await authService.getProfile();
@@ -257,7 +258,9 @@ export const useAuthStore = create<AuthStore>()(
                 } catch {
                     set({ user: null, isAuthenticated: false, isLoading: false, impersonatedBy: null });
                     clearPersistedAuthData();
-                    window.location.href = '/login';
+                    if (window.location.pathname !== '/login') {
+                        window.location.href = '/login';
+                    }
                 }
             },
 

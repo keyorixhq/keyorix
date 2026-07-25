@@ -12,6 +12,15 @@ const config = getEnvConfig();
 // to this hook's actual SESSION_TIMEOUT, so the two could disagree.
 const SESSION_TIMEOUT_WARNING_MS = 5 * 60 * 1000;
 
+// Module-level flag: the initial checkAuth/rehydrate must run exactly once per
+// page load, not once per component that calls useAuth(). Without this, every
+// component whose parent shows a loading spinner (PublicRoute, ProtectedRoute)
+// unmounts its children when isLoading=true and remounts them when it goes
+// false — each remount re-fires the effect and triggers another checkAuth,
+// creating an infinite loop. Module scope resets on full navigation (logout
+// does window.location.href) so re-login always gets a fresh init.
+let didInit = false;
+
 export const useAuth = () => {
     const {
         user,
@@ -35,8 +44,9 @@ export const useAuth = () => {
     // no client-visible token to check first under cookie auth) and cleanly clears
     // state if there's no valid session cookie, so this is safe to call unconditionally.
     useEffect(() => {
+        if (didInit) return;
+        didInit = true;
         const init = async () => {
-            // Wait for Zustand persist to hydrate from localStorage
             await useAuthStore.persist.rehydrate();
             await checkAuth();
         };

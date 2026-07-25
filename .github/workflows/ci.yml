@@ -46,8 +46,11 @@ jobs:
       # equivalent for the npm ecosystem, mirrored from keyorix's CI). Scoped to
       # --prod: dev-only tooling (jsdom/vitest's undici chain) never ships and
       # would make this gate noisy with findings that carry no real exposure.
+      # Pipes through scripts/audit-check.mjs so known non-applicable advisories
+      # (react-router RSC-mode CVE, not reachable in SPA builds) can be suppressed
+      # without silently ignoring all findings.
       - name: Audit dependencies
-        run: pnpm audit --audit-level=high --prod
+        run: pnpm audit --json --prod | node scripts/audit-check.mjs
 
   gitleaks:
     runs-on: ubuntu-latest

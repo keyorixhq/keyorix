@@ -15,6 +15,7 @@ import { apiErrorMessage } from '../../services/client';
 import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow, useBulkClassifySecrets, useSetAutoRotate, useSecretPolicy } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
+import { isPatternSafe, testPatternSafely } from '../../utils/safeRegex';
 
 const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
     { value: 'all', label: 'All Types' }, { value: 'text', label: 'Text' },
@@ -79,6 +80,12 @@ export const SecretsListPage: React.FC = () => {
         [namePolicy.pattern ? `must match ${namePolicy.pattern}` : '',
          namePolicy.max_length ? `max ${namePolicy.max_length} chars` : '']
             .filter(Boolean).join('; ');
+    // The naming-policy pattern is admin-configured but untrusted from the
+    // browser's perspective -- a catastrophic-backtracking shape (e.g.
+    // `(a+)+$`) would hang this tab. When the pattern looks unsafe, skip the
+    // live client-side check (the server still enforces it on submit) and
+    // say so.
+    const namePatternUnsafe = !!namePolicy?.enabled && !!namePolicy.pattern && !isPatternSafe(namePolicy.pattern);
     // secretNameError returns a client-side validation message, or '' when ok. The
     // server re-validates regardless — this just gives faster feedback.
     const secretNameError = (name: string): string => {
@@ -87,11 +94,14 @@ export const SecretsListPage: React.FC = () => {
             return `Name exceeds the ${namePolicy.max_length}-character maximum.`;
         }
         if (namePolicy.pattern) {
-            try {
-                if (!new RegExp(namePolicy.pattern).test(name)) {
-                    return `Name must match the pattern ${namePolicy.pattern}.`;
-                }
-            } catch { /* invalid client-side regex: defer to the server */ }
+            // testPatternSafely refuses to run patterns that look like
+            // catastrophic-backtracking shapes (or oversized input) -- see
+            // src/utils/safeRegex.ts for why a same-thread timeout can't
+            // substitute for that check.
+            const result = testPatternSafely(namePolicy.pattern, name);
+            if (!result.skipped && !result.matches) {
+                return `Name must match the pattern ${namePolicy.pattern}.`;
+            }
         }
         return '';
     };
@@ -433,6 +443,7 @@ export const SecretsListPage: React.FC = () => {
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name <span className="text-red-500">*</span></label>
                         <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                         {nameHint && <p className="mt-1 text-xs text-base-muted">Naming policy: {nameHint}.</p>}
+                        {namePatternUnsafe && <p className="mt-1 text-xs text-amber-600">This naming pattern can&apos;t be safely checked in your browser and won&apos;t be validated here; the server will still enforce it when you submit.</p>}
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1">
