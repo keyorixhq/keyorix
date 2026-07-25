@@ -3,8 +3,9 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,35 @@ func makeAlert(id uint, sev string, ageMinutes int) models.AnomalyAlert {
 		DetectedAt:   time.Now().UTC().Add(-time.Duration(ageMinutes) * time.Minute),
 		Acknowledged: false,
 	}
+}
+
+// fakeWebhookTransport is a sandbox-safe http.RoundTripper that intercepts
+// outbound webhook POSTs without binding a TCP port.
+type fakeWebhookTransport struct {
+	statusCode int          // returned status; 0 → 200
+	err        error        // if non-nil, returned instead of a response
+	called     chan struct{} // signalled on each call when non-nil
+}
+
+func (t *fakeWebhookTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+	if t.err != nil {
+		return nil, t.err
+	}
+	if t.called != nil {
+		select {
+		case t.called <- struct{}{}:
+		default:
+		}
+	}
+	code := t.statusCode
+	if code == 0 {
+		code = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: code,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     make(http.Header),
+	}, nil
 }
 
 // ---- RunAlertEscalation ----
@@ -145,13 +175,8 @@ func TestRunAlertEscalation_AlertTooRecent_Skipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_MatchingAlert_Escalated(t *testing.T) {
-	// Start a test HTTP server to receive the webhook POST.
-	received := make(chan bool, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received <- true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+	received := make(chan struct{}, 1)
+	tr := &fakeWebhookTransport{called: received}
 
 	store := new(MockStorage)
 	now := time.Now().UTC()
@@ -166,7 +191,7 @@ func TestRunAlertEscalation_MatchingAlert_Escalated(t *testing.T) {
 		ID:      7,
 		Name:    "test-webhook",
 		Type:    "webhook",
-		URL:     srv.URL,
+		URL:     "http://fake-webhook.test/hook",
 		Enabled: true,
 	}
 
@@ -176,6 +201,7 @@ func TestRunAlertEscalation_MatchingAlert_Escalated(t *testing.T) {
 
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
+	c.httpClient = &http.Client{Transport: tr}
 
 	result, err := c.RunAlertEscalation(context.Background())
 	require.NoError(t, err)
@@ -183,7 +209,6 @@ func TestRunAlertEscalation_MatchingAlert_Escalated(t *testing.T) {
 	assert.Equal(t, 1, result.Escalated)
 	assert.Equal(t, 0, result.Skipped)
 
-	// Verify the webhook was called.
 	select {
 	case <-received:
 	default:
@@ -226,34 +251,30 @@ func TestRunAlertEscalation_DisabledChannel_Skipped(t *testing.T) {
 }
 
 func TestRunAlertEscalation_MultiplePolicies_OneMatches(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+	tr := &fakeWebhookTransport{}
 
 	store := new(MockStorage)
 	now := time.Now().UTC()
 
 	p1 := makePolicy(1, "p1", "critical", 30) // severity too high — won't match "high" alert
 	p1.ChannelIDs = "7"
-	p2 := makePolicy(2, "p2", "medium", 60)   // matches
+	p2 := makePolicy(2, "p2", "medium", 60) // matches
 	p2.ChannelIDs = "7"
 
 	alert := makeAlert(1, "high", 90) // 90 min old, severity=high
 	alert.DetectedAt = now.Add(-90 * time.Minute)
 
-	ch := &models.NotificationChannel{ID: 7, Name: "wh", Type: "webhook", URL: srv.URL, Enabled: true}
+	ch := &models.NotificationChannel{ID: 7, Name: "wh", Type: "webhook", URL: "http://fake-webhook.test/hook", Enabled: true}
 
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p1, p2}, nil)
 	store.On("ListUnacknowledgedAnomalyAlertsBefore", mock.Anything, mock.Anything).Return([]models.AnomalyAlert{alert}, nil)
-	// Channel 7 fetched twice: once for p1 (gets it but sev fails before channel fetch — wait, p1 fails on severity)
-	// Actually p1 has minSeverity "critical" and alert is "high": severityAtLeast("high","critical") is false.
-	// p1 won't even call GetNotificationChannel for its channels.
-	// p2 has minSeverity "medium" and alert age 90 >= 60: matches, calls GetNotificationChannel(7).
+	// p1 fails on severity (critical > high) so no channel fetch for p1.
+	// p2 matches: age 90 >= 60, severity high >= medium; fetches channel 7.
 	store.On("GetNotificationChannel", mock.Anything, uint(7)).Return(ch, nil)
 
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
+	c.httpClient = &http.Client{Transport: tr}
 
 	result, err := c.RunAlertEscalation(context.Background())
 	require.NoError(t, err)
@@ -312,12 +333,8 @@ func TestRunAlertEscalation_ChannelFetchError_ContinuesOtherChannels(t *testing.
 }
 
 func TestRunAlertEscalation_SlackChannel_Escalated(t *testing.T) {
-	received := make(chan bool, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received <- true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+	received := make(chan struct{}, 1)
+	tr := &fakeWebhookTransport{called: received}
 
 	store := new(MockStorage)
 	now := time.Now().UTC()
@@ -328,7 +345,7 @@ func TestRunAlertEscalation_SlackChannel_Escalated(t *testing.T) {
 	alert := makeAlert(1, "low", 10)
 	alert.DetectedAt = now.Add(-10 * time.Minute)
 
-	ch := &models.NotificationChannel{ID: 3, Name: "slack-ops", Type: "slack", URL: srv.URL, Enabled: true}
+	ch := &models.NotificationChannel{ID: 3, Name: "slack-ops", Type: "slack", URL: "http://fake-slack.test/hook", Enabled: true}
 
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
 	store.On("ListUnacknowledgedAnomalyAlertsBefore", mock.Anything, mock.Anything).Return([]models.AnomalyAlert{alert}, nil)
@@ -336,6 +353,7 @@ func TestRunAlertEscalation_SlackChannel_Escalated(t *testing.T) {
 
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
+	c.httpClient = &http.Client{Transport: tr}
 
 	result, err := c.RunAlertEscalation(context.Background())
 	require.NoError(t, err)
@@ -423,11 +441,8 @@ func TestRunAlertEscalation_ListAlertsError(t *testing.T) {
 }
 
 func TestRunAlertEscalation_WebhookError_CountsSkipped(t *testing.T) {
-	// Webhook returns 500, dispatch fails; alert counted as skipped.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	// Webhook returns 500; dispatch fails and alert is counted as skipped.
+	tr := &fakeWebhookTransport{statusCode: http.StatusInternalServerError}
 
 	store := new(MockStorage)
 	now := time.Now().UTC()
@@ -438,7 +453,7 @@ func TestRunAlertEscalation_WebhookError_CountsSkipped(t *testing.T) {
 	alert := makeAlert(1, "low", 30)
 	alert.DetectedAt = now.Add(-30 * time.Minute)
 
-	ch := &models.NotificationChannel{ID: 8, Name: "bad-hook", Type: "webhook", URL: srv.URL, Enabled: true}
+	ch := &models.NotificationChannel{ID: 8, Name: "bad-hook", Type: "webhook", URL: "http://fake-webhook.test/hook", Enabled: true}
 
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
 	store.On("ListUnacknowledgedAnomalyAlertsBefore", mock.Anything, mock.Anything).Return([]models.AnomalyAlert{alert}, nil)
@@ -446,11 +461,11 @@ func TestRunAlertEscalation_WebhookError_CountsSkipped(t *testing.T) {
 
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
+	c.httpClient = &http.Client{Transport: tr}
 
 	result, err := c.RunAlertEscalation(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Evaluated)
-	// dispatch logged the error but didn't count as "escalated"
 	assert.Equal(t, 0, result.Escalated)
 	assert.Equal(t, 1, result.Skipped)
 	store.AssertExpectations(t)
@@ -740,16 +755,13 @@ func TestPostJSONToURL_MarshalError(t *testing.T) {
 // ---- RunAlertEscalation with two+ active policies (covers minDelay update branch) ----
 
 func TestRunAlertEscalation_MultiPolicyMinDelayUpdate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+	tr := &fakeWebhookTransport{}
 
 	store := new(MockStorage)
 	now := time.Now().UTC()
 
 	// Two policies with different delays; p2 has a shorter delay (10 min < 60 min).
-	// This exercises the minDelay update branch (line 73-75).
+	// This exercises the minDelay update branch.
 	p1 := makePolicy(1, "slow-policy", "low", 60)
 	p1.ChannelIDs = ""
 	p2 := makePolicy(2, "fast-policy", "low", 10)
@@ -759,7 +771,7 @@ func TestRunAlertEscalation_MultiPolicyMinDelayUpdate(t *testing.T) {
 	alert := makeAlert(1, "low", 15)
 	alert.DetectedAt = now.Add(-15 * time.Minute)
 
-	ch := &models.NotificationChannel{ID: 2, Name: "wh", Type: "webhook", URL: srv.URL, Enabled: true}
+	ch := &models.NotificationChannel{ID: 2, Name: "wh", Type: "webhook", URL: "http://fake-webhook.test/hook", Enabled: true}
 
 	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p1, p2}, nil)
 	store.On("ListUnacknowledgedAnomalyAlertsBefore", mock.Anything, mock.Anything).Return([]models.AnomalyAlert{alert}, nil)
@@ -767,6 +779,7 @@ func TestRunAlertEscalation_MultiPolicyMinDelayUpdate(t *testing.T) {
 
 	c := NewKeyorixCore(store)
 	c.now = fixedNow(now)
+	c.httpClient = &http.Client{Transport: tr}
 
 	result, err := c.RunAlertEscalation(context.Background())
 	require.NoError(t, err)
