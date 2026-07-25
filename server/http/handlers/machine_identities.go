@@ -232,7 +232,12 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		t := time.Now().AddDate(0, 0, body.ExpiresInDays)
 		expiresAt = &t
 	}
-	result, err := h.coreService.IssueMachineToken(r.Context(), projectID, uint(machineID), body.Name, expiresAt, body.Classification, actor.UserID, body.AllowedCIDRs)
+	result, err := h.coreService.IssueMachineToken(r.Context(), projectID, uint(machineID), actor.UserID, core.IssueMachineTokenParams{
+		Name:           body.Name,
+		ExpiresAt:      expiresAt,
+		Classification: body.Classification,
+		AllowedCIDRs:   body.AllowedCIDRs,
+	})
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

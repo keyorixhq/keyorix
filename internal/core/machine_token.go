@@ -45,11 +45,19 @@ func (c *KeyorixCore) machineInProject(ctx context.Context, projectID, machineID
 	return m, nil
 }
 
+// IssueMachineTokenParams groups the token-specific fields for IssueMachineToken.
+type IssueMachineTokenParams struct {
+	Name           string
+	ExpiresAt      *time.Time
+	Classification string
+	AllowedCIDRs   []string
+}
+
 // IssueMachineToken mints an opaque bearer token for an active machine identity.
 // The raw token is returned once for out-of-band delivery; only its SHA-256 hash
-// is stored. allowedCIDRs, when non-nil and non-empty, restricts the token to
-// requests whose source IP falls within one of the listed CIDR blocks.
-func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID uint, name string, expiresAt *time.Time, classification string, actorID uint, allowedCIDRs []string) (*IssueMachineTokenResult, error) {
+// is stored. params.AllowedCIDRs, when non-nil and non-empty, restricts the token
+// to requests whose source IP falls within one of the listed CIDR blocks.
+func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID, actorID uint, params IssueMachineTokenParams) (*IssueMachineTokenResult, error) {
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
 		return nil, err
@@ -57,6 +65,7 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	if m.State != MachineActive {
 		return nil, fmt.Errorf("cannot issue a token for a %s machine identity (must be active)", m.State)
 	}
+	classification := params.Classification
 	if !IsValidClassification(classification) {
 		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
 	}
@@ -72,17 +81,17 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	raw := machineTokenPrefix + base64.RawURLEncoding.EncodeToString(b)
 
 	var cidrJSON string
-	if len(allowedCIDRs) > 0 {
-		b, _ := json.Marshal(allowedCIDRs)
+	if len(params.AllowedCIDRs) > 0 {
+		b, _ := json.Marshal(params.AllowedCIDRs)
 		cidrJSON = string(b)
 	}
 	cred := &models.MachineIdentityCredential{
 		MachineIdentityID: machineID,
-		Name:              strings.TrimSpace(name),
+		Name:              strings.TrimSpace(params.Name),
 		TokenHash:         sha256Hex(raw),
 		TokenPrefix:       raw[:len(machineTokenPrefix)+6], // "kx_machine_ab12cd"
 		AllowedCIDRs:      cidrJSON,
-		ExpiresAt:         expiresAt,
+		ExpiresAt:         params.ExpiresAt,
 		Classification:    classification,
 		CreatedAt:         c.now(),
 	}

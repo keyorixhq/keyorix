@@ -76,7 +76,7 @@ func (h *NotificationChannelHandler) Create(w http.ResponseWriter, r *http.Reque
 		Events  string `json:"events"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	ch := &models.NotificationChannel{
@@ -131,7 +131,7 @@ func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Reque
 	}
 	var body map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	updated, err := h.coreService.UpdateNotificationChannel(r.Context(), id, body)
@@ -187,7 +187,7 @@ func (h *NotificationChannelHandler) SetRetryPolicy(w http.ResponseWriter, r *ht
 		RetryBackoffMs int `json:"retry_backoff_ms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
 	cfg := core.NotificationRetryConfig{
