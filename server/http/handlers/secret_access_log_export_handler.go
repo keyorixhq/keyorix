@@ -5,10 +5,12 @@
 package handlers
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 
@@ -43,5 +45,5 @@ func (h *SecretHandler) ExportAccessLog(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = w.Write(data) // #nosec G705 -- Content-Type explicitly set (csv/json); X-Content-Type-Options: nosniff prevents sniffing // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
+	http.ServeContent(w, r, filename, time.Time{}, bytes.NewReader(data))
 }
