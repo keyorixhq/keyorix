@@ -147,9 +147,11 @@ func TestListSecrets_FilterParams_S38(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestListSecrets_ScopeFilter_403_S38 verifies that a scope filter with an unauthorized
-// user returns 403 (exercises the project_id/environment_id parse + scope-auth check).
-func TestListSecrets_ScopeFilter_403_S38(t *testing.T) {
+// TestListSecrets_ScopeFilter_NoAccess_S38 verifies that a scope filter with a
+// user who has no role or ACL grants in the requested project returns 200+empty
+// (not 403).  The scoped-list endpoint never returns 403 — it returns the
+// intersection of the requested scope and the caller's accessible secrets.
+func TestListSecrets_ScopeFilter_NoAccess_S38(t *testing.T) {
 	t.Parallel()
 	h, _ := freshListFixtureS38(t)
 	req := withUserCtxS38(
@@ -157,7 +159,7 @@ func TestListSecrets_ScopeFilter_403_S38(t *testing.T) {
 			"/api/v1/secrets?project_id=1&environment_id=1", nil), 1)
 	w := httptest.NewRecorder()
 	h.ListSecrets(w, req)
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // TestListSecrets_ExpiresBeforeParam_S38 exercises the expires_before RFC3339 filter.

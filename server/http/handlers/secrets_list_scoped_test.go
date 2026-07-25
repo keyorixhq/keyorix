@@ -226,16 +226,17 @@ func TestListSecrets_NoSecretsReadPerm_ReturnsEmpty(t *testing.T) {
 	assert.Equal(t, int64(0), resp.Total, "expected empty list for user with no permissions")
 }
 
-// TestListSecrets_ScopedUser_ForbiddenSpecificScope verifies that a
-// project-scoped user gets 403 when they explicitly request a project
-// they are NOT authorized for.
-func TestListSecrets_ScopedUser_ForbiddenSpecificScope(t *testing.T) {
+// TestListSecrets_ScopedUser_NoAccessProject_ReturnsEmpty verifies that a
+// project-scoped user gets an empty list (not 403) when they explicitly
+// request a project they have no role or ACL grants in.  The scoped-list
+// endpoint never returns 403 — it returns what the caller can access.
+func TestListSecrets_ScopedUser_NoAccessProject_ReturnsEmpty(t *testing.T) {
 	h, db := freshScopedListFixture(t)
 
 	// Seed two projects; user 5 has read on proj1 only.
 	proj1 := &models.Project{Name: "proj-allowed"}
 	require.NoError(t, db.Create(proj1).Error)
-	proj2 := &models.Project{Name: "proj-forbidden"}
+	proj2 := &models.Project{Name: "proj-no-access"}
 	require.NoError(t, db.Create(proj2).Error)
 
 	require.NoError(t, db.Create(&models.User{ID: 5, Username: "partial-user", AccountState: "active"}).Error)
@@ -244,13 +245,93 @@ func TestListSecrets_ScopedUser_ForbiddenSpecificScope(t *testing.T) {
 		UserID: 5, RoleID: roleID, ProjectID: proj1.ID, EnvironmentID: 0,
 	}).Error)
 
-	// Request secrets from the forbidden project.
+	// Request secrets from the project where the user has no access.
 	url := fmt.Sprintf("/api/v1/secrets?project_id=%d", proj2.ID)
 	req := withUserCtxID2(httptest.NewRequest(http.MethodGet, url, nil), 5, "partial-user")
 	w := httptest.NewRecorder()
 	h.ListSecrets(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code, "expected 403 for unauthorized scope")
+	require.Equal(t, http.StatusOK, w.Code, "scoped listing should return 200+empty, not 403")
+	resp := decodeListResponse(t, w.Body.Bytes())
+	assert.Equal(t, int64(0), resp.Total, "expected empty list for project with no access")
+}
+
+// TestListSecrets_ACLOnly_ScopedRequest verifies that a user with no project
+// role but a per-secret ACL grant in a project gets their granted secrets
+// when filtering by that project_id (not a 403 or empty list).
+func TestListSecrets_ACLOnly_ScopedRequest(t *testing.T) {
+	h, db := freshScopedListFixture(t)
+
+	proj := &models.Project{Name: "proj-acl-scoped"}
+	require.NoError(t, db.Create(proj).Error)
+	env := &models.Environment{Name: "env-acl-scoped", ProjectID: proj.ID}
+	require.NoError(t, db.Create(env).Error)
+
+	// Two secrets in the project; user 8 gets an ACL grant only on secret1.
+	secret1 := &models.SecretNode{
+		Name: "acl-secret-1", ProjectID: proj.ID, EnvironmentID: env.ID,
+		OwnerID: 99, Type: "static", IsSecret: true,
+	}
+	require.NoError(t, db.Create(secret1).Error)
+	secret2 := &models.SecretNode{
+		Name: "acl-secret-2", ProjectID: proj.ID, EnvironmentID: env.ID,
+		OwnerID: 99, Type: "static", IsSecret: true,
+	}
+	require.NoError(t, db.Create(secret2).Error)
+
+	require.NoError(t, db.Create(&models.User{ID: 8, Username: "acl-only-user", AccountState: "active"}).Error)
+	// No UserRole — ACL grant only.
+	require.NoError(t, db.Create(&models.SecretACL{
+		SecretID:    secret1.ID,
+		UserID:      8,
+		Permissions: `["secrets.read"]`,
+		GrantedBy:   99,
+	}).Error)
+
+	url := fmt.Sprintf("/api/v1/secrets?project_id=%d", proj.ID)
+	req := withUserCtxID2(httptest.NewRequest(http.MethodGet, url, nil), 8, "acl-only-user")
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "ACL-only user should get 200, not 403")
+	resp := decodeListResponse(t, w.Body.Bytes())
+	require.Equal(t, int64(1), resp.Total, "expected exactly the ACL-granted secret")
+	assert.Equal(t, "acl-secret-1", resp.Secrets[0].Name)
+}
+
+// TestListSecrets_ACLOnly_UnfilteredRequest verifies that a user with no
+// project role but per-secret ACL grants gets those secrets on an unfiltered
+// GET /secrets (not an empty list).
+func TestListSecrets_ACLOnly_UnfilteredRequest(t *testing.T) {
+	h, db := freshScopedListFixture(t)
+
+	proj := &models.Project{Name: "proj-acl-unfiltered"}
+	require.NoError(t, db.Create(proj).Error)
+	env := &models.Environment{Name: "env-acl-unfiltered", ProjectID: proj.ID}
+	require.NoError(t, db.Create(env).Error)
+
+	secret := &models.SecretNode{
+		Name: "acl-unfiltered-secret", ProjectID: proj.ID, EnvironmentID: env.ID,
+		OwnerID: 99, Type: "static", IsSecret: true,
+	}
+	require.NoError(t, db.Create(secret).Error)
+
+	require.NoError(t, db.Create(&models.User{ID: 9, Username: "acl-only-user-2", AccountState: "active"}).Error)
+	require.NoError(t, db.Create(&models.SecretACL{
+		SecretID:    secret.ID,
+		UserID:      9,
+		Permissions: `["secrets.read"]`,
+		GrantedBy:   99,
+	}).Error)
+
+	req := withUserCtxID2(httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil), 9, "acl-only-user-2")
+	w := httptest.NewRecorder()
+	h.ListSecrets(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeListResponse(t, w.Body.Bytes())
+	require.Equal(t, int64(1), resp.Total, "expected the ACL-granted secret to appear on unfiltered list")
+	assert.Equal(t, "acl-unfiltered-secret", resp.Secrets[0].Name)
 }
 
 // TestListSecrets_GlobalReader_StillWorks verifies that a user with a global
