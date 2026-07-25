@@ -246,6 +246,32 @@ func (c *KeyorixCore) PasswordExpired(user *models.User) bool {
 	return c.now().Sub(*set) > maxAge
 }
 
+// enforcePasswordExpiryGate transitions an active user to password_reset_required
+// when the configured max_age_days policy has elapsed (ADR-025). Called at
+// session-mint time so every subsequent API request is hard-gated by
+// EnforceAccountRestriction, not just the client-side soft flag in the login
+// response.
+//
+// Only transitions active → password_reset_required; other states (already
+// restricted, suspended, deprovisioned) are left unchanged. Fails closed: a
+// storage error is returned so an expired password cannot bypass the gate due
+// to a transient write failure.
+func (c *KeyorixCore) enforcePasswordExpiryGate(ctx context.Context, user *models.User) error {
+	if !c.PasswordExpired(user) {
+		return nil
+	}
+	if NormalizeAccountState(user.AccountState) != AccountActive {
+		return nil
+	}
+	now := c.now()
+	if err := c.storage.SetAccountState(ctx, user.ID, AccountPasswordResetRequired, now); err != nil {
+		return fmt.Errorf("failed to enforce password expiry: %w", err)
+	}
+	user.AccountState = AccountPasswordResetRequired
+	user.UpdatedAt = now
+	return nil
+}
+
 // CurrentSessionID returns the session ID backing a session token, or 0 if the
 // token is not a session (e.g. a PAT) or no longer exists. Used to flag the
 // "current" row in the active-sessions list.

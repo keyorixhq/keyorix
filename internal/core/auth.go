@@ -178,6 +178,14 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	if err != nil {
 		return nil, nil, err
 	}
+	// Enforce the password max-age policy: if the password has expired, gate the
+	// account to password_reset_required NOW so the middleware blocks API access
+	// on every subsequent request (ADR-025 hard gate). The soft flag in the login
+	// response alone is not sufficient — a client that ignores it would retain
+	// full API access indefinitely.
+	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
+		return nil, nil, err
+	}
 	// Accounts with any second factor (TOTP or a passkey) get no session from the
 	// password step — the caller must complete it (CreateMFAChallenge →
 	// VerifyMFALogin for TOTP, or the WebAuthn assertion ceremony for a passkey).
