@@ -86,7 +86,10 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, req BulkRotateReque
 	}
 
 	if len(req.SecretIDs) > 0 {
-		return result, c.bulkRotateExplicit(ctx, req, result)
+		if err := c.bulkRotateExplicit(ctx, req, result); err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	// Project-wide: list all matching secrets. Use the storage ceiling page size (10 000)
