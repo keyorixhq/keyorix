@@ -10,6 +10,11 @@ _(nothing claimed)_
 
 ## Done
 
+- **Password expiry hard gate** — `enforcePasswordExpiryGate` wired into `Login`
+  and `VerifyMFALogin`: when `max_age_days` is exceeded for an active user, the
+  account state is transitioned to `password_reset_required` before the session is
+  minted, so `EnforceAccountRestriction` blocks all subsequent API requests.
+  Fails closed on storage error. ADR-025. Commit 871cc520.
 - **RBAC PK rebuild migration** — `migrateDatabase` now detects when
   `user_roles`/`group_roles` carry the old `(user_id, role_id)` or
   `(user_id, role_id, project_id)` primary key (from GORM-created pre-Phase-2
