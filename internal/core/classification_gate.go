@@ -125,38 +125,57 @@ func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, sec
 
 	// Gate 1: narrower RBAC permission (fast path — no per-secret DB query).
 	if c.classificationRestrictedRequiresPermission {
-		scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-		ok, err := c.Authorize(ctx, userID, PermSecretReadRestricted, scope)
-		if err != nil {
-			return fmt.Errorf("secret %q is restricted: could not verify the %q permission: %w", secret.Name, PermSecretReadRestricted, err)
-		}
-		if !ok {
-			return fmt.Errorf("secret %q is restricted: the %q permission is required at the project scope to read this secret's value", secret.Name, PermSecretReadRestricted)
+		if err := c.checkRestrictedPermissionGate(ctx, secret, userID); err != nil {
+			return err
 		}
 	}
-
 	// Gate 2: approved secret-scoped access request.
 	if c.classificationRestrictedRequiresApproval {
-		ok, err := c.hasApprovedSecretAccessRequest(ctx, secret.ProjectID, secret.ID, userID)
-		if err != nil {
-			return fmt.Errorf("secret %q is restricted: could not verify an approved access request: %w", secret.Name, err)
-		}
-		if !ok {
-			return fmt.Errorf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
+		if err := c.checkRestrictedApprovalGate(ctx, secret, userID); err != nil {
+			return err
 		}
 	}
-
 	// Gate 3: recent MFA step-up (completed within the configured window).
 	if c.classificationRestrictedRequiresMFAStepUp {
-		ok, err := c.storage.HasActiveMFAStepup(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("secret %q is restricted: could not verify MFA step-up: %w", secret.Name, err)
-		}
-		if !ok {
-			return fmt.Errorf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
+		if err := c.checkRestrictedMFAGate(ctx, secret, userID); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func (c *KeyorixCore) checkRestrictedPermissionGate(ctx context.Context, secret *models.SecretNode, userID uint) error {
+	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+	ok, err := c.Authorize(ctx, userID, PermSecretReadRestricted, scope)
+	if err != nil {
+		return fmt.Errorf("secret %q is restricted: could not verify the %q permission: %w", secret.Name, PermSecretReadRestricted, err)
+	}
+	if !ok {
+		return fmt.Errorf("secret %q is restricted: the %q permission is required at the project scope to read this secret's value", secret.Name, PermSecretReadRestricted)
+	}
+	return nil
+}
+
+func (c *KeyorixCore) checkRestrictedApprovalGate(ctx context.Context, secret *models.SecretNode, userID uint) error {
+	ok, err := c.hasApprovedSecretAccessRequest(ctx, secret.ProjectID, secret.ID, userID)
+	if err != nil {
+		return fmt.Errorf("secret %q is restricted: could not verify an approved access request: %w", secret.Name, err)
+	}
+	if !ok {
+		return fmt.Errorf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
+	}
+	return nil
+}
+
+func (c *KeyorixCore) checkRestrictedMFAGate(ctx context.Context, secret *models.SecretNode, userID uint) error {
+	ok, err := c.storage.HasActiveMFAStepup(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("secret %q is restricted: could not verify MFA step-up: %w", secret.Name, err)
+	}
+	if !ok {
+		return fmt.Errorf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
+	}
 	return nil
 }
 

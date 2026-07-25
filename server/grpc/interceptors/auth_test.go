@@ -241,7 +241,7 @@ func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.
 
 	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1)
 	require.NoError(t, err)
-	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, "tok", nil, "", 1, nil)
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
 	// Grant the machine viewer (secrets.read) in project 2 only.
@@ -400,7 +400,7 @@ func TestAuthInterceptor_MachineRequestStampsMachineActorInAudit(t *testing.T) {
 
 	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1)
 	require.NoError(t, err)
-	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, "tok", nil, "", 1, nil)
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{Name: "tok"})
 	require.NoError(t, err)
 
 	var captured context.Context
