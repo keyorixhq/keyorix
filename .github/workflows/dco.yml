@@ -58,6 +58,14 @@ jobs:
           fail=0
           for sha in $(git rev-list --no-merges "$base..$head"); do
             author_email="$(git log -1 --format=%ae "$sha")"
+            # Skip commits authored by bots (e.g. dependabot, renovate) — they
+            # have no mechanism to add a Signed-off-by trailer themselves.
+            case "$author_email" in
+              *'[bot]@users.noreply.github.com')
+                echo "Skipping bot-authored commit $sha ($author_email)."
+                continue
+                ;;
+            esac
             msg="$(git log -1 --format=%B "$sha")"
             found=0
             while IFS= read -r line; do
