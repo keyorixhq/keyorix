@@ -205,6 +205,14 @@ type KeyorixCore struct {
 	// the user must ALSO hold the "secrets.read.restricted" permission (or an admin
 	// bypass role). Set at startup via SetClassificationRestrictedRequiresPermission.
 	classificationRestrictedRequiresPermission bool
+	// classificationRestrictedRequiresMFAStepUp mirrors config classification.
+	// restricted_requires_mfa_stepup; when true, reading a "restricted" secret
+	// also requires the user to have completed MFA within the step-up window. Set
+	// at startup via SetClassificationRestrictedRequiresMFAStepUp.
+	classificationRestrictedRequiresMFAStepUp bool
+	// classificationRestrictedMFAStepUpWindow is how long a completed MFA
+	// verification remains valid for the step-up gate. 0 = default (15 min).
+	classificationRestrictedMFAStepUpWindow time.Duration
 	// retentionPolicy holds the configured per-record-type data-retention windows
 	// (ISO A.5.33) so the compliance posture can report them; zero value = no
 	// retention configured. Set from config at startup via SetRetentionPolicy.

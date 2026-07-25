@@ -42,6 +42,7 @@ func AllTestModels() []any {
 		&MFASecret{},
 		&MFARecoveryCode{},
 		&MFAChallenge{},
+		&MFAStepupToken{},
 		&SecretDependency{},
 		&MachineIdentity{},
 		&MachineIdentityCredential{},

@@ -714,6 +714,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	if cfg.Classification.RestrictedRequiresPermission {
 		log.Printf("Classification enforcement enabled: reading a \"restricted\" secret's value now requires the %q permission at the project scope", core.PermSecretReadRestricted)
 	}
+	coreService.SetClassificationRestrictedRequiresMFAStepUp(cfg.Classification.RestrictedRequiresMFAStepUp, cfg.Classification.RestrictedMFAStepUpWindowMinutes)
+	if cfg.Classification.RestrictedRequiresMFAStepUp {
+		window := cfg.Classification.RestrictedMFAStepUpWindowMinutes
+		if window == 0 {
+			window = 15
+		}
+		log.Printf("Classification enforcement enabled: reading a \"restricted\" secret's value now requires a recent MFA verification (window: %d min)", window)
+	}
 
 	// Wire the configured data-retention windows (A.5.33) so the compliance posture
 	// reports them; the scheduler below drives the actual purge. Audited (#160) so a

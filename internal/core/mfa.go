@@ -346,6 +346,12 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	if err != nil {
 		return nil, nil, err
 	}
+	// Record the MFA step-up window when the classification gate requires it.
+	// Best-effort: a write failure does not block the login, but the user won't
+	// be able to read restricted secrets until they re-verify successfully.
+	if c.classificationRestrictedRequiresMFAStepUp {
+		_ = c.storage.UpsertMFAStepupToken(ctx, user.ID, c.now().Add(c.mfaStepUpWindow()))
+	}
 	uid := user.ID
 	if usedRecovery {
 		c.writeAuditEventFull(ctx, "mfa.recovery_used", &uid, nil, nil, ip, fmt.Sprintf("user %s used a recovery code", user.Username))

@@ -33,6 +33,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -43,6 +44,9 @@ import (
 // project_admin roles bypass this check via Authorize's admin-role shortcut;
 // everyone else needs an explicit grant on their role.
 const PermSecretReadRestricted = "secrets.read.restricted"
+
+// defaultMFAStepUpWindow is the fallback step-up window when the config value is 0.
+const defaultMFAStepUpWindow = 15 * time.Minute
 
 // SetClassificationRestrictedRequiresApproval mirrors config classification.
 // restricted_requires_approval. false (the default, and the zero value) leaves
@@ -62,20 +66,44 @@ func (c *KeyorixCore) SetClassificationRestrictedRequiresPermission(enabled bool
 	c.classificationRestrictedRequiresPermission = enabled
 }
 
+// SetClassificationRestrictedRequiresMFAStepUp mirrors config classification.
+// restricted_requires_mfa_stepup and restricted_mfa_stepup_window_minutes.
+// When enabled, reading a "restricted" secret requires a recent MFA verification
+// (within windowMinutes minutes; 0 = 15 min default). Can be combined with the
+// other gate flags.
+func (c *KeyorixCore) SetClassificationRestrictedRequiresMFAStepUp(enabled bool, windowMinutes int) {
+	c.classificationRestrictedRequiresMFAStepUp = enabled
+	if windowMinutes > 0 {
+		c.classificationRestrictedMFAStepUpWindow = time.Duration(windowMinutes) * time.Minute
+	} else {
+		c.classificationRestrictedMFAStepUpWindow = defaultMFAStepUpWindow
+	}
+}
+
+// mfaStepUpWindow returns the effective step-up window, defaulting when 0.
+func (c *KeyorixCore) mfaStepUpWindow() time.Duration {
+	if c.classificationRestrictedMFAStepUpWindow > 0 {
+		return c.classificationRestrictedMFAStepUpWindow
+	}
+	return defaultMFAStepUpWindow
+}
+
 // checkRestrictedSecretReadApproval is the fail-closed gate every secret VALUE
 // read path routes through (see versions.go/secret_render.go). It is a no-op
 // unless at least one classification gate setting is active AND the secret's
 // classification is exactly ClassificationRestricted — a lower tier is never
 // gated regardless of configuration (#128's product decision).
 //
-// Two independent guards can be active simultaneously; when both are on, BOTH
-// must be satisfied — defense in depth:
+// Three independent guards can be active simultaneously; when multiple are on,
+// ALL must be satisfied — defense in depth:
 //
 //  1. restricted_requires_permission: the user must hold PermSecretReadRestricted
 //     at the secret's project scope (or be an admin). Checked first — fast RBAC
 //     lookup, no per-secret DB query.
 //  2. restricted_requires_approval: the user must have an approved, secret-scoped
 //     access request. Checked second.
+//  3. restricted_requires_mfa_stepup: the user must have completed MFA within the
+//     configured step-up window (default 15 min), recorded by VerifyMFALogin.
 //
 // userID identifies the acting human principal, if any. 0 means the read has no
 // identifiable user behind it — a machine/service-account credential, the
@@ -85,7 +113,7 @@ func (c *KeyorixCore) SetClassificationRestrictedRequiresPermission(enabled bool
 // flow on behalf of a user. Any failure to positively confirm a gate condition —
 // including a storage error — denies the read; this never fails open.
 func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, secret *models.SecretNode, userID uint) error {
-	if !c.classificationRestrictedRequiresApproval && !c.classificationRestrictedRequiresPermission {
+	if !c.classificationRestrictedRequiresApproval && !c.classificationRestrictedRequiresPermission && !c.classificationRestrictedRequiresMFAStepUp {
 		return nil
 	}
 	if secret == nil || secret.Classification != ClassificationRestricted {
@@ -115,6 +143,17 @@ func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, sec
 		}
 		if !ok {
 			return fmt.Errorf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
+		}
+	}
+
+	// Gate 3: recent MFA step-up (completed within the configured window).
+	if c.classificationRestrictedRequiresMFAStepUp {
+		ok, err := c.storage.HasActiveMFAStepup(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("secret %q is restricted: could not verify MFA step-up: %w", secret.Name, err)
+		}
+		if !ok {
+			return fmt.Errorf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
 		}
 	}
 

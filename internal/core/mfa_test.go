@@ -27,7 +27,8 @@ func newMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{},
-		&models.MFARecoveryCode{}, &models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{}))
+		&models.MFARecoveryCode{}, &models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
+		&models.MFAStepupToken{}))
 	hash, _ := bcrypt.GenerateFromPassword([]byte(mfaTestPassword), bcrypt.DefaultCost)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
 		PasswordHash: string(hash), AccountState: "active"}).Error)
@@ -543,4 +544,32 @@ func TestMFA_TOTPSecretTransplantBetweenUsersFailsToDecrypt(t *testing.T) {
 
 	_, err = c.loadTOTPSecret(ctx, 2)
 	require.Error(t, err, "a TOTP secret transplanted from another user's row must fail to decrypt, not silently succeed")
+}
+
+// VerifyMFALogin must record a MFA step-up token when the classification gate
+// requires it. The write is best-effort (error discarded), so VerifyMFALogin
+// must still succeed even if UpsertMFAStepupToken were to fail. This test
+// exercises the recording branch (mfa.go:352-353) that is otherwise skipped
+// when classificationRestrictedRequiresMFAStepUp is false.
+func TestVerifyMFALogin_RecordsMFAStepupWhenGateEnabled(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
+	require.NoError(t, err)
+
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	sess, user, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
+	require.NoError(t, err, "VerifyMFALogin must succeed even with the MFA step-up gate enabled (UpsertMFAStepupToken is best-effort)")
+	require.NotNil(t, sess)
+	assert.Equal(t, "alice", user.Username)
 }

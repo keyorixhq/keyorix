@@ -392,6 +392,17 @@ type MFARecoveryCode struct {
 	UsedAt   *time.Time
 }
 
+// MFAStepupToken records that a user recently completed a successful MFA
+// second-factor check, allowing the classification gate to confirm step-up for
+// restricted secret reads without re-prompting on every call. One active row per
+// user; UpsertMFAStepupToken replaces it on each re-verification.
+type MFAStepupToken struct {
+	ID        uint      `gorm:"primaryKey"`
+	UserID    uint      `gorm:"uniqueIndex"`
+	ExpiresAt time.Time `gorm:"index"`
+	CreatedAt time.Time
+}
+
 // MFAChallenge is a short-lived, single-use pre-auth token issued when an
 // MFA-enabled user passes the password step; the verify step consumes it. The
 // raw token is never stored — only its SHA-256 hash.
