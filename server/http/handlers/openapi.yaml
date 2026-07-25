@@ -55,6 +55,7 @@ paths:
     post:
       tags: [Auth]
       summary: Authenticate with username and password
+      description: Authenticate with username and password and return a session bearer token.
       operationId: authLogin
       requestBody:
         required: true
@@ -97,6 +98,7 @@ paths:
     post:
       tags: [Auth]
       summary: Invalidate the supplied bearer token
+      description: Invalidate the current session token, logging the user out immediately.
       operationId: authLogout
       responses:
         '200': {description: Logged out}
@@ -105,6 +107,7 @@ paths:
     post:
       tags: [Auth]
       summary: Issue a new session token and invalidate the old one
+      description: Exchange the current session token for a fresh one, invalidating the previous token.
       operationId: authRefresh
       responses:
         '200':
@@ -126,6 +129,7 @@ paths:
     post:
       tags: [Auth]
       summary: Request a password reset (enumeration-safe; always 200)
+      description: Send a password-reset email to the given address; always returns 200 to prevent email enumeration.
       operationId: authPasswordReset
       requestBody:
         required: true
@@ -141,6 +145,7 @@ paths:
     post:
       tags: [System]
       summary: Bootstrap the server (admin user + default project/environments)
+      description: Initialize the server with the first admin user, default project, and default environments; idempotent.
       operationId: systemInit
       requestBody:
         required: true
@@ -179,6 +184,7 @@ paths:
     get:
       tags: [Auth]
       summary: Describe a single-use setup token without consuming it
+      description: Return non-sensitive metadata about a setup token (purpose, email) without consuming it.
       operationId: authGetSetupToken
       parameters:
         - {name: token, in: path, required: true, schema: {type: string}}
@@ -202,6 +208,7 @@ paths:
     post:
       tags: [Auth]
       summary: Consume a setup token, set the password, and log in
+      description: Consume a one-time setup token to set the account password and return a session token.
       operationId: authConsumeSetup
       requestBody:
         required: true
@@ -220,6 +227,7 @@ paths:
     get:
       tags: [System]
       summary: Liveness/health check (not wrapped in the data/message envelope)
+      description: Return server health status including version and subsystem check results.
       operationId: healthCheck
       responses:
         '200':
@@ -237,6 +245,7 @@ paths:
     get:
       tags: [System]
       summary: Prometheus metrics exposition
+      description: Expose runtime metrics in Prometheus text exposition format for scraping.
       operationId: prometheusMetrics
       responses:
         '200':
@@ -247,6 +256,7 @@ paths:
     get:
       tags: [Auth]
       summary: Get the current user's profile
+      description: Return the authenticated user's profile including roles, permissions, and last login.
       operationId: getAuthProfile
       security: [{bearerAuth: []}]
       responses:
@@ -255,6 +265,7 @@ paths:
     put:
       tags: [Auth]
       summary: Update own display name and email
+      description: Update the authenticated user's own display name and email address.
       operationId: updateAuthProfile
       security: [{bearerAuth: []}]
       requestBody:
@@ -272,6 +283,7 @@ paths:
     post:
       tags: [Auth]
       summary: Change own password (drops other sessions)
+      description: Change the authenticated user's password; invalidates all other active sessions.
       operationId: changePassword
       security: [{bearerAuth: []}]
       requestBody:
@@ -291,6 +303,7 @@ paths:
     get:
       tags: [Auth]
       summary: List the caller's active sessions
+      description: Return all active sessions for the authenticated user, with the current session flagged.
       operationId: listSessions
       security: [{bearerAuth: []}]
       responses:
@@ -299,6 +312,7 @@ paths:
     delete:
       tags: [Auth]
       summary: Revoke one of the caller's sessions
+      description: Revoke a specific active session by ID, immediately invalidating its token.
       operationId: revokeSession
       security: [{bearerAuth: []}]
       parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
@@ -309,6 +323,7 @@ paths:
     get:
       tags: [Auth]
       summary: List the caller's personal access tokens
+      description: Return all personal access tokens belonging to the authenticated user (secret never returned).
       operationId: listPATs
       security: [{bearerAuth: []}]
       responses:
@@ -316,6 +331,7 @@ paths:
     post:
       tags: [Auth]
       summary: Create a personal access token (raw token returned once)
+      description: Create a personal access token with optional scopes and expiry; the raw token is returned only once.
       operationId: createPAT
       security: [{bearerAuth: []}]
       requestBody:
@@ -338,6 +354,7 @@ paths:
     delete:
       tags: [Auth]
       summary: Revoke one of the caller's personal access tokens
+      description: Permanently revoke a personal access token by ID, preventing further use.
       operationId: revokePAT
       security: [{bearerAuth: []}]
       parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
@@ -348,6 +365,7 @@ paths:
     post:
       tags: [Auth]
       summary: End the current impersonation session
+      description: Terminate the active impersonation session and return to the original user context.
       operationId: endImpersonation
       security: [{bearerAuth: []}]
       responses:
@@ -356,6 +374,7 @@ paths:
     get:
       tags: [System]
       summary: Server information (requires system.read)
+      description: Return server version, build info, database status, and enabled security features.
       operationId: getSystemInfo
       security: [{bearerAuth: []}]
       responses:
@@ -365,6 +384,7 @@ paths:
     get:
       tags: [System]
       summary: System performance metrics (requires system.read)
+      description: Return runtime, HTTP, database, and secrets performance metrics for the deployment.
       operationId: getSystemMetrics
       security: [{bearerAuth: []}]
       responses:
@@ -374,6 +394,7 @@ paths:
     get:
       tags: [Projects]
       summary: List projects with secret and environment counts
+      description: List all projects accessible to the caller, including secret and environment counts.
       operationId: listProjects
       security: [{bearerAuth: []}]
       parameters:
@@ -388,6 +409,7 @@ paths:
     post:
       tags: [Projects]
       summary: Create a project
+      description: Create a new project with the given name and optional description.
       operationId: createProject
       security: [{bearerAuth: []}]
       requestBody:
@@ -410,6 +432,7 @@ paths:
     get:
       tags: [Projects]
       summary: Get a project by ID
+      description: Return a single project by its numeric ID, including metadata and counts.
       operationId: getProject
       security: [{bearerAuth: []}]
       parameters:
@@ -426,6 +449,7 @@ paths:
     put:
       tags: [Projects]
       summary: Update a project's name/description
+      description: Update the name and/or description of an existing project by ID.
       operationId: updateProject
       security: [{bearerAuth: []}]
       parameters:
@@ -450,6 +474,7 @@ paths:
     delete:
       tags: [Projects]
       summary: Delete a project
+      description: Soft-delete a project by ID; use force=true to cascade-delete even when the project contains secrets.
       operationId: deleteProject
       security: [{bearerAuth: []}]
       parameters:
@@ -472,6 +497,7 @@ paths:
     post:
       tags: [Projects]
       summary: Restore a soft-deleted project
+      description: Restore a previously soft-deleted project, making it active again.
       operationId: restoreProject
       security: [{bearerAuth: []}]
       parameters:
@@ -490,6 +516,7 @@ paths:
     get:
       tags: [Projects]
       summary: Cross-environment drift report for a project
+      description: Return a cross-environment drift report showing secret keys that are missing or diverge across environments.
       operationId: getProjectDrift
       security: [{bearerAuth: []}]
       parameters:
@@ -622,6 +649,7 @@ paths:
     get:
       tags: [Projects]
       summary: Get a campaign with its items and progress
+      description: Return a single access-review campaign with all its items and recertification progress.
       operationId: getAccessReviewCampaign
       security: [{bearerAuth: []}]
       parameters:
@@ -784,6 +812,7 @@ paths:
     get:
       tags: [Members]
       summary: List a project's members (role grants)
+      description: Return all members of a project with their assigned role grants.
       operationId: listProjectMembers
       security: [{bearerAuth: []}]
       parameters:
@@ -799,6 +828,7 @@ paths:
     post:
       tags: [Members]
       summary: Add a member to a project with a role
+      description: Add a user to a project by granting them the specified role.
       operationId: addProjectMember
       security: [{bearerAuth: []}]
       parameters:
@@ -827,6 +857,7 @@ paths:
     put:
       tags: [Members]
       summary: Update a project member's role
+      description: Change the role assigned to an existing project member.
       operationId: updateProjectMember
       security: [{bearerAuth: []}]
       parameters:
@@ -855,6 +886,7 @@ paths:
     delete:
       tags: [Members]
       summary: Remove a member from a project
+      description: Remove a user from a project, revoking all their project-scoped role grants.
       operationId: removeProjectMember
       security: [{bearerAuth: []}]
       parameters:
@@ -877,6 +909,7 @@ paths:
     get:
       tags: [Memberships]
       summary: List project memberships (onboarding state machine)
+      description: List onboarding memberships for a project, optionally filtering for stale invited records.
       operationId: listProjectMemberships
       security: [{bearerAuth: []}]
       parameters:
@@ -896,6 +929,7 @@ paths:
     post:
       tags: [Memberships]
       summary: Invite a member (creates an invited membership)
+      description: Create an invited membership for a user, starting the onboarding state machine.
       operationId: inviteMember
       security: [{bearerAuth: []}]
       parameters:
@@ -925,6 +959,7 @@ paths:
     put:
       tags: [Memberships]
       summary: Transition a membership through the onboarding state machine
+      description: Advance or revoke a membership by applying verify, provision, activate, or revoke actions.
       operationId: transitionMembership
       security: [{bearerAuth: []}]
       parameters:
@@ -960,6 +995,7 @@ paths:
     get:
       tags: [Environments]
       summary: List all environments (global, backward-compat)
+      description: Return all environments across all projects accessible to the authenticated user.
       operationId: listEnvironments
       security: [{bearerAuth: []}]
       responses:
@@ -971,6 +1007,7 @@ paths:
     get:
       tags: [Environments]
       summary: List a project's environments
+      description: Return all environments belonging to the specified project, optionally including soft-deleted ones.
       operationId: listProjectEnvironments
       security: [{bearerAuth: []}]
       parameters:
@@ -990,6 +1027,7 @@ paths:
     post:
       tags: [Environments]
       summary: Create an environment in a project
+      description: Create a new named environment within the specified project.
       operationId: createProjectEnvironment
       security: [{bearerAuth: []}]
       parameters:
@@ -1016,6 +1054,7 @@ paths:
     post:
       tags: [Environments]
       summary: Restore a soft-deleted environment
+      description: Restore a previously soft-deleted environment within the specified project.
       operationId: restoreEnvironment
       security: [{bearerAuth: []}]
       parameters:
@@ -1039,6 +1078,7 @@ paths:
     delete:
       tags: [Environments]
       summary: Delete an environment
+      description: Soft-delete an environment by ID; fails with 409 if the environment still contains secrets.
       operationId: deleteEnvironment
       security: [{bearerAuth: []}]
       parameters:
@@ -1057,6 +1097,7 @@ paths:
     get:
       tags: [Invitations]
       summary: List project invitations
+      description: Return all pending and historical invitations for the specified project.
       operationId: listProjectInvitations
       security: [{bearerAuth: []}]
       parameters:
@@ -1070,6 +1111,7 @@ paths:
     post:
       tags: [Invitations]
       summary: Invite a user to the project
+      description: Send a project invitation to an email address, assigning the specified role on acceptance.
       operationId: createProjectInvitation
       security: [{bearerAuth: []}]
       parameters:
@@ -1096,6 +1138,7 @@ paths:
     delete:
       tags: [Invitations]
       summary: Revoke a pending invitation
+      description: Cancel a pending project invitation so it can no longer be accepted.
       operationId: revokeProjectInvitation
       security: [{bearerAuth: []}]
       parameters:
@@ -1112,6 +1155,7 @@ paths:
     post:
       tags: [Invitations]
       summary: Resend a pending invitation link
+      description: Reissue and resend the accept link for a pending project invitation.
       operationId: resendProjectInvitation
       security: [{bearerAuth: []}]
       parameters:
@@ -1128,6 +1172,7 @@ paths:
     post:
       tags: [Invitations]
       summary: Create a global (non-project) invitation
+      description: Invite a user to the deployment globally, with optional system role and project assignments.
       operationId: createGlobalInvitation
       security: [{bearerAuth: []}]
       requestBody:
@@ -1162,6 +1207,7 @@ paths:
     get:
       tags: [AccessRequests]
       summary: List project access requests
+      description: Return all access requests for a project, including pending dual-control approval progress.
       operationId: listAccessRequests
       security: [{bearerAuth: []}]
       parameters:
@@ -1178,6 +1224,7 @@ paths:
     post:
       tags: [AccessRequests]
       summary: Request access to a project (self-service)
+      description: Submit a self-service request for access to a project with an optional suggested role and reason.
       operationId: createAccessRequest
       security: [{bearerAuth: []}]
       parameters:
@@ -1234,6 +1281,7 @@ paths:
     post:
       tags: [AccessRequests]
       summary: Withdraw your own access request (self-service)
+      description: Cancel a previously submitted access request that is still pending approval.
       operationId: withdrawAccessRequest
       security: [{bearerAuth: []}]
       parameters:
@@ -1250,6 +1298,7 @@ paths:
     get:
       tags: [MachineIdentities]
       summary: List machine identities
+      description: Return all machine identities registered in the specified project.
       operationId: listMachineIdentities
       security: [{bearerAuth: []}]
       parameters:
@@ -1263,6 +1312,7 @@ paths:
     post:
       tags: [MachineIdentities]
       summary: Create a machine identity
+      description: Create a new machine identity in the specified project for non-human authentication.
       operationId: createMachineIdentity
       security: [{bearerAuth: []}]
       parameters:
@@ -1288,6 +1338,7 @@ paths:
     put:
       tags: [MachineIdentities]
       summary: Transition a machine identity state
+      description: Change a machine identity's lifecycle state by applying an activate, suspend, or revoke action.
       operationId: transitionMachineIdentity
       security: [{bearerAuth: []}]
       parameters:
@@ -1314,6 +1365,7 @@ paths:
     get:
       tags: [MachineIdentities]
       summary: List machine tokens (metadata only)
+      description: Return token metadata (prefix, expiry, last used) for a machine identity; secret values are never returned.
       operationId: listMachineTokens
       security: [{bearerAuth: []}]
       parameters:
@@ -1330,6 +1382,7 @@ paths:
     post:
       tags: [MachineIdentities]
       summary: Issue a machine token (raw token shown once)
+      description: Issue a new authentication token for a machine identity; the raw token is returned only once.
       operationId: issueMachineToken
       security: [{bearerAuth: []}]
       parameters:
@@ -1359,6 +1412,7 @@ paths:
     delete:
       tags: [MachineIdentities]
       summary: Revoke a machine token
+      description: Permanently revoke a machine token by ID, preventing further authentication with it.
       operationId: revokeMachineToken
       security: [{bearerAuth: []}]
       parameters:
@@ -1376,6 +1430,7 @@ paths:
     post:
       tags: [MachineIdentities]
       summary: Grant a project role to a machine identity
+      description: Assign a project-scoped role to a machine identity, granting it the role's permissions.
       operationId: grantMachineRole
       security: [{bearerAuth: []}]
       parameters:
@@ -1402,6 +1457,7 @@ paths:
     delete:
       tags: [MachineIdentities]
       summary: Remove a project role from a machine identity
+      description: Revoke a previously granted project-scoped role from a machine identity.
       operationId: removeMachineRole
       security: [{bearerAuth: []}]
       parameters:
@@ -1420,6 +1476,7 @@ paths:
     get:
       tags: [Secrets]
       summary: List secrets
+      description: List secrets accessible to the caller with optional filters for project, environment, type, and classification.
       operationId: listSecrets
       security: [{bearerAuth: []}]
       parameters:
@@ -1444,6 +1501,7 @@ paths:
     post:
       tags: [Secrets]
       summary: Create a secret
+      description: Create a new secret with a name, value, type, and optional metadata in the specified environment.
       operationId: createSecret
       security: [{bearerAuth: []}]
       requestBody:
@@ -1475,6 +1533,7 @@ paths:
     get:
       tags: [Secrets]
       summary: Get a secret
+      description: Return a secret by ID; include include_value=true to retrieve the decrypted value.
       operationId: getSecret
       security: [{bearerAuth: []}]
       parameters:
@@ -1495,6 +1554,7 @@ paths:
     put:
       tags: [Secrets]
       summary: Update a secret
+      description: Update a secret's value, max-read limit, or expiration by ID.
       operationId: updateSecret
       security: [{bearerAuth: []}]
       parameters:
@@ -1523,6 +1583,7 @@ paths:
     delete:
       tags: [Secrets]
       summary: Delete a secret
+      description: Permanently delete a secret and all its versions by ID.
       operationId: deleteSecret
       security: [{bearerAuth: []}]
       parameters:
@@ -1641,6 +1702,7 @@ paths:
     post:
       tags: [Secrets]
       summary: Rotate a secret value
+      description: Replace a secret's current value with a new one, archiving the previous version.
       operationId: rotateSecret
       security: [{bearerAuth: []}]
       parameters:
@@ -1664,6 +1726,7 @@ paths:
     get:
       tags: [Secrets]
       summary: List secret versions
+      description: Return the full version history for a secret, including previous values' metadata.
       operationId: getSecretVersions
       security: [{bearerAuth: []}]
       parameters:
@@ -1679,6 +1742,7 @@ paths:
     get:
       tags: [Secrets]
       summary: Get a secret's risk score
+      description: Return the composite risk score for a secret based on expiry, rotation, usage, and exposure factors.
       operationId: getSecretRisk
       security: [{bearerAuth: []}]
       parameters:
@@ -1695,6 +1759,7 @@ paths:
     get:
       tags: [Secrets]
       summary: List most-accessed secrets
+      description: Return the top secrets ranked by read count within the specified project and time window.
       operationId: getMostAccessedSecrets
       security: [{bearerAuth: []}]
       parameters:
@@ -1712,6 +1777,7 @@ paths:
     get:
       tags: [Secrets]
       summary: List unused secrets
+      description: Return secrets that have not been read within the specified number of days, never-read first.
       operationId: getUnusedSecrets
       security: [{bearerAuth: []}]
       parameters:
@@ -1728,6 +1794,7 @@ paths:
     get:
       tags: [Shares]
       summary: List a secret's shares
+      description: Return all share records for a secret, showing who has been granted access and at what permission level.
       operationId: listSecretShares
       security: [{bearerAuth: []}]
       parameters:
@@ -1742,6 +1809,7 @@ paths:
     post:
       tags: [Shares]
       summary: Share a secret
+      description: Grant read or write access to a secret for a specific user or group.
       operationId: shareSecret
       security: [{bearerAuth: []}]
       parameters:
@@ -1800,6 +1868,7 @@ paths:
     get:
       tags: [Shares]
       summary: List shares created by the caller
+      description: Return all secret shares that were created by the authenticated user.
       operationId: listShares
       security: [{bearerAuth: []}]
       responses:
@@ -1810,6 +1879,7 @@ paths:
     put:
       tags: [Shares]
       summary: Update a share's permission
+      description: Change the permission level (read or write) of an existing secret share.
       operationId: updateSharePermission
       security: [{bearerAuth: []}]
       parameters:
@@ -1833,6 +1903,7 @@ paths:
     delete:
       tags: [Shares]
       summary: Revoke a share
+      description: Remove a secret share, revoking the recipient's access to the secret.
       operationId: revokeShare
       security: [{bearerAuth: []}]
       parameters:
@@ -1847,6 +1918,7 @@ paths:
     get:
       tags: [Shares]
       summary: List secrets shared with the caller
+      description: Return all secrets that other users or groups have shared with the authenticated user.
       operationId: listSharedSecrets
       security: [{bearerAuth: []}]
       responses:
@@ -1857,6 +1929,7 @@ paths:
     get:
       tags: [RotationPolicies]
       summary: List rotation policies
+      description: Return rotation policies, optionally filtered by project or environment.
       operationId: listRotationPolicies
       security: [{bearerAuth: []}]
       parameters:
@@ -1870,6 +1943,7 @@ paths:
     post:
       tags: [RotationPolicies]
       summary: Create a rotation policy
+      description: Create a new rotation policy with a name, scope, interval, and optional alert thresholds.
       operationId: createRotationPolicy
       security: [{bearerAuth: []}]
       requestBody:
@@ -1898,6 +1972,7 @@ paths:
     get:
       tags: [RotationPolicies]
       summary: Evaluate rotation policies
+      description: Evaluate rotation policies and return secrets that are overdue or approaching their rotation deadline.
       operationId: evaluateRotationPolicies
       security: [{bearerAuth: []}]
       parameters:
@@ -1913,6 +1988,7 @@ paths:
     get:
       tags: [RotationPolicies]
       summary: Get rotation posture per secret
+      description: Return rotation posture (overdue, due soon, or OK) for every policy-covered secret in the project.
       operationId: getRotationStatus
       security: [{bearerAuth: []}]
       parameters:
@@ -1928,6 +2004,7 @@ paths:
     get:
       tags: [RotationPolicies]
       summary: Get a rotation policy
+      description: Return a single rotation policy by its numeric ID.
       operationId: getRotationPolicy
       security: [{bearerAuth: []}]
       parameters:
@@ -1941,6 +2018,7 @@ paths:
     put:
       tags: [RotationPolicies]
       summary: Update a rotation policy
+      description: Update a rotation policy's name, interval, alert thresholds, or active status.
       operationId: updateRotationPolicy
       security: [{bearerAuth: []}]
       parameters:
@@ -1968,6 +2046,7 @@ paths:
     delete:
       tags: [RotationPolicies]
       summary: Delete a rotation policy
+      description: Permanently delete a rotation policy by ID.
       operationId: deleteRotationPolicy
       security: [{bearerAuth: []}]
       parameters:
@@ -1981,6 +2060,7 @@ paths:
     get:
       tags: [Users]
       summary: List users
+      description: Return a paginated list of users with optional filters for search, state, and activity.
       operationId: listUsers
       security: [{bearerAuth: []}]
       parameters:
@@ -1999,6 +2079,7 @@ paths:
     post:
       tags: [Users]
       summary: Create user
+      description: Create a new user with credentials, optionally delivering a setup link or one-time password.
       operationId: createUser
       security: [{bearerAuth: []}]
       requestBody:
@@ -2036,6 +2117,7 @@ paths:
     get:
       tags: [Users]
       summary: Search users
+      description: Search users by a query string, returning up to ten matching results.
       operationId: searchUsers
       security: [{bearerAuth: []}]
       parameters:
@@ -2050,6 +2132,7 @@ paths:
     get:
       tags: [Users]
       summary: List stale (stuck-state) accounts
+      description: Return user accounts stuck in pending_first_login or password_reset_required state beyond the specified age.
       operationId: listStaleUsers
       security: [{bearerAuth: []}]
       parameters:
@@ -2067,6 +2150,7 @@ paths:
     get:
       tags: [Users]
       summary: Get user
+      description: Return a single user by ID, including project membership counts and account state.
       operationId: getUser
       security: [{bearerAuth: []}]
       responses:
@@ -2077,6 +2161,7 @@ paths:
     put:
       tags: [Users]
       summary: Update user
+      description: Update a user's username, email, display name, or active status by ID.
       operationId: updateUser
       security: [{bearerAuth: []}]
       requestBody:
@@ -2099,6 +2184,7 @@ paths:
     delete:
       tags: [Users]
       summary: Delete (soft-delete) user
+      description: Soft-delete a user account by ID, preserving audit history while preventing login.
       operationId: deleteUser
       security: [{bearerAuth: []}]
       responses:
@@ -2112,6 +2198,7 @@ paths:
     post:
       tags: [Users]
       summary: Restore soft-deleted user
+      description: Restore a previously soft-deleted user account, re-enabling their access.
       operationId: restoreUser
       security: [{bearerAuth: []}]
       responses:
@@ -2125,6 +2212,7 @@ paths:
     post:
       tags: [Users]
       summary: Suspend user
+      description: Suspend a user account, immediately preventing authentication without deleting the account.
       operationId: suspendUser
       security: [{bearerAuth: []}]
       responses:
@@ -2139,6 +2227,7 @@ paths:
     post:
       tags: [Users]
       summary: Reactivate user
+      description: Reactivate a suspended user account, restoring their ability to authenticate.
       operationId: reactivateUser
       security: [{bearerAuth: []}]
       responses:
@@ -2153,6 +2242,7 @@ paths:
     post:
       tags: [Users]
       summary: Require password reset on next login
+      description: Flag a user account so the user must change their password before they can proceed after next login.
       operationId: requirePasswordReset
       security: [{bearerAuth: []}]
       responses:
@@ -2167,6 +2257,7 @@ paths:
     post:
       tags: [Users]
       summary: Reissue and resend account-setup link
+      description: Generate a new account-setup link for a user and resend it via the configured delivery channel.
       operationId: resendSetupLink
       security: [{bearerAuth: []}]
       responses:
@@ -2182,6 +2273,7 @@ paths:
     get:
       tags: [Users]
       summary: Get user roles
+      description: Return all roles assigned to the specified user.
       operationId: getUserRolesForUser
       security: [{bearerAuth: []}]
       responses:
@@ -2192,6 +2284,7 @@ paths:
     put:
       tags: [Users]
       summary: Replace user roles at a scope
+      description: Replace the user's role assignments at the given project or global scope with the provided role IDs.
       operationId: updateUserRoles
       security: [{bearerAuth: []}]
       requestBody:
@@ -2216,6 +2309,7 @@ paths:
     get:
       tags: [Users]
       summary: List user project memberships
+      description: Return all project memberships for the specified user with their role and state in each project.
       operationId: getUserMembershipsForUser
       security: [{bearerAuth: []}]
       responses:
@@ -2227,6 +2321,7 @@ paths:
     post:
       tags: [Users]
       summary: Start impersonating a user
+      description: Issue a short-lived impersonation session token to act as another user for administrative purposes.
       operationId: startImpersonation
       security: [{bearerAuth: []}]
       requestBody:
@@ -2250,6 +2345,7 @@ paths:
     get:
       tags: [Groups]
       summary: List groups
+      description: Return all groups in the deployment with their names and descriptions.
       operationId: listGroups
       security: [{bearerAuth: []}]
       responses:
@@ -2259,6 +2355,7 @@ paths:
     post:
       tags: [Groups]
       summary: Create group
+      description: Create a new group with a unique name and optional description.
       operationId: createGroup
       security: [{bearerAuth: []}]
       requestBody:
@@ -2284,6 +2381,7 @@ paths:
     get:
       tags: [Groups]
       summary: Get group
+      description: Return a single group by its numeric ID, including name and description.
       operationId: getGroup
       security: [{bearerAuth: []}]
       responses:
@@ -2294,6 +2392,7 @@ paths:
     put:
       tags: [Groups]
       summary: Update group
+      description: Update the name and/or description of an existing group by ID.
       operationId: updateGroup
       security: [{bearerAuth: []}]
       requestBody:
@@ -2313,6 +2412,7 @@ paths:
     delete:
       tags: [Groups]
       summary: Delete group
+      description: Permanently delete a group by ID, removing all its memberships and role assignments.
       operationId: deleteGroup
       security: [{bearerAuth: []}]
       responses:
@@ -2326,6 +2426,7 @@ paths:
     get:
       tags: [Groups]
       summary: List group members
+      description: Return all users who are members of the specified group.
       operationId: getGroupMembers
       security: [{bearerAuth: []}]
       responses:
@@ -2336,6 +2437,7 @@ paths:
     post:
       tags: [Groups]
       summary: Add group member
+      description: Add a user to a group, optionally scoped to a specific project.
       operationId: addGroupMember
       security: [{bearerAuth: []}]
       requestBody:
@@ -2365,6 +2467,7 @@ paths:
     delete:
       tags: [Groups]
       summary: Remove group member
+      description: Remove a user from a group, revoking any access derived from that group membership.
       operationId: removeGroupMember
       security: [{bearerAuth: []}]
       responses:
@@ -2377,6 +2480,7 @@ paths:
     get:
       tags: [Groups]
       summary: List group role assignments
+      description: Return all role assignments for the specified group, showing each role and its scope.
       operationId: getGroupRoles
       security: [{bearerAuth: []}]
       responses:
@@ -2387,6 +2491,7 @@ paths:
     post:
       tags: [Groups]
       summary: Assign role to group at a scope
+      description: Grant a role to a group at the specified project or global scope, with an optional expiry for JIT access.
       operationId: assignRoleToGroup
       security: [{bearerAuth: []}]
       requestBody:
@@ -2418,6 +2523,7 @@ paths:
     delete:
       tags: [Groups]
       summary: Remove role from group
+      description: Revoke a role assignment from a group at the specified project or global scope.
       operationId: removeRoleFromGroup
       security: [{bearerAuth: []}]
       responses:
@@ -2429,6 +2535,7 @@ paths:
     get:
       tags: [Roles]
       summary: List roles with permissions
+      description: Return all roles in the deployment, each with its assigned permissions.
       operationId: listRoles
       security: [{bearerAuth: []}]
       responses:
@@ -2438,6 +2545,7 @@ paths:
     post:
       tags: [Roles]
       summary: Create role
+      description: Create a new custom role with a name, description, and initial set of permissions.
       operationId: createRole
       security: [{bearerAuth: []}]
       requestBody:
@@ -2464,6 +2572,7 @@ paths:
     get:
       tags: [Roles]
       summary: Get role with permissions
+      description: Return a single role by ID, including its full list of assigned permissions.
       operationId: getRole
       security: [{bearerAuth: []}]
       responses:
@@ -2474,6 +2583,7 @@ paths:
     put:
       tags: [Roles]
       summary: Update role
+      description: Update a role's description and/or replace its full set of permissions.
       operationId: updateRole
       security: [{bearerAuth: []}]
       requestBody:
@@ -2493,6 +2603,7 @@ paths:
     delete:
       tags: [Roles]
       summary: Delete role
+      description: Permanently delete a role by ID; fails if the role is currently assigned to any user or group.
       operationId: deleteRole
       security: [{bearerAuth: []}]
       responses:
@@ -2507,6 +2618,7 @@ paths:
     get:
       tags: [Roles]
       summary: List role permissions
+      description: Return all permissions currently assigned to the specified role.
       operationId: getRolePermissions
       security: [{bearerAuth: []}]
       responses:
@@ -2517,6 +2629,7 @@ paths:
     post:
       tags: [Roles]
       summary: Assign permission to role
+      description: Add a permission to the specified role, granting it to all users and groups holding that role.
       operationId: assignPermissionToRole
       security: [{bearerAuth: []}]
       requestBody:
@@ -2542,6 +2655,7 @@ paths:
     delete:
       tags: [Roles]
       summary: Remove permission from role
+      description: Remove a permission from the specified role, revoking it for all users and groups holding that role.
       operationId: removePermissionFromRole
       security: [{bearerAuth: []}]
       responses:
@@ -2553,6 +2667,7 @@ paths:
     get:
       tags: [Permissions]
       summary: List permissions
+      description: Return all available permissions, optionally filtered by resource type.
       operationId: listPermissions
       security: [{bearerAuth: []}]
       parameters:
@@ -2568,6 +2683,7 @@ paths:
     get:
       tags: [Permissions]
       summary: Get a single permission by ID
+      description: Return a single permission by ID, including its resource, action, and description.
       operationId: getPermission
       security: [{bearerAuth: []}]
       responses:
@@ -2580,6 +2696,7 @@ paths:
     post:
       tags: [UserRoles]
       summary: Assign role to user at a scope
+      description: Assign a role to a user at the specified project or global scope, with an optional JIT expiry.
       operationId: assignUserRole
       security: [{bearerAuth: []}]
       requestBody:
@@ -2604,6 +2721,7 @@ paths:
     delete:
       tags: [UserRoles]
       summary: Remove role from user at a scope
+      description: Remove a role assignment from a user at the specified project or global scope.
       operationId: removeUserRole
       security: [{bearerAuth: []}]
       requestBody:
@@ -2630,6 +2748,7 @@ paths:
     get:
       tags: [UserRoles]
       summary: Get a user's role assignment
+      description: Return the current role assignment for the specified user.
       operationId: getUserRoleAssignment
       security: [{bearerAuth: []}]
       responses:
@@ -2641,6 +2760,7 @@ paths:
     get:
       tags: [Audit]
       summary: List audit log entries (UI-oriented, paginated)
+      description: Return paginated audit log entries filtered by action, user, project, actor type, or time range.
       operationId: listAuditLogs
       security: [{bearerAuth: []}]
       parameters:
@@ -2666,6 +2786,7 @@ paths:
     get:
       tags: [Audit]
       summary: Cursor-paginated full-fidelity audit feed for SIEM pull
+      description: Return a cursor-paginated, full-fidelity audit event feed designed for SIEM ingestion.
       operationId: exportAuditLogs
       security: [{bearerAuth: []}]
       parameters:
@@ -2746,6 +2867,7 @@ paths:
     get:
       tags: [Audit]
       summary: List the role-assignment audit trail
+      description: Return paginated records of role, permission, and group assignment changes for RBAC auditing.
       operationId: listRBACAuditLogs
       security: [{bearerAuth: []}]
       parameters:
@@ -2763,6 +2885,7 @@ paths:
     get:
       tags: [Audit]
       summary: Report audit-trail retention coverage (ADR-029)
+      description: Return audit-trail retention statistics including oldest event, coverage span, and NIS2 compliance status.
       operationId: getAuditRetention
       security: [{bearerAuth: []}]
       responses:
@@ -2777,6 +2900,7 @@ paths:
     get:
       tags: [Audit]
       summary: Verify the tamper-evidence hash chain (ADR-029)
+      description: Verify the audit log's tamper-evidence hash chain and report the first broken link if any.
       operationId: verifyAuditChain
       security: [{bearerAuth: []}]
       responses:
@@ -2813,6 +2937,7 @@ paths:
     get:
       tags: [Audit]
       summary: List anomaly alerts
+      description: Return secret-access anomaly alerts, optionally filtered by acknowledged state.
       operationId: listAnomalyAlerts
       security: [{bearerAuth: []}]
       parameters:
@@ -2830,6 +2955,7 @@ paths:
     post:
       tags: [Audit]
       summary: Acknowledge an anomaly alert
+      description: Mark an anomaly alert as acknowledged, indicating it has been reviewed and triaged.
       operationId: acknowledgeAnomalyAlert
       security: [{bearerAuth: []}]
       parameters:
@@ -2844,6 +2970,7 @@ paths:
     get:
       tags: [Notifications]
       summary: List the authenticated user's notifications
+      description: Return in-app notifications for the authenticated user, optionally filtered to unread only.
       operationId: listNotifications
       security: [{bearerAuth: []}]
       parameters:
@@ -2860,6 +2987,7 @@ paths:
     post:
       tags: [Notifications]
       summary: Mark all of the user's notifications read
+      description: Mark all in-app notifications for the authenticated user as read in one operation.
       operationId: markAllNotificationsRead
       security: [{bearerAuth: []}]
       responses:
@@ -2870,6 +2998,7 @@ paths:
     post:
       tags: [Notifications]
       summary: Mark a single notification read
+      description: Mark a specific notification as read by its ID; the notification must belong to the caller.
       operationId: markNotificationRead
       security: [{bearerAuth: []}]
       parameters:
@@ -3039,6 +3168,7 @@ paths:
     delete:
       tags: [Dashboard]
       summary: Lift the active legal hold (resume purges)
+      description: Remove the active deployment-wide legal hold, allowing background purge jobs to resume.
       operationId: liftLegalHold
       security: [{bearerAuth: []}]
       responses:
@@ -3092,6 +3222,7 @@ paths:
     delete:
       tags: [Dashboard]
       summary: Revoke a risk exception before its expiry (ISO 27001 A.5.8)
+      description: Revoke a risk exception before its expiry date, immediately closing the accepted control gap.
       operationId: revokeRiskException
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
@@ -3140,6 +3271,7 @@ paths:
     delete:
       tags: [Dashboard]
       summary: Delete a separation-of-duties policy
+      description: Permanently delete a separation-of-duties policy, removing the toxic-pair constraint.
       operationId: deleteSoDPolicy
       security: [{bearerAuth: []}]
       parameters:
@@ -3167,6 +3299,7 @@ paths:
     get:
       tags: [Dashboard]
       summary: Paginated activity feed
+      description: Return a paginated activity feed of recent secret operations for the dashboard.
       operationId: getDashboardActivity
       security: [{bearerAuth: []}]
       parameters:
