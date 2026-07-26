@@ -6,6 +6,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -51,7 +53,7 @@ func (c *KeyorixCore) CreateNotificationChannel(ctx context.Context, ch *models.
 
 // UpdateNotificationChannel applies the given map of field updates to the channel
 // identified by id and returns the updated channel.
-func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, updates map[string]interface{}) (*models.NotificationChannel, error) {
+func (c *KeyorixCore) UpdateNotificationChannel(ctx context.Context, id uint, updates map[string]any) (*models.NotificationChannel, error) {
 	ch, err := c.storage.GetNotificationChannel(ctx, id)
 	if err != nil {
 		return nil, err
@@ -102,10 +104,49 @@ func validateNotificationChannel(ch *models.NotificationChannel) error {
 		if strings.TrimSpace(ch.URL) == "" {
 			return fmt.Errorf("notification channel URL is required for type %q", ch.Type)
 		}
+		if err := validateWebhookURL(ch.URL); err != nil {
+			return err
+		}
 	case "email":
 		if strings.TrimSpace(ch.Email) == "" {
 			return fmt.Errorf("notification channel email is required for type \"email\"")
 		}
 	}
 	return nil
+}
+
+// validateWebhookURL enforces SSRF-prevention rules on outbound webhook/slack/teams URLs.
+// It requires an https scheme and rejects destinations that resolve to RFC 1918,
+// loopback, link-local, or IMDS (169.254.0.0/16) addresses.
+func validateWebhookURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("notification channel: invalid URL %q: %w", raw, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("notification channel: URL must use https (got %q)", u.Scheme)
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		if isChannelDisallowedIP(ip) {
+			return fmt.Errorf("notification channel: URL targets a private/link-local address; refusing internal destination")
+		}
+		return nil
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	if err != nil {
+		return fmt.Errorf("notification channel: could not resolve URL hostname to verify it is not private/internal: %w", err)
+	}
+	for _, a := range addrs {
+		if isChannelDisallowedIP(a.IP) {
+			return fmt.Errorf("notification channel: URL resolves to a private/link-local address (%s); refusing internal destination", a.IP)
+		}
+	}
+	return nil
+}
+
+// isChannelDisallowedIP reports whether ip is a private, link-local, or loopback
+// address — all of which are forbidden as outbound webhook destinations (SSRF guard).
+func isChannelDisallowedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
