@@ -1,5 +1,6 @@
 import { storage } from './index';
 import { ROUTES } from '../constants';
+import { ADMIN_ROLES } from '../features/auth/roles';
 
 const INTENDED_ROUTE_KEY = 'intendedRoute';
 
@@ -90,8 +91,8 @@ export const canAccessRoute = (
         return { canAccess: false, redirectTo: ROUTES.LOGIN };
     }
 
-    // Admin routes require admin role
-    if (isAdminRoute(path) && userRole !== 'admin') {
+    // Admin routes require an install-admin role (admin / system_admin / super_admin).
+    if (isAdminRoute(path) && !ADMIN_ROLES.includes(userRole ?? '')) {
         return { canAccess: false, redirectTo: getFallbackRoute(userRole) };
     }
 

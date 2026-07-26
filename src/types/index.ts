@@ -282,10 +282,10 @@ export interface ProfileImpersonation {
 }
 
 export interface LoginResponse {
-    token: string;
-    // expires_at is when the current access token lapses — the client refreshes
+    // expires_at is when the current session cookie lapses — the client refreshes
     // silently before this. absolute_expires_at, when present, is the hard ceiling
     // past which refresh is refused and the user must re-authenticate.
+    // Note: no `token` field — auth is cookie-based (httpOnly), not Bearer.
     expires_at: string;
     absolute_expires_at?: string;
     user_id: number;
@@ -300,8 +300,8 @@ export interface LoginResponse {
 }
 
 export interface RefreshTokenResponse {
-    token: string;
-    // snake_case to match the backend payload ({token, expires_at, absolute_expires_at}).
+    // snake_case to match the backend payload ({expires_at, absolute_expires_at}).
+    // Note: no `token` field — auth is cookie-based (httpOnly), not Bearer.
     expires_at: string;
     absolute_expires_at?: string;
 }

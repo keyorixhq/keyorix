@@ -54,7 +54,7 @@ export const setupService = {
                 token,
                 password,
             });
-            if (!response.data.data?.token) {
+            if (!response.data.data?.user_id) {
                 throw new Error(response.data.message || 'Setup failed');
             }
             return response.data.data;

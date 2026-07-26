@@ -51,11 +51,16 @@ let inFlightRefresh: Promise<void> | null = null;
 export const useAuthStore = create<AuthStore>()(
     persist(
         (set, get) => ({
-            // Initial state
+            // Initial state — isLoading: true holds every route guard in the
+            // spinner state until rehydrate() + checkAuth() have both resolved.
+            // skipHydration (below) prevents the persist middleware from loading
+            // stale localStorage values synchronously before the server validates
+            // the session, which would let a manipulated auth-storage entry pass
+            // ProtectedRoute before checkAuth fires.
             user: null,
             isAuthenticated: false,
             impersonatedBy: null,
-            isLoading: false,
+            isLoading: true,
             error: null,
 
             // Actions
@@ -243,6 +248,9 @@ export const useAuthStore = create<AuthStore>()(
                             notifications: { email: true, browser: true, sharing: true, security: true },
                         },
                         lastLogin: profile.lastLogin || new Date().toISOString(),
+                        // Carry the server's flag forward on every reload so
+                        // RequirePasswordChange stays effective past the first session.
+                        passwordChangeRequired: profile.passwordChangeRequired ?? false,
                     };
                     // impersonation is present only while the session is actively
                     // impersonating — server-validated, not a client claim (see
@@ -307,6 +315,14 @@ export const useAuthStore = create<AuthStore>()(
                 user: state.user,
                 isAuthenticated: state.isAuthenticated,
             }),
+            // Prevent synchronous localStorage hydration on store creation.
+            // Without this, persist rehydrates before checkAuth runs, so a
+            // manipulated auth-storage entry (isAuthenticated: true, role:
+            // 'admin') would pass ProtectedRoute/AdminRoute for the first
+            // render cycle. useAuth's init() calls rehydrate() + checkAuth()
+            // in sequence under isLoading: true, which keeps the guards in the
+            // spinner state until the server validates the session.
+            skipHydration: true,
         }
     )
 );
@@ -322,7 +338,16 @@ export const useAuthStore = create<AuthStore>()(
 if (typeof window !== 'undefined') {
     window.addEventListener('storage', (event) => {
         if (event.key === 'auth-storage' || event.key === null) {
-            useAuthStore.persist.rehydrate();
+            // Re-validate with the server after accepting cross-tab state.
+            // Rehydrate alone is insufficient: a tampered auth-storage written
+            // by another same-origin context would set isAuthenticated: true
+            // without the session cookie that actually lets API calls through.
+            Promise.resolve(useAuthStore.persist.rehydrate()).then(() => {
+                const { isAuthenticated } = useAuthStore.getState();
+                if (isAuthenticated) {
+                    useAuthStore.getState().checkAuth();
+                }
+            });
         }
     });
 }
