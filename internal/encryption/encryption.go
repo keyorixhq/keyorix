@@ -350,6 +350,10 @@ func DeserializeEncryptedData(data []byte) (*EncryptedData, error) {
 
 // RotateKey re-encrypts data with a new key version
 func (es *EncryptionService) RotateKey(encryptedData *EncryptedData, newKeyVersion string) (*EncryptedData, error) {
+	// WARNING: RotateKey uses no-AAD decrypt/encrypt and is incompatible with
+	// AAD-bound ciphertexts (e.g. secret versions encrypted with EncryptWithAAD).
+	// To re-key AAD-bound ciphertexts, use sweepSecretVersions in sweep.go instead.
+
 	// Decrypt with current key
 	plaintext, err := es.Decrypt(encryptedData)
 	if err != nil {
