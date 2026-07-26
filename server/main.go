@@ -516,8 +516,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			case "aws-secrets-manager":
 				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AllowedRefs))
 			case "gcp-secret-manager":
-				if cn.ProjectID == "" {
-					log.Printf("Keyorix Connect: gcp-secret-manager connector %q has no project_id configured — reads can reach ANY GCP project the ambient identity can access, relying solely on allowed_refs to scope reach; set project_id to pin the connector to one project (#431)", cn.Name)
+				if cn.ProjectID == "" && len(cn.AllowedRefs) == 0 {
+					log.Fatalf("Keyorix Connect: gcp-secret-manager connector %q has neither project_id nor allowed_refs — this grants unrestricted cross-project read access to the ambient identity; set project_id or allowed_refs before starting", cn.Name)
+				} else if cn.ProjectID == "" {
+					log.Printf("Keyorix Connect: gcp-secret-manager connector %q has no project_id configured — reads can reach any GCP project the ambient identity can access; allowed_refs is the only scope restriction; set project_id to pin the connector to one project (#431)", cn.Name)
 				}
 				connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.ProjectID, cn.AllowedRefs))
 			case "azure-key-vault":
@@ -531,7 +533,15 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 				if token == "" {
 					log.Printf("Keyorix Connect: vault connector %q has no token (%s unset) — reads will fail", cn.Name, tokenEnv)
 				}
-				connectors = append(connectors, connect.NewVaultConnector(cn.Name, cn.Address, token, cn.AllowedRefs))
+				vc := connect.NewVaultConnector(cn.Name, cn.Address, token, cn.AllowedRefs)
+				if ttl, renewable, terr := vc.CheckTokenTTL(context.Background()); terr != nil {
+					log.Printf("Keyorix Connect: vault connector %q: token TTL check failed: %v", cn.Name, terr)
+				} else if ttl > 0 && ttl < 86400 && !renewable {
+					log.Printf("Keyorix Connect: vault connector %q: token has %d seconds remaining and is NOT renewable — replace before expiry", cn.Name, ttl)
+				} else if ttl > 0 && ttl < 86400 {
+					log.Printf("Keyorix Connect: vault connector %q: token expires in %d seconds; ensure renewal is configured", cn.Name, ttl)
+				}
+				connectors = append(connectors, vc)
 			default:
 				log.Printf("Keyorix Connect: skipping connector %q with unknown type %q", cn.Name, cn.Type)
 			}

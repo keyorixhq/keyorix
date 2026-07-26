@@ -52,6 +52,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -447,10 +448,13 @@ func (m *realK8sMinter) deleteBoundSecret(ctx context.Context, namespace, name s
 
 // pathSegment guards a namespace/service-account name placed into the request path: K8s
 // names are DNS labels (lowercase alphanumerics and '-'), so anything else is rejected
-// rather than escaped, closing off path traversal in the constructed URL.
+// rather than escaped, closing off path traversal in the constructed URL. The '.'
+// character is rejected explicitly to block dot-segment sequences (`.`, `..`) even
+// when combined with url.PathEscape, then url.PathEscape is applied to the accepted
+// value to neutralise any unexpected metacharacters that survive the allowlist.
 func pathSegment(s string) string {
-	if s == "" || strings.ContainsAny(s, "/?#%") {
+	if s == "" || s == "." || s == ".." || strings.ContainsAny(s, "/?#%.") {
 		return "INVALID"
 	}
-	return s
+	return url.PathEscape(s)
 }

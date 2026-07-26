@@ -63,10 +63,11 @@ func (e *AWSSTSEngine) SupportsNativeExpiry() bool { return true } // AWS enforc
 func (e *AWSSTSEngine) IsEphemeralBackend() bool   { return true }
 
 type awsSTSConfig struct {
-	RoleARN         string `json:"role_arn"`
-	Region          string `json:"region,omitempty"`
-	ExternalID      string `json:"external_id,omitempty"`
-	DurationSeconds int32  `json:"duration_seconds,omitempty"`
+	RoleARN          string `json:"role_arn"`
+	Region           string `json:"region,omitempty"`
+	ExternalID       string `json:"external_id,omitempty"`
+	DurationSeconds  int32  `json:"duration_seconds,omitempty"`
+	AllowedAccountID string `json:"allowed_account_id,omitempty"` // when set, RoleARN must belong to this AWS account ID
 }
 
 func (e *AWSSTSEngine) client(ctx context.Context, region string) (stsRoleAssumer, error) {
@@ -94,6 +95,12 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	}
 	if strings.TrimSpace(cfg.RoleARN) == "" {
 		return Credential{}, "", fmt.Errorf("aws-sts: role_arn is required")
+	}
+	if cfg.AllowedAccountID != "" {
+		gotAccount := arnAccountID(cfg.RoleARN)
+		if gotAccount != cfg.AllowedAccountID {
+			return Credential{}, "", fmt.Errorf("aws-sts: role ARN account ID %q does not match allowed_account_id %q", gotAccount, cfg.AllowedAccountID)
+		}
 	}
 
 	duration := cfg.DurationSeconds
@@ -160,4 +167,15 @@ func (e *AWSSTSEngine) RevokeInvalidatesCredential(_ string) bool { return false
 // guards on IsEphemeralBackend before reaching here; this is a defensive backstop.
 func (e *AWSSTSEngine) Renew(_ context.Context, _, _ string, _ time.Time) error {
 	return fmt.Errorf("aws-sts: credentials are not renewable; issue a new lease instead")
+}
+
+// arnAccountID extracts the AWS account ID from a role ARN.
+// ARN format: arn:partition:iam::account-id:role/name
+// Returns empty string if the ARN is not in the expected format.
+func arnAccountID(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 5 {
+		return ""
+	}
+	return parts[4]
 }

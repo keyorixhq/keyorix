@@ -86,6 +86,36 @@ func sanitizeVaultRef(ref string) (string, error) {
 	return strings.Join(clean, "/"), nil
 }
 
+// CheckTokenTTL performs a token self-lookup and returns the remaining TTL in
+// seconds. Returns (0, false, nil) for root tokens (TTL = 0). Returns an error if the
+// lookup fails or the token is invalid.
+func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, renewable bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.address+"/v1/auth/token/lookup-self", nil)
+	if err != nil {
+		return 0, false, err
+	}
+	req.Header.Set("X-Vault-Token", c.token)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, false, fmt.Errorf("vault: token TTL lookup failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, vaultMaxResponseBytes))
+	if resp.StatusCode != http.StatusOK {
+		return 0, false, fmt.Errorf("vault: token lookup returned %d", resp.StatusCode)
+	}
+	var result struct {
+		Data struct {
+			TTL       int  `json:"ttl"`
+			Renewable bool `json:"renewable"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, false, fmt.Errorf("vault: token lookup parse error: %w", err)
+	}
+	return result.Data.TTL, result.Data.Renewable, nil
+}
+
 func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("vault: secret reference (path) is required, e.g. secret/data/myapp")
