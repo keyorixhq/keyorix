@@ -102,7 +102,7 @@ func randomPasswordHash() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(b)), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(b)), bcryptCost)
 	if err != nil {
 		return "", err
 	}
