@@ -38,6 +38,12 @@ type AccessLogExportRow struct {
 // for secretID and serialises them to the requested format (csv or json).
 // Returns the encoded bytes and the MIME content-type.
 // An unrecognised format or a non-existent secret returns an error.
+//
+// Authorization contract: callers must verify that the requesting user holds
+// secrets.read permission for this secret before calling this function.
+// The HTTP handler enforces this via RequireScopedPermission; other transports
+// (gRPC, CLI) must enforce it independently. This function does NOT check
+// per-user read permission itself.
 func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, secretID uint, format string) ([]byte, string, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format != ExportFormatCSV && format != ExportFormatJSON {

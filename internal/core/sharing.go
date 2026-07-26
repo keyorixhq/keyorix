@@ -114,6 +114,10 @@ func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShar
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
+	if shareRecord.ExpiresAt != nil && shareRecord.ExpiresAt.Before(c.now()) {
+		return nil, fmt.Errorf("cannot update an expired share record; revoke and re-share instead")
+	}
+
 	// Resolve the share's expiry: clear it (permanent), set/extend/shorten it, or
 	// preserve the current value when the request specifies neither. A new expiry must
 	// be in the future, just like at creation.

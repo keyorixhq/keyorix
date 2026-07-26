@@ -75,6 +75,12 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if err := c.requireEqualOrGreaterAdminAuthority(ctx, adminID, targetID, "impersonate"); err != nil {
 		return nil, nil, err
 	}
+	// The ceiling check above runs once at impersonation start. If the target
+	// user's roles are elevated above the impersonator's DURING an active
+	// impersonation session (up to 1h TTL), the impersonator retains the
+	// already-issued session — the check is not re-evaluated per-request.
+	// The auth cache TTL (30s) bounds the propagation delay for role changes,
+	// but the ceiling is not continuously enforced.
 	token, err := generateSecureToken()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate session token: %w", err)

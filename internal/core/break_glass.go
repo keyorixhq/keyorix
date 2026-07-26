@@ -85,6 +85,9 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	if !affiliated {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "break-glass is available only to members of the project")
 	}
+	// Note: IsProjectMember has no minimum-tenure requirement — a user added
+	// to the project seconds ago can immediately self-activate break-glass.
+	// A configurable join-date cooldown would close this gap.
 	// Refuse a new activation while the user already holds an active, unexpired one on
 	// this project — otherwise the time-bound grant becomes indefinitely renewable.
 	bgNow := c.now()
