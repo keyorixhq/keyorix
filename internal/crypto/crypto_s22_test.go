@@ -185,8 +185,9 @@ func TestShamirKeyProvider_S22_EmptyPathsSkipped(t *testing.T) {
 	require.NoError(t, os.WriteFile(f1, []byte(hex.EncodeToString(shares[0])), 0600))
 	require.NoError(t, os.WriteFile(f2, []byte(hex.EncodeToString(shares[1])), 0600))
 
+	commitmentHex := hex.EncodeToString(CommitKEK(kek))
 	// Include empty-string paths that must be silently skipped.
-	got, err := NewShamirKeyProvider([]string{"", f1, "", f2, ""}, nil, "").KEK()
+	got, err := NewShamirKeyProvider([]string{"", f1, "", f2, ""}, nil, commitmentHex).KEK()
 	require.NoError(t, err)
 	assert.Equal(t, kek, got)
 }
@@ -203,8 +204,9 @@ func TestShamirKeyProvider_S22_EmptyEnvVarsSkipped(t *testing.T) {
 	require.NoError(t, os.WriteFile(f1, []byte(hex.EncodeToString(shares[0])), 0600))
 	t.Setenv("KX_S22_SHARE2", base64.StdEncoding.EncodeToString(shares[1]))
 
+	commitmentHex := hex.EncodeToString(CommitKEK(kek))
 	// One empty env-var name that must be skipped; the non-empty one carries the share.
-	got, err := NewShamirKeyProvider([]string{f1}, []string{"", "KX_S22_SHARE2", ""}, "").KEK()
+	got, err := NewShamirKeyProvider([]string{f1}, []string{"", "KX_S22_SHARE2", ""}, commitmentHex).KEK()
 	require.NoError(t, err)
 	assert.Equal(t, kek, got)
 }

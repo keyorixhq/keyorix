@@ -12,6 +12,10 @@
 // threading each token's owning identity (userID/tokenID) through every encrypt/decrypt
 // call site AND a versioned-AAD migration for existing blobs (mirroring the secret-value
 // AADVersion fallback). Track as a dedicated change.
+//
+// Recommended fix: pass each token's owning identity as AAD via service.EncryptSecretWithAAD —
+// userID for session and password-reset tokens, tokenID for API tokens — matching the
+// MFASecretAAD pattern already used for MFA secrets. This is a tracked deferred gap.
 package encryption
 
 import (

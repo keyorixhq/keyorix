@@ -55,6 +55,11 @@ func encryptExport(plainJSON []byte, pubKeyPath string) ([]byte, error) {
 		pub = rsaKey
 	}
 
+	// Enforce a minimum RSA key size to reject weak keys before encrypting.
+	if pub.N.BitLen() < 2048 {
+		return nil, fmt.Errorf("RSA public key must be at least 2048 bits; got %d", pub.N.BitLen())
+	}
+
 	// 2. Generate random 32-byte AES key.
 	aesKey := make([]byte, 32)
 	if _, err := rand.Read(aesKey); err != nil {
