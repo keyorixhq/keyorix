@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -59,6 +60,14 @@ func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecre
 	}
 	if err := validateTemplateClassification(req.DefaultClassification); err != nil {
 		return nil, err
+	}
+	if len(req.DescriptionPattern) > maxSecretDescriptionLen {
+		return nil, fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+	}
+	if req.DefaultTags != "" {
+		if _, err := normalizeTags(strings.Split(req.DefaultTags, ",")); err != nil {
+			return nil, fmt.Errorf("%s: DefaultTags: %w", i18n.T("ErrorValidation", nil), err)
+		}
 	}
 
 	tmpl := &models.SecretTemplate{
@@ -117,6 +126,14 @@ func (c *KeyorixCore) UpdateSecretTemplate(ctx context.Context, id uint, req *Up
 	}
 	if err := validateTemplateClassification(req.DefaultClassification); err != nil {
 		return nil, err
+	}
+	if len(req.DescriptionPattern) > maxSecretDescriptionLen {
+		return nil, fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+	}
+	if req.DefaultTags != "" {
+		if _, err := normalizeTags(strings.Split(req.DefaultTags, ",")); err != nil {
+			return nil, fmt.Errorf("%s: DefaultTags: %w", i18n.T("ErrorValidation", nil), err)
+		}
 	}
 
 	tmpl.Name = req.Name

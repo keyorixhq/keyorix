@@ -1343,7 +1343,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 		// headers should arrive promptly even for a slow body upload.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
