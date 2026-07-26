@@ -87,6 +87,9 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDelet
 		UpdatedAt          string
 		LastSecretActivity *string
 	}
+	// Both where values are compile-time string constants — no user input is
+	// interpolated. Do NOT add user-controlled filter terms to this query without
+	// switching to parameterised bindings.
 	where := "WHERE p.deleted_at IS NULL"
 	if includeDeleted {
 		where = ""

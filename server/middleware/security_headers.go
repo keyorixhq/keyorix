@@ -2,6 +2,7 @@ package middleware
 
 import "net/http"
 
+
 // contentSecurityPolicy mirrors the policy the Helm chart's nginx frontend already sends
 // (deploy/helm/keyorix/templates/web-config.yaml) — the two serving modes (embedded
 // single-binary SPA vs. the separate nginx+API-proxy deployment) should present the same
@@ -9,7 +10,12 @@ import "net/http"
 // injection (a common CSS-in-JS/Tailwind requirement); script-src does not, so an
 // attacker-injected inline <script> — the primary XSS vector — is blocked regardless of
 // where the malicious markup came from.
-const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:;"
+//
+// connect-src uses 'self' only — this already covers same-origin WebSocket connections
+// (ws:/wss: to the same host) in all modern browsers. The bare ws: and wss: scheme
+// values that were here previously allowed WebSocket connections to ANY host, which
+// is a CSP bypass for data exfiltration via WebSocket.
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self';"
 
 // SecurityHeaders sets standard hardening response headers on every response. For a
 // secrets manager these matter beyond the usual:
@@ -39,6 +45,7 @@ func SecurityHeaders(tlsEnabled bool) func(http.Handler) http.Handler {
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("Referrer-Policy", "no-referrer")
 			h.Set("Content-Security-Policy", contentSecurityPolicy)
+			h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
 			if tlsEnabled {
 				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 			}

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -33,6 +34,7 @@ import (
 // docs/CONFIGURATION.md.
 func PrincipalRateLimit(cfg config.RateLimitConfig) func(http.Handler) http.Handler {
 	if !cfg.Enabled || cfg.RequestsPerSecond <= 0 {
+		log.Printf("Keyorix: PrincipalRateLimit is disabled (server.http.ratelimit.enabled=false) — no per-principal API rate limit is active; enable in production")
 		return func(next http.Handler) http.Handler { return next }
 	}
 	burst := cfg.Burst
