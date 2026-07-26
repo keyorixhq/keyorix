@@ -1,6 +1,7 @@
-import React, { Fragment } from 'react';
+import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Dialog, Transition } from '@headlessui/react';
+import { Dialog } from 'radix-ui';
+import { cn } from '@/lib/utils';
 import { clsx } from 'clsx';
 import {
     XMarkIcon,
@@ -277,33 +278,39 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
 
     return (
         <>
-            {/* Mobile */}
-            <Transition.Root show={isOpen} as={Fragment}>
-                <Dialog as="div" className="relative z-40 lg:hidden" onClose={onClose}>
-                    <Transition.Child as={Fragment}
-                        enter="transition-opacity ease-linear duration-300" enterFrom="opacity-0" enterTo="opacity-100"
-                        leave="transition-opacity ease-linear duration-300" leaveFrom="opacity-100" leaveTo="opacity-0">
-                        <div className="fixed inset-0 bg-black bg-opacity-60" />
-                    </Transition.Child>
-                    <div className="fixed inset-0 flex z-40">
-                        <Transition.Child as={Fragment}
-                            enter="transition ease-in-out duration-300 transform" enterFrom="-translate-x-full" enterTo="translate-x-0"
-                            leave="transition ease-in-out duration-300 transform" leaveFrom="translate-x-0" leaveTo="-translate-x-full">
-                            <Dialog.Panel className="relative flex-1 flex flex-col max-w-xs w-full"
-                                style={{ backgroundColor: 'var(--bg-surface)' }}>
-                                <div className="absolute top-0 right-0 -mr-12 pt-2">
-                                    <button type="button" onClick={onClose}
-                                        className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-white">
-                                        <XMarkIcon className="h-6 w-6 text-white" />
-                                    </button>
-                                </div>
-                                <SidebarContent />
-                            </Dialog.Panel>
-                        </Transition.Child>
-                        <div className="shrink-0 w-14" aria-hidden="true" />
-                    </div>
-                </Dialog>
-            </Transition.Root>
+            {/* Mobile — Radix Dialog used for focus-trap + Esc handling */}
+            <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+                <Dialog.Portal>
+                    <Dialog.Overlay
+                        className={cn(
+                            'fixed inset-0 z-40 bg-black/60 lg:hidden',
+                            'data-[state=open]:animate-in data-[state=open]:fade-in-0',
+                            'data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
+                            'duration-300',
+                        )}
+                    />
+                    <Dialog.Content
+                        className={cn(
+                            'fixed inset-y-0 left-0 z-40 flex flex-col max-w-xs w-full lg:hidden',
+                            'data-[state=open]:animate-in data-[state=open]:slide-in-from-left',
+                            'data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left',
+                            'duration-300',
+                        )}
+                        style={{ backgroundColor: 'var(--bg-surface)' }}
+                        aria-describedby={undefined}
+                    >
+                        <Dialog.Title className="sr-only">Navigation menu</Dialog.Title>
+                        <div className="absolute top-0 right-0 -mr-12 pt-2">
+                            <Dialog.Close
+                                className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-white"
+                            >
+                                <XMarkIcon className="h-6 w-6 text-white" />
+                            </Dialog.Close>
+                        </div>
+                        <SidebarContent />
+                    </Dialog.Content>
+                </Dialog.Portal>
+            </Dialog.Root>
 
             {/* Desktop */}
             <div className={clsx('hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0', className)}>

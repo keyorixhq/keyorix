@@ -1,7 +1,7 @@
-import React, { Fragment } from 'react';
-import { Menu, Transition } from '@headlessui/react';
+import React from 'react';
+import { DropdownMenu } from 'radix-ui';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
-import { clsx } from 'clsx';
+import { cn } from '@/lib/utils';
 
 type IconComponent = React.ComponentType<React.SVGProps<SVGSVGElement>>;
 
@@ -21,81 +21,61 @@ export interface DropdownProps {
     className?: string;
 }
 
-const Dropdown: React.FC<DropdownProps> = ({
-    trigger,
-    items,
-    align = 'right',
-    className,
-}) => {
-    const alignmentClasses = {
-        left: 'origin-top-left left-0',
-        right: 'origin-top-right right-0',
-    };
-
-    return (
-        <Menu as="div" className={clsx('relative inline-block text-left', className)}>
-            <Menu.Button as="div" className="cursor-pointer">
+const Dropdown: React.FC<DropdownProps> = ({ trigger, items, align = 'right', className }) => (
+    <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+            <div className={cn('relative inline-block text-left cursor-pointer', className)}>
                 {trigger}
-            </Menu.Button>
+            </div>
+        </DropdownMenu.Trigger>
 
-            <Transition
-                as={Fragment}
-                enter="transition ease-out duration-100"
-                enterFrom="transform opacity-0 scale-95"
-                enterTo="transform opacity-100 scale-100"
-                leave="transition ease-in duration-75"
-                leaveFrom="transform opacity-100 scale-100"
-                leaveTo="transform opacity-0 scale-95"
+        <DropdownMenu.Portal>
+            <DropdownMenu.Content
+                align={align === 'right' ? 'end' : 'start'}
+                sideOffset={8}
+                className={cn(
+                    'z-50 min-w-56 rounded-md border shadow-lg py-1',
+                    'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+                    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+                )}
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
-                <Menu.Items
-                    className={clsx(
-                        'absolute z-10 mt-2 w-56 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-hidden border border-base',
-                        alignmentClasses[align]
-                    )}
-                    style={{ backgroundColor: 'var(--bg-surface)' }}
-                >
-                    <div className="py-1">
-                        {(items ?? []).map((item) => {
-                            const Icon = item.icon;
-
-                            return (
-                                <Menu.Item key={item.value} disabled={item.disabled || false}>
-                                    {({ focus }) => (
-                                        <button
-                                            className={clsx(
-                                                'group flex w-full items-center px-4 py-2 text-sm',
-                                                focus && !item.disabled && 'bg-subtle',
-                                                item.disabled && 'opacity-50 cursor-not-allowed',
-                                                item.danger
-                                                    ? 'text-red-700 hover:bg-red-50'
-                                                    : 'text-gray-700 hover:bg-gray-100'
-                                            )}
-                                            onClick={item.onClick}
-                                            disabled={item.disabled}
-                                        >
-                                            {Icon && (
-                                                <Icon
-                                                    className={clsx(
-                                                        'mr-3 h-4 w-4',
-                                                        item.danger ? 'text-red-500' : 'text-base-muted'
-                                                    )}
-                                                    aria-hidden="true"
-                                                />
-                                            )}
-                                            {item.label}
-                                        </button>
+                {(items ?? []).map((item) => {
+                    const Icon = item.icon;
+                    return (
+                        <DropdownMenu.Item
+                            key={item.value}
+                            disabled={item.disabled ?? false}
+                            {...(item.onClick && { onSelect: item.onClick })}
+                            className={cn(
+                                'group flex w-full items-center px-4 py-2 text-sm outline-none cursor-pointer',
+                                'data-[highlighted]:bg-subtle',
+                                item.disabled && 'opacity-50 cursor-not-allowed',
+                                item.danger
+                                    ? 'text-[var(--error)] data-[highlighted]:bg-[var(--error-subtle)]'
+                                    : 'text-base-secondary',
+                            )}
+                        >
+                            {Icon && (
+                                <Icon
+                                    className={cn(
+                                        'mr-3 h-4 w-4 shrink-0',
+                                        item.danger ? 'text-[var(--error)]' : 'text-base-muted',
                                     )}
-                                </Menu.Item>
-                            );
-                        })}
-                    </div>
-                </Menu.Items>
-            </Transition>
-        </Menu>
-    );
-};
+                                    aria-hidden="true"
+                                />
+                            )}
+                            {item.label}
+                        </DropdownMenu.Item>
+                    );
+                })}
+            </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+);
 
-// Simple dropdown button component
+// ── DropdownButton ────────────────────────────────────────────────────────────
+
 export interface DropdownButtonProps {
     children: React.ReactNode;
     items: DropdownItem[];
@@ -106,6 +86,18 @@ export interface DropdownButtonProps {
     className?: string;
 }
 
+const VARIANT: Record<NonNullable<DropdownButtonProps['variant']>, string> = {
+    primary:   'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] focus:ring-[var(--accent)]',
+    secondary: 'bg-subtle text-base-primary hover:bg-muted focus:ring-[var(--border-strong)]',
+    ghost:     'text-base-secondary hover:bg-subtle focus:ring-[var(--border-strong)]',
+};
+
+const SIZE_BTN: Record<NonNullable<DropdownButtonProps['size']>, string> = {
+    sm: 'px-3 py-1.5 text-sm',
+    md: 'px-4 py-2 text-sm',
+    lg: 'px-6 py-3 text-base',
+};
+
 const DropdownButton: React.FC<DropdownButtonProps> = ({
     children,
     items,
@@ -115,41 +107,16 @@ const DropdownButton: React.FC<DropdownButtonProps> = ({
     disabled = false,
     className,
 }) => {
-    const baseClasses = [
-        'inline-flex items-center justify-center font-medium rounded-md',
-        'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
-        'transition-colors duration-200',
-        'disabled:opacity-50 disabled:cursor-not-allowed',
-    ];
-
-    const variantClasses = {
-        primary: [
-            'bg-blue-600 text-white hover:bg-blue-700',
-            'focus:ring-blue-500',
-        ],
-        secondary: [
-            'bg-subtle text-base-primary hover:bg-muted',
-            'focus:ring-gray-500',
-        ],
-        ghost: [
-            'text-base-secondary hover:bg-subtle',
-            'focus:ring-gray-500',
-        ],
-    };
-
-    const sizeClasses = {
-        sm: 'px-3 py-1.5 text-sm',
-        md: 'px-4 py-2 text-sm',
-        lg: 'px-6 py-3 text-base',
-    };
-
     const trigger = (
         <button
-            className={clsx(
-                baseClasses,
-                variantClasses[variant],
-                sizeClasses[size],
-                className
+            className={cn(
+                'inline-flex items-center justify-center font-medium rounded-md',
+                'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
+                'transition-colors duration-200',
+                'disabled:opacity-50 disabled:cursor-not-allowed',
+                VARIANT[variant],
+                SIZE_BTN[size],
+                className,
             )}
             disabled={disabled}
         >
@@ -158,13 +125,7 @@ const DropdownButton: React.FC<DropdownButtonProps> = ({
         </button>
     );
 
-    return (
-        <Dropdown
-            trigger={trigger}
-            items={items}
-            align={align}
-        />
-    );
+    return <Dropdown trigger={trigger} items={items} align={align} />;
 };
 
 export { Dropdown, DropdownButton };

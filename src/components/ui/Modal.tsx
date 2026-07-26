@@ -1,7 +1,7 @@
-import React, { Fragment, useRef } from 'react';
-import { Dialog, Transition } from '@headlessui/react';
+import React from 'react';
+import { Dialog } from 'radix-ui';
 import { XMarkIcon } from '@heroicons/react/24/outline';
-import { clsx } from 'clsx';
+import { cn } from '@/lib/utils';
 
 export interface ModalProps {
     isOpen: boolean;
@@ -14,6 +14,14 @@ export interface ModalProps {
     className?: string;
 }
 
+const SIZE: Record<NonNullable<ModalProps['size']>, string> = {
+    sm:   'max-w-md',
+    md:   'max-w-lg',
+    lg:   'max-w-2xl',
+    xl:   'max-w-4xl',
+    full: 'max-w-full mx-4',
+};
+
 const Modal: React.FC<ModalProps> = ({
     isOpen,
     onClose,
@@ -23,90 +31,64 @@ const Modal: React.FC<ModalProps> = ({
     showCloseButton = true,
     closeOnOverlayClick = true,
     className,
-}) => {
-    const sizeClasses = {
-        sm: 'max-w-md',
-        md: 'max-w-lg',
-        lg: 'max-w-2xl',
-        xl: 'max-w-4xl',
-        full: 'max-w-full mx-4',
-    };
+}) => (
+    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+        <Dialog.Portal>
+            {/* Backdrop */}
+            <Dialog.Overlay
+                className={cn(
+                    'fixed inset-0 z-50 bg-black/40',
+                    'data-[state=open]:animate-in data-[state=open]:fade-in-0',
+                    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
+                )}
+                onClick={closeOnOverlayClick ? undefined : (e) => e.stopPropagation()}
+            />
 
-    const initialFocusRef = useRef(null);
-
-    const handleClose = () => {
-        if (closeOnOverlayClick) {
-            onClose();
-        }
-    };
-
-    return (
-        <Transition appear show={isOpen} as={Fragment}>
-            <Dialog as="div" className="relative z-50" onClose={handleClose} initialFocus={initialFocusRef}>
-                <Transition.Child
-                    as={Fragment}
-                    enter="ease-out duration-300"
-                    enterFrom="opacity-0"
-                    enterTo="opacity-100"
-                    leave="ease-in duration-200"
-                    leaveFrom="opacity-100"
-                    leaveTo="opacity-0"
-                >
-                    <div className="fixed inset-0 bg-black bg-opacity-25 pointer-events-none" />
-                </Transition.Child>
-
-                <div className="fixed inset-0 overflow-y-auto">
-                    <div className="flex min-h-full items-center justify-center p-4 text-center">
-                        <Transition.Child
-                            as={Fragment}
-                            enter="ease-out duration-300"
-                            enterFrom="opacity-0 scale-95"
-                            enterTo="opacity-100 scale-100"
-                            leave="ease-in duration-200"
-                            leaveFrom="opacity-100 scale-100"
-                            leaveTo="opacity-0 scale-95"
-                        >
-                            <Dialog.Panel
-                                className={clsx(
-                                    'w-full transform overflow-hidden rounded-lg text-left align-middle shadow-xl transition-all border border-base bg-surface',
-                                    sizeClasses[size],
-                                    className
-                                )}
+            {/* Panel */}
+            <Dialog.Content
+                {...(!closeOnOverlayClick && { onInteractOutside: (e) => e.preventDefault() })}
+                onEscapeKeyDown={() => onClose()}
+                className={cn(
+                    'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2',
+                    'rounded-lg border shadow-xl overflow-hidden',
+                    'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+                    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+                    SIZE[size],
+                    className,
+                )}
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+                {(title || showCloseButton) && (
+                    <div
+                        className="flex items-center justify-between px-6 py-4 border-b"
+                        style={{ borderColor: 'var(--border)' }}
+                    >
+                        {title && (
+                            <Dialog.Title
+                                className="text-lg font-medium leading-6"
+                                style={{ color: 'var(--text-primary)' }}
                             >
-                                {(title || showCloseButton) && (
-                                    <div className="flex items-center justify-between px-6 py-4 border-b border-base">
-                                        {title && (
-                                            <Dialog.Title
-                                                as="h3"
-                                                className="text-lg font-medium leading-6 text-base-primary"
-                                            >
-                                                {title}
-                                            </Dialog.Title>
-                                        )}
-                                        {showCloseButton && (
-                                            <button
-                                                type="button"
-                                                className="rounded-md text-base-muted hover:text-base-muted focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                                                onClick={onClose}
-                                            >
-                                                <span className="sr-only">Close</span>
-                                                <XMarkIcon className="h-6 w-6" aria-hidden="true" />
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-
-                                <div className="px-6 py-4">
-                                    <span ref={initialFocusRef} className="sr-only" aria-hidden="true" />
-                                    {children}
-                                </div>
-                            </Dialog.Panel>
-                        </Transition.Child>
+                                {title}
+                            </Dialog.Title>
+                        )}
+                        {showCloseButton && (
+                            <Dialog.Close
+                                className="rounded-md focus:outline-hidden focus:ring-2 focus:ring-[var(--accent)] transition-colors"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
+                                <span className="sr-only">Close</span>
+                                <XMarkIcon className="h-6 w-6" aria-hidden="true" />
+                            </Dialog.Close>
+                        )}
                     </div>
+                )}
+
+                <div className="px-6 py-4">
+                    {children}
                 </div>
-            </Dialog>
-        </Transition>
-    );
-};
+            </Dialog.Content>
+        </Dialog.Portal>
+    </Dialog.Root>
+);
 
 export { Modal };
