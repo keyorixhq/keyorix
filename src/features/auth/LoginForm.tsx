@@ -1,7 +1,18 @@
 import React, { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import { LoginFormData } from '../../types';
-import { cn } from '../../utils';
+import { Input } from '../../components/ui/Input';
+import { Button } from '../../components/ui/Button';
+import { Alert } from '../../components/ui/Alert';
+import type { LoginFormData } from '../../types';
+
+const schema = z.object({
+    username:   z.string().min(1, 'Username is required'),
+    password:   z.string().min(6, 'Password must be at least 6 characters'),
+    rememberMe: z.boolean(),
+});
 
 interface LoginFormProps {
     onSubmit: (data: LoginFormData) => Promise<void>;
@@ -16,128 +27,58 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     error,
     onForgotPassword,
 }) => {
-    const [formData, setFormData] = useState<LoginFormData>({
-        username: '',
-        password: '',
-        rememberMe: false,
-    });
     const [showPassword, setShowPassword] = useState(false);
-    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-    const validateForm = (): boolean => {
-        const errors: Record<string, string> = {};
-        if (!formData.username.trim()) errors.username = 'Username is required';
-        if (!formData.password.trim()) {
-            errors.password = 'Password is required';
-        } else if (formData.password.length < 6) {
-            errors.password = 'Password must be at least 6 characters long';
-        }
-        setValidationErrors(errors);
-        return Object.keys(errors).length === 0;
-    };
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!validateForm()) return;
-        try {
-            await onSubmit(formData);
-        } catch {
-            // Error handling done by parent
-        }
-    };
-
-    const handleInputChange = (field: keyof LoginFormData, value: string | boolean) => {
-        setFormData(prev => ({ ...prev, [field]: value }));
-        if (validationErrors[field]) {
-            setValidationErrors(prev => { const e = { ...prev }; delete e[field]; return e; });
-        }
-    };
+    const { register, handleSubmit, formState: { errors } } = useForm<z.infer<typeof schema>>({
+        resolver: zodResolver(schema),
+        defaultValues: { username: '', password: '', rememberMe: false },
+    });
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-6" noValidate>
-            <div>
-                <label htmlFor="username" className="block text-sm font-medium text-base-secondary mb-1">
-                    Username
-                </label>
-                <input
-                    type="text"
-                    id="username"
-                    name="username"
-                    autoComplete="username"
-                    required
-                    value={formData.username}
-                    onChange={(e) => handleInputChange('username', e.target.value)}
-                    className={cn(
-                        'block w-full px-3 py-2 border rounded-md shadow-xs',
-                        'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
-                        validationErrors.username
-                            ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                            : 'border-base focus:border-blue-500 focus:ring-blue-500'
-                    )}
-                    style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
-                    placeholder="Username"
-                    disabled={isLoading}
-                />
-                {validationErrors.username && (
-                    <p className="mt-1 text-sm text-red-600" role="alert">{validationErrors.username}</p>
-                )}
-            </div>
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-6" noValidate>
+            <Input
+                label="Username"
+                type="text"
+                autoComplete="username"
+                placeholder="Username"
+                disabled={isLoading}
+                {...(errors.username?.message && { error: errors.username.message })}
+                {...register('username')}
+            />
 
-            <div>
-                <label htmlFor="password" className="block text-sm font-medium text-base-secondary mb-1">
-                    Password
-                </label>
-                <div className="relative">
-                    <input
-                        type={showPassword ? 'text' : 'password'}
-                        id="password"
-                        name="password"
-                        autoComplete="current-password"
-                        required
-                        value={formData.password}
-                        onChange={(e) => handleInputChange('password', e.target.value)}
-                        className={cn(
-                            'block w-full px-3 py-2 pr-10 border rounded-md shadow-xs',
-                            'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
-                            validationErrors.password
-                                ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                                : 'border-base focus:border-blue-500 focus:ring-blue-500'
-                        )}
-                        style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
-                        placeholder="Password"
-                        disabled={isLoading}
-                    />
+            <Input
+                label="Password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                placeholder="Password"
+                disabled={isLoading}
+                {...(errors.password?.message && { error: errors.password.message })}
+                trailingElement={
                     <button
                         type="button"
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                        onClick={() => setShowPassword(!showPassword)}
+                        onClick={() => setShowPassword(v => !v)}
                         disabled={isLoading}
                         aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="focus:outline-hidden"
                     >
-                        {showPassword ? (
-                            <EyeSlashIcon className="h-5 w-5 text-base-muted" />
-                        ) : (
-                            <EyeIcon className="h-5 w-5 text-base-muted" />
-                        )}
+                        {showPassword
+                            ? <EyeSlashIcon className="h-5 w-5 text-base-muted" />
+                            : <EyeIcon className="h-5 w-5 text-base-muted" />}
                     </button>
-                </div>
-                {validationErrors.password && (
-                    <p className="mt-1 text-sm text-red-600" role="alert">{validationErrors.password}</p>
-                )}
-            </div>
+                }
+                {...register('password')}
+            />
 
             <div className="flex items-center justify-between">
                 <div className="flex items-center">
                     <input
                         id="rememberMe"
-                        name="rememberMe"
                         type="checkbox"
-                        checked={formData.rememberMe}
-                        onChange={(e) => handleInputChange('rememberMe', e.target.checked)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-base rounded-sm"
+                        className="h-4 w-4 rounded-sm"
                         disabled={isLoading}
+                        {...register('rememberMe')}
                     />
-                    <label htmlFor="rememberMe" className="ml-2 block text-sm text-base-secondary">
+                    <label htmlFor="rememberMe" className="ml-2 text-sm text-base-secondary">
                         Remember me
                     </label>
                 </div>
@@ -145,39 +86,19 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                     <button
                         type="button"
                         onClick={onForgotPassword}
-                        className="text-sm text-blue-600 hover:text-blue-500 focus:outline-hidden focus:underline"
                         disabled={isLoading}
+                        className="text-sm text-[var(--accent-text)] hover:underline focus:outline-hidden focus:underline"
                     >
                         Forgot password?
                     </button>
                 )}
             </div>
 
-            {error && (
-                <div className="rounded-md bg-red-50 p-4" role="alert">
-                    <div className="text-sm text-red-700">{error}</div>
-                </div>
-            )}
+            {error && <Alert type="error" message={error} />}
 
-            <button
-                type="submit"
-                disabled={isLoading}
-                className={cn(
-                    'w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-xs text-sm font-medium text-white',
-                    'focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500',
-                    isLoading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                )}
-            >
-                {isLoading ? (
-                    <div className="flex items-center">
-                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Loading...
-                    </div>
-                ) : 'Sign in'}
-            </button>
+            <Button type="submit" className="w-full" loading={isLoading} disabled={isLoading}>
+                Sign in
+            </Button>
         </form>
     );
 };

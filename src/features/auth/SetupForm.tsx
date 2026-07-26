@@ -1,148 +1,80 @@
 import React, { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import { cn } from '../../utils';
+import { Input } from '../../components/ui/Input';
+import { Button } from '../../components/ui/Button';
+import { Alert } from '../../components/ui/Alert';
+
+const schema = z.object({
+    password: z.string().min(1, 'Password is required'),
+    confirm:  z.string(),
+}).refine(data => data.password === data.confirm, {
+    message: 'Passwords do not match',
+    path:    ['confirm'],
+});
 
 interface SetupFormProps {
-    // Submit the chosen password; the parent consumes the setup token. Throws on
-    // failure (e.g. a policy rejection), which the parent surfaces via `error` — the
-    // link stays usable so the user can correct the password and retry.
     onSubmit: (password: string) => Promise<void>;
     isLoading?: boolean;
     error?: string | null;
 }
 
 export const SetupForm: React.FC<SetupFormProps> = ({ onSubmit, isLoading = false, error }) => {
-    const [password, setPassword] = useState('');
-    const [confirm, setConfirm] = useState('');
     const [showPassword, setShowPassword] = useState(false);
-    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-    const validateForm = (): boolean => {
-        const errors: Record<string, string> = {};
-        if (!password.trim()) {
-            errors.password = 'Password is required';
-        }
-        if (confirm !== password) {
-            errors.confirm = 'Passwords do not match';
-        }
-        setValidationErrors(errors);
-        return Object.keys(errors).length === 0;
-    };
+    const { register, handleSubmit, formState: { errors } } = useForm<z.infer<typeof schema>>({
+        resolver: zodResolver(schema),
+        defaultValues: { password: '', confirm: '' },
+    });
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!validateForm()) return;
-        try {
-            await onSubmit(password);
-        } catch {
-            // Error handling done by parent (keeps the link usable for a retry).
-        }
-    };
-
-    const clearError = (field: string) => {
-        if (validationErrors[field]) {
-            setValidationErrors(prev => { const e = { ...prev }; delete e[field]; return e; });
-        }
-    };
+    const revealToggle = (
+        <button
+            type="button"
+            onClick={() => setShowPassword(v => !v)}
+            disabled={isLoading}
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            className="focus:outline-hidden"
+        >
+            {showPassword
+                ? <EyeSlashIcon className="h-5 w-5 text-base-muted" />
+                : <EyeIcon className="h-5 w-5 text-base-muted" />}
+        </button>
+    );
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-6" noValidate>
-            <div>
-                <label htmlFor="new-password" className="block text-sm font-medium text-base-secondary mb-1">
-                    New password
-                </label>
-                <div className="relative">
-                    <input
-                        type={showPassword ? 'text' : 'password'}
-                        id="new-password"
-                        name="new-password"
-                        autoComplete="new-password"
-                        required
-                        value={password}
-                        onChange={(e) => { setPassword(e.target.value); clearError('password'); }}
-                        className={cn(
-                            'block w-full px-3 py-2 pr-10 border rounded-md shadow-xs',
-                            'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
-                            validationErrors.password
-                                ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                                : 'border-base focus:border-blue-500 focus:ring-blue-500'
-                        )}
-                        style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
-                        placeholder="New password"
-                        disabled={isLoading}
-                    />
-                    <button
-                        type="button"
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                        onClick={() => setShowPassword(!showPassword)}
-                        disabled={isLoading}
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    >
-                        {showPassword ? (
-                            <EyeSlashIcon className="h-5 w-5 text-base-muted" />
-                        ) : (
-                            <EyeIcon className="h-5 w-5 text-base-muted" />
-                        )}
-                    </button>
-                </div>
-                {validationErrors.password && (
-                    <p className="mt-1 text-sm text-red-600" role="alert">{validationErrors.password}</p>
-                )}
-            </div>
-
-            <div>
-                <label htmlFor="confirm-password" className="block text-sm font-medium text-base-secondary mb-1">
-                    Confirm password
-                </label>
-                <input
-                    type={showPassword ? 'text' : 'password'}
-                    id="confirm-password"
-                    name="confirm-password"
-                    autoComplete="new-password"
-                    required
-                    value={confirm}
-                    onChange={(e) => { setConfirm(e.target.value); clearError('confirm'); }}
-                    className={cn(
-                        'block w-full px-3 py-2 border rounded-md shadow-xs',
-                        'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
-                        validationErrors.confirm
-                            ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                            : 'border-base focus:border-blue-500 focus:ring-blue-500'
-                    )}
-                    style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
-                    placeholder="Confirm password"
-                    disabled={isLoading}
-                />
-                {validationErrors.confirm && (
-                    <p className="mt-1 text-sm text-red-600" role="alert">{validationErrors.confirm}</p>
-                )}
-            </div>
-
-            {error && (
-                <div className="rounded-md bg-red-50 p-4" role="alert">
-                    <div className="text-sm text-red-700">{error}</div>
-                </div>
-            )}
-
-            <button
-                type="submit"
+        <form
+            onSubmit={handleSubmit(data => onSubmit(data.password))}
+            className="space-y-6"
+            noValidate
+        >
+            <Input
+                label="New password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="new-password"
+                placeholder="New password"
                 disabled={isLoading}
-                className={cn(
-                    'w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-xs text-sm font-medium text-white',
-                    'focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500',
-                    isLoading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                )}
-            >
-                {isLoading ? (
-                    <div className="flex items-center">
-                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Setting up...
-                    </div>
-                ) : 'Set password and continue'}
-            </button>
+                {...(errors.password?.message && { error: errors.password.message })}
+                trailingElement={revealToggle}
+                {...register('password')}
+            />
+
+            <Input
+                label="Confirm password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="new-password"
+                placeholder="Confirm password"
+                disabled={isLoading}
+                {...(errors.confirm?.message && { error: errors.confirm.message })}
+                {...register('confirm')}
+            />
+
+            {error && <Alert type="error" message={error} />}
+
+            <Button type="submit" className="w-full" loading={isLoading} disabled={isLoading}>
+                Set password and continue
+            </Button>
         </form>
     );
 };

@@ -1,161 +1,166 @@
-import React from 'react';
-import { useForm, UseFormReturn, FieldValues, SubmitHandler, UseFormProps } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { clsx } from 'clsx';
+import * as React from 'react';
+import {
+    Controller,
+    FormProvider,
+    useFormContext,
+    type ControllerProps,
+    type FieldPath,
+    type FieldValues,
+} from 'react-hook-form';
+import { cn } from '@/lib/utils';
 
-// Form context to pass form methods to child components
-const FormContext = React.createContext<UseFormReturn<any> | null>(null);
+// ── Form ──────────────────────────────────────────────────────────────────────
+// Thin alias for FormProvider — callers own the useForm() call:
+//   const form = useForm({ resolver: zodResolver(schema) });
+//   <Form {...form}><form onSubmit={form.handleSubmit(onSubmit)}>…</form></Form>
 
-export const useFormContext = <T extends FieldValues = FieldValues>(): UseFormReturn<T> => {
-    const context = React.useContext(FormContext);
-    if (!context) {
-        throw new Error('useFormContext must be used within a Form component');
-    }
-    return context as UseFormReturn<T>;
-};
+const Form = FormProvider;
 
-export interface FormProps<T extends FieldValues = FieldValues> extends Omit<React.FormHTMLAttributes<HTMLFormElement>, 'onSubmit'> {
-    // z.ZodType<T> across zod 3/4; the resolver input is cast at the call
-    // site below since this generic Form guarantees T extends FieldValues.
-    schema?: z.ZodType<T>;
-    onSubmit: SubmitHandler<T>;
-    defaultValues?: UseFormProps<T>['defaultValues'];
-    mode?: UseFormProps<T>['mode'];
-    children: React.ReactNode;
-    className?: string;
+// ── FormField ─────────────────────────────────────────────────────────────────
+// Controller wrapper that puts the field name in context for child components.
+
+type FormFieldContextValue<
+    TFieldValues extends FieldValues = FieldValues,
+    TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
+> = { name: TName };
+
+const FormFieldContext = React.createContext<FormFieldContextValue>(
+    {} as FormFieldContextValue,
+);
+
+function FormField<
+    TFieldValues extends FieldValues = FieldValues,
+    TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
+>(props: ControllerProps<TFieldValues, TName>) {
+    return (
+        <FormFieldContext.Provider value={{ name: props.name }}>
+            <Controller {...props} />
+        </FormFieldContext.Provider>
+    );
 }
 
-function Form<T extends FieldValues = FieldValues>({
-    schema,
-    onSubmit,
-    defaultValues,
-    mode = 'onChange',
-    children,
-    className,
-    ...props
-}: FormProps<T>) {
-    const formMethods = useForm<T>({
-        ...(schema && { resolver: zodResolver(schema as z.ZodType<T, any, any>) }),
-        ...(defaultValues && { defaultValues }),
-        mode,
-    });
+// ── useFormField ──────────────────────────────────────────────────────────────
 
-    const { handleSubmit } = formMethods;
+type FormItemContextValue = { id: string };
+const FormItemContext = React.createContext<FormItemContextValue>(
+    {} as FormItemContextValue,
+);
 
-    return (
-        <FormContext.Provider value={formMethods}>
-            <form
-                onSubmit={handleSubmit(onSubmit as SubmitHandler<FieldValues>)}
-                className={clsx('space-y-4', className)}
+export function useFormField() {
+    const fieldCtx = React.useContext(FormFieldContext);
+    const itemCtx = React.useContext(FormItemContext);
+    const { getFieldState, formState } = useFormContext();
+    const fieldState = getFieldState(fieldCtx.name, formState);
+
+    if (!fieldCtx.name) throw new Error('useFormField must be used within <FormField>');
+
+    const { id } = itemCtx;
+    return {
+        id,
+        name: fieldCtx.name,
+        formItemId: `${id}-item`,
+        formDescriptionId: `${id}-desc`,
+        formMessageId: `${id}-msg`,
+        ...fieldState,
+    };
+}
+
+// ── FormItem ──────────────────────────────────────────────────────────────────
+
+const FormItem = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+    ({ className, ...props }, ref) => {
+        const id = React.useId();
+        return (
+            <FormItemContext.Provider value={{ id }}>
+                <div ref={ref} className={cn('space-y-1.5', className)} {...props} />
+            </FormItemContext.Provider>
+        );
+    },
+);
+FormItem.displayName = 'FormItem';
+
+// ── FormLabel ─────────────────────────────────────────────────────────────────
+
+const FormLabel = React.forwardRef<HTMLLabelElement, React.LabelHTMLAttributes<HTMLLabelElement>>(
+    ({ className, ...props }, ref) => {
+        const { error, formItemId } = useFormField();
+        return (
+            <label
+                ref={ref}
+                htmlFor={formItemId}
+                className={cn(
+                    'block text-sm font-medium',
+                    error ? 'text-[var(--error)]' : 'text-base-secondary',
+                    className,
+                )}
                 {...props}
-            >
-                {children}
-            </form>
-        </FormContext.Provider>
-    );
-}
+            />
+        );
+    },
+);
+FormLabel.displayName = 'FormLabel';
 
-// Form field wrapper component
-export interface FormFieldProps {
-    name: string;
-    children: (field: {
-        value: any;
-        onChange: (value: any) => void;
-        onBlur: () => void;
-        error?: string | undefined;
-    }) => React.ReactNode;
-}
+// ── FormControl ───────────────────────────────────────────────────────────────
+// Wraps the control with the correct id and aria attrs for the field.
 
-const FormField: React.FC<FormFieldProps> = ({ name, children }) => {
-    const { register, formState: { errors }, setValue, watch } = useFormContext();
-
-    const error = errors[name]?.message as string | undefined;
-    const value = watch(name);
-
-    const { onChange, onBlur } = register(name);
-
-    const handleChange = (newValue: any) => {
-        setValue(name, newValue, { shouldValidate: true, shouldDirty: true });
-        onChange({ target: { value: newValue, name } });
-    };
-
+const FormControl = React.forwardRef<
+    HTMLDivElement,
+    React.HTMLAttributes<HTMLDivElement>
+>(({ ...props }, ref) => {
+    const { error, formItemId, formDescriptionId, formMessageId } = useFormField();
     return (
-        <>
-            {children({
-                value,
-                onChange: handleChange,
-                onBlur: () => onBlur({ target: { value, name } }),
-                error,
-            })}
-        </>
+        <div
+            ref={ref}
+            id={formItemId}
+            aria-describedby={
+                error ? `${formDescriptionId} ${formMessageId}` : formDescriptionId
+            }
+            aria-invalid={!!error}
+            {...props}
+        />
     );
-};
+});
+FormControl.displayName = 'FormControl';
 
-// Form section component for grouping related fields
-export interface FormSectionProps {
-    title?: string;
-    description?: string;
-    children: React.ReactNode;
-    className?: string;
-}
+// ── FormDescription ───────────────────────────────────────────────────────────
 
-const FormSection: React.FC<FormSectionProps> = ({
-    title,
-    description,
-    children,
-    className,
-}) => {
+const FormDescription = React.forwardRef<
+    HTMLParagraphElement,
+    React.HTMLAttributes<HTMLParagraphElement>
+>(({ className, ...props }, ref) => {
+    const { formDescriptionId } = useFormField();
     return (
-        <div className={clsx('space-y-4', className)}>
-            {(title || description) && (
-                <div className="border-b border-gray-200 pb-4">
-                    {title && (
-                        <h3 className="text-lg font-medium text-gray-900">
-                            {title}
-                        </h3>
-                    )}
-                    {description && (
-                        <p className="mt-1 text-sm text-gray-500">
-                            {description}
-                        </p>
-                    )}
-                </div>
-            )}
-            <div className="space-y-4">
-                {children}
-            </div>
-        </div>
+        <p
+            ref={ref}
+            id={formDescriptionId}
+            className={cn('text-sm text-base-muted', className)}
+            {...props}
+        />
     );
-};
+});
+FormDescription.displayName = 'FormDescription';
 
-// Form actions component for submit/cancel buttons
-export interface FormActionsProps {
-    children: React.ReactNode;
-    align?: 'left' | 'right' | 'center';
-    className?: string;
-}
+// ── FormMessage ───────────────────────────────────────────────────────────────
 
-const FormActions: React.FC<FormActionsProps> = ({
-    children,
-    align = 'right',
-    className,
-}) => {
-    const alignmentClasses = {
-        left: 'justify-start',
-        right: 'justify-end',
-        center: 'justify-center',
-    };
-
+const FormMessage = React.forwardRef<
+    HTMLParagraphElement,
+    React.HTMLAttributes<HTMLParagraphElement>
+>(({ className, children, ...props }, ref) => {
+    const { error, formMessageId } = useFormField();
+    const body = error ? String(error.message ?? '') : children;
+    if (!body) return null;
     return (
-        <div className={clsx(
-            'flex space-x-3 pt-4 border-t border-gray-200',
-            alignmentClasses[align],
-            className
-        )}>
-            {children}
-        </div>
+        <p
+            ref={ref}
+            id={formMessageId}
+            role="alert"
+            className={cn('text-sm text-[var(--error)]', className)}
+            {...props}
+        >
+            {body}
+        </p>
     );
-};
+});
+FormMessage.displayName = 'FormMessage';
 
-export { Form, FormField, FormSection, FormActions };
+export { Form, FormField, FormItem, FormLabel, FormControl, FormDescription, FormMessage };
