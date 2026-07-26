@@ -40,7 +40,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
-	g, err := service.UpdateGroup(ctx, 0, &core.UpdateGroupRequest{ // actorID 0: local/unauthenticated CLI
+	g, err := service.UpdateGroup(ctx, common.ResolveActorID(), &core.UpdateGroupRequest{
 		ID:          updateGroupID,
 		Name:        updateGroupName,
 		Description: updateGroupDescription,

@@ -50,6 +50,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
@@ -76,6 +77,39 @@ func clampPageSize(pageSize int) int {
 		return maxStoragePageSize
 	}
 	return pageSize
+}
+
+// maxStoragePage is the maximum page number accepted by paginated queries.
+// Without a ceiling, a hostile caller can force OFFSET = (page-1)*pageSize
+// into the millions, which SQLite/Postgres must scan and discard before
+// returning any rows — a cheap denial-of-service against the audit endpoint.
+// 10000 pages × up to 100 rows/page = 1 million rows, far above any real
+// audit log a single deployment would accumulate.
+const maxStoragePage = 10_000
+
+// clampPage bounds a caller-supplied page number to [1, maxStoragePage].
+func clampPage(page int) int {
+	if page < 1 {
+		return 1
+	}
+	if page > maxStoragePage {
+		return maxStoragePage
+	}
+	return page
+}
+
+// escapeLIKE escapes SQL LIKE wildcard metacharacters (%, _) in a caller-supplied
+// string using backslash as the escape character. Callers must also append
+// ESCAPE '\' to the LIKE clause so the database honours the escapes.
+// Without this, a search for "foo%bar" would match any string starting with
+// "foo" rather than the literal token, turning a user-controlled LIKE operand
+// into a wildcard injection vector.
+func escapeLIKE(s string) string {
+	// Replace \ first to avoid double-escaping already-present backslashes.
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 // RemoteStorage implements storage.Storage via the Keyorix REST API.

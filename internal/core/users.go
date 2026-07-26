@@ -287,13 +287,46 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if req.DisplayName != "" {
 		user.DisplayName = req.DisplayName
 	}
+	wasActive := user.IsActive
 	if req.IsActive != nil {
 		user.IsActive = *req.IsActive
 	}
+	deactivating := wasActive && !user.IsActive
 	user.UpdatedAt = c.now()
-	updated, err := c.storage.UpdateUser(ctx, user)
+
+	var sessionHashes []string
+	if deactivating {
+		// Collect session hashes before the write so we can evict the auth cache
+		// after commit. The HTTP auth middleware caches validated tokens for up to
+		// validTokenTTL (30s); without eviction a just-deactivated user's session
+		// keeps passing auth for that window — same race SetAccountState already
+		// handles on suspend/deactivate via the account-state path (#r124).
+		sessionHashes, _ = c.storage.ListSessionTokenHashesForUser(ctx, req.ID)
+	}
+
+	var patHashes []string
+	var updated *models.User
+	if deactivating {
+		err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			var terr error
+			updated, terr = tx.UpdateUser(ctx, user)
+			if terr != nil {
+				return terr
+			}
+			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID); herr == nil {
+				patHashes = hashes
+			}
+			return tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
+		})
+	} else {
+		updated, err = c.storage.UpdateUser(ctx, user)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if deactivating {
+		c.invalidateTokenCache(sessionHashes...)
+		c.invalidateTokenCache(patHashes...)
 	}
 	return updated, nil
 }

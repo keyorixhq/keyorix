@@ -52,7 +52,7 @@ func runRemoveMember(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	if err := service.RemoveUserFromGroup(ctx, 0, removeMemberUserID, removeMemberGroupID, removeMemberProjectID); err != nil { // actorID 0: local/unauthenticated CLI
+	if err := service.RemoveUserFromGroup(ctx, common.ResolveActorID(), removeMemberUserID, removeMemberGroupID, removeMemberProjectID); err != nil {
 		return fmt.Errorf("failed to remove member: %w", err)
 	}
 	fmt.Printf("User %d removed from group %d (project %d).\n", removeMemberUserID, removeMemberGroupID, removeMemberProjectID)
