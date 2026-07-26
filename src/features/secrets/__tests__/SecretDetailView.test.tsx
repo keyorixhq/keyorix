@@ -10,7 +10,14 @@ const mockResumeMutate = vi.fn();
 let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: string }[] = [];
 let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
 let mockAccessLog: { AccessedBy: string; AccessTime: string; Action: string; IPAddress: string }[] = [];
-let mockAuditTrail: { id: number; event_type: string; timestamp: string; actor_type: string; description: string; success: boolean }[] = [];
+let mockAuditTrail: {
+    id: number;
+    event_type: string;
+    timestamp: string;
+    actor_type: string;
+    description: string;
+    success: boolean;
+}[] = [];
 let mockTags: string[] = [];
 const setTagsMutate = vi.fn();
 let mockDescription = '';
@@ -90,7 +97,6 @@ describe('SecretDetailView classification', () => {
         expect(screen.getByTestId('classification-badge')).toHaveTextContent('Restricted');
     });
 });
-
 
 describe('SecretDetailView version rollback', () => {
     beforeEach(() => {
@@ -201,8 +207,22 @@ describe('SecretDetailView history', () => {
         mockAccessors = [];
         mockAccessLog = [];
         mockAuditTrail = [
-            { id: 2, event_type: 'secret.suspended', timestamp: '2026-06-18T12:00:00Z', actor_type: 'user', description: 'frozen for incident', success: true },
-            { id: 1, event_type: 'secret.created', timestamp: '2026-06-18T10:00:00Z', actor_type: 'user', description: '', success: true },
+            {
+                id: 2,
+                event_type: 'secret.suspended',
+                timestamp: '2026-06-18T12:00:00Z',
+                actor_type: 'user',
+                description: 'frozen for incident',
+                success: true,
+            },
+            {
+                id: 1,
+                event_type: 'secret.created',
+                timestamp: '2026-06-18T10:00:00Z',
+                actor_type: 'user',
+                description: '',
+                success: true,
+            },
         ];
     });
 

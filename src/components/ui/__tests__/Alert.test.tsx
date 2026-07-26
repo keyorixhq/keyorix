@@ -10,7 +10,11 @@ describe('Alert', () => {
     });
 
     it('renders children as body content', () => {
-        render(<Alert type="info"><span>Custom body</span></Alert>);
+        render(
+            <Alert type="info">
+                <span>Custom body</span>
+            </Alert>
+        );
         expect(screen.getByText('Custom body')).toBeInTheDocument();
     });
 
@@ -45,7 +49,7 @@ describe('AlertList', () => {
         const onDismiss = vi.fn();
         const alerts = [
             { id: 'a1', type: 'success' as const, title: 'A', dismissible: true },
-            { id: 'a2', type: 'error'   as const, title: 'B', dismissible: true },
+            { id: 'a2', type: 'error' as const, title: 'B', dismissible: true },
         ];
         render(<AlertList alerts={alerts} onDismiss={onDismiss} />);
         expect(screen.getByText('A')).toBeInTheDocument();

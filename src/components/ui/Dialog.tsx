@@ -76,44 +76,31 @@ const Dialog: React.FC<DialogProps> = ({
     const confirmButtonVariant = type === 'danger' ? 'destructive' : 'default';
 
     return (
-        <Modal
-            isOpen={isOpen}
-            onClose={onClose}
-            size="sm"
-            showCloseButton={false}
-            closeOnOverlayClick={!loading}
-        >
+        <Modal isOpen={isOpen} onClose={onClose} size="sm" showCloseButton={false} closeOnOverlayClick={!loading}>
             <div className="flex">
-                <div className={clsx('mx-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full', config.bgColor)}>
+                <div
+                    className={clsx(
+                        'mx-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full',
+                        config.bgColor
+                    )}
+                >
                     <Icon className={clsx('h-6 w-6', config.iconColor)} aria-hidden="true" />
                 </div>
                 <div className="ml-4 text-left">
-                    <h3 className="text-lg font-medium text-gray-900">
-                        {title}
-                    </h3>
+                    <h3 className="text-lg font-medium text-gray-900">{title}</h3>
                     <div className="mt-2">
-                        <p className="text-sm text-gray-500">
-                            {message}
-                        </p>
+                        <p className="text-sm text-gray-500">{message}</p>
                     </div>
                 </div>
             </div>
 
             <div className="mt-6 flex justify-end space-x-3">
                 {showCancel && (
-                    <Button
-                        variant="outline"
-                        onClick={handleCancel}
-                        disabled={loading}
-                    >
+                    <Button variant="outline" onClick={handleCancel} disabled={loading}>
                         {cancelText}
                     </Button>
                 )}
-                <Button
-                    variant={confirmButtonVariant}
-                    onClick={handleConfirm}
-                    loading={loading}
-                >
+                <Button variant={confirmButtonVariant} onClick={handleConfirm} loading={loading}>
                     {confirmText}
                 </Button>
             </div>

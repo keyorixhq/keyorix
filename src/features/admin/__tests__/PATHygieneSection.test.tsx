@@ -18,8 +18,24 @@ describe('PATHygieneSection', () => {
 
     it('renders the count, per-token detail, and flag labels', () => {
         mockTokens = [
-            { id: 2, name: 'ci', token_prefix: 'kx_pat_ci', user_id: 7, last_used_at: null, expired: false, stale: true },
-            { id: 5, name: 'old', token_prefix: 'kx_pat_old', user_id: 9, last_used_at: fiveDaysAgo, expired: true, stale: false },
+            {
+                id: 2,
+                name: 'ci',
+                token_prefix: 'kx_pat_ci',
+                user_id: 7,
+                last_used_at: null,
+                expired: false,
+                stale: true,
+            },
+            {
+                id: 5,
+                name: 'old',
+                token_prefix: 'kx_pat_old',
+                user_id: 9,
+                last_used_at: fiveDaysAgo,
+                expired: true,
+                stale: false,
+            },
         ];
         render(<PATHygieneSection />);
         expect(screen.getByText(/2 personal access tokens stale or expired-but-active/i)).toBeInTheDocument();
@@ -31,7 +47,15 @@ describe('PATHygieneSection', () => {
 
     it('can be dismissed', () => {
         mockTokens = [
-            { id: 2, name: 'ci', token_prefix: 'kx_pat_ci', user_id: 7, last_used_at: null, expired: false, stale: true },
+            {
+                id: 2,
+                name: 'ci',
+                token_prefix: 'kx_pat_ci',
+                user_id: 7,
+                last_used_at: null,
+                expired: false,
+                stale: true,
+            },
         ];
         render(<PATHygieneSection />);
         fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));

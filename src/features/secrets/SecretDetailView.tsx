@@ -14,9 +14,25 @@ import {
     KeyIcon,
     ArrowPathIcon,
     ShieldExclamationIcon,
-    ShieldCheckIcon
+    ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSecretDescription, useSetSecretDescription, useCopySecret, useSuspendSecret, useResumeSecret } from './api';
+import {
+    useSecretVersions,
+    useRotateSecret,
+    useSecretRisk,
+    useClassifySecret,
+    useRollbackSecret,
+    useSecretAccessors,
+    useSecretAccessLog,
+    useSecretAuditTrail,
+    useSecretTags,
+    useSetSecretTags,
+    useSecretDescription,
+    useSetSecretDescription,
+    useCopySecret,
+    useSuspendSecret,
+    useResumeSecret,
+} from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { SecretDependenciesSection } from './SecretDependenciesSection';
 import { CertificatePanel } from './CertificatePanel';
@@ -81,13 +97,7 @@ interface SecretDetailViewProps {
     onClose?: () => void;
 }
 
-export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
-    secret,
-    onEdit,
-    onShare,
-    onDelete,
-    onClose
-}) => {
+export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEdit, onShare, onDelete, onClose }) => {
     const [showValue, setShowValue] = useState(false);
     const [copySuccess, setCopySuccess] = useState(false);
     const [showRotate, setShowRotate] = useState(false);
@@ -110,7 +120,8 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
             { environmentId: envId, ...(name ? { name } : {}) },
             {
                 onSuccess: () => setCopyMsg(`Copied to environment ${envId}.`),
-                onError: (err: any) => setCopyMsg(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Copy failed.'),
+                onError: (err: any) =>
+                    setCopyMsg(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Copy failed.'),
             }
         );
     };
@@ -184,9 +195,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
         });
     };
 
-    const latestVersion = versions && versions.length > 0
-        ? versions.reduce((a, b) => a.VersionNumber >= b.VersionNumber ? a : b)
-        : null;
+    const latestVersion =
+        versions && versions.length > 0
+            ? versions.reduce((a, b) => (a.VersionNumber >= b.VersionNumber ? a : b))
+            : null;
     const secretValue = latestVersion ? atob(latestVersion.EncryptedValue) : null;
 
     const handleCopyValue = async (value: string): Promise<void> => {
@@ -231,10 +243,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
             <div className="flex items-start justify-between">
                 <div className="flex-1">
                     <div className="flex items-center space-x-3">
-                        <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
-                            {secret.name}
-                        </h2>
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getTypeColor(secret.type)}`}>
+                        <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">{secret.name}</h2>
+                        <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getTypeColor(secret.type)}`}
+                        >
                             {secret.type}
                         </span>
                         <span
@@ -299,27 +311,15 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                 </div>
 
                 <div className="flex items-center space-x-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onEdit?.(secret)}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => onEdit?.(secret)}>
                         <PencilIcon className="h-4 w-4 mr-2" />
                         Edit
                     </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowRotate(true)}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => setShowRotate(true)}>
                         <ArrowPathIcon className="h-4 w-4 mr-2" />
                         Rotate
                     </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onShare?.(secret)}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => onShare?.(secret)}>
                         <ShareIcon className="h-4 w-4 mr-2" />
                         Share
                     </Button>
@@ -355,7 +355,9 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
             </div>
 
             {copyMsg && (
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{copyMsg}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {copyMsg}
+                </p>
             )}
 
             {/* Secret Value */}
@@ -372,7 +374,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             onClick={handleToggleValue}
                             disabled={showValue && isLoading}
                         >
-                            {(showValue && isLoading) ? (
+                            {showValue && isLoading ? (
                                 <Spinner size="sm" />
                             ) : showValue ? (
                                 <>
@@ -418,7 +420,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             Secret value is hidden for security. Click "Reveal" to view.
                         </p>
                     </div>
-                ) : (showValue && isLoading) ? (
+                ) : showValue && isLoading ? (
                     <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
                         <Loading />
                     </div>
@@ -438,11 +440,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
 
                 {copySuccess && (
                     <div className="mt-2">
-                        <Alert
-                            type="success"
-                            title="Copied to clipboard"
-                            message="Secret value copied to clipboard."
-                        />
+                        <Alert type="success" title="Copied to clipboard" message="Secret value copied to clipboard." />
                     </div>
                 )}
             </div>
@@ -455,30 +453,46 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                 <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
                     <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Version History</h3>
                     {rollbackMutation.isError && (
-                        <Alert type="error" title="Rollback failed" message={rollbackMutation.error instanceof Error ? rollbackMutation.error.message : 'An unexpected error occurred'} />
+                        <Alert
+                            type="error"
+                            title="Rollback failed"
+                            message={
+                                rollbackMutation.error instanceof Error
+                                    ? rollbackMutation.error.message
+                                    : 'An unexpected error occurred'
+                            }
+                        />
                     )}
                     <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                        {[...versions].sort((a, b) => b.VersionNumber - a.VersionNumber).map((v) => (
-                            <div key={v.VersionNumber} className="flex items-center justify-between py-2.5">
-                                <div className="flex items-center gap-2 text-sm">
-                                    <span className="font-medium text-gray-900 dark:text-white tabular-nums">v{v.VersionNumber}</span>
-                                    {v.VersionNumber === latestVersion.VersionNumber && (
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">current</span>
+                        {[...versions]
+                            .sort((a, b) => b.VersionNumber - a.VersionNumber)
+                            .map((v) => (
+                                <div key={v.VersionNumber} className="flex items-center justify-between py-2.5">
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <span className="font-medium text-gray-900 dark:text-white tabular-nums">
+                                            v{v.VersionNumber}
+                                        </span>
+                                        {v.VersionNumber === latestVersion.VersionNumber && (
+                                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">
+                                                current
+                                            </span>
+                                        )}
+                                        <span className="text-gray-500 dark:text-gray-400">
+                                            {new Date(v.CreatedAt).toLocaleString()}
+                                        </span>
+                                    </div>
+                                    {v.VersionNumber !== latestVersion.VersionNumber && (
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={rollbackMutation.isPending}
+                                            onClick={() => handleRollback(v.VersionNumber)}
+                                        >
+                                            {rollbackMutation.isPending ? 'Rolling back…' : 'Roll back'}
+                                        </Button>
                                     )}
-                                    <span className="text-gray-500 dark:text-gray-400">{new Date(v.CreatedAt).toLocaleString()}</span>
                                 </div>
-                                {v.VersionNumber !== latestVersion.VersionNumber && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        disabled={rollbackMutation.isPending}
-                                        onClick={() => handleRollback(v.VersionNumber)}
-                                    >
-                                        {rollbackMutation.isPending ? 'Rolling back…' : 'Roll back'}
-                                    </Button>
-                                )}
-                            </div>
-                        ))}
+                            ))}
                     </div>
                 </div>
             )}
@@ -498,13 +512,15 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                                     <span className="font-medium text-gray-900 dark:text-white">{a.username}</span>
                                     <span className="text-xs text-gray-500 dark:text-gray-400">{a.source}</span>
                                 </div>
-                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                                    a.permission === 'owner'
-                                        ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300'
-                                        : a.permission === 'write'
-                                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-                                            : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                                }`}>
+                                <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                        a.permission === 'owner'
+                                            ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300'
+                                            : a.permission === 'write'
+                                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                                              : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                                    }`}
+                                >
                                     {a.permission}
                                 </span>
                             </div>
@@ -525,10 +541,18 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             <div key={i} className="flex items-center justify-between py-2 text-sm">
                                 <div className="flex items-center gap-2 min-w-0">
                                     <UserIcon className="h-4 w-4 text-gray-400 shrink-0" />
-                                    <span className="font-medium text-gray-900 dark:text-white">{e.AccessedBy || 'unknown'}</span>
-                                    <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{e.Action}{e.IPAddress ? ` · ${e.IPAddress}` : ''}</span>
+                                    <span className="font-medium text-gray-900 dark:text-white">
+                                        {e.AccessedBy || 'unknown'}
+                                    </span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                        {e.Action}
+                                        {e.IPAddress ? ` · ${e.IPAddress}` : ''}
+                                    </span>
                                 </div>
-                                <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap" title={new Date(e.AccessTime).toLocaleString()}>
+                                <span
+                                    className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap"
+                                    title={new Date(e.AccessTime).toLocaleString()}
+                                >
                                     {relativeFromNow(e.AccessTime)}
                                 </span>
                             </div>
@@ -586,7 +610,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                     {secretTags.map((t) => (
-                        <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                        <span
+                            key={t}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
+                        >
                             {t}
                             <button
                                 type="button"
@@ -599,9 +626,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             </button>
                         </span>
                     ))}
-                    {secretTags.length === 0 && (
-                        <span className="text-xs text-gray-400">No tags yet.</span>
-                    )}
+                    {secretTags.length === 0 && <span className="text-xs text-gray-400">No tags yet.</span>}
                 </div>
                 <input
                     value={tagDraft}
@@ -609,7 +634,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     onKeyDown={(e) => {
                         if (e.key !== 'Enter') return;
                         const t = tagDraft.trim().toLowerCase();
-                        if (!t || secretTags.includes(t)) { setTagDraft(''); return; }
+                        if (!t || secretTags.includes(t)) {
+                            setTagDraft('');
+                            return;
+                        }
                         setTags.mutate([...secretTags, t], { onSuccess: () => setTagDraft('') });
                     }}
                     disabled={setTags.isPending}
@@ -630,15 +658,24 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             <div key={e.id} className="flex items-center justify-between py-2 text-sm">
                                 <div className="flex items-center gap-2 min-w-0">
                                     <ClockIcon className="h-4 w-4 text-gray-400 shrink-0" />
-                                    <span className="font-medium text-gray-900 dark:text-white">{auditEventLabel(e.event_type)}</span>
+                                    <span className="font-medium text-gray-900 dark:text-white">
+                                        {auditEventLabel(e.event_type)}
+                                    </span>
                                     {e.description && (
-                                        <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{e.description}</span>
+                                        <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                            {e.description}
+                                        </span>
                                     )}
                                     {e.actor_type === 'machine_identity' && (
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">machine</span>
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
+                                            machine
+                                        </span>
                                     )}
                                 </div>
-                                <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap" title={new Date(e.timestamp).toLocaleString()}>
+                                <span
+                                    className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap"
+                                    title={new Date(e.timestamp).toLocaleString()}
+                                >
                                     {relativeFromNow(e.timestamp)}
                                 </span>
                             </div>
@@ -656,25 +693,33 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             Risk Score
                         </h3>
                         <div className="flex items-center gap-3">
-                            <span className="text-2xl font-bold tabular-nums" style={{ color: RISK_BAND_STYLE[risk.band].color }}>
+                            <span
+                                className="text-2xl font-bold tabular-nums"
+                                style={{ color: RISK_BAND_STYLE[risk.band].color }}
+                            >
                                 {risk.score}
                                 <span className="text-sm font-normal text-gray-400"> / 100</span>
                             </span>
                             <span
                                 className="px-2.5 py-1 rounded-full text-xs font-semibold"
-                                style={{ color: RISK_BAND_STYLE[risk.band].color, backgroundColor: `${RISK_BAND_STYLE[risk.band].color}1a` }}
+                                style={{
+                                    color: RISK_BAND_STYLE[risk.band].color,
+                                    backgroundColor: `${RISK_BAND_STYLE[risk.band].color}1a`,
+                                }}
                             >
                                 {RISK_BAND_STYLE[risk.band].label}
                             </span>
                         </div>
                     </div>
                     <div className="space-y-3">
-                        {risk.factors.map(f => (
+                        {risk.factors.map((f) => (
                             <div key={f.key} className="space-y-1">
                                 <div className="flex items-center justify-between text-sm">
                                     <span className="text-gray-700 dark:text-gray-300">
                                         {f.label}
-                                        <span className="text-gray-400 dark:text-gray-500 ml-2">{Math.round(f.weight * 100)}%</span>
+                                        <span className="text-gray-400 dark:text-gray-500 ml-2">
+                                            {Math.round(f.weight * 100)}%
+                                        </span>
                                     </span>
                                     <span className="text-xs text-gray-500 dark:text-gray-400">{f.detail}</span>
                                 </div>
@@ -716,18 +761,12 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
             {/* Metadata */}
             {Object.keys(secret.metadata).length > 0 && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
-                        Metadata
-                    </h3>
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Metadata</h3>
                     <div className="space-y-3">
                         {Object.entries(secret.metadata).map(([key, value]) => (
                             <div key={key} className="flex items-start">
-                                <div className="w-1/3 text-sm font-medium text-gray-500 dark:text-gray-400">
-                                    {key}
-                                </div>
-                                <div className="w-2/3 text-sm text-gray-900 dark:text-white">
-                                    {value}
-                                </div>
+                                <div className="w-1/3 text-sm font-medium text-gray-500 dark:text-gray-400">{key}</div>
+                                <div className="w-2/3 text-sm text-gray-900 dark:text-white">{value}</div>
                             </div>
                         ))}
                     </div>
@@ -744,17 +783,14 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm text-gray-900 dark:text-white">
-                                This secret is shared with <span className="font-medium">{secret.shareCount}</span> recipients
+                                This secret is shared with <span className="font-medium">{secret.shareCount}</span>{' '}
+                                recipients
                             </p>
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                 Click "Share" to manage sharing permissions
                             </p>
                         </div>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => onShare?.(secret)}
-                        >
+                        <Button variant="outline" size="sm" onClick={() => onShare?.(secret)}>
                             Manage Shares
                         </Button>
                     </div>
@@ -764,9 +800,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
             {/* Permissions */}
             {secret.permissions.length > 0 && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
-                        Permissions
-                    </h3>
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Permissions</h3>
                     <div className="flex flex-wrap gap-2">
                         {secret.permissions.map((permission) => (
                             <span
@@ -782,10 +816,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
 
             {/* Actions */}
             <div className="flex items-center justify-end space-x-3 pt-6 border-t border-gray-200 dark:border-gray-700">
-                <Button
-                    variant="outline"
-                    onClick={onClose}
-                >
+                <Button variant="outline" onClick={onClose}>
                     Close
                 </Button>
             </div>
@@ -794,8 +825,8 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
             <Modal isOpen={showRotate} onClose={closeRotate} title={`Rotate ${secret.name}`} size="md">
                 <div className="space-y-4">
                     <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Enter the new value for this secret. Rotating stores a new version (the previous
-                        value is kept in history) and records the rotation timestamp.
+                        Enter the new value for this secret. Rotating stores a new version (the previous value is kept
+                        in history) and records the rotation timestamp.
                     </p>
 
                     <Textarea

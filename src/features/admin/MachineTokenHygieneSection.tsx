@@ -54,10 +54,17 @@ export const MachineTokenHygieneSection: React.FC = () => {
 
             <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                 {tokens.map((t) => (
-                    <li key={t.id} className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: 'var(--bg-surface)' }}>
+                    <li
+                        key={t.id}
+                        className="flex items-center gap-3 px-4 py-2.5"
+                        style={{ backgroundColor: 'var(--bg-surface)' }}
+                    >
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                {t.name} <span className="font-normal" style={{ color: 'var(--text-muted)' }}>{t.token_prefix}…</span>
+                                {t.name}{' '}
+                                <span className="font-normal" style={{ color: 'var(--text-muted)' }}>
+                                    {t.token_prefix}…
+                                </span>
                             </p>
                             <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
                                 machine #{t.machine_identity_id} · {lastUsedLabel(t.last_used_at)}

@@ -16,8 +16,24 @@ vi.mock('../api', () => ({
         data: {
             unread_count: 2,
             notifications: [
-                { id: 1, type: 'access_request.approved', title: 'Approved', message: 'granted', link: '/projects/1', is_read: false, created_at: new Date().toISOString() },
-                { id: 2, type: 'x', title: 'Already read', message: 'm2', link: '', is_read: true, created_at: new Date().toISOString() },
+                {
+                    id: 1,
+                    type: 'access_request.approved',
+                    title: 'Approved',
+                    message: 'granted',
+                    link: '/projects/1',
+                    is_read: false,
+                    created_at: new Date().toISOString(),
+                },
+                {
+                    id: 2,
+                    type: 'x',
+                    title: 'Already read',
+                    message: 'm2',
+                    link: '',
+                    is_read: true,
+                    created_at: new Date().toISOString(),
+                },
             ],
         },
     }),

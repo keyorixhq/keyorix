@@ -23,8 +23,20 @@ describe('ProjectDriftTab', () => {
                 projectId: 1,
                 environments: threeEnvs,
                 driftedKeys: [
-                    { name: 'STRIPE_KEY', presentIn: [1, 2], missingFrom: [3], status: 'missing_in_some', driftFields: [] },
-                    { name: 'JWT_SECRET', presentIn: [1, 2, 3], missingFrom: [], status: 'metadata_drift', driftFields: ['type', 'max_reads'] },
+                    {
+                        name: 'STRIPE_KEY',
+                        presentIn: [1, 2],
+                        missingFrom: [3],
+                        status: 'missing_in_some',
+                        driftFields: [],
+                    },
+                    {
+                        name: 'JWT_SECRET',
+                        presentIn: [1, 2, 3],
+                        missingFrom: [],
+                        status: 'metadata_drift',
+                        driftFields: ['type', 'max_reads'],
+                    },
                 ],
                 summary: { environmentCount: 3, totalKeys: 3, consistentKeys: 1, missingInSome: 1, metadataDrift: 1 },
             },

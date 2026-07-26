@@ -15,10 +15,10 @@ export interface ModalProps {
 }
 
 const SIZE: Record<NonNullable<ModalProps['size']>, string> = {
-    sm:   'max-w-md',
-    md:   'max-w-lg',
-    lg:   'max-w-2xl',
-    xl:   'max-w-4xl',
+    sm: 'max-w-md',
+    md: 'max-w-lg',
+    lg: 'max-w-2xl',
+    xl: 'max-w-4xl',
     full: 'max-w-full mx-4',
 };
 
@@ -32,14 +32,19 @@ const Modal: React.FC<ModalProps> = ({
     closeOnOverlayClick = true,
     className,
 }) => (
-    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog.Root
+        open={isOpen}
+        onOpenChange={(open) => {
+            if (!open) onClose();
+        }}
+    >
         <Dialog.Portal>
             {/* Backdrop */}
             <Dialog.Overlay
                 className={cn(
                     'fixed inset-0 z-50 bg-black/40',
                     'data-[state=open]:animate-in data-[state=open]:fade-in-0',
-                    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
+                    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0'
                 )}
                 onClick={closeOnOverlayClick ? undefined : (e) => e.stopPropagation()}
             />
@@ -54,7 +59,7 @@ const Modal: React.FC<ModalProps> = ({
                     'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
                     'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
                     SIZE[size],
-                    className,
+                    className
                 )}
                 style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
@@ -83,9 +88,7 @@ const Modal: React.FC<ModalProps> = ({
                     </div>
                 )}
 
-                <div className="px-6 py-4">
-                    {children}
-                </div>
+                <div className="px-6 py-4">{children}</div>
             </Dialog.Content>
         </Dialog.Portal>
     </Dialog.Root>

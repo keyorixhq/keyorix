@@ -221,7 +221,8 @@ const invalidateSecretGraph = (queryClient: ReturnType<typeof useQueryClient>, i
 export const useAddSecretDependency = (id: number) => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (vars: { dependsOnId: number; note?: string }) => secretsApi.addDependency(id, vars.dependsOnId, vars.note),
+        mutationFn: (vars: { dependsOnId: number; note?: string }) =>
+            secretsApi.addDependency(id, vars.dependsOnId, vars.note),
         onSuccess: () => invalidateSecretGraph(queryClient, id),
     });
 };
@@ -306,7 +307,7 @@ export const useDeleteSecret = () => {
 export const useBulkClassifySecrets = () => {
     return useMutation({
         mutationFn: ({ ids, classification }: { ids: number[]; classification: string }) =>
-            Promise.all(ids.map(id => secretsApi.classify(id, classification))),
+            Promise.all(ids.map((id) => secretsApi.classify(id, classification))),
         onSuccess: () => {
             invalidateQueries.secrets.lists();
         },
@@ -318,11 +319,11 @@ export const useBulkDeleteSecrets = () => {
 
     return useMutation({
         mutationFn: async (secretIds: number[]) => {
-            await Promise.all(secretIds.map(id => secretsApi.delete(id)));
+            await Promise.all(secretIds.map((id) => secretsApi.delete(id)));
             return secretIds;
         },
         onSuccess: (deletedIds) => {
-            deletedIds.forEach(id => {
+            deletedIds.forEach((id) => {
                 queryClient.removeQueries({ queryKey: queryKeys.secrets.detail(id) });
             });
             invalidateQueries.secrets.all();
@@ -357,7 +358,9 @@ export const useSearchSecrets = (query: string, delay = 300) => {
     const [debouncedQuery, setDebouncedQuery] = React.useState(query);
 
     React.useEffect(() => {
-        const timer = setTimeout(() => { setDebouncedQuery(query); }, delay);
+        const timer = setTimeout(() => {
+            setDebouncedQuery(query);
+        }, delay);
         return () => clearTimeout(timer);
     }, [query, delay]);
 
@@ -383,25 +386,28 @@ export const useSecretStats = () => {
 export const usePrefetchSecret = () => {
     const queryClient = useQueryClient();
 
-    return React.useCallback((id: number) => {
-        queryClient.prefetchQuery({
-            queryKey: queryKeys.secrets.detail(id),
-            queryFn: () => secretsApi.get(id),
-            staleTime: 2 * 60 * 1000,
-        });
-    }, [queryClient]);
+    return React.useCallback(
+        (id: number) => {
+            queryClient.prefetchQuery({
+                queryKey: queryKeys.secrets.detail(id),
+                queryFn: () => secretsApi.get(id),
+                staleTime: 2 * 60 * 1000,
+            });
+        },
+        [queryClient]
+    );
 };
 
 export const useOptimisticSecretUpdate = (id: number) => {
     const queryClient = useQueryClient();
 
-    return React.useCallback((updatedData: Partial<Secret>) => {
-        queryClient.setQueryData(
-            queryKeys.secrets.detail(id),
-            (oldData: Secret | undefined) => {
+    return React.useCallback(
+        (updatedData: Partial<Secret>) => {
+            queryClient.setQueryData(queryKeys.secrets.detail(id), (oldData: Secret | undefined) => {
                 if (!oldData) return oldData;
                 return { ...oldData, ...updatedData };
-            }
-        );
-    }, [queryClient, id]);
+            });
+        },
+        [queryClient, id]
+    );
 };

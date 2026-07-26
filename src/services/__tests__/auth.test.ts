@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // authApi is a private axios instance created via axios.create() inside auth.ts.
 // vi.hoisted() runs before the vi.mock() factory so the stubs are in scope there.
 const { mockGet, mockPost } = vi.hoisted(() => ({
-    mockGet:  vi.fn(),
+    mockGet: vi.fn(),
     mockPost: vi.fn(),
 }));
 
@@ -14,7 +14,7 @@ vi.mock('axios', async () => {
         default: {
             ...actual.default,
             create: vi.fn(() => ({
-                get:  mockGet,
+                get: mockGet,
                 post: mockPost,
                 interceptors: { request: { use: vi.fn() } },
             })),
@@ -48,16 +48,20 @@ describe('authService.login', () => {
 
     it('returns LoginResponse on success', async () => {
         const payload = {
-            token: 't', expires_at: '2030-01-01', user_id: 1,
-            username: 'alice', email: 'a@x.io',
+            token: 't',
+            expires_at: '2030-01-01',
+            user_id: 1,
+            username: 'alice',
+            email: 'a@x.io',
         };
         mockPost.mockResolvedValueOnce(ok(payload));
         const result = await authService.login(credentials);
         expect(result).toEqual(payload);
-        expect(mockPost).toHaveBeenCalledWith(
-            expect.stringContaining('login'),
-            { username: 'alice', password: 'secret1', rememberMe: false },
-        );
+        expect(mockPost).toHaveBeenCalledWith(expect.stringContaining('login'), {
+            username: 'alice',
+            password: 'secret1',
+            rememberMe: false,
+        });
     });
 
     it('throws with server error message on 401', async () => {
@@ -189,7 +193,9 @@ describe('authService.requestPasswordReset', () => {
 
     it('throws when the server omits the message field', async () => {
         mockPost.mockResolvedValueOnce({ data: {} });
-        await expect(authService.requestPasswordReset({ email: 'a@x.io' })).rejects.toThrow('Password reset request failed');
+        await expect(authService.requestPasswordReset({ email: 'a@x.io' })).rejects.toThrow(
+            'Password reset request failed'
+        );
     });
 
     it('throws with server message on 422', async () => {
@@ -203,23 +209,21 @@ describe('authService.requestPasswordReset', () => {
 describe('authService.confirmPasswordReset', () => {
     it('resolves when the server confirms with a message', async () => {
         mockPost.mockResolvedValueOnce({ data: { message: 'Password updated' } });
-        await expect(
-            authService.confirmPasswordReset({ token: 'tok', password: 'newpass' }),
-        ).resolves.toBeUndefined();
+        await expect(authService.confirmPasswordReset({ token: 'tok', password: 'newpass' })).resolves.toBeUndefined();
     });
 
     it('throws when the server omits the message field', async () => {
         mockPost.mockResolvedValueOnce({ data: {} });
-        await expect(
-            authService.confirmPasswordReset({ token: 'tok', password: 'newpass' }),
-        ).rejects.toThrow('Password reset failed');
+        await expect(authService.confirmPasswordReset({ token: 'tok', password: 'newpass' })).rejects.toThrow(
+            'Password reset failed'
+        );
     });
 
     it('throws with server error message on 410 (token expired)', async () => {
         mockPost.mockRejectedValueOnce(axiosErr(410, { error: 'Token expired' }));
-        await expect(
-            authService.confirmPasswordReset({ token: 'bad', password: 'x' }),
-        ).rejects.toThrow('Token expired');
+        await expect(authService.confirmPasswordReset({ token: 'bad', password: 'x' })).rejects.toThrow(
+            'Token expired'
+        );
     });
 });
 

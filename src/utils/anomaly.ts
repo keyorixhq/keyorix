@@ -10,5 +10,12 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
 // humanizeAlertType turns a raw anomaly alert type (off_hours, frequency_spike, …)
 // into a readable label; unknown types are Title-cased from their snake_case form.
 export function humanizeAlertType(t: string): string {
-    return ALERT_TYPE_LABELS[t] ?? t.split('_').filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return (
+        ALERT_TYPE_LABELS[t] ??
+        t
+            .split('_')
+            .filter(Boolean)
+            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(' ')
+    );
 }

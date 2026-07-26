@@ -52,16 +52,15 @@ describe('KeyorixConnectPage', () => {
     });
 
     it('reads a secret and reveals the value', async () => {
-        readMutate.mockImplementation((_vars, opts) => opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' }));
+        readMutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' })
+        );
         render(<KeyorixConnectPage />);
 
         fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
         fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
 
-        expect(readMutate).toHaveBeenCalledWith(
-            { connector: 'prod-aws', ref: 'prod/db' },
-            expect.anything(),
-        );
+        expect(readMutate).toHaveBeenCalledWith({ connector: 'prod-aws', ref: 'prod/db' }, expect.anything());
         // Value is masked until revealed.
         expect(screen.queryByText('s3cr3t')).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
@@ -70,7 +69,7 @@ describe('KeyorixConnectPage', () => {
 
     it('surfaces a read error', () => {
         readMutate.mockImplementation((_vars, opts) =>
-            opts.onError({ response: { data: { message: 'ref not permitted' } } }),
+            opts.onError({ response: { data: { message: 'ref not permitted' } } })
         );
         render(<KeyorixConnectPage />);
         fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'x' } });
@@ -102,7 +101,7 @@ describe('KeyorixConnectPage — per-reference grants', () => {
         fireEvent.click(screen.getByRole('button', { name: /Add grant/i }));
         expect(createGrantMutate).toHaveBeenCalledWith(
             { roleId: 3, connector: 'prod-aws', refPrefix: 'prod/*/db' },
-            expect.anything(),
+            expect.anything()
         );
     });
 

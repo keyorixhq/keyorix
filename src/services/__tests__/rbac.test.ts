@@ -14,9 +14,9 @@ import { apiClient } from '../client';
 import { rbacApi } from '../rbac';
 
 const mocked = apiClient as unknown as {
-    get:    ReturnType<typeof vi.fn>;
-    post:   ReturnType<typeof vi.fn>;
-    put:    ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
+    post: ReturnType<typeof vi.fn>;
+    put: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
 };
 
@@ -44,7 +44,14 @@ describe('rbacApi.assignRoleToGroup', () => {
 describe('rbacApi.getGroupSharedSecrets', () => {
     it('normalizes the server SecretNode rows (PascalCase) to id/name/type', async () => {
         mocked.get.mockResolvedValue({
-            data: { data: { secrets: [{ ID: 1, Name: 'alpha', Type: 'password' }, { ID: 2, Name: 'beta', Type: 'token' }] } },
+            data: {
+                data: {
+                    secrets: [
+                        { ID: 1, Name: 'alpha', Type: 'password' },
+                        { ID: 2, Name: 'beta', Type: 'token' },
+                    ],
+                },
+            },
         });
         const out = await rbacApi.getGroupSharedSecrets(7);
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/groups/7/shared-secrets');
@@ -64,26 +71,59 @@ describe('rbacApi.getGroupSharedSecrets', () => {
 
 describe('rbacApi.getRoles', () => {
     it('normalizes lowercase field names', async () => {
-        mocked.get.mockResolvedValueOnce({ data: { data: [{ id: 1, name: 'admin', description: 'Admins', permissions: [], created_at: '', updated_at: '' }] } });
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: [
+                    { id: 1, name: 'admin', description: 'Admins', permissions: [], created_at: '', updated_at: '' },
+                ],
+            },
+        });
         const roles = await rbacApi.getRoles();
         expect(roles[0]).toMatchObject({ id: 1, name: 'admin' });
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/roles');
     });
 
     it('normalizes uppercase (Go-serialized) field names', async () => {
-        mocked.get.mockResolvedValueOnce({ data: { data: [{ ID: 2, Name: 'viewer', Description: 'Readers', Permissions: [], CreatedAt: '', UpdatedAt: '' }] } });
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: [
+                    { ID: 2, Name: 'viewer', Description: 'Readers', Permissions: [], CreatedAt: '', UpdatedAt: '' },
+                ],
+            },
+        });
         const roles = await rbacApi.getRoles();
         expect(roles[0]).toMatchObject({ id: 2, name: 'viewer' });
     });
 
     it('handles {roles: [...]} wrapper shape', async () => {
-        mocked.get.mockResolvedValueOnce({ data: { data: { roles: [{ id: 3, name: 'editor', description: '', permissions: [], created_at: '', updated_at: '' }] } } });
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: {
+                    roles: [
+                        { id: 3, name: 'editor', description: '', permissions: [], created_at: '', updated_at: '' },
+                    ],
+                },
+            },
+        });
         const roles = await rbacApi.getRoles();
         expect(roles[0]).toMatchObject({ id: 3, name: 'editor' });
     });
 
     it('normalizes string permissions to the full Permission shape', async () => {
-        mocked.get.mockResolvedValueOnce({ data: { data: [{ id: 1, name: 'admin', description: '', permissions: ['secrets.read'], created_at: '', updated_at: '' }] } });
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: [
+                    {
+                        id: 1,
+                        name: 'admin',
+                        description: '',
+                        permissions: ['secrets.read'],
+                        created_at: '',
+                        updated_at: '',
+                    },
+                ],
+            },
+        });
         const roles = await rbacApi.getRoles();
         expect(roles[0].permissions[0]).toMatchObject({ name: 'secrets.read', resource: 'secrets', action: 'read' });
     });
@@ -93,7 +133,9 @@ describe('rbacApi.getRoles', () => {
 
 describe('rbacApi.getRole', () => {
     it('fetches and normalizes a single role', async () => {
-        mocked.get.mockResolvedValueOnce({ data: { data: { id: 5, name: 'ops', description: '', permissions: [], created_at: '', updated_at: '' } } });
+        mocked.get.mockResolvedValueOnce({
+            data: { data: { id: 5, name: 'ops', description: '', permissions: [], created_at: '', updated_at: '' } },
+        });
         const role = await rbacApi.getRole(5);
         expect(role).toMatchObject({ id: 5, name: 'ops' });
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/roles/5');
@@ -106,14 +148,22 @@ describe('rbacApi.createRole', () => {
     it('posts the role body and returns the created role', async () => {
         mocked.post.mockResolvedValueOnce({ data: { data: { id: 10, name: 'dev' } } });
         const role = await rbacApi.createRole({ name: 'dev', description: 'Developers' });
-        expect(mocked.post).toHaveBeenCalledWith('/api/v1/roles', { name: 'dev', description: 'Developers', permissions: [] });
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/roles', {
+            name: 'dev',
+            description: 'Developers',
+            permissions: [],
+        });
         expect(role).toMatchObject({ id: 10, name: 'dev' });
     });
 
     it('passes explicit permissions array', async () => {
         mocked.post.mockResolvedValueOnce({ data: { data: {} } });
         await rbacApi.createRole({ name: 'dev', description: '', permissions: ['secrets.read'] });
-        expect(mocked.post).toHaveBeenCalledWith('/api/v1/roles', { name: 'dev', description: '', permissions: ['secrets.read'] });
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/roles', {
+            name: 'dev',
+            description: '',
+            permissions: ['secrets.read'],
+        });
     });
 });
 
@@ -123,7 +173,11 @@ describe('rbacApi.updateRole', () => {
     it('sends PUT with updated fields', async () => {
         mocked.put.mockResolvedValueOnce({ data: { data: { id: 1, name: 'admin-v2' } } });
         await rbacApi.updateRole(1, { name: 'admin-v2', description: 'Updated' });
-        expect(mocked.put).toHaveBeenCalledWith('/api/v1/roles/1', { name: 'admin-v2', description: 'Updated', permissions: [] });
+        expect(mocked.put).toHaveBeenCalledWith('/api/v1/roles/1', {
+            name: 'admin-v2',
+            description: 'Updated',
+            permissions: [],
+        });
     });
 });
 

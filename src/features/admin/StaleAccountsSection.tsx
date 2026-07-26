@@ -51,8 +51,7 @@ export const StaleAccountsSection: React.FC = () => {
         setNote('');
         suspend.mutate(id, {
             onSuccess: () => setConfirmingId(null),
-            onError: (err: any) =>
-                setNote(err?.response?.data?.error ?? err?.message ?? 'Failed to revoke account.'),
+            onError: (err: any) => setNote(err?.response?.data?.error ?? err?.message ?? 'Failed to revoke account.'),
         });
     };
 
@@ -87,7 +86,11 @@ export const StaleAccountsSection: React.FC = () => {
 
             <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                 {stale.map((u) => (
-                    <li key={u.id} className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: 'var(--bg-surface)' }}>
+                    <li
+                        key={u.id}
+                        className="flex items-center gap-3 px-4 py-2.5"
+                        style={{ backgroundColor: 'var(--bg-surface)' }}
+                    >
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                                 {u.display_name || u.username}

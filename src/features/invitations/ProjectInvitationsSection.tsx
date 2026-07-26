@@ -4,7 +4,7 @@ import { ProjectInvitation } from '../../services/projectInvitations';
 import { useProjectInvitations, useRevokeInvitation } from './api';
 
 // "project_developer" → "Developer"
-const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, c => c.toUpperCase());
+const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
 // A pending invitation older than this is "stale" — likely forgotten. Mirrors the
 // backend staleInviteThreshold (ADR-022, 7 days) so the UI flags the same records
@@ -108,59 +108,70 @@ export const ProjectInvitationsSection: React.FC<{ projectId: number }> = ({ pro
                 style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
             >
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {ordered.map(inv => {
+                    {ordered.map((inv) => {
                         const stale = isStale(inv);
                         const pendingDays = stale ? daysSince(inv.createdAt) : null;
                         return (
-                        <li key={inv.id} className="flex items-center gap-3 px-4 py-3">
-                            <div
-                                className="h-8 w-8 rounded-full flex items-center justify-center shrink-0"
-                                style={
-                                    stale
-                                        ? { backgroundColor: 'var(--warning-subtle, #fffbeb)', color: 'var(--warning, #b45309)' }
-                                        : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
-                                }
-                            >
-                                <EnvelopeIcon className="h-4 w-4" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                    {inv.email}
-                                </p>
-                                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                    {roleLabel(inv.role)}
-                                    {stale && pendingDays != null
-                                        ? ` · pending ${pendingDays} days`
-                                        : inv.expiresAt && inv.state === 'pending' && ` · expires ${fmtDate(inv.expiresAt)}`}
-                                </p>
-                            </div>
-                            {stale && (
+                            <li key={inv.id} className="flex items-center gap-3 px-4 py-3">
+                                <div
+                                    className="h-8 w-8 rounded-full flex items-center justify-center shrink-0"
+                                    style={
+                                        stale
+                                            ? {
+                                                  backgroundColor: 'var(--warning-subtle, #fffbeb)',
+                                                  color: 'var(--warning, #b45309)',
+                                              }
+                                            : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
+                                    }
+                                >
+                                    <EnvelopeIcon className="h-4 w-4" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p
+                                        className="text-sm font-medium truncate"
+                                        style={{ color: 'var(--text-primary)' }}
+                                    >
+                                        {inv.email}
+                                    </p>
+                                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                        {roleLabel(inv.role)}
+                                        {stale && pendingDays != null
+                                            ? ` · pending ${pendingDays} days`
+                                            : inv.expiresAt &&
+                                              inv.state === 'pending' &&
+                                              ` · expires ${fmtDate(inv.expiresAt)}`}
+                                    </p>
+                                </div>
+                                {stale && (
+                                    <span
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
+                                        style={{
+                                            backgroundColor: 'var(--warning-subtle, #fffbeb)',
+                                            color: 'var(--warning, #b45309)',
+                                        }}
+                                    >
+                                        <ExclamationTriangleIcon className="h-3 w-3" />
+                                        Stale
+                                    </span>
+                                )}
                                 <span
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
-                                    style={{ backgroundColor: 'var(--warning-subtle, #fffbeb)', color: 'var(--warning, #b45309)' }}
+                                    className="px-2 py-0.5 rounded-full text-xs font-medium capitalize shrink-0"
+                                    style={stateStyle(inv.state)}
                                 >
-                                    <ExclamationTriangleIcon className="h-3 w-3" />
-                                    Stale
+                                    {inv.state}
                                 </span>
-                            )}
-                            <span
-                                className="px-2 py-0.5 rounded-full text-xs font-medium capitalize shrink-0"
-                                style={stateStyle(inv.state)}
-                            >
-                                {inv.state}
-                            </span>
-                            {inv.state === 'pending' && (
-                                <button
-                                    onClick={() => handleRevoke(inv)}
-                                    disabled={revoke.isPending}
-                                    className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0"
-                                    style={{ color: 'var(--error)' }}
-                                    title="Revoke invitation"
-                                >
-                                    <TrashIcon className="h-4 w-4" />
-                                </button>
-                            )}
-                        </li>
+                                {inv.state === 'pending' && (
+                                    <button
+                                        onClick={() => handleRevoke(inv)}
+                                        disabled={revoke.isPending}
+                                        className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0"
+                                        style={{ color: 'var(--error)' }}
+                                        title="Revoke invitation"
+                                    >
+                                        <TrashIcon className="h-4 w-4" />
+                                    </button>
+                                )}
+                            </li>
                         );
                     })}
                 </ul>

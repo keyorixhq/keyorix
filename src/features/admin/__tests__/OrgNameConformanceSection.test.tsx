@@ -31,8 +31,22 @@ describe('OrgNameConformanceSection', () => {
             policy_enabled: true,
             total_secrets: 5,
             violations: [
-                { id: 8, name: 'db-pass', type: 'password', reason: 'does not match the required pattern', project_id: 7, project_name: 'web' },
-                { id: 9, name: 'api key', type: 'token', reason: 'exceeds the 12-character maximum', project_id: 9, project_name: 'api' },
+                {
+                    id: 8,
+                    name: 'db-pass',
+                    type: 'password',
+                    reason: 'does not match the required pattern',
+                    project_id: 7,
+                    project_name: 'web',
+                },
+                {
+                    id: 9,
+                    name: 'api key',
+                    type: 'token',
+                    reason: 'exceeds the 12-character maximum',
+                    project_id: 9,
+                    project_name: 'api',
+                },
             ],
         };
         render(<OrgNameConformanceSection />);
@@ -47,7 +61,9 @@ describe('OrgNameConformanceSection', () => {
         mockData = {
             policy_enabled: true,
             total_secrets: 2,
-            violations: [{ id: 8, name: 'db-pass', type: 'password', reason: 'bad', project_id: 7, project_name: 'web' }],
+            violations: [
+                { id: 8, name: 'db-pass', type: 'password', reason: 'bad', project_id: 7, project_name: 'web' },
+            ],
         };
         render(<OrgNameConformanceSection />);
         fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));

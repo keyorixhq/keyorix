@@ -18,7 +18,9 @@ vi.mock('../../../services/users', () => ({
 }));
 
 describe('TransferOwnership', () => {
-    beforeEach(() => { vi.clearAllMocks(); });
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
 
     it('is collapsed by default, showing a trigger', () => {
         render(<TransferOwnership secretId={1} currentOwner="bob" />);

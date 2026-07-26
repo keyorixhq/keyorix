@@ -24,9 +24,7 @@ export interface DropdownProps {
 const Dropdown: React.FC<DropdownProps> = ({ trigger, items, align = 'right', className }) => (
     <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
-            <div className={cn('relative inline-block text-left cursor-pointer', className)}>
-                {trigger}
-            </div>
+            <div className={cn('relative inline-block text-left cursor-pointer', className)}>{trigger}</div>
         </DropdownMenu.Trigger>
 
         <DropdownMenu.Portal>
@@ -36,7 +34,7 @@ const Dropdown: React.FC<DropdownProps> = ({ trigger, items, align = 'right', cl
                 className={cn(
                     'z-50 min-w-56 rounded-md border shadow-lg py-1',
                     'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
-                    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+                    'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95'
                 )}
                 style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
@@ -53,14 +51,14 @@ const Dropdown: React.FC<DropdownProps> = ({ trigger, items, align = 'right', cl
                                 item.disabled && 'opacity-50 cursor-not-allowed',
                                 item.danger
                                     ? 'text-[var(--error)] data-[highlighted]:bg-[var(--error-subtle)]'
-                                    : 'text-base-secondary',
+                                    : 'text-base-secondary'
                             )}
                         >
                             {Icon && (
                                 <Icon
                                     className={cn(
                                         'mr-3 h-4 w-4 shrink-0',
-                                        item.danger ? 'text-[var(--error)]' : 'text-base-muted',
+                                        item.danger ? 'text-[var(--error)]' : 'text-base-muted'
                                     )}
                                     aria-hidden="true"
                                 />
@@ -87,9 +85,9 @@ export interface DropdownButtonProps {
 }
 
 const VARIANT: Record<NonNullable<DropdownButtonProps['variant']>, string> = {
-    primary:   'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] focus:ring-[var(--accent)]',
+    primary: 'bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] focus:ring-[var(--accent)]',
     secondary: 'bg-subtle text-base-primary hover:bg-muted focus:ring-[var(--border-strong)]',
-    ghost:     'text-base-secondary hover:bg-subtle focus:ring-[var(--border-strong)]',
+    ghost: 'text-base-secondary hover:bg-subtle focus:ring-[var(--border-strong)]',
 };
 
 const SIZE_BTN: Record<NonNullable<DropdownButtonProps['size']>, string> = {
@@ -116,7 +114,7 @@ const DropdownButton: React.FC<DropdownButtonProps> = ({
                 'disabled:opacity-50 disabled:cursor-not-allowed',
                 VARIANT[variant],
                 SIZE_BTN[size],
-                className,
+                className
             )}
             disabled={disabled}
         >

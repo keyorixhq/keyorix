@@ -28,10 +28,15 @@ export const AbsoluteSessionExpiryWarning: React.FC<AbsoluteSessionExpiryWarning
 
     // Keep a stable ref to logout so the 1s interval doesn't re-subscribe.
     const logoutRef = useRef(logout);
-    useEffect(() => { logoutRef.current = logout; });
+    useEffect(() => {
+        logoutRef.current = logout;
+    });
 
     useEffect(() => {
-        if (!isAuthenticated) { setRemaining(null); return; }
+        if (!isAuthenticated) {
+            setRemaining(null);
+            return;
+        }
 
         const tick = () => {
             const ms = getTimeUntilAbsoluteExpiry();
@@ -49,13 +54,7 @@ export const AbsoluteSessionExpiryWarning: React.FC<AbsoluteSessionExpiryWarning
 
     // Hide unless authenticated, a ceiling exists, we're inside the warning
     // window, the deadline hasn't passed, and the user hasn't dismissed it.
-    if (
-        !isAuthenticated ||
-        remaining === null ||
-        remaining <= 0 ||
-        remaining > warningTimeMs ||
-        dismissed
-    ) {
+    if (!isAuthenticated || remaining === null || remaining <= 0 || remaining > warningTimeMs || dismissed) {
         return null;
     }
 
@@ -72,16 +71,20 @@ export const AbsoluteSessionExpiryWarning: React.FC<AbsoluteSessionExpiryWarning
             <div className="mx-auto flex max-w-5xl items-center gap-3">
                 <ExclamationTriangleIcon className="h-5 w-5 shrink-0" style={{ color: '#f59e0b' }} />
                 <p className="flex-1 text-sm" style={{ color: 'var(--text-primary)' }}>
-                    Your session ends in <span className="font-semibold">{countdown}</span> and
-                    can&rsquo;t be extended. Sign in again to keep working without losing access.
+                    Your session ends in <span className="font-semibold">{countdown}</span> and can&rsquo;t be extended.
+                    Sign in again to keep working without losing access.
                 </p>
                 <button
                     type="button"
-                    onClick={() => { void logout(); }}
+                    onClick={() => {
+                        void logout();
+                    }}
                     className="rounded-md px-3 py-1.5 text-sm font-medium focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                     style={{ backgroundColor: 'var(--accent)', color: '#ffffff' }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--accent-hover)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--accent)'}
+                    onMouseEnter={(e) =>
+                        ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--accent-hover)')
+                    }
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--accent)')}
                 >
                     Sign in again
                 </button>
@@ -91,8 +94,8 @@ export const AbsoluteSessionExpiryWarning: React.FC<AbsoluteSessionExpiryWarning
                     className="rounded-md p-1 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                     style={{ color: 'var(--text-muted)' }}
                     aria-label="Dismiss"
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-primary)')}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
                 >
                     <XMarkIcon className="h-5 w-5" />
                 </button>

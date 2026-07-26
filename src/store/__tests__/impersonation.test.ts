@@ -37,7 +37,10 @@ const makeUser = (id: number, username: string): User =>
 
 // Profile-shaped fixture matching what authService.getProfile() resolves to
 // (User fields plus the optional, server-validated `impersonation` block).
-const profileFixture = (user: User, impersonation?: { admin_id: number; admin_username: string; admin_display_name?: string }) => ({
+const profileFixture = (
+    user: User,
+    impersonation?: { admin_id: number; admin_username: string; admin_display_name?: string }
+) => ({
     ...user,
     impersonation,
 });
@@ -56,7 +59,11 @@ describe('authStore impersonation', () => {
 
     it('checkAuth derives impersonatedBy from the profile response while impersonating', async () => {
         vi.mocked(authService.getProfile).mockResolvedValueOnce(
-            profileFixture(makeUser(2, 'alice'), { admin_id: 1, admin_username: 'admin', admin_display_name: 'Admin User' })
+            profileFixture(makeUser(2, 'alice'), {
+                admin_id: 1,
+                admin_username: 'admin',
+                admin_display_name: 'Admin User',
+            })
         );
 
         await useAuthStore.getState().checkAuth();

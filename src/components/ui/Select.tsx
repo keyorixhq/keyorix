@@ -18,20 +18,7 @@ export interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectE
 }
 
 const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-    (
-        {
-            className,
-            label,
-            error,
-            helperText,
-            options,
-            placeholder,
-            fullWidth = true,
-            id,
-            ...rest
-        },
-        ref
-    ) => {
+    ({ className, label, error, helperText, options, placeholder, fullWidth = true, id, ...rest }, ref) => {
         const generatedId = React.useId();
         const selectId = id ?? generatedId;
         const hasError = Boolean(error);
@@ -56,11 +43,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                         id={selectId}
                         aria-invalid={hasError || undefined}
                         {...rest}
-                        aria-describedby={
-                            error ? `${selectId}-error` :
-                            helperText ? `${selectId}-hint` :
-                            undefined
-                        }
+                        aria-describedby={error ? `${selectId}-error` : helperText ? `${selectId}-hint` : undefined}
                         className={cn(
                             'block px-3 py-2 pr-10 rounded-md shadow-xs',
                             'border border-strong',
@@ -69,9 +52,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                             'focus:outline-hidden focus:ring-2 focus:ring-offset-0',
                             'disabled:opacity-50 disabled:cursor-not-allowed',
                             fullWidth ? 'w-full' : 'w-auto',
-                            hasError
-                                ? 'border-[var(--error)] focus:ring-[var(--error)]'
-                                : 'focus:ring-[var(--accent)]',
+                            hasError ? 'border-[var(--error)] focus:ring-[var(--error)]' : 'focus:ring-[var(--accent)]',
                             className
                         )}
                     >
@@ -89,10 +70,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
 
                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
                         <ChevronDownIcon
-                            className={cn(
-                                'h-4 w-4',
-                                hasError ? 'text-[var(--error)]' : 'text-base-muted'
-                            )}
+                            className={cn('h-4 w-4', hasError ? 'text-[var(--error)]' : 'text-base-muted')}
                         />
                     </div>
                 </div>

@@ -20,7 +20,10 @@ function useGlobalSearch(query: string) {
     const { data: projects = [] } = useProjects();
 
     useEffect(() => {
-        if (!query.trim()) { setResults([]); return; }
+        if (!query.trim()) {
+            setResults([]);
+            return;
+        }
         const q = query.toLowerCase();
 
         const projectHits: SearchResult[] = projects
@@ -35,10 +38,11 @@ function useGlobalSearch(query: string) {
             }));
 
         setIsSearching(true);
-        apiClient.get('/api/v1/secrets', { params: { search: query, pageSize: 8 } })
-            .then(res => {
+        apiClient
+            .get('/api/v1/secrets', { params: { search: query, pageSize: 8 } })
+            .then((res) => {
                 const secrets: any[] = res.data.data?.secrets ?? [];
-                const secretHits: SearchResult[] = secrets.map(s => {
+                const secretHits: SearchResult[] = secrets.map((s) => {
                     const projectId = s.ProjectID ?? s.project_id ?? null;
                     const envName = s.environment_name ?? s.environment ?? '';
                     const href = projectId
@@ -80,20 +84,25 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
     const { results, isSearching } = useGlobalSearch(debouncedQuery);
 
     useEffect(() => setActiveIndex(0), [results]);
-    useEffect(() => { inputRef.current?.focus(); }, []);
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, []);
 
-    const handleSelect = useCallback((result: SearchResult) => {
-        navigate(result.href);
-        onClose();
-    }, [navigate, onClose]);
+    const handleSelect = useCallback(
+        (result: SearchResult) => {
+            navigate(result.href);
+            onClose();
+        },
+        [navigate, onClose]
+    );
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'ArrowDown') {
             e.preventDefault();
-            setActiveIndex(i => Math.min(i + 1, results.length - 1));
+            setActiveIndex((i) => Math.min(i + 1, results.length - 1));
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            setActiveIndex(i => Math.max(i - 1, 0));
+            setActiveIndex((i) => Math.max(i - 1, 0));
         } else if (e.key === 'Enter' && results[activeIndex]) {
             handleSelect(results[activeIndex]);
         } else if (e.key === 'Escape') {
@@ -105,7 +114,9 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
         <div
             className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
             style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
-            onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+            onClick={(e) => {
+                if (e.target === e.currentTarget) onClose();
+            }}
         >
             <div
                 className="w-full max-w-xl rounded-xl shadow-2xl overflow-hidden"
@@ -118,7 +129,7 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                         ref={inputRef}
                         type="text"
                         value={query}
-                        onChange={e => setQuery(e.target.value)}
+                        onChange={(e) => setQuery(e.target.value)}
                         onKeyDown={handleKeyDown}
                         placeholder="Search projects and secrets…"
                         className="flex-1 bg-transparent outline-hidden text-sm"
@@ -127,8 +138,10 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                     {isSearching && (
                         <div className="animate-spin rounded-full h-3.5 w-3.5 border-b border-blue-500 shrink-0" />
                     )}
-                    <kbd className="text-xs px-1.5 py-0.5 rounded-sm"
-                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                    <kbd
+                        className="text-xs px-1.5 py-0.5 rounded-sm"
+                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
+                    >
                         esc
                     </kbd>
                 </div>
@@ -148,17 +161,28 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                                     onClick={() => handleSelect(result)}
                                     onMouseEnter={() => setActiveIndex(i)}
                                     className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
-                                    style={{ backgroundColor: i === activeIndex ? 'var(--accent-subtle)' : 'transparent' }}
+                                    style={{
+                                        backgroundColor: i === activeIndex ? 'var(--accent-subtle)' : 'transparent',
+                                    }}
                                 >
-                                    <div className="shrink-0 h-7 w-7 rounded-sm flex items-center justify-center"
-                                        style={{ backgroundColor: result.type === 'project' ? 'var(--accent-subtle)' : 'var(--bg-muted)' }}>
-                                        {result.type === 'project'
-                                            ? <FolderIcon className="h-4 w-4" style={{ color: 'var(--accent)' }} />
-                                            : <KeyIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
-                                        }
+                                    <div
+                                        className="shrink-0 h-7 w-7 rounded-sm flex items-center justify-center"
+                                        style={{
+                                            backgroundColor:
+                                                result.type === 'project' ? 'var(--accent-subtle)' : 'var(--bg-muted)',
+                                        }}
+                                    >
+                                        {result.type === 'project' ? (
+                                            <FolderIcon className="h-4 w-4" style={{ color: 'var(--accent)' }} />
+                                        ) : (
+                                            <KeyIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
+                                        )}
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                        <p
+                                            className="text-sm font-medium truncate"
+                                            style={{ color: 'var(--text-primary)' }}
+                                        >
                                             {result.label}
                                         </p>
                                         {result.sub && (
@@ -179,9 +203,24 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                 {/* Footer hints */}
                 {!query.trim() && (
                     <div className="px-4 py-3 flex items-center gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <span><kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>↑↓</kbd> navigate</span>
-                        <span><kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>↵</kbd> open</span>
-                        <span><kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>esc</kbd> close</span>
+                        <span>
+                            <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                                ↑↓
+                            </kbd>{' '}
+                            navigate
+                        </span>
+                        <span>
+                            <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                                ↵
+                            </kbd>{' '}
+                            open
+                        </span>
+                        <span>
+                            <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                                esc
+                            </kbd>{' '}
+                            close
+                        </span>
                     </div>
                 )}
             </div>

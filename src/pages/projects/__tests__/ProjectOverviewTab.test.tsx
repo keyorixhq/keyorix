@@ -28,7 +28,11 @@ const members = [
 
 const threeEnvNoDrift = {
     projectId: 1,
-    environments: [{ id: 1, name: 'dev' }, { id: 2, name: 'staging' }, { id: 3, name: 'prod' }],
+    environments: [
+        { id: 1, name: 'dev' },
+        { id: 2, name: 'staging' },
+        { id: 3, name: 'prod' },
+    ],
     driftedKeys: [],
     summary: { environmentCount: 3, totalKeys: 7, consistentKeys: 7, missingInSome: 0, metadataDrift: 0 },
 };
@@ -51,9 +55,9 @@ describe('ProjectOverviewTab', () => {
         expect(screen.getByText('Members')).toBeInTheDocument();
 
         // Stat card values
-        expect(screen.getByText('7')).toBeInTheDocument();   // secretCount
-        expect(screen.getByText('4')).toBeInTheDocument();   // environmentCount
-        expect(screen.getByText('2')).toBeInTheDocument();   // members.length
+        expect(screen.getByText('7')).toBeInTheDocument(); // secretCount
+        expect(screen.getByText('4')).toBeInTheDocument(); // environmentCount
+        expect(screen.getByText('2')).toBeInTheDocument(); // members.length
 
         // Sync banner — no drift
         expect(screen.getByText(/All 3 environments in sync/)).toBeInTheDocument();
@@ -66,8 +70,20 @@ describe('ProjectOverviewTab', () => {
             data: {
                 ...threeEnvNoDrift,
                 driftedKeys: [
-                    { name: 'STRIPE_KEY', presentIn: [1], missingFrom: [2, 3], status: 'missing_in_some', driftFields: [] },
-                    { name: 'JWT_SECRET', presentIn: [1, 2, 3], missingFrom: [], status: 'metadata_drift', driftFields: ['type'] },
+                    {
+                        name: 'STRIPE_KEY',
+                        presentIn: [1],
+                        missingFrom: [2, 3],
+                        status: 'missing_in_some',
+                        driftFields: [],
+                    },
+                    {
+                        name: 'JWT_SECRET',
+                        presentIn: [1, 2, 3],
+                        missingFrom: [],
+                        status: 'metadata_drift',
+                        driftFields: ['type'],
+                    },
                 ],
             },
             isLoading: false,

@@ -8,11 +8,7 @@ export interface SpinnerProps {
     className?: string;
 }
 
-const Spinner: React.FC<SpinnerProps> = ({
-    size = 'md',
-    color = 'primary',
-    className,
-}) => {
+const Spinner: React.FC<SpinnerProps> = ({ size = 'md', color = 'primary', className }) => {
     const sizeClasses = {
         sm: 'h-4 w-4',
         md: 'h-6 w-6',
@@ -28,23 +24,11 @@ const Spinner: React.FC<SpinnerProps> = ({
 
     return (
         <svg
-            className={clsx(
-                'animate-spin',
-                sizeClasses[size],
-                colorClasses[color],
-                className
-            )}
+            className={clsx('animate-spin', sizeClasses[size], colorClasses[color], className)}
             fill="none"
             viewBox="0 0 24 24"
         >
-            <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-            />
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path
                 className="opacity-75"
                 fill="currentColor"
@@ -62,12 +46,7 @@ export interface LoadingOverlayProps {
     className?: string;
 }
 
-const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
-    isLoading,
-    children,
-    message = 'Loading...',
-    className,
-}) => {
+const LoadingOverlay: React.FC<LoadingOverlayProps> = ({ isLoading, children, message = 'Loading...', className }) => {
     return (
         <div className={clsx('relative', className)}>
             {children}
@@ -90,11 +69,7 @@ export interface SkeletonProps {
     height?: string;
 }
 
-const Skeleton: React.FC<SkeletonProps> = ({
-    className,
-    lines = 1,
-    height = 'h-4',
-}) => {
+const Skeleton: React.FC<SkeletonProps> = ({ className, lines = 1, height = 'h-4' }) => {
     return (
         <div className={clsx('animate-pulse space-y-2', className)}>
             {Array.from({ length: lines }).map((_, index) => (
@@ -150,9 +125,7 @@ const Progress: React.FC<ProgressProps> = ({
         <div className={clsx('w-full', className)}>
             {(showLabel || label) && (
                 <div className="flex justify-between items-center mb-1">
-                    <span className="text-sm font-medium text-gray-700">
-                        {label || `${Math.round(percentage)}%`}
-                    </span>
+                    <span className="text-sm font-medium text-gray-700">{label || `${Math.round(percentage)}%`}</span>
                     {showLabel && !label && (
                         <span className="text-sm text-gray-500">
                             {value}/{max}
@@ -180,15 +153,9 @@ export interface LoadingPageProps {
     className?: string;
 }
 
-const LoadingPage: React.FC<LoadingPageProps> = ({
-    message = 'Loading...',
-    className,
-}) => {
+const LoadingPage: React.FC<LoadingPageProps> = ({ message = 'Loading...', className }) => {
     return (
-        <div className={clsx(
-            'min-h-screen flex items-center justify-center bg-gray-50',
-            className
-        )}>
+        <div className={clsx('min-h-screen flex items-center justify-center bg-gray-50', className)}>
             <div className="text-center">
                 <Spinner size="xl" />
                 <p className="mt-4 text-lg text-gray-600">{message}</p>

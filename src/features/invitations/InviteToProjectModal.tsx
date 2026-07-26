@@ -11,7 +11,7 @@ interface InviteToProjectModalProps {
 }
 
 // "project_developer" → "Developer"
-const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, c => c.toUpperCase());
+const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -95,7 +95,7 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
                     <input
                         type="email"
                         value={email}
-                        onChange={e => setEmail(e.target.value)}
+                        onChange={(e) => setEmail(e.target.value)}
                         placeholder="person@example.com"
                         autoFocus
                         className="w-full rounded-lg px-3 py-1.5 text-sm outline-hidden"
@@ -109,11 +109,11 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
                     </label>
                     <select
                         value={role}
-                        onChange={e => setRole(e.target.value)}
+                        onChange={(e) => setRole(e.target.value)}
                         className="w-full rounded-lg px-3 py-1.5 text-sm outline-hidden"
                         style={inputStyle}
                     >
-                        {PROJECT_ROLES.map(r => (
+                        {PROJECT_ROLES.map((r) => (
                             <option key={r} value={r}>
                                 {roleLabel(r)}
                             </option>

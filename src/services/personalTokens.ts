@@ -85,9 +85,7 @@ export const personalTokensApi = {
     },
 
     // Returns the freshly created token's metadata plus its one-time plaintext.
-    async createToken(
-        body: CreatePersonalTokenBody
-    ): Promise<{ token: string; pat: PersonalAccessToken }> {
+    async createToken(body: CreatePersonalTokenBody): Promise<{ token: string; pat: PersonalAccessToken }> {
         const response = await apiClient.post('/api/v1/auth/tokens', body);
         const data = response.data.data;
         return { token: data.token, pat: data.pat as PersonalAccessToken };

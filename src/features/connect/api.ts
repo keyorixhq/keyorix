@@ -16,8 +16,7 @@ export const useConnectors = () =>
 
 export const useReadFederatedSecret = () =>
     useMutation({
-        mutationFn: ({ connector, ref }: { connector: string; ref: string }) =>
-            connectApi.readSecret(connector, ref),
+        mutationFn: ({ connector, ref }: { connector: string; ref: string }) => connectApi.readSecret(connector, ref),
     });
 
 // Per-reference RBAC grants (ADR-045). The list is gated server-side by roles.read;

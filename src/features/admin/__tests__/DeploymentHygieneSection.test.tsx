@@ -32,7 +32,14 @@ describe('DeploymentHygieneSection', () => {
         mockData = {
             totals: { ...ZERO, orphaned_secrets: 1, unused_secrets: 3, rotation_overdue: 1 },
             projects: [
-                { project_id: 7, project_name: 'web', ...ZERO, orphaned_secrets: 1, unused_secrets: 2, rotation_overdue: 1 },
+                {
+                    project_id: 7,
+                    project_name: 'web',
+                    ...ZERO,
+                    orphaned_secrets: 1,
+                    unused_secrets: 2,
+                    rotation_overdue: 1,
+                },
                 { project_id: 9, project_name: 'api', ...ZERO, unused_secrets: 1 },
             ],
         };

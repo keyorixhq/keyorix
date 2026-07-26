@@ -1,11 +1,5 @@
 import React, { useState } from 'react';
-import {
-    PlusIcon,
-    ClipboardDocumentIcon,
-    KeyIcon,
-    PencilIcon,
-    TrashIcon,
-} from '@heroicons/react/24/outline';
+import { PlusIcon, ClipboardDocumentIcon, KeyIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import {
     useServiceAccounts,
     useCreateServiceAccount,
@@ -34,7 +28,9 @@ function formatDate(iso: string): string {
     if (!iso) return '—';
     try {
         return new Date(iso).toLocaleDateString(undefined, {
-            year: 'numeric', month: 'short', day: 'numeric',
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
         });
     } catch {
         return iso;
@@ -119,7 +115,14 @@ export const ServiceAccountsPage: React.FC = () => {
     function openEdit(sa: ServiceAccount) {
         setFormName(sa.name);
         setFormDescription(sa.description);
-        setFormScopes(new Set(sa.scopes.split(',').map((s) => s.trim()).filter(Boolean)));
+        setFormScopes(
+            new Set(
+                sa.scopes
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+            )
+        );
         setFormError('');
         setActiveModal({ type: 'edit', sa });
     }
@@ -134,14 +137,21 @@ export const ServiceAccountsPage: React.FC = () => {
     function toggleScope(scope: string) {
         setFormScopes((prev) => {
             const next = new Set(prev);
-            if (next.has(scope)) next.delete(scope); else next.add(scope);
+            if (next.has(scope)) next.delete(scope);
+            else next.add(scope);
             return next;
         });
     }
 
     function handleCreate() {
-        if (!formName.trim()) { setFormError('Name is required'); return; }
-        if (formScopes.size === 0) { setFormError('At least one scope is required'); return; }
+        if (!formName.trim()) {
+            setFormError('Name is required');
+            return;
+        }
+        if (formScopes.size === 0) {
+            setFormError('At least one scope is required');
+            return;
+        }
         setFormError('');
         createMutation.mutate(
             {
@@ -168,8 +178,14 @@ export const ServiceAccountsPage: React.FC = () => {
 
     function handleUpdate() {
         if (activeModal?.type !== 'edit') return;
-        if (!formName.trim()) { setFormError('Name is required'); return; }
-        if (formScopes.size === 0) { setFormError('At least one scope is required'); return; }
+        if (!formName.trim()) {
+            setFormError('Name is required');
+            return;
+        }
+        if (formScopes.size === 0) {
+            setFormError('At least one scope is required');
+            return;
+        }
         setFormError('');
         updateMutation.mutate(
             {
@@ -282,7 +298,8 @@ export const ServiceAccountsPage: React.FC = () => {
                         </p>
                     </div>
                     <Button variant="default" onClick={openCreate}>
-                        <PlusIcon className="h-4 w-4 mr-1.5" />New Service Account
+                        <PlusIcon className="h-4 w-4 mr-1.5" />
+                        New Service Account
                     </Button>
                 </div>
 
@@ -344,7 +361,9 @@ export const ServiceAccountsPage: React.FC = () => {
                                                 <div>
                                                     <p className="text-sm font-medium text-base-primary">{sa.name}</p>
                                                     {sa.description && (
-                                                        <p className="text-xs text-base-muted mt-0.5">{sa.description}</p>
+                                                        <p className="text-xs text-base-muted mt-0.5">
+                                                            {sa.description}
+                                                        </p>
                                                     )}
                                                 </div>
                                             </td>
@@ -542,16 +561,19 @@ export const ServiceAccountsPage: React.FC = () => {
                 <div className="space-y-4">
                     {activeModal?.type === 'deactivate' && (
                         <p className="text-sm text-base-secondary">
-                            Deactivate{' '}
-                            <span className="font-semibold">{activeModal.sa.name}</span>? All tokens
-                            issued to this service account will stop working.
+                            Deactivate <span className="font-semibold">{activeModal.sa.name}</span>? All tokens issued
+                            to this service account will stop working.
                         </p>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={deactivateMutation.isPending}>
                             Cancel
                         </Button>
-                        <Button variant="destructive" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
+                        <Button
+                            variant="destructive"
+                            onClick={handleDeactivate}
+                            disabled={deactivateMutation.isPending}
+                        >
                             {deactivateMutation.isPending ? 'Deactivating…' : 'Deactivate'}
                         </Button>
                     </div>
@@ -569,10 +591,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                 borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d',
                             }}
                         >
-                            <p
-                                className="text-sm font-semibold"
-                                style={{ color: isDark ? '#fbbf24' : '#92400e' }}
-                            >
+                            <p className="text-sm font-semibold" style={{ color: isDark ? '#fbbf24' : '#92400e' }}>
                                 ⚠️ Save these credentials — they won't be shown again
                             </p>
                         </div>
@@ -597,9 +616,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                     <ClipboardDocumentIcon className="h-4 w-4" />
                                 </button>
                             </div>
-                            {copiedField === 'clientId' && (
-                                <p className="text-xs text-green-600 mt-1">Copied!</p>
-                            )}
+                            {copiedField === 'clientId' && <p className="text-xs text-green-600 mt-1">Copied!</p>}
                         </div>
 
                         <div>
@@ -622,9 +639,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                     <ClipboardDocumentIcon className="h-4 w-4" />
                                 </button>
                             </div>
-                            {copiedField === 'clientSecret' && (
-                                <p className="text-xs text-green-600 mt-1">Copied!</p>
-                            )}
+                            {copiedField === 'clientSecret' && <p className="text-xs text-green-600 mt-1">Copied!</p>}
                         </div>
 
                         <div className="flex justify-end pt-2">
@@ -659,10 +674,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                 borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d',
                             }}
                         >
-                            <p
-                                className="text-sm font-semibold"
-                                style={{ color: isDark ? '#fbbf24' : '#92400e' }}
-                            >
+                            <p className="text-sm font-semibold" style={{ color: isDark ? '#fbbf24' : '#92400e' }}>
                                 ⚠️ Save this token — it won't be shown again
                             </p>
                             <div>
@@ -716,7 +728,8 @@ export const ServiceAccountsPage: React.FC = () => {
                                     setTokenFormError('');
                                 }}
                             >
-                                <PlusIcon className="h-4 w-4 mr-1.5" />New Token
+                                <PlusIcon className="h-4 w-4 mr-1.5" />
+                                New Token
                             </Button>
 
                             {showTokenForm && (
@@ -744,8 +757,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-base-secondary mb-1">
-                                            Expires At{' '}
-                                            <span className="text-base-muted font-normal">(optional)</span>
+                                            Expires At <span className="text-base-muted font-normal">(optional)</span>
                                         </label>
                                         <input
                                             type="date"
@@ -789,9 +801,7 @@ export const ServiceAccountsPage: React.FC = () => {
                     {tokensLoading ? (
                         <Loading />
                     ) : tokens.length === 0 ? (
-                        <p className="text-sm text-base-muted text-center py-6">
-                            No tokens yet. Create one above.
-                        </p>
+                        <p className="text-sm text-base-muted text-center py-6">No tokens yet. Create one above.</p>
                     ) : (
                         <div className="border border-base rounded-lg overflow-hidden">
                             <table className="min-w-full divide-y divide-base">
@@ -858,16 +868,17 @@ export const ServiceAccountsPage: React.FC = () => {
                                                                 color: inactive
                                                                     ? 'var(--text-muted)'
                                                                     : isDark
-                                                                    ? '#f87171'
-                                                                    : '#dc2626',
+                                                                      ? '#f87171'
+                                                                      : '#dc2626',
                                                                 backgroundColor: 'transparent',
                                                             }}
                                                             onMouseEnter={(e) => {
                                                                 if (!inactive)
-                                                                    (e.currentTarget as HTMLElement).style.backgroundColor =
-                                                                        isDark
-                                                                            ? 'rgba(239,68,68,0.12)'
-                                                                            : '#fee2e2';
+                                                                    (
+                                                                        e.currentTarget as HTMLElement
+                                                                    ).style.backgroundColor = isDark
+                                                                        ? 'rgba(239,68,68,0.12)'
+                                                                        : '#fee2e2';
                                                             }}
                                                             onMouseLeave={(e) => {
                                                                 (e.currentTarget as HTMLElement).style.backgroundColor =
@@ -891,13 +902,7 @@ export const ServiceAccountsPage: React.FC = () => {
     );
 };
 
-function TokenStatusBadge({
-    status,
-    isDark,
-}: {
-    status: 'active' | 'revoked' | 'expired';
-    isDark: boolean;
-}) {
+function TokenStatusBadge({ status, isDark }: { status: 'active' | 'revoked' | 'expired'; isDark: boolean }) {
     const styles: Record<string, React.CSSProperties> = {
         active: {
             backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7',

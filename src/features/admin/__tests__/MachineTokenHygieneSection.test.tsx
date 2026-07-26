@@ -18,8 +18,24 @@ describe('MachineTokenHygieneSection', () => {
 
     it('renders the count, per-token detail, and flag labels', () => {
         mockTokens = [
-            { id: 2, machine_identity_id: 5, name: 'ci', token_prefix: 'kx_machine_ci', last_used_at: null, expired: false, stale: true },
-            { id: 7, machine_identity_id: 9, name: 'old', token_prefix: 'kx_machine_old', last_used_at: fiveDaysAgo, expired: true, stale: false },
+            {
+                id: 2,
+                machine_identity_id: 5,
+                name: 'ci',
+                token_prefix: 'kx_machine_ci',
+                last_used_at: null,
+                expired: false,
+                stale: true,
+            },
+            {
+                id: 7,
+                machine_identity_id: 9,
+                name: 'old',
+                token_prefix: 'kx_machine_old',
+                last_used_at: fiveDaysAgo,
+                expired: true,
+                stale: false,
+            },
         ];
         render(<MachineTokenHygieneSection />);
         expect(screen.getByText(/2 machine tokens stale or expired-but-active/i)).toBeInTheDocument();
@@ -31,7 +47,15 @@ describe('MachineTokenHygieneSection', () => {
 
     it('can be dismissed', () => {
         mockTokens = [
-            { id: 2, machine_identity_id: 5, name: 'ci', token_prefix: 'kx_machine_ci', last_used_at: null, expired: false, stale: true },
+            {
+                id: 2,
+                machine_identity_id: 5,
+                name: 'ci',
+                token_prefix: 'kx_machine_ci',
+                last_used_at: null,
+                expired: false,
+                stale: true,
+            },
         ];
         render(<MachineTokenHygieneSection />);
         fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));

@@ -13,12 +13,12 @@ function normalizeRole(r: any): RoleWithPermissions {
             typeof p === 'string'
                 ? { id: 0, name: p, description: '', resource: p.split('.')[0] ?? '', action: p.split('.')[1] ?? '' }
                 : {
-                    id: p.id ?? p.ID ?? 0,
-                    name: p.name ?? p.Name ?? '',
-                    description: p.description ?? p.Description ?? '',
-                    resource: p.resource ?? p.Resource ?? '',
-                    action: p.action ?? p.Action ?? '',
-                }
+                      id: p.id ?? p.ID ?? 0,
+                      name: p.name ?? p.Name ?? '',
+                      description: p.description ?? p.Description ?? '',
+                      resource: p.resource ?? p.Resource ?? '',
+                      action: p.action ?? p.Action ?? '',
+                  }
         ),
         created_at: r.created_at ?? r.CreatedAt ?? '',
         updated_at: r.updated_at ?? r.UpdatedAt ?? '',
@@ -66,7 +66,9 @@ export const rbacApi = {
         return Array.isArray(data) ? data : (data?.permissions ?? []);
     },
 
-    async getRolePermissions(roleId: number): Promise<{ role_id: number; role_name: string; permissions: Permission[] }> {
+    async getRolePermissions(
+        roleId: number
+    ): Promise<{ role_id: number; role_name: string; permissions: Permission[] }> {
         const res = await apiClient.get<ApiResponse<{ role_id: number; role_name: string; permissions: Permission[] }>>(
             `/api/v1/roles/${roleId}/permissions`
         );

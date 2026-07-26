@@ -57,7 +57,11 @@ describe('SecretDependenciesSection', () => {
             depends_on: [{ id: 10, secret_id: 2, secret_name: 'db-password', note: 'derives from' }],
             dependents: [{ id: 11, secret_id: 3, secret_name: 'edge-cert' }],
         };
-        impactData = { secret_id: 1, secret_name: 'app-token', affected: [{ secret_id: 3, secret_name: 'edge-cert', depth: 1 }] };
+        impactData = {
+            secret_id: 1,
+            secret_name: 'app-token',
+            affected: [{ secret_id: 3, secret_name: 'edge-cert', depth: 1 }],
+        };
         render(<SecretDependenciesSection secret={makeSecret()} />);
 
         expect(screen.getByText('db-password')).toBeInTheDocument();
@@ -85,7 +89,10 @@ describe('SecretDependenciesSection', () => {
                 makeSecret({ id: 5, name: 'other-project', projectId: 99 }), // different project → excluded
                 makeSecret({ id: 6, name: 'other-env', environment: 'staging' }), // different env → excluded
             ],
-            total: 3, page: 1, pageSize: 20, totalPages: 1,
+            total: 3,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
         };
         render(<SecretDependenciesSection secret={makeSecret()} />);
 

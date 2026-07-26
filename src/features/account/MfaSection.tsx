@@ -12,22 +12,17 @@ import { Alert } from '../../components/ui/Alert';
 import { Spinner } from '../../components/ui/Loading';
 import { Modal } from '../../components/ui/Modal';
 import { copyToClipboard } from '../../utils';
-import {
-    useMfaRecoveryStatus,
-    useEnrollMfa,
-    useActivateMfa,
-    useDisableMfa,
-    useRegenerateRecoveryCodes,
-} from './index';
+import { useMfaRecoveryStatus, useEnrollMfa, useActivateMfa, useDisableMfa, useRegenerateRecoveryCodes } from './index';
 
 // LOW_CODES_THRESHOLD is when we nudge the user to regenerate recovery codes.
 const LOW_CODES_THRESHOLD = 3;
 
 function errMessage(e: unknown, fallback: string): string {
-    return (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data
-        ?.message ||
+    return (
+        (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ||
         (e as Error)?.message ||
-        fallback;
+        fallback
+    );
 }
 
 // RecoveryCodes renders the one-time codes with a copy-all control. The codes are
@@ -57,11 +52,7 @@ const RecoveryCodes: React.FC<{ codes: string[] }> = ({ codes }) => {
                 ))}
             </div>
             <Button variant="outline" size="sm" onClick={copy}>
-                {copied ? (
-                    <CheckIcon className="h-4 w-4 mr-2" />
-                ) : (
-                    <ClipboardDocumentIcon className="h-4 w-4 mr-2" />
-                )}
+                {copied ? <CheckIcon className="h-4 w-4 mr-2" /> : <ClipboardDocumentIcon className="h-4 w-4 mr-2" />}
                 {copied ? 'Copied' : 'Copy all'}
             </Button>
         </div>
@@ -126,8 +117,8 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                 <form onSubmit={submit} className="space-y-4">
                     {error && <Alert type="error" message={error} />}
                     <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                        Add this key to your authenticator app (Google Authenticator, 1Password, …),
-                        then enter the 6-digit code it shows.
+                        Add this key to your authenticator app (Google Authenticator, 1Password, …), then enter the
+                        6-digit code it shows.
                     </p>
                     {enroll.isPending && !secret ? (
                         <div className="flex justify-center py-6">
@@ -293,10 +284,7 @@ export const MfaSection: React.FC = () => {
             >
                 <div className="flex items-center justify-between">
                     <div className="flex items-center">
-                        <DevicePhoneMobileIcon
-                            className="h-7 w-7 mr-4"
-                            style={{ color: 'var(--text-muted)' }}
-                        />
+                        <DevicePhoneMobileIcon className="h-7 w-7 mr-4" style={{ color: 'var(--text-muted)' }} />
                         <div>
                             <h4
                                 className="text-sm font-medium flex items-center gap-2"
@@ -344,8 +332,14 @@ export const MfaSection: React.FC = () => {
                 )}
 
                 {enabled && (
-                    <div className="mt-4 pt-4 flex items-center justify-between" style={{ borderTop: '1px solid var(--border)' }}>
-                        <div className="flex items-center gap-2 text-sm" style={{ color: lowCodes ? 'var(--warning-text, #b45309)' : 'var(--text-muted)' }}>
+                    <div
+                        className="mt-4 pt-4 flex items-center justify-between"
+                        style={{ borderTop: '1px solid var(--border)' }}
+                    >
+                        <div
+                            className="flex items-center gap-2 text-sm"
+                            style={{ color: lowCodes ? 'var(--warning-text, #b45309)' : 'var(--text-muted)' }}
+                        >
                             {lowCodes && <ExclamationTriangleIcon className="h-4 w-4" />}
                             {lowCodes
                                 ? 'You are running low on recovery codes.'

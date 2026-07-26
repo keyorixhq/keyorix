@@ -40,7 +40,9 @@ export const SetupPage: React.FC = () => {
                 setInvalidReason(err instanceof Error ? err.message : 'This setup link is no longer valid.');
                 setPhase('invalid');
             });
-        return () => { active = false; };
+        return () => {
+            active = false;
+        };
     }, [token]);
 
     const handleSubmit = async (password: string) => {
@@ -61,17 +63,25 @@ export const SetupPage: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundColor: 'var(--bg-app)' }}>
+        <div
+            className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8"
+            style={{ backgroundColor: 'var(--bg-app)' }}
+        >
             <div className="max-w-md w-full space-y-8">
                 <div className="text-center">
                     <div className="inline-flex items-center justify-center h-12 w-12 bg-blue-600 rounded-xl mb-4">
                         <span className="text-white font-bold text-lg">K</span>
                     </div>
-                    <h1 className="text-3xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Keyorix</h1>
+                    <h1 className="text-3xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        Keyorix
+                    </h1>
                     <p style={{ color: 'var(--text-secondary)' }}>Set up your account</p>
                 </div>
 
-                <div className="py-8 px-6 shadow-lg rounded-lg border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+                <div
+                    className="py-8 px-6 shadow-lg rounded-lg border"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                >
                     {phase === 'loading' && (
                         <div className="text-center py-4">
                             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500 mx-auto mb-4"></div>
@@ -81,8 +91,12 @@ export const SetupPage: React.FC = () => {
 
                     {phase === 'invalid' && (
                         <div className="text-center space-y-4">
-                            <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>This link can’t be used</h2>
-                            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{invalidReason}</p>
+                            <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                This link can’t be used
+                            </h2>
+                            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                {invalidReason}
+                            </p>
                             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                                 Setup links are single-use and expire. Ask your administrator to send a new one.
                             </p>
@@ -96,8 +110,12 @@ export const SetupPage: React.FC = () => {
                         <div className="space-y-6">
                             <div>
                                 <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                    {info.display_name ? `Welcome, ${info.display_name}.` : 'Welcome.'} Choose a password to finish
-                                    setting up your account for <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{info.email}</span>.
+                                    {info.display_name ? `Welcome, ${info.display_name}.` : 'Welcome.'} Choose a
+                                    password to finish setting up your account for{' '}
+                                    <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                                        {info.email}
+                                    </span>
+                                    .
                                 </p>
                             </div>
                             <SetupForm onSubmit={handleSubmit} isLoading={submitting} error={submitError} />

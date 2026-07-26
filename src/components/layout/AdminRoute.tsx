@@ -6,15 +6,9 @@ interface AdminRouteProps {
     requiredPermissions?: string[];
 }
 
-export const AdminRoute: React.FC<AdminRouteProps> = ({
-    children,
-    requiredPermissions = [],
-}) => {
+export const AdminRoute: React.FC<AdminRouteProps> = ({ children, requiredPermissions = [] }) => {
     return (
-        <ProtectedRoute
-            adminOnly
-            requiredPermissions={requiredPermissions}
-        >
+        <ProtectedRoute adminOnly requiredPermissions={requiredPermissions}>
             {children}
         </ProtectedRoute>
     );

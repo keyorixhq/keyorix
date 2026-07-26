@@ -24,7 +24,9 @@ const SummaryStat: React.FC<{ label: string; value: number; tone?: string | unde
         <div className="text-2xl font-semibold" style={{ color: tone ?? 'var(--text-primary)' }}>
             {value}
         </div>
-        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{label}</div>
+        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            {label}
+        </div>
     </div>
 );
 
@@ -49,8 +51,8 @@ export const ProjectDriftTab: React.FC<ProjectDriftTabProps> = ({ projectId }) =
                     Environment Drift
                 </h2>
                 <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    Secret keys that are missing from some environments, or present everywhere with
-                    diverging settings. No secret values are read.
+                    Secret keys that are missing from some environments, or present everywhere with diverging settings.
+                    No secret values are read.
                 </p>
             </div>
 
@@ -58,15 +60,26 @@ export const ProjectDriftTab: React.FC<ProjectDriftTabProps> = ({ projectId }) =
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                     <SummaryStat label="Keys" value={summary.totalKeys} />
                     <SummaryStat label="Consistent" value={summary.consistentKeys} tone="var(--success)" />
-                    <SummaryStat label="Missing in some" value={summary.missingInSome} tone={summary.missingInSome > 0 ? 'var(--error)' : undefined} />
-                    <SummaryStat label="Settings differ" value={summary.metadataDrift} tone={summary.metadataDrift > 0 ? 'var(--warning)' : undefined} />
+                    <SummaryStat
+                        label="Missing in some"
+                        value={summary.missingInSome}
+                        tone={summary.missingInSome > 0 ? 'var(--error)' : undefined}
+                    />
+                    <SummaryStat
+                        label="Settings differ"
+                        value={summary.metadataDrift}
+                        tone={summary.metadataDrift > 0 ? 'var(--warning)' : undefined}
+                    />
                 </div>
             )}
 
-            <div className="rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div
+                className="rounded-lg border"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
                 {isLoading ? (
                     <div className="p-6 space-y-3">
-                        {[1, 2, 3, 4].map(i => (
+                        {[1, 2, 3, 4].map((i) => (
                             <div key={i} className="flex items-center gap-3 animate-pulse">
                                 <div className="h-3 w-40 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
                                 <div className="h-3 flex-1 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
@@ -75,11 +88,16 @@ export const ProjectDriftTab: React.FC<ProjectDriftTabProps> = ({ projectId }) =
                     </div>
                 ) : isError ? (
                     <div className="p-6 text-center">
-                        <p className="text-sm" style={{ color: 'var(--error)' }}>Failed to load drift report.</p>
+                        <p className="text-sm" style={{ color: 'var(--error)' }}>
+                            Failed to load drift report.
+                        </p>
                     </div>
                 ) : envs.length < 2 ? (
                     <div className="p-10 text-center">
-                        <ArrowsRightLeftIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                        <ArrowsRightLeftIcon
+                            className="h-10 w-10 mx-auto mb-3"
+                            style={{ color: 'var(--text-muted)' }}
+                        />
                         <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Need at least two environments
                         </p>
@@ -102,51 +120,68 @@ export const ProjectDriftTab: React.FC<ProjectDriftTabProps> = ({ projectId }) =
                         <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
                             <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
                                 <tr>
-                                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
-                                        style={{ color: 'var(--text-muted)' }}>
+                                    <th
+                                        className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
+                                        style={{ color: 'var(--text-muted)' }}
+                                    >
                                         Key
                                     </th>
-                                    {envs.map(env => (
-                                        <th key={env.id}
+                                    {envs.map((env) => (
+                                        <th
+                                            key={env.id}
                                             className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider"
-                                            style={{ color: 'var(--text-muted)' }}>
+                                            style={{ color: 'var(--text-muted)' }}
+                                        >
                                             {env.name}
                                         </th>
                                     ))}
-                                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
-                                        style={{ color: 'var(--text-muted)' }}>
+                                    <th
+                                        className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
+                                        style={{ color: 'var(--text-muted)' }}
+                                    >
                                         Issue
                                     </th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                                {keys.map(key => {
+                                {keys.map((key) => {
                                     const badge = STATUS_BADGE[key.status] ?? FALLBACK_BADGE;
                                     return (
                                         <tr key={key.name}>
-                                            <td className="px-4 py-3 whitespace-nowrap font-mono text-xs"
-                                                style={{ color: 'var(--text-primary)' }}>
+                                            <td
+                                                className="px-4 py-3 whitespace-nowrap font-mono text-xs"
+                                                style={{ color: 'var(--text-primary)' }}
+                                            >
                                                 {key.name}
                                             </td>
-                                            {envs.map(env => {
+                                            {envs.map((env) => {
                                                 const present = cellHas(key, env.id);
                                                 return (
                                                     <td key={env.id} className="px-4 py-3 text-center">
                                                         <span
                                                             className="inline-block h-2.5 w-2.5 rounded-full"
                                                             title={present ? 'present' : 'missing'}
-                                                            style={{ backgroundColor: present ? 'var(--success)' : 'var(--error)' }}
+                                                            style={{
+                                                                backgroundColor: present
+                                                                    ? 'var(--success)'
+                                                                    : 'var(--error)',
+                                                            }}
                                                         />
                                                     </td>
                                                 );
                                             })}
                                             <td className="px-4 py-3 whitespace-nowrap">
-                                                <span className="text-xs font-medium px-2 py-0.5 rounded-full"
-                                                    style={{ backgroundColor: badge.bg, color: badge.text }}>
+                                                <span
+                                                    className="text-xs font-medium px-2 py-0.5 rounded-full"
+                                                    style={{ backgroundColor: badge.bg, color: badge.text }}
+                                                >
                                                     {badge.label}
                                                 </span>
                                                 {key.driftFields.length > 0 && (
-                                                    <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+                                                    <span
+                                                        className="text-xs ml-2"
+                                                        style={{ color: 'var(--text-muted)' }}
+                                                    >
                                                         {key.driftFields.join(', ')}
                                                     </span>
                                                 )}

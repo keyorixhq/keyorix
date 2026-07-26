@@ -39,9 +39,7 @@ describe('MaintenanceSection', () => {
     });
 
     it('surfaces an error message on failure', async () => {
-        rotationMutate.mockImplementation((_v, opts) =>
-            opts.onError({ response: { data: { error: 'nope' } } }),
-        );
+        rotationMutate.mockImplementation((_v, opts) => opts.onError({ response: { data: { error: 'nope' } } }));
         render(<MaintenanceSection />);
         fireEvent.click(screen.getByRole('button', { name: 'Rotation reminders' }));
         expect(await screen.findByText('nope')).toBeInTheDocument();

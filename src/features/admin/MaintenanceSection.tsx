@@ -1,11 +1,6 @@
 import React, { useState } from 'react';
 import { BoltIcon } from '@heroicons/react/24/outline';
-import {
-    useRunAnomalyAlerts,
-    useRunRotationReminders,
-    useRunExpiryReminders,
-    useRunComplianceDigest,
-} from './api';
+import { useRunAnomalyAlerts, useRunRotationReminders, useRunExpiryReminders, useRunComplianceDigest } from './api';
 import { Button } from '../../components/ui/Button';
 import { Alert } from '../../components/ui/Alert';
 
@@ -26,7 +21,7 @@ export const MaintenanceSection: React.FC = () => {
 
     const run = (
         mutation: { mutate: (v: undefined, opts: object) => void; isPending: boolean },
-        result: (r: any) => string,
+        result: (r: any) => string
     ) => {
         setNote('');
         setError('');
@@ -40,21 +35,33 @@ export const MaintenanceSection: React.FC = () => {
         { label: 'Anomaly alerts', m: anomaly, msg: (r: any) => `Broadcast ${r?.alerted ?? 0} anomaly alert(s).` },
         { label: 'Rotation reminders', m: rotation, msg: (r: any) => `Sent ${r?.sent ?? 0} rotation reminder(s).` },
         { label: 'Expiry reminders', m: expiry, msg: (r: any) => `Sent ${r?.sent ?? 0} expiry reminder(s).` },
-        { label: 'Compliance digest', m: compliance, msg: (r: any) => (r?.sent ? 'Compliance digest sent.' : 'No compliance digest sent (no recipients/changes).') },
+        {
+            label: 'Compliance digest',
+            m: compliance,
+            msg: (r: any) =>
+                r?.sent ? 'Compliance digest sent.' : 'No compliance digest sent (no recipients/changes).',
+        },
     ];
 
     return (
-        <div className="rounded-lg border mb-4 p-4" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+        <div
+            className="rounded-lg border mb-4 p-4"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
             <div className="flex items-center gap-2 mb-1">
                 <BoltIcon className="h-5 w-5" style={{ color: 'var(--text-primary)' }} />
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Maintenance</h3>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Maintenance
+                </h3>
             </div>
             <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
                 Run a scheduled job now instead of waiting for its next tick.
             </p>
 
             {note && <Alert type="success" message={note} dismissible onDismiss={() => setNote('')} className="mb-3" />}
-            {error && <Alert type="error" message={error} dismissible onDismiss={() => setError('')} className="mb-3" />}
+            {error && (
+                <Alert type="error" message={error} dismissible onDismiss={() => setError('')} className="mb-3" />
+            )}
 
             <div className="flex flex-wrap gap-2">
                 {jobs.map(({ label, m, msg }) => (

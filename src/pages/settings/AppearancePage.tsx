@@ -44,15 +44,21 @@ export const AppearancePage: React.FC = () => {
                 </p>
             </div>
 
-            <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div
+                className="rounded-xl border overflow-hidden"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
                 <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-                    <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    <h2
+                        className="text-sm font-semibold uppercase tracking-widest"
+                        style={{ color: 'var(--text-muted)' }}
+                    >
                         Theme
                     </h2>
                 </div>
 
                 <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {THEME_OPTIONS.map(opt => {
+                    {THEME_OPTIONS.map((opt) => {
                         const selected = theme === opt.value;
                         const Icon = opt.icon;
                         return (
@@ -60,8 +66,13 @@ export const AppearancePage: React.FC = () => {
                                 key={opt.value}
                                 className="flex items-center gap-4 px-6 py-4 cursor-pointer transition-colors"
                                 style={{ backgroundColor: selected ? 'var(--accent-subtle)' : undefined }}
-                                onMouseEnter={e => { if (!selected) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'; }}
-                                onMouseLeave={e => { if (!selected) (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
+                                onMouseEnter={(e) => {
+                                    if (!selected)
+                                        (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!selected) (e.currentTarget as HTMLElement).style.backgroundColor = '';
+                                }}
                             >
                                 <input
                                     type="radio"
@@ -72,17 +83,24 @@ export const AppearancePage: React.FC = () => {
                                     className="sr-only"
                                 />
                                 {/* Custom radio indicator */}
-                                <div className="shrink-0 h-4 w-4 rounded-full border-2 flex items-center justify-center transition-colors"
+                                <div
+                                    className="shrink-0 h-4 w-4 rounded-full border-2 flex items-center justify-center transition-colors"
                                     style={{
                                         borderColor: selected ? 'var(--accent)' : 'var(--border-strong)',
-                                    }}>
+                                    }}
+                                >
                                     {selected && (
-                                        <div className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--accent)' }} />
+                                        <div
+                                            className="h-2 w-2 rounded-full"
+                                            style={{ backgroundColor: 'var(--accent)' }}
+                                        />
                                     )}
                                 </div>
 
-                                <Icon className="h-5 w-5 shrink-0"
-                                    style={{ color: selected ? 'var(--accent)' : 'var(--text-muted)' }} />
+                                <Icon
+                                    className="h-5 w-5 shrink-0"
+                                    style={{ color: selected ? 'var(--accent)' : 'var(--text-muted)' }}
+                                />
 
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>

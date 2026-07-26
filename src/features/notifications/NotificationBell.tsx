@@ -38,7 +38,7 @@ export const NotificationBell: React.FC = () => {
         <div className="relative">
             <button
                 type="button"
-                onClick={() => setOpen(o => !o)}
+                onClick={() => setOpen((o) => !o)}
                 className="p-2 rounded-md relative transition-colors focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-blue-500"
                 style={{ color: 'var(--text-muted)' }}
                 title="Notifications"
@@ -68,7 +68,9 @@ export const NotificationBell: React.FC = () => {
                             className="flex items-center justify-between px-3 py-2 border-b sticky top-0"
                             style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
                         >
-                            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Notifications</span>
+                            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                Notifications
+                            </span>
                             {unread > 0 && (
                                 <button
                                     type="button"
@@ -88,7 +90,7 @@ export const NotificationBell: React.FC = () => {
                             </div>
                         ) : (
                             <ul>
-                                {items.map(n => (
+                                {items.map((n) => (
                                     <li key={n.id}>
                                         <button
                                             type="button"
@@ -102,9 +104,21 @@ export const NotificationBell: React.FC = () => {
                                                 aria-hidden="true"
                                             />
                                             <span className="min-w-0">
-                                                <span className="block text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{n.title}</span>
-                                                <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>{n.message}</span>
-                                                <span className="block text-[0.7rem] mt-0.5" style={{ color: 'var(--text-muted)' }}>{timeAgo(n.created_at)}</span>
+                                                <span
+                                                    className="block text-sm font-medium truncate"
+                                                    style={{ color: 'var(--text-primary)' }}
+                                                >
+                                                    {n.title}
+                                                </span>
+                                                <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+                                                    {n.message}
+                                                </span>
+                                                <span
+                                                    className="block text-[0.7rem] mt-0.5"
+                                                    style={{ color: 'var(--text-muted)' }}
+                                                >
+                                                    {timeAgo(n.created_at)}
+                                                </span>
                                             </span>
                                         </button>
                                     </li>

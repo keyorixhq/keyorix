@@ -69,7 +69,11 @@ describe('projectInvitationsApi.listInvitations', () => {
 describe('projectInvitationsApi.createInvitation', () => {
     it('posts email+role and unwraps {data:{invitation}}', async () => {
         mocked.post.mockResolvedValue({
-            data: { data: { invitation: { ID: 9, ProjectID: 2, Email: 'a@b.com', Role: 'project_viewer', State: 'pending' } } },
+            data: {
+                data: {
+                    invitation: { ID: 9, ProjectID: 2, Email: 'a@b.com', Role: 'project_viewer', State: 'pending' },
+                },
+            },
         });
 
         const inv = await projectInvitationsApi.createInvitation(2, 'a@b.com', 'project_viewer');
@@ -88,7 +92,12 @@ describe('projectInvitationsApi.createGlobal', () => {
             data: {
                 data: {
                     invitation: { ID: 12, ProjectID: 0, Email: 'carol@x.io', State: 'pending' },
-                    setup_link: { email: 'carol@x.io', channel: 'out_of_band', delivered: false, link_for_admin: 'https://k/x/abc' },
+                    setup_link: {
+                        email: 'carol@x.io',
+                        channel: 'out_of_band',
+                        delivered: false,
+                        link_for_admin: 'https://k/x/abc',
+                    },
                 },
             },
         });
@@ -107,7 +116,9 @@ describe('projectInvitationsApi.createGlobal', () => {
     });
 
     it('omits role and project_assignments when empty (backend defaults apply)', async () => {
-        mocked.post.mockResolvedValue({ data: { data: { invitation: { ID: 13, Email: 'd@x.io', State: 'pending' } } } });
+        mocked.post.mockResolvedValue({
+            data: { data: { invitation: { ID: 13, Email: 'd@x.io', State: 'pending' } } },
+        });
 
         await projectInvitationsApi.createGlobal('d@x.io', '', []);
 
@@ -116,7 +127,9 @@ describe('projectInvitationsApi.createGlobal', () => {
 
     it('surfaces delivery_error when the link could not be sent', async () => {
         mocked.post.mockResolvedValue({
-            data: { data: { invitation: { ID: 14, Email: 'e@x.io', State: 'pending' }, delivery_error: 'base_url unset' } },
+            data: {
+                data: { invitation: { ID: 14, Email: 'e@x.io', State: 'pending' }, delivery_error: 'base_url unset' },
+            },
         });
 
         const res = await projectInvitationsApi.createGlobal('e@x.io', '', []);

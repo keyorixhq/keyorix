@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../client', () => ({
     apiClient: {
-        get:    vi.fn(),
-        post:   vi.fn(),
-        put:    vi.fn(),
+        get: vi.fn(),
+        post: vi.fn(),
+        put: vi.fn(),
         delete: vi.fn(),
     },
 }));
@@ -13,9 +13,9 @@ import { apiClient } from '../client';
 import { serviceAccountsApi } from '../serviceAccounts';
 
 const mock = apiClient as unknown as {
-    get:    ReturnType<typeof vi.fn>;
-    post:   ReturnType<typeof vi.fn>;
-    put:    ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
+    post: ReturnType<typeof vi.fn>;
+    put: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
 };
 

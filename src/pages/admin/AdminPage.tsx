@@ -31,13 +31,23 @@ import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
 import type { SetupLinkResult, ProjectAssignment } from '../../services/users';
 import { SYSTEM_ROLES } from '../../services/users';
-import { AccountStateBadge, StaleAccountsSection, PATHygieneSection, MachineTokenHygieneSection, DeploymentHygieneSection, OrgNameConformanceSection, OrgInventoryExport, ProjectAssignmentsPicker, MaintenanceSection } from '../../features/admin';
+import {
+    AccountStateBadge,
+    StaleAccountsSection,
+    PATHygieneSection,
+    MachineTokenHygieneSection,
+    DeploymentHygieneSection,
+    OrgNameConformanceSection,
+    OrgInventoryExport,
+    ProjectAssignmentsPicker,
+    MaintenanceSection,
+} from '../../features/admin';
 import { GlobalInviteUserModal } from '../../features/invitations/GlobalInviteUserModal';
 import { copyToClipboard } from '../../utils';
 
 // "system_auditor" → "Auditor"; the leading "system_" is stripped since the
 // whole control is already labelled "System role".
-const systemRoleLabel = (role: string) => role.replace(/^system_/, '').replace(/^\w/, c => c.toUpperCase());
+const systemRoleLabel = (role: string) => role.replace(/^system_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
 interface APIUser {
     id: number;
@@ -66,7 +76,9 @@ function formatDate(iso: string): string {
     if (!iso) return '—';
     try {
         return new Date(iso).toLocaleDateString(undefined, {
-            year: 'numeric', month: 'short', day: 'numeric',
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
         });
     } catch {
         return iso;
@@ -77,7 +89,9 @@ function generatePassword(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*';
     const arr = new Uint8Array(16);
     window.crypto.getRandomValues(arr);
-    return Array.from(arr).map(b => chars[b % chars.length]).join('');
+    return Array.from(arr)
+        .map((b) => chars[b % chars.length])
+        .join('');
 }
 
 export const AdminPage: React.FC = () => {
@@ -124,8 +138,15 @@ export const AdminPage: React.FC = () => {
 
     const navigate = useNavigate();
     const { theme } = useUIStore();
-    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE, includeDeleted: showDeleted, inactive: filterInactive });
+    const isDark =
+        theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const { data, isLoading, isError } = useAdminUserList({
+        page,
+        search,
+        pageSize: PAGE_SIZE,
+        includeDeleted: showDeleted,
+        inactive: filterInactive,
+    });
 
     const rawData = data as any;
     const users: APIUser[] = rawData?.users ?? [];
@@ -154,7 +175,10 @@ export const AdminPage: React.FC = () => {
     function closeModal() {
         setActiveModal(null);
         setFormError('');
-        setCreateUsername(''); setCreateEmail(''); setCreateDisplayName(''); setCreatePassword('');
+        setCreateUsername('');
+        setCreateEmail('');
+        setCreateDisplayName('');
+        setCreatePassword('');
         setShowPassword(false);
         setCreateMode('password');
         setCreateSystemRole('');
@@ -184,22 +208,29 @@ export const AdminPage: React.FC = () => {
     }, [userRolesData, activeModal?.type]);
 
     function toggleRoleId(id: number) {
-        setSelectedRoleIds(prev => {
+        setSelectedRoleIds((prev) => {
             const next = new Set(prev);
-            if (next.has(id)) next.delete(id); else next.add(id);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
             return next;
         });
     }
 
     function handleSaveRoles() {
         if (activeModal?.type !== 'roles') return;
-        if (selectedRoleIds.size === 0) { setFormError('User must have at least one role'); return; }
+        if (selectedRoleIds.size === 0) {
+            setFormError('User must have at least one role');
+            return;
+        }
         setFormError('');
         updateRolesMutation.mutate(
             { userId: activeModal.user.id, roleIds: Array.from(selectedRoleIds) },
             {
-                onSuccess: () => { closeModal(); },
-                onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to update roles'),
+                onSuccess: () => {
+                    closeModal();
+                },
+                onError: (err: any) =>
+                    setFormError(err.response?.data?.error ?? err.message ?? 'Failed to update roles'),
             }
         );
     }
@@ -214,14 +245,33 @@ export const AdminPage: React.FC = () => {
 
     function handleCreate() {
         setFormError('');
-        if (!createUsername.trim()) { setFormError('Username is required'); return; }
-        if (!createEmail.trim()) { setFormError('Email is required'); return; }
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(createEmail.trim())) { setFormError('Please enter a valid email address'); return; }
-        if (!createDisplayName.trim()) { setFormError('Display name is required'); return; }
+        if (!createUsername.trim()) {
+            setFormError('Username is required');
+            return;
+        }
+        if (!createEmail.trim()) {
+            setFormError('Email is required');
+            return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(createEmail.trim())) {
+            setFormError('Please enter a valid email address');
+            return;
+        }
+        if (!createDisplayName.trim()) {
+            setFormError('Display name is required');
+            return;
+        }
         // A password is only required when the admin is setting one; the
         // setup-link and one-time-password paths set none.
-        if (createMode === 'password' && createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
-        const base = { username: createUsername.trim(), email: createEmail.trim(), display_name: createDisplayName.trim() };
+        if (createMode === 'password' && createPassword.length < 8) {
+            setFormError('Password must be at least 8 characters');
+            return;
+        }
+        const base = {
+            username: createUsername.trim(),
+            email: createEmail.trim(),
+            display_name: createDisplayName.trim(),
+        };
         // Atomic role/project assignments ride only on the admin-set-password path
         // (the backend rejects them with setup-link / one-time-password). Send the
         // backend-only shape — drop the UI's display-only project_name.
@@ -234,9 +284,11 @@ export const AdminPage: React.FC = () => {
                 : {}),
         };
         const body =
-            createMode === 'setup_link' ? { ...base, deliver_setup_link: true } :
-            createMode === 'one_time_password' ? { ...base, generate_one_time_password: true } :
-            passwordBody;
+            createMode === 'setup_link'
+                ? { ...base, deliver_setup_link: true }
+                : createMode === 'one_time_password'
+                  ? { ...base, generate_one_time_password: true }
+                  : passwordBody;
         createMutation.mutate(body, {
             onSuccess: (res) => {
                 // Setup-link / one-time-password keep the modal open to show the
@@ -282,12 +334,19 @@ export const AdminPage: React.FC = () => {
     function handleUpdate() {
         if (activeModal?.type !== 'edit') return;
         setFormError('');
-        if (!editEmail.trim()) { setFormError('Email is required'); return; }
+        if (!editEmail.trim()) {
+            setFormError('Email is required');
+            return;
+        }
         updateMutation.mutate(
-            { id: activeModal.user.id, body: { email: editEmail.trim(), display_name: editDisplayName.trim(), active: editActive } },
+            {
+                id: activeModal.user.id,
+                body: { email: editEmail.trim(), display_name: editDisplayName.trim(), active: editActive },
+            },
             {
                 onSuccess: closeModal,
-                onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to update user'),
+                onError: (err: any) =>
+                    setFormError(err.response?.data?.error ?? err.message ?? 'Failed to update user'),
             }
         );
     }
@@ -309,21 +368,31 @@ export const AdminPage: React.FC = () => {
     }
 
     function toggleSelect(id: number) {
-        setSelected(prev => { const s = new Set(prev); if (s.has(id)) s.delete(id); else s.add(id); return s; });
+        setSelected((prev) => {
+            const s = new Set(prev);
+            if (s.has(id)) s.delete(id);
+            else s.add(id);
+            return s;
+        });
     }
 
     function toggleAll() {
-        setSelected(prev => prev.size === users.length ? new Set() : new Set(users.map(u => u.id)));
+        setSelected((prev) => (prev.size === users.length ? new Set() : new Set(users.map((u) => u.id))));
     }
 
     async function bulkSetActive(active: boolean) {
-        const targets = users.filter(u => selected.has(u.id) && u.active !== active);
+        const targets = users.filter((u) => selected.has(u.id) && u.active !== active);
         if (!targets.length) return;
         setBulkPending(true);
         try {
-            await Promise.all(targets.map(u =>
-                updateMutation.mutateAsync({ id: u.id, body: { email: u.email, display_name: u.display_name, active } })
-            ));
+            await Promise.all(
+                targets.map((u) =>
+                    updateMutation.mutateAsync({
+                        id: u.id,
+                        body: { email: u.email, display_name: u.display_name, active },
+                    })
+                )
+            );
             setSelected(new Set());
         } catch (err: any) {
             setPageError(err.response?.data?.error ?? err.message ?? 'Bulk action failed');
@@ -335,7 +404,7 @@ export const AdminPage: React.FC = () => {
     async function bulkDelete() {
         setBulkPending(true);
         try {
-            await Promise.all(Array.from(selected).map(id => deleteMutation.mutateAsync(id)));
+            await Promise.all(Array.from(selected).map((id) => deleteMutation.mutateAsync(id)));
             setSelected(new Set());
         } catch (err: any) {
             setPageError(err.response?.data?.error ?? err.message ?? 'Bulk delete failed');
@@ -344,8 +413,8 @@ export const AdminPage: React.FC = () => {
         }
     }
 
-    const hasActive = users.some(u => selected.has(u.id) && u.active);
-    const hasInactive = users.some(u => selected.has(u.id) && !u.active);
+    const hasActive = users.some((u) => selected.has(u.id) && u.active);
+    const hasInactive = users.some((u) => selected.has(u.id) && !u.active);
 
     return (
         <>
@@ -362,32 +431,65 @@ export const AdminPage: React.FC = () => {
                             <>
                                 <span className="text-sm text-base-muted">{selected.size} selected</span>
                                 {hasInactive && (
-                                    <Button variant="outline" size="sm" onClick={() => bulkSetActive(true)} disabled={bulkPending}>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => bulkSetActive(true)}
+                                        disabled={bulkPending}
+                                    >
                                         Activate
                                     </Button>
                                 )}
                                 {hasActive && (
-                                    <Button variant="outline" size="sm" onClick={() => bulkSetActive(false)} disabled={bulkPending}>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => bulkSetActive(false)}
+                                        disabled={bulkPending}
+                                    >
                                         Deactivate
                                     </Button>
                                 )}
-                                <Button variant="outline" size="sm" onClick={bulkDelete} disabled={bulkPending} className="text-red-600 hover:text-red-700">
-                                    <TrashIcon className="h-4 w-4 mr-1" />Delete
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={bulkDelete}
+                                    disabled={bulkPending}
+                                    className="text-red-600 hover:text-red-700"
+                                >
+                                    <TrashIcon className="h-4 w-4 mr-1" />
+                                    Delete
                                 </Button>
-                                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+                                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                                    Clear
+                                </Button>
                             </>
                         )}
                         <Button variant="outline" onClick={() => setInviteOpen(true)}>
-                            <EnvelopeIcon className="h-4 w-4 mr-1.5" />Invite User
+                            <EnvelopeIcon className="h-4 w-4 mr-1.5" />
+                            Invite User
                         </Button>
-                        <Button variant="default" onClick={() => { setFormError(''); setActiveModal({ type: 'create' }); }}>
-                            <PlusIcon className="h-4 w-4 mr-1.5" />New User
+                        <Button
+                            variant="default"
+                            onClick={() => {
+                                setFormError('');
+                                setActiveModal({ type: 'create' });
+                            }}
+                        >
+                            <PlusIcon className="h-4 w-4 mr-1.5" />
+                            New User
                         </Button>
                     </div>
                 </div>
 
                 {pageError && (
-                    <Alert type="error" title={pageError} dismissible onDismiss={() => setPageError('')} className="mb-4" />
+                    <Alert
+                        type="error"
+                        title={pageError}
+                        dismissible
+                        onDismiss={() => setPageError('')}
+                        className="mb-4"
+                    />
                 )}
 
                 <StaleAccountsSection />
@@ -399,9 +501,18 @@ export const AdminPage: React.FC = () => {
                 <MaintenanceSection />
 
                 {filterInactive && (
-                    <div className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"
-                        style={{ backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fffbeb', borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d', color: isDark ? '#fbbf24' : '#92400e' }}>
-                        <span className="text-sm font-medium">Showing inactive users only — no login in the last 30 days (includes accounts that have never logged in).</span>
+                    <div
+                        className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"
+                        style={{
+                            backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fffbeb',
+                            borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d',
+                            color: isDark ? '#fbbf24' : '#92400e',
+                        }}
+                    >
+                        <span className="text-sm font-medium">
+                            Showing inactive users only — no login in the last 30 days (includes accounts that have
+                            never logged in).
+                        </span>
                         <button
                             type="button"
                             onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=logins')}
@@ -413,7 +524,14 @@ export const AdminPage: React.FC = () => {
                 )}
 
                 <div className="flex flex-col gap-3 mb-6">
-                    <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); setPage(1); }} className="flex gap-2">
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            setSearch(searchInput);
+                            setPage(1);
+                        }}
+                        className="flex gap-2"
+                    >
                         <div className="relative flex-1">
                             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-base-muted" />
                             <input
@@ -421,19 +539,40 @@ export const AdminPage: React.FC = () => {
                                 placeholder="Search by username or email…"
                                 value={searchInput}
                                 onChange={(e) => setSearchInput(e.target.value)}
-                                className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
+                                className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                style={{
+                                    backgroundColor: 'var(--bg-app)',
+                                    color: 'var(--text-primary)',
+                                    borderColor: 'var(--border-strong)',
+                                }}
                             />
                         </div>
-                        <Button type="submit" variant="secondary">Search</Button>
+                        <Button type="submit" variant="secondary">
+                            Search
+                        </Button>
                         {search && (
-                            <Button type="button" variant="ghost" onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}>Clear</Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => {
+                                    setSearchInput('');
+                                    setSearch('');
+                                    setPage(1);
+                                }}
+                            >
+                                Clear
+                            </Button>
                         )}
                     </form>
                     <label className="flex items-center gap-2 cursor-pointer w-fit">
                         <input
                             type="checkbox"
                             checked={showDeleted}
-                            onChange={(e) => { setShowDeleted(e.target.checked); setPage(1); setSelected(new Set()); }}
+                            onChange={(e) => {
+                                setShowDeleted(e.target.checked);
+                                setPage(1);
+                                setSelected(new Set());
+                            }}
                             className="h-4 w-4 rounded-sm border-base"
                             style={{ accentColor: 'var(--accent)' }}
                         />
@@ -444,7 +583,11 @@ export const AdminPage: React.FC = () => {
                 {isLoading ? (
                     <Loading className="py-20" />
                 ) : isError ? (
-                    <Alert type="error" title="Failed to load users" message="Check that the server is running and you have admin access." />
+                    <Alert
+                        type="error"
+                        title="Failed to load users"
+                        message="Check that the server is running and you have admin access."
+                    />
                 ) : users.length === 0 ? (
                     <div className="text-center py-20 text-base-muted">
                         <UserCircleIcon className="h-12 w-12 mx-auto mb-3 text-base-muted" />
@@ -456,26 +599,51 @@ export const AdminPage: React.FC = () => {
                             <thead>
                                 <tr>
                                     <th className="px-4 py-3 w-10">
-                                        <input type="checkbox" className="rounded-sm border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
+                                        <input
+                                            type="checkbox"
+                                            className="rounded-sm border-base text-blue-600 focus:ring-blue-500"
+                                            style={{ accentColor: 'var(--accent)' }}
                                             checked={users.length > 0 && selected.size === users.length}
-                                            onChange={toggleAll} />
+                                            onChange={toggleAll}
+                                        />
                                     </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">User</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Email</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Status</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Projects</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Last Login</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Created</th>
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">Actions</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                        User
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                        Email
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                        Status
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                        Projects
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                        Last Login
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                        Created
+                                    </th>
+                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
+                                        Actions
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-base">
                                 {users.map((user) => (
-                                    <tr key={user.id} className={`hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`}>
+                                    <tr
+                                        key={user.id}
+                                        className={`hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`}
+                                    >
                                         <td className="px-4 py-4 w-10">
-                                            <input type="checkbox" className="rounded-sm border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
+                                            <input
+                                                type="checkbox"
+                                                className="rounded-sm border-base text-blue-600 focus:ring-blue-500"
+                                                style={{ accentColor: 'var(--accent)' }}
                                                 checked={selected.has(user.id)}
-                                                onChange={() => toggleSelect(user.id)} />
+                                                onChange={() => toggleSelect(user.id)}
+                                            />
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-3">
@@ -496,7 +664,9 @@ export const AdminPage: React.FC = () => {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">{user.email}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
+                                            {user.email}
+                                        </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <AccountStateBadge state={user.account_state} deleted={!!user.deleted_at} />
                                         </td>
@@ -504,37 +674,64 @@ export const AdminPage: React.FC = () => {
                                             {user.project_count === undefined ? (
                                                 <span className="text-base-muted">—</span>
                                             ) : (
-                                                <span title={`${user.active_project_count ?? 0} active of ${user.project_count} total`}>
+                                                <span
+                                                    title={`${user.active_project_count ?? 0} active of ${user.project_count} total`}
+                                                >
                                                     {user.active_project_count ?? 0} active · {user.project_count} total
                                                 </span>
                                             )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                                             {user.last_login_at ? (
-                                                <span className="text-base-secondary">{formatDate(user.last_login_at)}</span>
+                                                <span className="text-base-secondary">
+                                                    {formatDate(user.last_login_at)}
+                                                </span>
                                             ) : (
                                                 <span className="text-base-muted italic">Never</span>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">{formatDate(user.created_at)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
+                                            {formatDate(user.created_at)}
+                                        </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right">
                                             <div className="flex items-center justify-end gap-2">
                                                 {user.deleted_at ? (
-                                                    <button onClick={() => setActiveModal({ type: 'restore', user })} className="p-1.5 text-base-muted hover:text-green-600 hover:bg-green-50 rounded-sm transition-colors" title="Restore user">
+                                                    <button
+                                                        onClick={() => setActiveModal({ type: 'restore', user })}
+                                                        className="p-1.5 text-base-muted hover:text-green-600 hover:bg-green-50 rounded-sm transition-colors"
+                                                        title="Restore user"
+                                                    >
                                                         <ArrowPathIcon className="h-4 w-4" />
                                                     </button>
                                                 ) : (
                                                     <>
-                                                        <button onClick={() => handleRolesOpen(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors" title="Manage roles">
+                                                        <button
+                                                            onClick={() => handleRolesOpen(user)}
+                                                            className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
+                                                            title="Manage roles"
+                                                        >
                                                             <ShieldCheckIcon className="h-4 w-4" />
                                                         </button>
-                                                        <button onClick={() => handleImpersonate(user)} disabled={impersonateMutation.isPending} className="p-1.5 text-base-muted hover:text-amber-600 hover:bg-amber-50 rounded-sm transition-colors disabled:opacity-50" title="Impersonate user">
+                                                        <button
+                                                            onClick={() => handleImpersonate(user)}
+                                                            disabled={impersonateMutation.isPending}
+                                                            className="p-1.5 text-base-muted hover:text-amber-600 hover:bg-amber-50 rounded-sm transition-colors disabled:opacity-50"
+                                                            title="Impersonate user"
+                                                        >
                                                             <UserCircleIcon className="h-4 w-4" />
                                                         </button>
-                                                        <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors" title="Edit user">
+                                                        <button
+                                                            onClick={() => openEdit(user)}
+                                                            className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
+                                                            title="Edit user"
+                                                        >
                                                             <PencilIcon className="h-4 w-4" />
                                                         </button>
-                                                        <button onClick={() => setActiveModal({ type: 'delete', user })} className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors" title="Delete user">
+                                                        <button
+                                                            onClick={() => setActiveModal({ type: 'delete', user })}
+                                                            className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
+                                                            title="Delete user"
+                                                        >
                                                             <TrashIcon className="h-4 w-4" />
                                                         </button>
                                                     </>
@@ -548,12 +745,22 @@ export const AdminPage: React.FC = () => {
 
                         {totalPages > 1 && (
                             <div className="flex items-center justify-between px-6 py-3 border-t border-base bg-subtle">
-                                <p className="text-sm text-base-muted">Page {page} of {totalPages}</p>
+                                <p className="text-sm text-base-muted">
+                                    Page {page} of {totalPages}
+                                </p>
                                 <div className="flex gap-2">
-                                    <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <button
+                                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                        disabled={page === 1}
+                                        className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    >
                                         <ChevronLeftIcon className="h-4 w-4" />
                                     </button>
-                                    <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <button
+                                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                                        disabled={page === totalPages}
+                                        className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    >
                                         <ChevronRightIcon className="h-4 w-4" />
                                     </button>
                                 </div>
@@ -566,11 +773,15 @@ export const AdminPage: React.FC = () => {
             <Modal isOpen={activeModal?.type === 'create'} onClose={closeModal} title="Create User" size="md">
                 {setupResult ? (
                     <div className="space-y-4">
-                        <Alert type="success" message={`Account created for ${createEmail.trim() || setupResult.email}.`} />
+                        <Alert
+                            type="success"
+                            message={`Account created for ${createEmail.trim() || setupResult.email}.`}
+                        />
                         {setupResult.link_for_admin ? (
                             <div className="space-y-2">
                                 <p className="text-sm text-base-secondary">
-                                    Relay this single-use setup link to the user securely — it expires and can only be used once.
+                                    Relay this single-use setup link to the user securely — it expires and can only be
+                                    used once.
                                 </p>
                                 <div className="flex items-stretch gap-2">
                                     <code className="flex-1 min-w-0 px-3 py-2 text-xs font-mono break-all rounded-lg border border-base bg-subtle text-base-secondary">
@@ -584,18 +795,22 @@ export const AdminPage: React.FC = () => {
                         ) : (
                             <p className="text-sm text-base-secondary">
                                 A setup link was sent to <span className="font-medium">{setupResult.email}</span>
-                                {setupResult.channel ? <> via {setupResult.channel}</> : null}. They’ll set their own password on first use.
+                                {setupResult.channel ? <> via {setupResult.channel}</> : null}. They’ll set their own
+                                password on first use.
                             </p>
                         )}
                         <div className="flex justify-end pt-2">
-                            <Button variant="default" onClick={closeModal}>Done</Button>
+                            <Button variant="default" onClick={closeModal}>
+                                Done
+                            </Button>
                         </div>
                     </div>
                 ) : otpResult ? (
                     <div className="space-y-4">
                         <Alert type="success" message={`Account created for ${createEmail.trim()}.`} />
                         <p className="text-sm text-base-secondary">
-                            Relay this one-time password to the user securely — it’s shown once and never stored in clear. They’ll be required to change it at first login.
+                            Relay this one-time password to the user securely — it’s shown once and never stored in
+                            clear. They’ll be required to change it at first login.
                         </p>
                         <div className="flex items-stretch gap-2">
                             <code className="flex-1 min-w-0 px-3 py-2 text-sm font-mono break-all rounded-lg border border-base bg-subtle text-base-secondary">
@@ -606,92 +821,157 @@ export const AdminPage: React.FC = () => {
                             </Button>
                         </div>
                         <div className="flex justify-end pt-2">
-                            <Button variant="default" onClick={closeModal}>Done</Button>
+                            <Button variant="default" onClick={closeModal}>
+                                Done
+                            </Button>
                         </div>
                     </div>
                 ) : (
-                <div className="space-y-4">
-                    {formError && <Alert type="error" message={formError} />}
-                    <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Username</label>
-                        <input type="text" value={createUsername} onChange={(e) => setCreateUsername(e.target.value)} placeholder="e.g. jsmith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
-                        <input type="text" value={createDisplayName} onChange={(e) => setCreateDisplayName(e.target.value)} placeholder="e.g. Jane Smith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
-                        <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div className="rounded-lg border border-base p-3 space-y-2">
-                        <span className="block text-sm font-medium text-base-secondary mb-1">Initial credential</span>
-                        {([
-                            { mode: 'password', title: 'Set a password now', desc: 'The admin chooses the password and shares it.' },
-                            { mode: 'setup_link', title: 'Send a setup link', desc: 'The user sets their own password via a single-use link. The account starts pending until they do.' },
-                            { mode: 'one_time_password', title: 'Generate a one-time password', desc: 'The server generates a strong password, shown once for you to relay. The user must change it at first login.' },
-                        ] as const).map((opt) => (
-                            <label key={opt.mode} className="flex items-start gap-2 cursor-pointer">
-                                <input type="radio" name="createMode" checked={createMode === opt.mode} onChange={() => setCreateMode(opt.mode)} className="h-4 w-4 mt-0.5 border-base" style={{ accentColor: 'var(--accent)' }} />
-                                <span>
-                                    <span className="block text-sm font-medium text-base-secondary">{opt.title}</span>
-                                    <span className="block text-xs text-base-muted">{opt.desc}</span>
-                                </span>
-                            </label>
-                        ))}
-                    </div>
-                    {createMode === 'password' && (
-                    <>
-                    <div>
-                        <div className="flex items-center justify-between mb-1">
-                            <label className="text-sm font-medium text-base-secondary">Password</label>
-                            <button type="button"
-                                onClick={() => { setCreatePassword(generatePassword()); setShowPassword(true); }}
-                                className="text-xs font-medium text-accent-text hover:opacity-75 transition-opacity">
-                                ↻ Generate
-                            </button>
-                        </div>
-                        <div className="relative">
+                    <div className="space-y-4">
+                        {formError && <Alert type="error" message={formError} />}
+                        <div>
+                            <label className="block text-sm font-medium text-base-secondary mb-1">Username</label>
                             <input
-                                type={showPassword ? 'text' : 'password'}
-                                value={createPassword}
-                                onChange={(e) => setCreatePassword(e.target.value)}
-                                placeholder="Min. 8 characters"
-                                className="w-full px-3 py-2 pr-14 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono"
+                                type="text"
+                                value={createUsername}
+                                onChange={(e) => setCreateUsername(e.target.value)}
+                                placeholder="e.g. jsmith"
+                                className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             />
-                            <button type="button"
-                                onClick={() => setShowPassword(p => !p)}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-base-muted hover:text-base-secondary transition-colors select-none">
-                                {showPassword ? 'Hide' : 'Show'}
-                            </button>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
+                            <input
+                                type="text"
+                                value={createDisplayName}
+                                onChange={(e) => setCreateDisplayName(e.target.value)}
+                                placeholder="e.g. Jane Smith"
+                                className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
+                            <input
+                                type="email"
+                                value={createEmail}
+                                onChange={(e) => setCreateEmail(e.target.value)}
+                                placeholder="jane@example.com"
+                                className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div className="rounded-lg border border-base p-3 space-y-2">
+                            <span className="block text-sm font-medium text-base-secondary mb-1">
+                                Initial credential
+                            </span>
+                            {(
+                                [
+                                    {
+                                        mode: 'password',
+                                        title: 'Set a password now',
+                                        desc: 'The admin chooses the password and shares it.',
+                                    },
+                                    {
+                                        mode: 'setup_link',
+                                        title: 'Send a setup link',
+                                        desc: 'The user sets their own password via a single-use link. The account starts pending until they do.',
+                                    },
+                                    {
+                                        mode: 'one_time_password',
+                                        title: 'Generate a one-time password',
+                                        desc: 'The server generates a strong password, shown once for you to relay. The user must change it at first login.',
+                                    },
+                                ] as const
+                            ).map((opt) => (
+                                <label key={opt.mode} className="flex items-start gap-2 cursor-pointer">
+                                    <input
+                                        type="radio"
+                                        name="createMode"
+                                        checked={createMode === opt.mode}
+                                        onChange={() => setCreateMode(opt.mode)}
+                                        className="h-4 w-4 mt-0.5 border-base"
+                                        style={{ accentColor: 'var(--accent)' }}
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-medium text-base-secondary">
+                                            {opt.title}
+                                        </span>
+                                        <span className="block text-xs text-base-muted">{opt.desc}</span>
+                                    </span>
+                                </label>
+                            ))}
+                        </div>
+                        {createMode === 'password' && (
+                            <>
+                                <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="text-sm font-medium text-base-secondary">Password</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setCreatePassword(generatePassword());
+                                                setShowPassword(true);
+                                            }}
+                                            className="text-xs font-medium text-accent-text hover:opacity-75 transition-opacity"
+                                        >
+                                            ↻ Generate
+                                        </button>
+                                    </div>
+                                    <div className="relative">
+                                        <input
+                                            type={showPassword ? 'text' : 'password'}
+                                            value={createPassword}
+                                            onChange={(e) => setCreatePassword(e.target.value)}
+                                            placeholder="Min. 8 characters"
+                                            className="w-full px-3 py-2 pr-14 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword((p) => !p)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-base-muted hover:text-base-secondary transition-colors select-none"
+                                        >
+                                            {showPassword ? 'Hide' : 'Show'}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-base-secondary mb-1">
+                                        System role <span className="font-normal text-base-muted">(optional)</span>
+                                    </label>
+                                    <select
+                                        value={createSystemRole}
+                                        onChange={(e) => setCreateSystemRole(e.target.value)}
+                                        className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-surface"
+                                    >
+                                        <option value="">Default (Viewer)</option>
+                                        {SYSTEM_ROLES.map((r) => (
+                                            <option key={r} value={r}>
+                                                {systemRoleLabel(r)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <ProjectAssignmentsPicker
+                                    assignments={createAssignments}
+                                    onChange={setCreateAssignments}
+                                    disabled={createMutation.isPending}
+                                />
+                            </>
+                        )}
+                        <div className="flex justify-end gap-3 pt-2">
+                            <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>
+                                Cancel
+                            </Button>
+                            <Button variant="default" onClick={handleCreate} disabled={createMutation.isPending}>
+                                {createMutation.isPending
+                                    ? 'Creating…'
+                                    : createMode === 'setup_link'
+                                      ? 'Create & Send Link'
+                                      : createMode === 'one_time_password'
+                                        ? 'Create & Generate Password'
+                                        : 'Create User'}
+                            </Button>
                         </div>
                     </div>
-                    <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">System role <span className="font-normal text-base-muted">(optional)</span></label>
-                        <select
-                            value={createSystemRole}
-                            onChange={(e) => setCreateSystemRole(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-surface"
-                        >
-                            <option value="">Default (Viewer)</option>
-                            {SYSTEM_ROLES.map(r => (
-                                <option key={r} value={r}>{systemRoleLabel(r)}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <ProjectAssignmentsPicker assignments={createAssignments} onChange={setCreateAssignments} disabled={createMutation.isPending} />
-                    </>
-                    )}
-                    <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>Cancel</Button>
-                        <Button variant="default" onClick={handleCreate} disabled={createMutation.isPending}>
-                            {createMutation.isPending ? 'Creating…'
-                                : createMode === 'setup_link' ? 'Create & Send Link'
-                                : createMode === 'one_time_password' ? 'Create & Generate Password'
-                                : 'Create User'}
-                        </Button>
-                    </div>
-                </div>
                 )}
             </Modal>
 
@@ -699,24 +979,45 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
                     {activeModal?.type === 'edit' && (
-                        <p className="text-sm text-base-muted">Editing <span className="font-medium text-base-secondary">@{activeModal.user.username}</span></p>
+                        <p className="text-sm text-base-muted">
+                            Editing{' '}
+                            <span className="font-medium text-base-secondary">@{activeModal.user.username}</span>
+                        </p>
                     )}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
-                        <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
+                        <input
+                            type="text"
+                            value={editDisplayName}
+                            onChange={(e) => setEditDisplayName(e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                        />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
-                        <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
+                        <input
+                            type="email"
+                            value={editEmail}
+                            onChange={(e) => setEditEmail(e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                        />
                     </div>
                     <div>
                         <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 rounded-sm border-base" style={{ accentColor: 'var(--accent)' }} />
+                            <input
+                                type="checkbox"
+                                checked={editActive}
+                                onChange={(e) => setEditActive(e.target.checked)}
+                                className="h-4 w-4 rounded-sm border-base"
+                                style={{ accentColor: 'var(--accent)' }}
+                            />
                             <span className="text-sm font-medium text-base-secondary">Active</span>
                         </label>
                     </div>
                     <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={updateMutation.isPending}>Cancel</Button>
+                        <Button variant="ghost" onClick={closeModal} disabled={updateMutation.isPending}>
+                            Cancel
+                        </Button>
                         <Button variant="default" onClick={handleUpdate} disabled={updateMutation.isPending}>
                             {updateMutation.isPending ? 'Saving…' : 'Save Changes'}
                         </Button>
@@ -728,11 +1029,14 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {activeModal?.type === 'delete' && (
                         <p className="text-sm text-base-secondary">
-                            Delete <span className="font-semibold">@{activeModal.user.username}</span>? The user will be soft-deleted and can be restored within 30 days.
+                            Delete <span className="font-semibold">@{activeModal.user.username}</span>? The user will be
+                            soft-deleted and can be restored within 30 days.
                         </p>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={deleteMutation.isPending}>Cancel</Button>
+                        <Button variant="ghost" onClick={closeModal} disabled={deleteMutation.isPending}>
+                            Cancel
+                        </Button>
                         <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>
                             {deleteMutation.isPending ? 'Deleting…' : 'Delete User'}
                         </Button>
@@ -744,11 +1048,14 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {activeModal?.type === 'restore' && (
                         <p className="text-sm text-base-secondary">
-                            Restore <span className="font-semibold">@{activeModal.user.username}</span>? Their account will become active again.
+                            Restore <span className="font-semibold">@{activeModal.user.username}</span>? Their account
+                            will become active again.
                         </p>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={restoreMutation.isPending}>Cancel</Button>
+                        <Button variant="ghost" onClick={closeModal} disabled={restoreMutation.isPending}>
+                            Cancel
+                        </Button>
                         <Button variant="default" onClick={handleRestore} disabled={restoreMutation.isPending}>
                             {restoreMutation.isPending ? 'Restoring…' : 'Restore User'}
                         </Button>
@@ -760,14 +1067,20 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
                     {activeModal?.type === 'roles' && (
-                        <p className="text-sm text-base-muted">Roles for <span className="font-medium text-base-secondary">@{activeModal.user.username}</span></p>
+                        <p className="text-sm text-base-muted">
+                            Roles for{' '}
+                            <span className="font-medium text-base-secondary">@{activeModal.user.username}</span>
+                        </p>
                     )}
                     {rolesLoading ? (
                         <Loading />
                     ) : (
                         <div className="space-y-2">
-                            {(allRoles as any[] ?? []).map((role: any) => (
-                                <label key={role.id} className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors">
+                            {((allRoles as any[]) ?? []).map((role: any) => (
+                                <label
+                                    key={role.id}
+                                    className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors"
+                                >
                                     <input
                                         type="checkbox"
                                         checked={selectedRoleIds.has(role.id)}
@@ -777,15 +1090,23 @@ export const AdminPage: React.FC = () => {
                                     />
                                     <div>
                                         <p className="text-sm font-medium text-base-primary">{role.name}</p>
-                                        {role.description && <p className="text-xs text-base-muted mt-0.5">{role.description}</p>}
+                                        {role.description && (
+                                            <p className="text-xs text-base-muted mt-0.5">{role.description}</p>
+                                        )}
                                     </div>
                                 </label>
                             ))}
                         </div>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={updateRolesMutation.isPending}>Cancel</Button>
-                        <Button variant="default" onClick={handleSaveRoles} disabled={updateRolesMutation.isPending || rolesLoading}>
+                        <Button variant="ghost" onClick={closeModal} disabled={updateRolesMutation.isPending}>
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="default"
+                            onClick={handleSaveRoles}
+                            disabled={updateRolesMutation.isPending || rolesLoading}
+                        >
                             {updateRolesMutation.isPending ? 'Saving…' : 'Save Roles'}
                         </Button>
                     </div>

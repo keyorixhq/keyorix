@@ -21,8 +21,12 @@ export const LoginPage: React.FC = () => {
 
     useEffect(() => {
         let active = true;
-        authService.getSSOProviders().then(p => { if (active) setSsoProviders(p); });
-        return () => { active = false; };
+        authService.getSSOProviders().then((p) => {
+            if (active) setSsoProviders(p);
+        });
+        return () => {
+            active = false;
+        };
     }, []);
 
     // Where to land after SSO — preserve the originally-requested route.
@@ -75,43 +79,59 @@ export const LoginPage: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundColor: 'var(--bg-app)' }}>
+        <div
+            className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8"
+            style={{ backgroundColor: 'var(--bg-app)' }}
+        >
             <div className="max-w-md w-full space-y-8">
                 <div className="text-center">
                     <div className="inline-flex items-center justify-center h-12 w-12 bg-blue-600 rounded-xl mb-4">
                         <span className="text-white font-bold text-lg">K</span>
                     </div>
-                    <h1 className="text-3xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Keyorix</h1>
+                    <h1 className="text-3xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        Keyorix
+                    </h1>
                     <p style={{ color: 'var(--text-secondary)' }}>Secrets management for your infrastructure</p>
                 </div>
 
-                <div className="py-8 px-6 shadow-lg rounded-lg border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+                <div
+                    className="py-8 px-6 shadow-lg rounded-lg border"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                >
                     {mode === 'login' && (
                         <>
                             {ssoError && (
-                                <div className="mb-4 rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                                <div
+                                    className="mb-4 rounded-lg px-3 py-2 text-sm"
+                                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                                >
                                     SSO sign-in failed: {ssoError}
                                 </div>
                             )}
-                            <LoginForm
-                                onSubmit={handleLogin}
-                                isLoading={isLoading}
-                                error={error}
-                            />
+                            <LoginForm onSubmit={handleLogin} isLoading={isLoading} error={error} />
                             {ssoProviders.length > 0 && (
                                 <div className="mt-6">
                                     <div className="relative flex items-center my-4">
                                         <div className="grow border-t" style={{ borderColor: 'var(--border)' }} />
-                                        <span className="mx-3 text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>or</span>
+                                        <span
+                                            className="mx-3 text-xs uppercase tracking-wider"
+                                            style={{ color: 'var(--text-muted)' }}
+                                        >
+                                            or
+                                        </span>
                                         <div className="grow border-t" style={{ borderColor: 'var(--border)' }} />
                                     </div>
                                     <div className="space-y-2">
-                                        {ssoProviders.map(name => (
+                                        {ssoProviders.map((name) => (
                                             <a
                                                 key={name}
                                                 href={ssoHref(name)}
                                                 className="block w-full text-center px-4 py-2 rounded-lg text-sm font-medium border capitalize"
-                                                style={{ borderColor: 'var(--border)', color: 'var(--text-primary)', backgroundColor: 'var(--bg-app)' }}
+                                                style={{
+                                                    borderColor: 'var(--border)',
+                                                    color: 'var(--text-primary)',
+                                                    backgroundColor: 'var(--bg-app)',
+                                                }}
                                             >
                                                 Sign in with {name}
                                             </a>
@@ -124,7 +144,10 @@ export const LoginPage: React.FC = () => {
                     {(mode === 'reset' || mode === 'reset-success') && (
                         <PasswordResetForm
                             onSubmit={handlePasswordReset}
-                            onBack={() => { setMode('login'); setResetError(null); }}
+                            onBack={() => {
+                                setMode('login');
+                                setResetError(null);
+                            }}
                             isLoading={resetLoading}
                             error={resetError}
                             success={mode === 'reset-success'}

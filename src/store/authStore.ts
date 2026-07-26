@@ -9,7 +9,7 @@ import {
     updateAbsoluteTokenExpiry,
     isAbsoluteExpiryPassed,
     isTokenValid,
-    getTimeUntilExpiry
+    getTimeUntilExpiry,
 } from '../utils/auth';
 
 interface AuthStore extends AuthState {
@@ -249,10 +249,10 @@ export const useAuthStore = create<AuthStore>()(
                     // services/auth.ts's getProfile doc comment).
                     const impersonatedBy = profile.impersonation
                         ? {
-                            adminId: profile.impersonation.admin_id,
-                            adminUsername: profile.impersonation.admin_username,
-                            adminDisplayName: profile.impersonation.admin_display_name,
-                        }
+                              adminId: profile.impersonation.admin_id,
+                              adminUsername: profile.impersonation.admin_username,
+                              adminDisplayName: profile.impersonation.admin_display_name,
+                          }
                         : null;
                     set({ user, isAuthenticated: true, isLoading: false, error: null, impersonatedBy });
                 } catch {

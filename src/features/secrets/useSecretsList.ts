@@ -13,10 +13,17 @@ export const useSecretsList = () => {
     const queryClient = useQueryClient();
 
     const [filters, setFilters] = useState<SecretFilters>({
-        search: '', type: 'all', classification: '', environment: '', tags: [],
+        search: '',
+        type: 'all',
+        classification: '',
+        environment: '',
+        tags: [],
     });
     const [pagination, setPagination] = useState<PaginationState>({
-        page: 1, pageSize: ITEMS_PER_PAGE, total: 0, totalPages: 0,
+        page: 1,
+        pageSize: ITEMS_PER_PAGE,
+        total: 0,
+        totalPages: 0,
     });
     const [sortBy, setSortBy] = useState('modified_desc');
     const [tagInput, setTagInput] = useState('');
@@ -26,11 +33,13 @@ export const useSecretsList = () => {
     // Bulk selection
     const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
     const [bulkActionMode, setBulkActionMode] = useState(false);
-    const toggleSelectedItem = (id: number) => setSelectedItems(prev => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id); else next.add(id);
-        return next;
-    });
+    const toggleSelectedItem = (id: number) =>
+        setSelectedItems((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     const clearSelectedItems = () => setSelectedItems(new Set());
 
     const { data: environments = [] } = useQuery({
@@ -41,13 +50,18 @@ export const useSecretsList = () => {
 
     const environmentIdMap = React.useMemo(() => {
         const map: Record<string, number> = {};
-        environments.forEach(e => { map[e.name] = e.id; });
+        environments.forEach((e) => {
+            map[e.name] = e.id;
+        });
         return map;
     }, [environments]);
 
     const { data, isLoading, error, refetch, isFetching } = useQuery({
         queryKey: queryKeys.secrets.list({
-            ...filters, page: pagination.page, pageSize: pagination.pageSize, sortBy,
+            ...filters,
+            page: pagination.page,
+            pageSize: pagination.pageSize,
+            sortBy,
         }),
         queryFn: () => {
             const envId = filters.environment ? environmentIdMap[filters.environment] : undefined;
@@ -65,7 +79,7 @@ export const useSecretsList = () => {
     });
 
     React.useEffect(() => {
-        if (data) setPagination(prev => ({ ...prev, total: data.total, totalPages: data.totalPages }));
+        if (data) setPagination((prev) => ({ ...prev, total: data.total, totalPages: data.totalPages }));
     }, [data]);
 
     const secrets = useMemo(() => {
@@ -74,17 +88,23 @@ export const useSecretsList = () => {
         const [sortField, sortDirection] = sortBy.split('_');
         result.sort((a, b) => {
             let aVal: any, bVal: any;
-            if (sortField === 'name') { aVal = a.name.toLowerCase(); bVal = b.name.toLowerCase(); }
-            else if (sortField === 'modified') { aVal = new Date(a.lastModified); bVal = new Date(b.lastModified); }
-            else if (sortField === 'type') { aVal = a.type; bVal = b.type; }
-            else if (sortField === 'expiry') {
+            if (sortField === 'name') {
+                aVal = a.name.toLowerCase();
+                bVal = b.name.toLowerCase();
+            } else if (sortField === 'modified') {
+                aVal = new Date(a.lastModified);
+                bVal = new Date(b.lastModified);
+            } else if (sortField === 'type') {
+                aVal = a.type;
+                bVal = b.type;
+            } else if (sortField === 'expiry') {
                 // nulls last regardless of direction
                 if (!a.Expiration && !b.Expiration) return 0;
                 if (!a.Expiration) return 1;
                 if (!b.Expiration) return -1;
-                aVal = new Date(a.Expiration); bVal = new Date(b.Expiration);
-            }
-            else return 0;
+                aVal = new Date(a.Expiration);
+                bVal = new Date(b.Expiration);
+            } else return 0;
             if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
             if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
             return 0;
@@ -93,8 +113,8 @@ export const useSecretsList = () => {
     }, [data?.data, sortBy]);
 
     const handleFilterChange = useCallback((key: keyof SecretFilters, value: any) => {
-        setFilters(prev => ({ ...prev, [key]: value }));
-        setPagination(prev => ({ ...prev, page: 1 }));
+        setFilters((prev) => ({ ...prev, [key]: value }));
+        setPagination((prev) => ({ ...prev, page: 1 }));
     }, []);
 
     React.useEffect(() => {
@@ -102,39 +122,67 @@ export const useSecretsList = () => {
         return () => clearTimeout(timer);
     }, [searchInput, handleFilterChange]);
 
-    const handleAddTag = useCallback((tag: string) => {
-        if (tag.trim() && !filters.tags.includes(tag.trim()))
-            handleFilterChange('tags', [...filters.tags, tag.trim()]);
-        setTagInput('');
-    }, [filters.tags, handleFilterChange]);
+    const handleAddTag = useCallback(
+        (tag: string) => {
+            if (tag.trim() && !filters.tags.includes(tag.trim()))
+                handleFilterChange('tags', [...filters.tags, tag.trim()]);
+            setTagInput('');
+        },
+        [filters.tags, handleFilterChange]
+    );
 
-    const handleRemoveTag = useCallback((tagToRemove: string) => {
-        handleFilterChange('tags', filters.tags.filter(t => t !== tagToRemove));
-    }, [filters.tags, handleFilterChange]);
+    const handleRemoveTag = useCallback(
+        (tagToRemove: string) => {
+            handleFilterChange(
+                'tags',
+                filters.tags.filter((t) => t !== tagToRemove)
+            );
+        },
+        [filters.tags, handleFilterChange]
+    );
 
-    const handleTagInputKeyPress = useCallback((e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && tagInput.trim()) { e.preventDefault(); handleAddTag(tagInput); }
-    }, [tagInput, handleAddTag]);
+    const handleTagInputKeyPress = useCallback(
+        (e: React.KeyboardEvent) => {
+            if (e.key === 'Enter' && tagInput.trim()) {
+                e.preventDefault();
+                handleAddTag(tagInput);
+            }
+        },
+        [tagInput, handleAddTag]
+    );
 
-    const handlePageChange = useCallback((page: number) => setPagination(prev => ({ ...prev, page })), []);
-    const handlePageSizeChange = useCallback((pageSize: number) =>
-        setPagination(prev => ({ ...prev, pageSize, page: 1 })), []);
+    const handlePageChange = useCallback((page: number) => setPagination((prev) => ({ ...prev, page })), []);
+    const handlePageSizeChange = useCallback(
+        (pageSize: number) => setPagination((prev) => ({ ...prev, pageSize, page: 1 })),
+        []
+    );
 
     const handleClearFilters = useCallback(() => {
         setFilters({ search: '', type: 'all', classification: '', environment: '', tags: [] });
         setSearchInput('');
         setTagInput('');
-        setPagination(prev => ({ ...prev, page: 1 }));
+        setPagination((prev) => ({ ...prev, page: 1 }));
     }, []);
 
-    const hasActiveFilters = useMemo(() =>
-        !!(filters.search || filters.type !== 'all' || filters.classification ||
-            filters.environment || filters.tags.length > 0), [filters]);
+    const hasActiveFilters = useMemo(
+        () =>
+            !!(
+                filters.search ||
+                filters.type !== 'all' ||
+                filters.classification ||
+                filters.environment ||
+                filters.tags.length > 0
+            ),
+        [filters]
+    );
 
     // Mutations
     const createMutation = useMutation({
         mutationFn: (d: SecretFormData) => secretsApi.create(d),
-        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
+        onSuccess: () => {
+            closeModal();
+            queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all });
+        },
     });
 
     const editMutation = useMutation({
@@ -143,34 +191,79 @@ export const useSecretsList = () => {
             if (value.trim()) updateData.value = value;
             return secretsApi.update(id, updateData);
         },
-        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
+        onSuccess: () => {
+            closeModal();
+            queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all });
+        },
     });
 
     const deleteMutation = useMutation({
         mutationFn: (id: number) => secretsApi.delete(id),
-        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
+        onSuccess: () => {
+            closeModal();
+            queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all });
+        },
     });
 
     const rotateMutation = useMutation({
         mutationFn: ({ id, newValue }: { id: number; newValue: string }) => secretsApi.rotate(id, newValue),
-        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
+        onSuccess: () => {
+            closeModal();
+            queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all });
+        },
     });
 
     const bulkDeleteMutation = useMutation({
-        mutationFn: (ids: number[]) => Promise.all(ids.map(id => secretsApi.delete(id))),
-        onSuccess: () => { closeModal(); clearSelectedItems(); setBulkActionMode(false); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
+        mutationFn: (ids: number[]) => Promise.all(ids.map((id) => secretsApi.delete(id))),
+        onSuccess: () => {
+            closeModal();
+            clearSelectedItems();
+            setBulkActionMode(false);
+            queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all });
+        },
     });
 
     return {
-        secrets, data, isLoading, error, refetch, isFetching,
-        filters, setFilters, pagination, setPagination, sortBy, setSortBy,
-        tagInput, setTagInput, searchInput, setSearchInput,
-        showAdvancedFilters, setShowAdvancedFilters,
-        selectedItems, bulkActionMode, setBulkActionMode, toggleSelectedItem, clearSelectedItems,
+        secrets,
+        data,
+        isLoading,
+        error,
+        refetch,
+        isFetching,
+        filters,
+        setFilters,
+        pagination,
+        setPagination,
+        sortBy,
+        setSortBy,
+        tagInput,
+        setTagInput,
+        searchInput,
+        setSearchInput,
+        showAdvancedFilters,
+        setShowAdvancedFilters,
+        selectedItems,
+        bulkActionMode,
+        setBulkActionMode,
+        toggleSelectedItem,
+        clearSelectedItems,
         environments,
-        handleFilterChange, handleAddTag, handleRemoveTag, handleTagInputKeyPress,
-        handlePageChange, handlePageSizeChange, handleClearFilters, hasActiveFilters,
-        createMutation, editMutation, deleteMutation, rotateMutation, bulkDeleteMutation,
-        openModal, closeModal, activeModal, modalData,
+        handleFilterChange,
+        handleAddTag,
+        handleRemoveTag,
+        handleTagInputKeyPress,
+        handlePageChange,
+        handlePageSizeChange,
+        handleClearFilters,
+        hasActiveFilters,
+        createMutation,
+        editMutation,
+        deleteMutation,
+        rotateMutation,
+        bulkDeleteMutation,
+        openModal,
+        closeModal,
+        activeModal,
+        modalData,
     };
 };

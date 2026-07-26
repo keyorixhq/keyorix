@@ -173,7 +173,7 @@ export const accessibilityHelpers = {
      * Check if form has proper labels
      */
     expectProperLabels(fieldNames: string[]) {
-        fieldNames.forEach(fieldName => {
+        fieldNames.forEach((fieldName) => {
             const field = screen.getByLabelText(fieldName);
             expect(field).toBeInTheDocument();
             expect(field).toHaveAccessibleName(fieldName);

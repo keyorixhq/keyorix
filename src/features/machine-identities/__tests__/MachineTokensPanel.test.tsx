@@ -39,10 +39,7 @@ describe('MachineTokensPanel', () => {
         const picker = screen.getByLabelText('Classification for token kx_machine_ab12cd') as HTMLSelectElement;
         expect(picker.value).toBe('restricted');
         fireEvent.change(picker, { target: { value: 'confidential' } });
-        expect(classifyMutate).toHaveBeenCalledWith(
-            { tokenId: 11, classification: 'confidential' },
-            expect.anything()
-        );
+        expect(classifyMutate).toHaveBeenCalledWith({ tokenId: 11, classification: 'confidential' }, expect.anything());
     });
 
     it('non-admins see read-only classification badges, no issue/revoke', () => {

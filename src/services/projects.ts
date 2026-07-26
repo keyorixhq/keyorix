@@ -292,9 +292,7 @@ const normalizeEnv = (e: any): ProjectEnvironment => ({
 
 export const projectsApi = {
     async list(includeDeleted = false): Promise<Project[]> {
-        const response = await apiClient.get(
-            `/api/v1/projects${includeDeleted ? '?include_deleted=true' : ''}`
-        );
+        const response = await apiClient.get(`/api/v1/projects${includeDeleted ? '?include_deleted=true' : ''}`);
         const projects = response.data.data?.projects ?? response.data.projects ?? [];
         return projects.map(normalize);
     },
@@ -398,7 +396,13 @@ export const projectsApi = {
         };
     },
 
-    async decideCampaignItem(projectId: number, campaignId: number, itemId: number, action: 'attest' | 'revoke', reason?: string): Promise<void> {
+    async decideCampaignItem(
+        projectId: number,
+        campaignId: number,
+        itemId: number,
+        action: 'attest' | 'revoke',
+        reason?: string
+    ): Promise<void> {
         await apiClient.post(
             `/api/v1/projects/${projectId}/access-review/campaigns/${campaignId}/items/${itemId}/decide`,
             { action, reason: reason ?? '' }

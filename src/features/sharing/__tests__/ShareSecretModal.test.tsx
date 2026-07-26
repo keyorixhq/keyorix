@@ -25,9 +25,18 @@ vi.mock('../../../services/users', () => ({
 }));
 
 const secret: Secret = {
-    id: 1, name: 'db-password', type: 'password', environment: 'production',
-    isShared: false, shareCount: 0, lastModified: '2026-06-17T00:00:00Z', owner: 'alice',
-    permissions: [], metadata: {}, tags: [], classification: 'confidential',
+    id: 1,
+    name: 'db-password',
+    type: 'password',
+    environment: 'production',
+    isShared: false,
+    shareCount: 0,
+    lastModified: '2026-06-17T00:00:00Z',
+    owner: 'alice',
+    permissions: [],
+    metadata: {},
+    tags: [],
+    classification: 'confidential',
 };
 
 describe('expiresAtFromPreset', () => {
@@ -46,7 +55,9 @@ describe('expiresAtFromPreset', () => {
 });
 
 describe('ShareSecretModal expiry', () => {
-    beforeEach(() => { vi.clearAllMocks(); });
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
 
     it('shares with no expiresAt when expiry is "Never"', async () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);

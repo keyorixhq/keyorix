@@ -7,13 +7,15 @@ import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Alert } from '../../components/ui/Alert';
 
-const schema = z.object({
-    password: z.string().min(1, 'Password is required'),
-    confirm:  z.string(),
-}).refine(data => data.password === data.confirm, {
-    message: 'Passwords do not match',
-    path:    ['confirm'],
-});
+const schema = z
+    .object({
+        password: z.string().min(1, 'Password is required'),
+        confirm: z.string(),
+    })
+    .refine((data) => data.password === data.confirm, {
+        message: 'Passwords do not match',
+        path: ['confirm'],
+    });
 
 interface SetupFormProps {
     onSubmit: (password: string) => Promise<void>;
@@ -24,7 +26,11 @@ interface SetupFormProps {
 export const SetupForm: React.FC<SetupFormProps> = ({ onSubmit, isLoading = false, error }) => {
     const [showPassword, setShowPassword] = useState(false);
 
-    const { register, handleSubmit, formState: { errors } } = useForm<z.infer<typeof schema>>({
+    const {
+        register,
+        handleSubmit,
+        formState: { errors },
+    } = useForm<z.infer<typeof schema>>({
         resolver: zodResolver(schema),
         defaultValues: { password: '', confirm: '' },
     });
@@ -32,23 +38,21 @@ export const SetupForm: React.FC<SetupFormProps> = ({ onSubmit, isLoading = fals
     const revealToggle = (
         <button
             type="button"
-            onClick={() => setShowPassword(v => !v)}
+            onClick={() => setShowPassword((v) => !v)}
             disabled={isLoading}
             aria-label={showPassword ? 'Hide password' : 'Show password'}
             className="focus:outline-hidden"
         >
-            {showPassword
-                ? <EyeSlashIcon className="h-5 w-5 text-base-muted" />
-                : <EyeIcon className="h-5 w-5 text-base-muted" />}
+            {showPassword ? (
+                <EyeSlashIcon className="h-5 w-5 text-base-muted" />
+            ) : (
+                <EyeIcon className="h-5 w-5 text-base-muted" />
+            )}
         </button>
     );
 
     return (
-        <form
-            onSubmit={handleSubmit(data => onSubmit(data.password))}
-            className="space-y-6"
-            noValidate
-        >
+        <form onSubmit={handleSubmit((data) => onSubmit(data.password))} className="space-y-6" noValidate>
             <Input
                 label="New password"
                 type={showPassword ? 'text' : 'password'}

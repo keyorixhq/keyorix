@@ -5,7 +5,7 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
     label?: string;
     error?: string | undefined;
     helperText?: string;
-    icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>;  // left-side SVG icon component
+    icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>; // left-side SVG icon component
     trailingElement?: React.ReactNode; // right-side element (e.g. show/hide toggle)
 }
 
@@ -22,7 +22,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                         htmlFor={inputId}
                         className={cn(
                             'block text-sm font-medium mb-1',
-                            hasError ? 'text-destructive' : 'text-base-secondary',
+                            hasError ? 'text-destructive' : 'text-base-secondary'
                         )}
                     >
                         {label}
@@ -41,11 +41,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                         id={inputId}
                         type={type}
                         aria-invalid={hasError || undefined}
-                        aria-describedby={
-                            error ? `${inputId}-error` :
-                            helperText ? `${inputId}-hint` :
-                            undefined
-                        }
+                        aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-hint` : undefined}
                         data-slot="input"
                         className={cn(
                             'h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1',
@@ -57,15 +53,13 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                             'md:text-sm',
                             !!Icon && 'pl-10',
                             trailingElement && 'pr-10',
-                            className,
+                            className
                         )}
                         {...props}
                     />
 
                     {trailingElement && (
-                        <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-                            {trailingElement}
-                        </div>
+                        <div className="absolute inset-y-0 right-0 pr-3 flex items-center">{trailingElement}</div>
                     )}
                 </div>
 
@@ -82,7 +76,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 )}
             </div>
         );
-    },
+    }
 );
 
 Input.displayName = 'Input';

@@ -42,13 +42,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         // Store the intended route for redirect after login
         storeIntendedRoute(location.pathname + location.search);
 
-        return (
-            <Navigate
-                to={fallbackPath}
-                state={{ from: location }}
-                replace
-            />
-        );
+        return <Navigate to={fallbackPath} state={{ from: location }} replace />;
     }
 
     // Admin-only gate: any install-admin role (admin / system_admin / super_admin).
@@ -70,12 +64,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     // Check role requirement
     if (requiredRole && user?.role !== requiredRole) {
         if (redirectOnFailure) {
-            return (
-                <Navigate
-                    to={ROUTES.DASHBOARD}
-                    replace
-                />
-            );
+            return <Navigate to={ROUTES.DASHBOARD} replace />;
         } else {
             return (
                 <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -91,29 +80,22 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
     // Check permission requirements
     if (requiredPermissions.length > 0) {
-        const hasAllPermissions = requiredPermissions.every(permission =>
-            hasPermission(permission)
-        );
+        const hasAllPermissions = requiredPermissions.every((permission) => hasPermission(permission));
 
         if (!hasAllPermissions) {
             if (redirectOnFailure) {
-                return (
-                    <Navigate
-                        to={ROUTES.DASHBOARD}
-                        replace
-                    />
-                );
+                return <Navigate to={ROUTES.DASHBOARD} replace />;
             } else {
-                const missingPermissions = requiredPermissions.filter(permission =>
-                    !hasPermission(permission)
-                );
+                const missingPermissions = requiredPermissions.filter((permission) => !hasPermission(permission));
 
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-gray-50">
                         <div className="text-center">
                             <h1 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h1>
                             <p className="text-gray-600 mb-4">You don't have permission to access this page.</p>
-                            <p className="text-sm text-gray-500">Missing permissions: {missingPermissions.join(', ')}</p>
+                            <p className="text-sm text-gray-500">
+                                Missing permissions: {missingPermissions.join(', ')}
+                            </p>
                         </div>
                     </div>
                 );

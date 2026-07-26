@@ -26,10 +26,9 @@ export const connectApi = {
     },
 
     async readSecret(connector: string, ref: string): Promise<FederatedSecret> {
-        const response = await apiClient.get(
-            `/api/v1/connect/${encodeURIComponent(connector)}/secret`,
-            { params: { ref } },
-        );
+        const response = await apiClient.get(`/api/v1/connect/${encodeURIComponent(connector)}/secret`, {
+            params: { ref },
+        });
         return response.data.data as FederatedSecret;
     },
 
@@ -38,11 +37,7 @@ export const connectApi = {
         return (response.data.data?.grants ?? []) as ConnectRefGrant[];
     },
 
-    async createRefGrant(
-        roleId: number,
-        connector: string,
-        refPrefix: string,
-    ): Promise<ConnectRefGrant> {
+    async createRefGrant(roleId: number, connector: string, refPrefix: string): Promise<ConnectRefGrant> {
         const response = await apiClient.post('/api/v1/connect/ref-grants', {
             role_id: roleId,
             connector,

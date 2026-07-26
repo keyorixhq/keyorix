@@ -12,7 +12,11 @@ function axiosErr(data: unknown): AxiosError {
 
 describe('apiErrorMessage', () => {
     it('prefers the server message (the human reason) over the error type', () => {
-        const err = axiosErr({ error: 'ValidationError', message: 'secret value is a known weak or placeholder value', code: 400 });
+        const err = axiosErr({
+            error: 'ValidationError',
+            message: 'secret value is a known weak or placeholder value',
+            code: 400,
+        });
         expect(apiErrorMessage(err)).toBe('secret value is a known weak or placeholder value');
     });
 

@@ -1,5 +1,17 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor, SecretAccessLogEntry, SecretAuditEntry, SecretPolicy } from '../types';
+import {
+    ApiResponse,
+    PaginatedResponse,
+    Secret,
+    SecretFormData,
+    SecretUsageStat,
+    UnusedSecretStat,
+    SecretRiskScore,
+    SecretAccessor,
+    SecretAccessLogEntry,
+    SecretAuditEntry,
+    SecretPolicy,
+} from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 // Secret dependency graph (ADR-052). An edge means the focal secret and the linked
@@ -87,7 +99,7 @@ export const secretsApi = {
             data: mappedSecrets,
             total: total ?? 0,
             page: page ?? 1,
-            pageSize: page_size ?? (params?.pageSize ?? 20),
+            pageSize: page_size ?? params?.pageSize ?? 20,
             totalPages: total_pages ?? 1,
         };
     },
@@ -240,7 +252,7 @@ export const secretsApi = {
     // (length/charset), and an optional backend + ref to rotate an upstream credential.
     async setAutoRotate(
         id: number,
-        opts: { enabled: boolean; length?: number; charset?: string; backend?: string; ref?: string },
+        opts: { enabled: boolean; length?: number; charset?: string; backend?: string; ref?: string }
     ): Promise<void> {
         await apiClient.patch(`/api/v1/secrets/${id}/auto-rotate`, {
             enabled: opts.enabled,

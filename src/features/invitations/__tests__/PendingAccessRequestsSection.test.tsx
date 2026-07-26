@@ -7,8 +7,28 @@ const mutate = vi.fn();
 vi.mock('../api', () => ({
     useProjectAccessRequests: () => ({
         data: [
-            { id: 1, projectId: 3, userId: 42, suggestedRole: 'project_developer', grantedRole: '', state: 'pending', reason: 'need write', approvalsReceived: 1, requiredApprovals: 2 },
-            { id: 2, projectId: 3, userId: 99, suggestedRole: 'project_viewer', grantedRole: 'project_viewer', state: 'approved', reason: '', approvalsReceived: 0, requiredApprovals: 1 },
+            {
+                id: 1,
+                projectId: 3,
+                userId: 42,
+                suggestedRole: 'project_developer',
+                grantedRole: '',
+                state: 'pending',
+                reason: 'need write',
+                approvalsReceived: 1,
+                requiredApprovals: 2,
+            },
+            {
+                id: 2,
+                projectId: 3,
+                userId: 99,
+                suggestedRole: 'project_viewer',
+                grantedRole: 'project_viewer',
+                state: 'approved',
+                reason: '',
+                approvalsReceived: 0,
+                requiredApprovals: 1,
+            },
         ],
     }),
     useResolveAccessRequest: () => ({ mutate, isPending: false }),

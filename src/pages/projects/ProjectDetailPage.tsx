@@ -15,13 +15,17 @@ import { useProjectMruStore } from '../../store';
 
 // ── Tab definition ───────────────────────────────────────────────────────────
 
-interface Tab { id: string; label: string; path: string; }
+interface Tab {
+    id: string;
+    label: string;
+    path: string;
+}
 
 const TABS: Tab[] = [
     { id: 'overview', label: 'Overview', path: '' },
-    { id: 'secrets',  label: 'Secrets',  path: '/secrets' },
-    { id: 'members',  label: 'Members',  path: '/members' },
-    { id: 'drift',    label: 'Drift',    path: '/drift' },
+    { id: 'secrets', label: 'Secrets', path: '/secrets' },
+    { id: 'members', label: 'Members', path: '/members' },
+    { id: 'drift', label: 'Drift', path: '/drift' },
     { id: 'rotation-plan', label: 'Rotation Plan', path: '/rotation-plan' },
     { id: 'activity', label: 'Activity', path: '/activity' },
     { id: 'access-review', label: 'Access Review', path: '/access-review' },
@@ -53,15 +57,18 @@ const TabNav: React.FC<{ projectId: number }> = ({ projectId }) => {
 
     return (
         <div className="flex gap-1 border-b mb-6" style={{ borderColor: 'var(--border)' }}>
-            {TABS.map(tab => {
+            {TABS.map((tab) => {
                 const active = isActive(tab);
                 return (
-                    <Link key={tab.id} to={`${base}${tab.path}`}
+                    <Link
+                        key={tab.id}
+                        to={`${base}${tab.path}`}
                         className="px-4 py-2.5 text-sm font-medium -mb-px border-b-2 transition-colors duration-100"
                         style={{
                             borderBottomColor: active ? 'var(--accent)' : 'transparent',
                             color: active ? 'var(--accent-text)' : 'var(--text-secondary)',
-                        }}>
+                        }}
+                    >
                         {tab.label}
                     </Link>
                 );
@@ -99,9 +106,14 @@ export const ProjectDetailPage: React.FC = () => {
         return (
             <div className="p-6 max-w-5xl mx-auto">
                 <Breadcrumb projectName="Unknown" />
-                <div className="rounded-lg px-4 py-3 text-sm" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                <div
+                    className="rounded-lg px-4 py-3 text-sm"
+                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                >
                     Failed to load project.{' '}
-                    <button onClick={() => navigate(ROUTES.PROJECTS)} className="underline">Back to Projects</button>
+                    <button onClick={() => navigate(ROUTES.PROJECTS)} className="underline">
+                        Back to Projects
+                    </button>
                 </div>
             </div>
         );
@@ -113,14 +125,20 @@ export const ProjectDetailPage: React.FC = () => {
 
             {/* Project header */}
             <div className="flex items-center gap-3 mb-6">
-                <div className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ backgroundColor: 'var(--accent-subtle)' }}>
+                <div
+                    className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0"
+                    style={{ backgroundColor: 'var(--accent-subtle)' }}
+                >
                     <FolderIcon className="h-5 w-5" style={{ color: 'var(--accent)' }} />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>{project.name}</h1>
+                    <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {project.name}
+                    </h1>
                     {project.description && (
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{project.description}</p>
+                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                            {project.description}
+                        </p>
                     )}
                 </div>
             </div>

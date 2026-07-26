@@ -139,7 +139,12 @@ describe('usersApi.create', () => {
 
     it('one-time-password path posts the flag and unwraps the nested {email, one_time_password}', async () => {
         mocked.post.mockResolvedValue({
-            data: { data: { user: { id: 9 }, one_time_password: { email: 'otto@x.io', one_time_password: 'Xk7-mP2q-Rt9w-Zb4n' } } },
+            data: {
+                data: {
+                    user: { id: 9 },
+                    one_time_password: { email: 'otto@x.io', one_time_password: 'Xk7-mP2q-Rt9w-Zb4n' },
+                },
+            },
         });
 
         const res = await usersApi.create({
@@ -172,7 +177,14 @@ describe('usersApi ADR-025 lifecycle + views', () => {
 
     it('resendSetupLink unwraps the delivery outcome', async () => {
         mocked.post.mockResolvedValue({
-            data: { data: { email: 'e@x.io', channel: 'out_of_band', delivered: false, link_for_admin: 'https://app/setup/abc' } },
+            data: {
+                data: {
+                    email: 'e@x.io',
+                    channel: 'out_of_band',
+                    delivered: false,
+                    link_for_admin: 'https://app/setup/abc',
+                },
+            },
         });
         const res = await usersApi.resendSetupLink(7);
         expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/resend-setup-link');
@@ -181,7 +193,13 @@ describe('usersApi ADR-025 lifecycle + views', () => {
 
     it('getMemberships normalizes snake/Pascal keys', async () => {
         mocked.get.mockResolvedValue({
-            data: { data: { memberships: [{ project_id: 3, project_name: 'payments', role: 'project_developer', state: 'active' }] } },
+            data: {
+                data: {
+                    memberships: [
+                        { project_id: 3, project_name: 'payments', role: 'project_developer', state: 'active' },
+                    ],
+                },
+            },
         });
         const rows = await usersApi.getMemberships(42);
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/42/memberships');
@@ -190,10 +208,14 @@ describe('usersApi ADR-025 lifecycle + views', () => {
 
     it('getStale passes params and unwraps users', async () => {
         mocked.get.mockResolvedValue({
-            data: { data: { users: [{ id: 9, username: 'stale', email: 's@x.io', account_state: 'pending_first_login' }] } },
+            data: {
+                data: { users: [{ id: 9, username: 'stale', email: 's@x.io', account_state: 'pending_first_login' }] },
+            },
         });
         const rows = await usersApi.getStale({ state: 'pending_first_login', days: 7 });
-        expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/stale', { params: { state: 'pending_first_login', days: 7 } });
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/stale', {
+            params: { state: 'pending_first_login', days: 7 },
+        });
         expect(rows).toHaveLength(1);
         expect(rows[0].username).toBe('stale');
     });

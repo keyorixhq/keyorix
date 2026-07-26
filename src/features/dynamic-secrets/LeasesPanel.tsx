@@ -36,10 +36,16 @@ const CopyRow: React.FC<{ label: string; value: string }> = ({ label, value }) =
     return (
         <div className="flex items-stretch gap-2">
             <div className="flex-1 min-w-0">
-                <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>{label}</p>
+                <p className="text-xs mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                    {label}
+                </p>
                 <code
                     className="block px-3 py-2 text-xs font-mono break-all rounded-lg border"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)' }}
+                    style={{
+                        borderColor: 'var(--border)',
+                        backgroundColor: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                    }}
                 >
                     {value}
                 </code>
@@ -72,12 +78,12 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
     const handleIssue = () => {
         setError('');
         issue.mutate(undefined, {
-            onSuccess: cred => setCredential(cred),
-            onError: err => surface(err, 'Failed to issue credential.'),
+            onSuccess: (cred) => setCredential(cred),
+            onError: (err) => surface(err, 'Failed to issue credential.'),
         });
     };
 
-    const activeCount = leases.filter(l => l.status === 'active').length;
+    const activeCount = leases.filter((l) => l.status === 'active').length;
 
     return (
         <div className="px-4 py-3" style={{ backgroundColor: 'var(--bg-app)' }}>
@@ -95,7 +101,9 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                             variant="destructive"
                             onClick={() => {
                                 setError('');
-                                revokeAll.mutate(undefined, { onError: err => surface(err, 'Failed to revoke leases.') });
+                                revokeAll.mutate(undefined, {
+                                    onError: (err) => surface(err, 'Failed to revoke leases.'),
+                                });
                             }}
                             disabled={revokeAll.isPending}
                         >
@@ -106,17 +114,26 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
             )}
 
             {isLoading ? (
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Loading leases…</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Loading leases…
+                </p>
             ) : leases.length === 0 ? (
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No leases issued yet.</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    No leases issued yet.
+                </p>
             ) : (
                 <ul className="space-y-1">
-                    {leases.map(l => (
+                    {leases.map((l) => (
                         <li key={l.leaseId} className="flex items-center gap-2 text-xs">
-                            <span className="px-2 py-0.5 rounded-full font-medium capitalize shrink-0" style={leaseStatusStyle(l.status)}>
+                            <span
+                                className="px-2 py-0.5 rounded-full font-medium capitalize shrink-0"
+                                style={leaseStatusStyle(l.status)}
+                            >
                                 {l.status.replace('_', ' ')}
                             </span>
-                            <span className="font-mono truncate" style={{ color: 'var(--text-primary)' }}>{l.roleName || l.leaseId}</span>
+                            <span className="font-mono truncate" style={{ color: 'var(--text-primary)' }}>
+                                {l.roleName || l.leaseId}
+                            </span>
                             {l.expiresAt && (
                                 <span style={{ color: 'var(--text-muted)' }}>
                                     · expires {new Date(l.expiresAt).toLocaleString()}
@@ -126,7 +143,9 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                                 <button
                                     onClick={() => {
                                         setError('');
-                                        revoke.mutate(l.leaseId, { onError: err => surface(err, 'Failed to revoke lease.') });
+                                        revoke.mutate(l.leaseId, {
+                                            onError: (err) => surface(err, 'Failed to revoke lease.'),
+                                        });
                                     }}
                                     disabled={revoke.isPending}
                                     className="ml-auto p-1 rounded-sm disabled:opacity-50"
@@ -155,9 +174,11 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                             {credential.password && <CopyRow label="Password" value={credential.password} />}
                             {credential.fields &&
                                 Object.keys(credential.fields)
-                                    .filter(k => k !== 'expiration')
+                                    .filter((k) => k !== 'expiration')
                                     .sort()
-                                    .map(k => <CopyRow key={k} label={fieldLabel(k)} value={credential.fields![k] ?? ''} />)}
+                                    .map((k) => (
+                                        <CopyRow key={k} label={fieldLabel(k)} value={credential.fields![k] ?? ''} />
+                                    ))}
                             {credential.expiresAt && (
                                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                                     Expires {new Date(credential.expiresAt).toLocaleString()}
@@ -166,7 +187,9 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                         </>
                     )}
                     <div className="flex justify-end">
-                        <Button variant="secondary" onClick={() => setCredential(null)}>Done</Button>
+                        <Button variant="secondary" onClick={() => setCredential(null)}>
+                            Done
+                        </Button>
                     </div>
                 </div>
             </Modal>

@@ -27,8 +27,8 @@ export const OrgNameConformanceSection: React.FC = () => {
                 <div className="flex items-center gap-2" style={{ color: 'var(--warning, #92400e)' }}>
                     <TagIcon className="h-5 w-5 shrink-0" />
                     <span className="text-sm font-semibold">
-                        {violations.length} secret{violations.length !== 1 ? 's' : ''} violating the naming policy
-                        {' '}of {data.total_secrets}
+                        {violations.length} secret{violations.length !== 1 ? 's' : ''} violating the naming policy of{' '}
+                        {data.total_secrets}
                     </span>
                 </div>
                 <button
@@ -51,9 +51,14 @@ export const OrgNameConformanceSection: React.FC = () => {
                     >
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                {v.name} <span className="font-normal" style={{ color: 'var(--text-muted)' }}>{v.type}</span>
+                                {v.name}{' '}
+                                <span className="font-normal" style={{ color: 'var(--text-muted)' }}>
+                                    {v.type}
+                                </span>
                             </p>
-                            <p className="text-xs truncate" style={{ color: 'var(--error)' }}>{v.reason}</p>
+                            <p className="text-xs truncate" style={{ color: 'var(--error)' }}>
+                                {v.reason}
+                            </p>
                         </div>
                         <span
                             className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0 truncate max-w-[10rem]"

@@ -17,7 +17,14 @@ vi.mock('../../../features/auth', () => ({
 vi.mock('../../../features/dynamic-secrets/api', () => ({
     useDynamicConfigs: () => ({
         data: [
-            { id: 5, name: 'analytics-ro', backendType: 'postgres', defaultTtlSeconds: 3600, maxTtlSeconds: 0, classification: 'confidential' },
+            {
+                id: 5,
+                name: 'analytics-ro',
+                backendType: 'postgres',
+                defaultTtlSeconds: 3600,
+                maxTtlSeconds: 0,
+                classification: 'confidential',
+            },
         ],
         isLoading: false,
         error: null,

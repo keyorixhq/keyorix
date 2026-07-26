@@ -50,10 +50,10 @@ export const setupService = {
      */
     async consume(token: string, password: string): Promise<LoginResponse> {
         try {
-            const response: AxiosResponse<ApiResponse<LoginResponse>> = await client.post(
-                '/auth/setup/consume',
-                { token, password }
-            );
+            const response: AxiosResponse<ApiResponse<LoginResponse>> = await client.post('/auth/setup/consume', {
+                token,
+                password,
+            });
             if (!response.data.data?.token) {
                 throw new Error(response.data.message || 'Setup failed');
             }

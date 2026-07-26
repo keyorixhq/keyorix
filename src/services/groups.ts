@@ -3,15 +3,10 @@ import { ApiResponse, PaginatedResponse, Recipient } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const groupsApi = {
-    async list(params?: {
-        page?: number;
-        pageSize?: number;
-        search?: string;
-    }): Promise<PaginatedResponse<any>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<any>>>(
-            API_ENDPOINTS.GROUPS.LIST,
-            { params }
-        );
+    async list(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<any>> {
+        const response = await apiClient.get<ApiResponse<PaginatedResponse<any>>>(API_ENDPOINTS.GROUPS.LIST, {
+            params,
+        });
         return response.data.data;
     },
 
@@ -21,10 +16,9 @@ export const groupsApi = {
     },
 
     async search(query: string): Promise<Recipient[]> {
-        const response = await apiClient.get<ApiResponse<Recipient[]>>(
-            API_ENDPOINTS.GROUPS.SEARCH,
-            { params: { q: query } }
-        );
+        const response = await apiClient.get<ApiResponse<Recipient[]>>(API_ENDPOINTS.GROUPS.SEARCH, {
+            params: { q: query },
+        });
         return response.data.data;
     },
 };

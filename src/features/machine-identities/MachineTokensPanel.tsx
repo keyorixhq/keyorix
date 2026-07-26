@@ -5,12 +5,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { IssuedMachineToken } from '../../services/machineIdentities';
 import { classificationMeta, CLASSIFICATION_LEVELS } from '../secrets/classification';
-import {
-    useMachineTokens,
-    useIssueMachineToken,
-    useRevokeMachineToken,
-    useClassifyMachineToken,
-} from './api';
+import { useMachineTokens, useIssueMachineToken, useRevokeMachineToken, useClassifyMachineToken } from './api';
 
 /**
  * Machine-token credentials for one machine identity (ADR-030): issue an opaque
@@ -42,11 +37,11 @@ export const MachineTokensPanel: React.FC<{
         issue.mutate(
             { name: name.trim() },
             {
-                onSuccess: t => {
+                onSuccess: (t) => {
                     setIssued(t);
                     setName('');
                 },
-                onError: err => surface(err, 'Failed to issue token.'),
+                onError: (err) => surface(err, 'Failed to issue token.'),
             }
         );
     };
@@ -72,8 +67,8 @@ export const MachineTokensPanel: React.FC<{
                 <div className="flex items-center gap-2 mb-3">
                     <input
                         value={name}
-                        onChange={e => setName(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && handleIssue()}
+                        onChange={(e) => setName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleIssue()}
                         placeholder="Token name…"
                         className="flex-1 min-w-[10rem] rounded-lg px-3 py-1.5 text-sm outline-hidden"
                         style={selectStyle}
@@ -86,17 +81,28 @@ export const MachineTokensPanel: React.FC<{
             )}
 
             {isLoading ? (
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Loading tokens…</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Loading tokens…
+                </p>
             ) : tokens.length === 0 ? (
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No tokens issued yet.</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    No tokens issued yet.
+                </p>
             ) : (
                 <ul className="space-y-1">
-                    {tokens.map(t => (
+                    {tokens.map((t) => (
                         <li key={t.id} className="flex items-center gap-2 text-xs">
-                            <span className="font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>{t.prefix}…</span>
-                            <span className="truncate" style={{ color: 'var(--text-primary)' }}>{t.name || '(unnamed)'}</span>
+                            <span className="font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                {t.prefix}…
+                            </span>
+                            <span className="truncate" style={{ color: 'var(--text-primary)' }}>
+                                {t.name || '(unnamed)'}
+                            </span>
                             {t.revoked && (
-                                <span className="px-2 py-0.5 rounded-full font-medium shrink-0" style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                                <span
+                                    className="px-2 py-0.5 rounded-full font-medium shrink-0"
+                                    style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
+                                >
                                     revoked
                                 </span>
                             )}
@@ -106,19 +112,19 @@ export const MachineTokensPanel: React.FC<{
                                         aria-label={`Classification for token ${t.prefix}`}
                                         value={t.classification ?? ''}
                                         disabled={classify.isPending}
-                                        onChange={e => {
+                                        onChange={(e) => {
                                             if (e.target.value === (t.classification ?? '')) return;
                                             setError('');
                                             classify.mutate(
                                                 { tokenId: t.id, classification: e.target.value },
-                                                { onError: err => surface(err, 'Failed to update classification.') }
+                                                { onError: (err) => surface(err, 'Failed to update classification.') }
                                             );
                                         }}
                                         className="rounded-lg px-2 py-0.5 text-xs outline-hidden disabled:opacity-50"
                                         style={selectStyle}
                                         title="Data classification (ISO 27001 A.5.12)"
                                     >
-                                        {CLASSIFICATION_LEVELS.map(level => (
+                                        {CLASSIFICATION_LEVELS.map((level) => (
                                             <option key={level || 'unclassified'} value={level}>
                                                 {classificationMeta(level).label}
                                             </option>
@@ -137,7 +143,9 @@ export const MachineTokensPanel: React.FC<{
                                     <button
                                         onClick={() => {
                                             setError('');
-                                            revoke.mutate(t.id, { onError: err => surface(err, 'Failed to revoke token.') });
+                                            revoke.mutate(t.id, {
+                                                onError: (err) => surface(err, 'Failed to revoke token.'),
+                                            });
                                         }}
                                         disabled={revoke.isPending}
                                         className="p-1 rounded-sm disabled:opacity-50"
@@ -156,12 +164,19 @@ export const MachineTokensPanel: React.FC<{
             {/* The raw token is shown ONCE — never retrievable again. */}
             <Modal isOpen={!!issued} onClose={() => setIssued(null)} title="Machine token issued" size="md">
                 <div className="space-y-3">
-                    <Alert type="warning" message="Copy this now — the token is shown once and cannot be retrieved again." />
+                    <Alert
+                        type="warning"
+                        message="Copy this now — the token is shown once and cannot be retrieved again."
+                    />
                     {issued && (
                         <div className="flex items-stretch gap-2">
                             <code
                                 className="flex-1 min-w-0 px-3 py-2 text-xs font-mono break-all rounded-lg border"
-                                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)' }}
+                                style={{
+                                    borderColor: 'var(--border)',
+                                    backgroundColor: 'var(--bg-app)',
+                                    color: 'var(--text-primary)',
+                                }}
                             >
                                 {issued.token}
                             </code>
@@ -171,7 +186,9 @@ export const MachineTokensPanel: React.FC<{
                         </div>
                     )}
                     <div className="flex justify-end">
-                        <Button variant="secondary" onClick={() => setIssued(null)}>Done</Button>
+                        <Button variant="secondary" onClick={() => setIssued(null)}>
+                            Done
+                        </Button>
                     </div>
                 </div>
             </Modal>

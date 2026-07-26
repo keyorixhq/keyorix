@@ -35,7 +35,8 @@ export const PATHygieneSection: React.FC = () => {
                 <div className="flex items-center gap-2" style={{ color: 'var(--warning, #92400e)' }}>
                     <KeyIcon className="h-5 w-5 shrink-0" />
                     <span className="text-sm font-semibold">
-                        {tokens.length} personal access token{tokens.length !== 1 ? 's' : ''} stale or expired-but-active
+                        {tokens.length} personal access token{tokens.length !== 1 ? 's' : ''} stale or
+                        expired-but-active
                     </span>
                 </div>
                 <button
@@ -50,15 +51,23 @@ export const PATHygieneSection: React.FC = () => {
             </div>
 
             <p className="px-4 pb-1 text-xs" style={{ color: 'var(--warning, #92400e)' }}>
-                These long-lived tokens are candidates for revocation. Ask the owner to revoke, or revoke from the user detail page.
+                These long-lived tokens are candidates for revocation. Ask the owner to revoke, or revoke from the user
+                detail page.
             </p>
 
             <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                 {tokens.map((t) => (
-                    <li key={t.id} className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: 'var(--bg-surface)' }}>
+                    <li
+                        key={t.id}
+                        className="flex items-center gap-3 px-4 py-2.5"
+                        style={{ backgroundColor: 'var(--bg-surface)' }}
+                    >
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                {t.name} <span className="font-normal" style={{ color: 'var(--text-muted)' }}>{t.token_prefix}…</span>
+                                {t.name}{' '}
+                                <span className="font-normal" style={{ color: 'var(--text-muted)' }}>
+                                    {t.token_prefix}…
+                                </span>
                             </p>
                             <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
                                 user #{t.user_id} · {lastUsedLabel(t.last_used_at)}

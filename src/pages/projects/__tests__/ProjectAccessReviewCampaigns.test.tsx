@@ -32,8 +32,30 @@ const detail = {
     campaign: { id: 1, projectId: 2, name: 'Q4 2026', state: 'open', createdAt: '' },
     progress: { total: 3, pending: 2, attested: 1, revoked: 0 },
     items: [
-        { id: 10, principalType: 'user', principalId: 5, principalName: 'alice', email: 'a@x.io', source: 'role', roleName: 'editor', accessLevel: 'write', secretName: '', decision: 'pending' },
-        { id: 11, principalType: 'group', principalId: 9, principalName: 'devs', email: '', source: 'group_share', roleName: '', accessLevel: 'read', secretName: 'db', decision: 'attested' },
+        {
+            id: 10,
+            principalType: 'user',
+            principalId: 5,
+            principalName: 'alice',
+            email: 'a@x.io',
+            source: 'role',
+            roleName: 'editor',
+            accessLevel: 'write',
+            secretName: '',
+            decision: 'pending',
+        },
+        {
+            id: 11,
+            principalType: 'group',
+            principalId: 9,
+            principalName: 'devs',
+            email: '',
+            source: 'group_share',
+            roleName: '',
+            accessLevel: 'read',
+            secretName: 'db',
+            decision: 'attested',
+        },
     ],
 };
 
@@ -71,7 +93,7 @@ describe('ProjectAccessReviewCampaigns', () => {
         fireEvent.click(screen.getByText('Attest'));
         expect(mockDecideMutate).toHaveBeenCalledWith(
             expect.objectContaining({ itemId: 10, action: 'attest' }),
-            expect.any(Object),
+            expect.any(Object)
         );
     });
 
@@ -89,10 +111,9 @@ describe('ProjectAccessReviewCampaigns', () => {
         fireEvent.click(screen.getByRole('button', { name: /download csv/i }));
 
         await waitFor(() =>
-            expect(mockGet).toHaveBeenCalledWith(
-                '/api/v1/projects/2/access-review/campaigns/1/export.csv',
-                { responseType: 'blob' },
-            ),
+            expect(mockGet).toHaveBeenCalledWith('/api/v1/projects/2/access-review/campaigns/1/export.csv', {
+                responseType: 'blob',
+            })
         );
         expect((URL as any).createObjectURL).toHaveBeenCalled();
     });

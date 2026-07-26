@@ -5,8 +5,15 @@ const now = Date.UTC(2026, 5, 18, 12, 0, 0); // 2026-06-18
 const daysAgo = (d: number) => new Date(now - d * 24 * 60 * 60 * 1000).toISOString();
 
 const mk = (over: Partial<MachineIdentity>): MachineIdentity => ({
-    id: 1, projectId: 1, name: 'ci', identityType: 'ci', state: 'active',
-    description: '', createdBy: 1, classification: '', ...over,
+    id: 1,
+    projectId: 1,
+    name: 'ci',
+    identityType: 'ci',
+    state: 'active',
+    description: '',
+    createdBy: 1,
+    classification: '',
+    ...over,
 });
 
 describe('isStaleMachineIdentity', () => {

@@ -12,10 +12,7 @@ interface SessionTimeoutWarningProps {
 // deadline — this component no longer runs its own independent timer/activity
 // listeners, so the warning window can't drift out of sync with the real
 // SESSION_TIMEOUT-driven logout.
-export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
-    onExtendSession,
-    onLogout,
-}) => {
+export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({ onExtendSession, onLogout }) => {
     const { isAuthenticated, sessionTimeLeftMs, logout, refreshToken } = useAuth();
     const [isExtending, setIsExtending] = useState(false);
     const [dismissed, setDismissed] = useState(false);
@@ -67,8 +64,8 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                         style={{ color: 'var(--text-muted)' }}
                         onClick={() => setDismissed(true)}
                         aria-label="Close"
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-primary)')}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
                     >
                         <XMarkIcon className="h-6 w-6" />
                     </button>
@@ -95,30 +92,69 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                                     onClick={handleExtendSession}
                                     disabled={isExtending}
                                     className="flex-1 px-4 py-2 text-sm font-medium rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-                                    style={isExtending
-                                        ? { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)', cursor: 'not-allowed' }
-                                        : { backgroundColor: 'var(--accent)', color: '#ffffff' }
+                                    style={
+                                        isExtending
+                                            ? {
+                                                  backgroundColor: 'var(--bg-muted)',
+                                                  color: 'var(--text-muted)',
+                                                  cursor: 'not-allowed',
+                                              }
+                                            : { backgroundColor: 'var(--accent)', color: '#ffffff' }
                                     }
-                                    onMouseEnter={e => { if (!isExtending) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--accent-hover)'; }}
-                                    onMouseLeave={e => { if (!isExtending) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--accent)'; }}
+                                    onMouseEnter={(e) => {
+                                        if (!isExtending)
+                                            (e.currentTarget as HTMLElement).style.backgroundColor =
+                                                'var(--accent-hover)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        if (!isExtending)
+                                            (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--accent)';
+                                    }}
                                 >
                                     {isExtending ? (
                                         <div className="flex items-center justify-center">
-                                            <svg className="animate-spin -ml-1 mr-2 h-4 w-4" style={{ color: 'var(--text-muted)' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            <svg
+                                                className="animate-spin -ml-1 mr-2 h-4 w-4"
+                                                style={{ color: 'var(--text-muted)' }}
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                fill="none"
+                                                viewBox="0 0 24 24"
+                                            >
+                                                <circle
+                                                    className="opacity-25"
+                                                    cx="12"
+                                                    cy="12"
+                                                    r="10"
+                                                    stroke="currentColor"
+                                                    strokeWidth="4"
+                                                ></circle>
+                                                <path
+                                                    className="opacity-75"
+                                                    fill="currentColor"
+                                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                                ></path>
                                             </svg>
                                             Loading...
                                         </div>
-                                    ) : 'Extend Session'}
+                                    ) : (
+                                        'Extend Session'
+                                    )}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={handleLogout}
                                     className="flex-1 px-4 py-2 text-sm font-medium rounded-md border focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-                                    style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-secondary)', borderColor: 'var(--border-strong)' }}
-                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
-                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'}
+                                    style={{
+                                        backgroundColor: 'var(--bg-surface)',
+                                        color: 'var(--text-secondary)',
+                                        borderColor: 'var(--border-strong)',
+                                    }}
+                                    onMouseEnter={(e) =>
+                                        ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)')
+                                    }
+                                    onMouseLeave={(e) =>
+                                        ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)')
+                                    }
                                 >
                                     Logout
                                 </button>

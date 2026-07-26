@@ -51,9 +51,7 @@ export const expiresAtFromPreset = (preset: string, now: number = Date.now()): s
     return ms ? new Date(now + ms).toISOString() : undefined;
 };
 
-export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
-    secret, isOpen, onClose, onSuccess,
-}) => {
+export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOpen, onClose, onSuccess }) => {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<UserOption[]>([]);
     const [selected, setSelected] = useState<UserOption | null>(null);
@@ -68,7 +66,10 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
 
     // Search users as query changes
     useEffect(() => {
-        if (!query.trim()) { setResults([]); return; }
+        if (!query.trim()) {
+            setResults([]);
+            return;
+        }
         let cancelled = false;
         const timer = setTimeout(async () => {
             setLoading(true);
@@ -81,14 +82,21 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                 if (!cancelled) setLoading(false);
             }
         }, 200);
-        return () => { cancelled = true; clearTimeout(timer); };
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
     }, [query]);
 
     // Close dropdown on outside click
     useEffect(() => {
         const handler = (e: MouseEvent) => {
-            if (listRef.current && !listRef.current.contains(e.target as Node) &&
-                inputRef.current && !inputRef.current.contains(e.target as Node)) {
+            if (
+                listRef.current &&
+                !listRef.current.contains(e.target as Node) &&
+                inputRef.current &&
+                !inputRef.current.contains(e.target as Node)
+            ) {
                 setOpen(false);
             }
         };
@@ -97,9 +105,14 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
     }, []);
 
     const handleClose = () => {
-        setQuery(''); setResults([]); setSelected(null);
-        setOpen(false); setSuccess(false); shareSecret.reset();
-        setPermission('read'); setExpiry('never');
+        setQuery('');
+        setResults([]);
+        setSelected(null);
+        setOpen(false);
+        setSuccess(false);
+        shareSecret.reset();
+        setPermission('read');
+        setExpiry('never');
         onClose();
     };
 
@@ -129,8 +142,13 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
         <Modal isOpen={isOpen} onClose={handleClose} title={`Share "${secret.name}"`} size="md">
             <form onSubmit={handleSubmit} className="space-y-4">
                 {shareSecret.isError && (
-                    <Alert type="error" title="Error"
-                        message={shareSecret.error instanceof Error ? shareSecret.error.message : 'Failed to share secret.'} />
+                    <Alert
+                        type="error"
+                        title="Error"
+                        message={
+                            shareSecret.error instanceof Error ? shareSecret.error.message : 'Failed to share secret.'
+                        }
+                    />
                 )}
                 {success && <Alert type="success" title="Shared!" message="Secret shared successfully." />}
 
@@ -142,22 +160,36 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                     <div className="relative">
                         {/* Input */}
                         <div className="relative">
-                            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none"
-                                style={{ color: 'var(--text-muted)' }} />
+                            <MagnifyingGlassIcon
+                                className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none"
+                                style={{ color: 'var(--text-muted)' }}
+                            />
                             <input
                                 ref={inputRef}
                                 type="text"
                                 placeholder="Search by name or username…"
                                 value={query}
-                                onChange={e => { setQuery(e.target.value); setSelected(null); setOpen(true); }}
-                                onFocus={() => { if (query) setOpen(true); }}
+                                onChange={(e) => {
+                                    setQuery(e.target.value);
+                                    setSelected(null);
+                                    setOpen(true);
+                                }}
+                                onFocus={() => {
+                                    if (query) setOpen(true);
+                                }}
                                 disabled={shareSecret.isPending || success}
                                 className="w-full pl-9 pr-4 py-2 text-sm rounded-md border focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                                style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: selected ? 'var(--accent)' : 'var(--border-strong)' }}
+                                style={{
+                                    backgroundColor: 'var(--bg-app)',
+                                    color: 'var(--text-primary)',
+                                    borderColor: selected ? 'var(--accent)' : 'var(--border-strong)',
+                                }}
                             />
                             {selected && (
-                                <CheckIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4"
-                                    style={{ color: 'var(--accent)' }} />
+                                <CheckIcon
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4"
+                                    style={{ color: 'var(--accent)' }}
+                                />
                             )}
                         </div>
 
@@ -177,24 +209,36 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                                         No users found for "{query}"
                                     </div>
                                 ) : (
-                                    results.map(user => (
+                                    results.map((user) => (
                                         <button
                                             key={user.id}
                                             type="button"
                                             onClick={() => handleSelect(user)}
                                             className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
                                             style={{ color: 'var(--text-primary)' }}
-                                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
-                                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
+                                            onMouseEnter={(e) =>
+                                                ((e.currentTarget as HTMLElement).style.backgroundColor =
+                                                    'var(--bg-subtle)')
+                                            }
+                                            onMouseLeave={(e) =>
+                                                ((e.currentTarget as HTMLElement).style.backgroundColor = '')
+                                            }
                                         >
                                             <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
-                                                <span className="text-xs font-semibold" style={{ color: 'var(--accent-text)' }}>
+                                                <span
+                                                    className="text-xs font-semibold"
+                                                    style={{ color: 'var(--accent-text)' }}
+                                                >
                                                     {(user.display_name || user.username).charAt(0).toUpperCase()}
                                                 </span>
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-medium truncate">{user.display_name || user.username}</p>
-                                                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>@{user.username} · {user.email}</p>
+                                                <p className="text-sm font-medium truncate">
+                                                    {user.display_name || user.username}
+                                                </p>
+                                                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                                    @{user.username} · {user.email}
+                                                </p>
                                             </div>
                                         </button>
                                     ))
@@ -211,7 +255,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                     </label>
                     <Select
                         value={permission}
-                        onChange={e => setPermission(e.target.value as 'read' | 'write')}
+                        onChange={(e) => setPermission(e.target.value as 'read' | 'write')}
                         options={PERMISSION_OPTIONS}
                         disabled={shareSecret.isPending || success}
                     />
@@ -224,7 +268,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                     </label>
                     <Select
                         value={expiry}
-                        onChange={e => setExpiry(e.target.value)}
+                        onChange={(e) => setExpiry(e.target.value)}
                         options={EXPIRY_OPTIONS}
                         disabled={shareSecret.isPending || success}
                     />
@@ -235,7 +279,10 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                     )}
                 </div>
 
-                <div className="flex items-center justify-end space-x-3 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+                <div
+                    className="flex items-center justify-end space-x-3 pt-4 border-t"
+                    style={{ borderColor: 'var(--border)' }}
+                >
                     <Button type="button" variant="outline" onClick={handleClose} disabled={shareSecret.isPending}>
                         Cancel
                     </Button>

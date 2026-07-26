@@ -19,11 +19,12 @@ export const useProjectMruStore = create<ProjectMruState>()(
         persist(
             (set) => ({
                 recentIds: [],
-                recordAccess: (id) => set((state) => {
-                    if (!Number.isFinite(id)) return state;
-                    const next = [id, ...state.recentIds.filter((x) => x !== id)].slice(0, MAX_RECENT);
-                    return { recentIds: next };
-                }),
+                recordAccess: (id) =>
+                    set((state) => {
+                        if (!Number.isFinite(id)) return state;
+                        const next = [id, ...state.recentIds.filter((x) => x !== id)].slice(0, MAX_RECENT);
+                        return { recentIds: next };
+                    }),
             }),
             {
                 name: 'keyorix-project-mru',

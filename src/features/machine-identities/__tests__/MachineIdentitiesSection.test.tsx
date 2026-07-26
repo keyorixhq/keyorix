@@ -10,8 +10,24 @@ let isAdmin = true;
 vi.mock('../api', () => ({
     useMachineIdentities: () => ({
         data: [
-            { id: 1, projectId: 3, name: 'ci-runner', identityType: 'ci', state: 'active', description: 'builds', classification: 'restricted' },
-            { id: 2, projectId: 3, name: 'paused-bot', identityType: 'automation', state: 'suspended', description: '', classification: '' },
+            {
+                id: 1,
+                projectId: 3,
+                name: 'ci-runner',
+                identityType: 'ci',
+                state: 'active',
+                description: 'builds',
+                classification: 'restricted',
+            },
+            {
+                id: 2,
+                projectId: 3,
+                name: 'paused-bot',
+                identityType: 'automation',
+                state: 'suspended',
+                description: '',
+                classification: '',
+            },
         ],
         isLoading: false,
     }),
@@ -47,17 +63,11 @@ describe('MachineIdentitiesSection', () => {
 
         // active → suspend
         fireEvent.click(screen.getByRole('button', { name: /^suspend$/i }));
-        expect(transitionMutate).toHaveBeenCalledWith(
-            { machineId: 1, action: 'suspend' },
-            expect.anything()
-        );
+        expect(transitionMutate).toHaveBeenCalledWith({ machineId: 1, action: 'suspend' }, expect.anything());
 
         // suspended → reactivate (activate action)
         fireEvent.click(screen.getByRole('button', { name: /reactivate/i }));
-        expect(transitionMutate).toHaveBeenCalledWith(
-            { machineId: 2, action: 'activate' },
-            expect.anything()
-        );
+        expect(transitionMutate).toHaveBeenCalledWith({ machineId: 2, action: 'activate' }, expect.anything());
     });
 
     it('creates a machine identity with the selected type', () => {

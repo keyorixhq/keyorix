@@ -20,16 +20,34 @@ vi.mock('../../../features/projects/api', () => ({
 
 const entries = [
     {
-        principalType: 'user', principalId: 10, principalName: 'alice', email: 'alice@x.io',
-        source: 'role', roleId: 3, roleName: 'editor', accessLevel: 'write', environmentId: 0,
+        principalType: 'user',
+        principalId: 10,
+        principalName: 'alice',
+        email: 'alice@x.io',
+        source: 'role',
+        roleId: 3,
+        roleName: 'editor',
+        accessLevel: 'write',
+        environmentId: 0,
     },
     {
-        principalType: 'user', principalId: 11, principalName: 'bob', email: 'bob@x.io',
-        source: 'owner', accessLevel: 'owner', secretId: 500, secretName: 'db-pw',
+        principalType: 'user',
+        principalId: 11,
+        principalName: 'bob',
+        email: 'bob@x.io',
+        source: 'owner',
+        accessLevel: 'owner',
+        secretId: 500,
+        secretName: 'db-pw',
     },
     {
-        principalType: 'group', principalId: 100, principalName: 'devs',
-        source: 'group_share', accessLevel: 'read', secretId: 500, secretName: 'db-pw',
+        principalType: 'group',
+        principalId: 100,
+        principalName: 'devs',
+        source: 'group_share',
+        accessLevel: 'read',
+        secretId: 500,
+        secretName: 'db-pw',
     },
 ];
 
@@ -67,7 +85,7 @@ describe('ProjectAccessReviewTab', () => {
         fireEvent.click(screen.getByText('Attest'));
         expect(mockAttestMutate).toHaveBeenCalledWith(
             expect.objectContaining({ source: 'role', principalId: 10, roleId: 3 }),
-            expect.any(Object),
+            expect.any(Object)
         );
     });
 
@@ -81,7 +99,7 @@ describe('ProjectAccessReviewTab', () => {
         fireEvent.click(screen.getByText('Confirm'));
         expect(mockRevokeMutate).toHaveBeenCalledWith(
             expect.objectContaining({ source: 'group_share', principalId: 100, secretId: 500 }),
-            expect.any(Object),
+            expect.any(Object)
         );
     });
 

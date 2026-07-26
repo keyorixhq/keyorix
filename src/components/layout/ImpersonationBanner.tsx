@@ -48,7 +48,12 @@ export const ImpersonationBanner: React.FC = () => {
             <span>
                 Impersonating <strong>{target}</strong>
                 {admin ? <> — signed in as {admin}</> : null}
-                {endError ? <> · <span className="font-semibold">{endError}</span></> : null}
+                {endError ? (
+                    <>
+                        {' '}
+                        · <span className="font-semibold">{endError}</span>
+                    </>
+                ) : null}
             </span>
             <button
                 onClick={handleEnd}

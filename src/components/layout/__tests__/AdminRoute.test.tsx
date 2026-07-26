@@ -66,9 +66,7 @@ describe('AdminRoute', () => {
 
     it('still enforces extra permission requirements for an admin', () => {
         setAuth({ isAuthenticated: true, user: { role: 'admin', permissions: [] } });
-        renderGuard(
-            <AdminRoute requiredPermissions={['rbac:manage']}>admin panel</AdminRoute>
-        );
+        renderGuard(<AdminRoute requiredPermissions={['rbac:manage']}>admin panel</AdminRoute>);
         expect(screen.getByText('Dashboard Page')).toBeInTheDocument();
         expect(screen.queryByText('admin panel')).not.toBeInTheDocument();
     });

@@ -55,9 +55,7 @@ export const serviceAccountsApi = {
     },
 
     async listTokens(serviceAccountId: number): Promise<APIToken[]> {
-        const response = await apiClient.get(
-            `/api/v1/service-accounts/${serviceAccountId}/tokens`
-        );
+        const response = await apiClient.get(`/api/v1/service-accounts/${serviceAccountId}/tokens`);
         return toArray<APIToken>(response.data.data);
     },
 
@@ -65,10 +63,7 @@ export const serviceAccountsApi = {
         serviceAccountId: number,
         body: CreateTokenBody
     ): Promise<{ token: APIToken; access_token: string }> {
-        const response = await apiClient.post(
-            `/api/v1/service-accounts/${serviceAccountId}/tokens`,
-            body
-        );
+        const response = await apiClient.post(`/api/v1/service-accounts/${serviceAccountId}/tokens`, body);
         const data = response.data.data;
         const token = data.token ?? data;
         const accessToken = data.token_value ?? data.access_token ?? data.plain_token ?? '';

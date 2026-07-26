@@ -31,10 +31,7 @@ describe('SSOCompletePage', () => {
         window.location.hash = '#error=access_denied';
         render(<SSOCompletePage />);
         await waitFor(() =>
-            expect(mockNavigate).toHaveBeenCalledWith(
-                expect.stringContaining('/login?sso_error='),
-                { replace: true },
-            ),
+            expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('/login?sso_error='), { replace: true })
         );
         expect(mockComplete).not.toHaveBeenCalled();
     });

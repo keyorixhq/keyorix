@@ -36,9 +36,7 @@ describe('ProjectAssignmentsPicker', () => {
         render(<ProjectAssignmentsPicker assignments={[]} onChange={onChange} />);
         fireEvent.change(screen.getByPlaceholderText(/search projects/i), { target: { value: 'platform' } });
         fireEvent.click(screen.getByRole('button', { name: 'Platform' }));
-        expect(onChange).toHaveBeenCalledWith([
-            { project_id: 2, project_name: 'Platform', role: 'project_viewer' },
-        ]);
+        expect(onChange).toHaveBeenCalledWith([{ project_id: 2, project_name: 'Platform', role: 'project_viewer' }]);
     });
 
     it('hides already-assigned projects from the results', () => {
@@ -55,9 +53,7 @@ describe('ProjectAssignmentsPicker', () => {
         render(<ProjectAssignmentsPicker assignments={assignments} onChange={onChange} />);
 
         fireEvent.change(screen.getByDisplayValue('Viewer'), { target: { value: 'project_admin' } });
-        expect(onChange).toHaveBeenLastCalledWith([
-            { project_id: 1, project_name: 'Payments', role: 'project_admin' },
-        ]);
+        expect(onChange).toHaveBeenLastCalledWith([{ project_id: 1, project_name: 'Payments', role: 'project_admin' }]);
 
         fireEvent.click(screen.getByTitle(/remove assignment/i));
         expect(onChange).toHaveBeenLastCalledWith([]);

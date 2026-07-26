@@ -11,14 +11,12 @@ const MFA_RECOVERY_KEY = 'account-mfa-recovery';
 
 export const useUpdateProfile = () =>
     useMutation({
-        mutationFn: (body: { display_name: string; email: string }) =>
-            accountApi.updateProfile(body),
+        mutationFn: (body: { display_name: string; email: string }) => accountApi.updateProfile(body),
     });
 
 export const useChangePassword = () =>
     useMutation({
-        mutationFn: (body: { current_password: string; new_password: string }) =>
-            accountApi.changePassword(body),
+        mutationFn: (body: { current_password: string; new_password: string }) => accountApi.changePassword(body),
     });
 
 // ── Active sessions ───────────────────────────────────────────────────────────
@@ -74,8 +72,7 @@ export const useMfaRecoveryStatus = () =>
         staleTime: 30 * 1000,
     });
 
-export const useEnrollMfa = () =>
-    useMutation({ mutationFn: () => mfaApi.enroll() });
+export const useEnrollMfa = () => useMutation({ mutationFn: () => mfaApi.enroll() });
 
 export const useActivateMfa = () => {
     const queryClient = useQueryClient();
@@ -96,8 +93,7 @@ export const useDisableMfa = () => {
 export const useRegenerateRecoveryCodes = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (proof: { code?: string; password?: string }) =>
-            mfaApi.regenerateRecoveryCodes(proof),
+        mutationFn: (proof: { code?: string; password?: string }) => mfaApi.regenerateRecoveryCodes(proof),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [MFA_RECOVERY_KEY] }),
     });
 };

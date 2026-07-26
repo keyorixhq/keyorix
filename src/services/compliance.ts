@@ -65,9 +65,9 @@ const num = (v: any): number => (typeof v === 'number' ? v : 0);
 const normalize = (d: any): CompliancePosture => ({
     generatedAt: d.generated_at ?? d.generatedAt ?? '',
     auditIntegrity: {
-        chainVerified: !!(d.audit_integrity?.chain_verified),
+        chainVerified: !!d.audit_integrity?.chain_verified,
         chainedEvents: num(d.audit_integrity?.chained_events),
-        checkpointed: !!(d.audit_integrity?.checkpointed),
+        checkpointed: !!d.audit_integrity?.checkpointed,
         reason: d.audit_integrity?.reason ?? undefined,
     },
     accessGovernance: {
@@ -107,12 +107,12 @@ const normalize = (d: any): CompliancePosture => ({
         highSeverityOpen: num(d.anomalies?.high_severity_open),
     },
     legalHold: {
-        active: !!(d.legal_hold?.active),
+        active: !!d.legal_hold?.active,
         reason: d.legal_hold?.reason ?? '',
         placedAt: d.legal_hold?.placed_at ?? undefined,
     },
     retention: {
-        enabled: !!(d.retention?.enabled),
+        enabled: !!d.retention?.enabled,
         anomalyAlertsDays: num(d.retention?.anomaly_alerts_days),
         closedAccessReviewsDays: num(d.retention?.closed_access_reviews_days),
         breakGlassDays: num(d.retention?.break_glass_days),

@@ -62,8 +62,8 @@ const FederatedReadPanel: React.FC = () => {
     if (!connectors || connectors.length === 0) {
         return (
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                No connectors are configured. Add one under <code>connect.connectors</code> in the server
-                config (AWS Secrets Manager, GCP Secret Manager, or HashiCorp Vault).
+                No connectors are configured. Add one under <code>connect.connectors</code> in the server config (AWS
+                Secrets Manager, GCP Secret Manager, or HashiCorp Vault).
             </p>
         );
     }
@@ -83,9 +83,9 @@ const FederatedReadPanel: React.FC = () => {
                     setError(
                         (err as { response?: { data?: { message?: string } } }).response?.data?.message ||
                             (err as Error).message ||
-                            'Read failed.',
+                            'Read failed.'
                     ),
-            },
+            }
         );
     };
 
@@ -99,8 +99,8 @@ const FederatedReadPanel: React.FC = () => {
     return (
         <form onSubmit={submit} className="space-y-4">
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                Read the current value of a secret held in an external store. The value is proxied on demand,
-                audited, and never stored by Keyorix.
+                Read the current value of a secret held in an external store. The value is proxied on demand, audited,
+                and never stored by Keyorix.
             </p>
             {error && <Alert type="error" message={error} />}
             <div>
@@ -110,7 +110,11 @@ const FederatedReadPanel: React.FC = () => {
                 <select
                     aria-label="Connector"
                     className="text-sm px-3 py-2 rounded-md w-full"
-                    style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    style={{
+                        backgroundColor: 'var(--bg-app)',
+                        border: '1px solid var(--border)',
+                        color: 'var(--text-primary)',
+                    }}
                     value={effectiveConnector}
                     onChange={(e) => setConnector(e.target.value)}
                 >
@@ -154,14 +158,15 @@ const FederatedReadPanel: React.FC = () => {
                                 {revealed ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
                             </Button>
                             <Button variant="outline" size="sm" onClick={copy} type="button" aria-label="Copy value">
-                                {copied ? <CheckIcon className="h-4 w-4" /> : <ClipboardDocumentIcon className="h-4 w-4" />}
+                                {copied ? (
+                                    <CheckIcon className="h-4 w-4" />
+                                ) : (
+                                    <ClipboardDocumentIcon className="h-4 w-4" />
+                                )}
                             </Button>
                         </div>
                     </div>
-                    <code
-                        className="block break-all font-mono text-sm"
-                        style={{ color: 'var(--text-primary)' }}
-                    >
+                    <code className="block break-all font-mono text-sm" style={{ color: 'var(--text-primary)' }}>
                         {revealed ? value : '•'.repeat(Math.min(value.length, 40))}
                     </code>
                 </div>
@@ -201,7 +206,7 @@ const RefGrantsPanel: React.FC = () => {
                     setRefPrefix('');
                 },
                 onError: (err) => setFormError(errMessage(err, 'Could not create the grant.')),
-            },
+            }
         );
     };
 
@@ -230,10 +235,10 @@ const RefGrantsPanel: React.FC = () => {
     return (
         <div className="space-y-5">
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                Scope which role may read which references on a connector. A connector with no grants is
-                governed only by <code>connect.read</code>; once it has any grant, it is deny-by-default. A
-                pattern is a prefix, or a shell-style glob if it contains <code>*</code> <code>?</code>{' '}
-                <code>[</code> (e.g. <code>prod/*/db</code>); an empty pattern matches every reference.
+                Scope which role may read which references on a connector. A connector with no grants is governed only
+                by <code>connect.read</code>; once it has any grant, it is deny-by-default. A pattern is a prefix, or a
+                shell-style glob if it contains <code>*</code> <code>?</code> <code>[</code> (e.g.{' '}
+                <code>prod/*/db</code>); an empty pattern matches every reference.
             </p>
 
             {grants && grants.length > 0 ? (
@@ -250,10 +255,18 @@ const RefGrantsPanel: React.FC = () => {
                         <tbody>
                             {grants.map((g) => (
                                 <tr key={g.id} style={{ borderTop: '1px solid var(--border)' }}>
-                                    <td className="px-3 py-2" style={{ color: 'var(--text-primary)' }}>{g.role_id}</td>
-                                    <td className="px-3 py-2" style={{ color: 'var(--text-primary)' }}>{g.connector}</td>
+                                    <td className="px-3 py-2" style={{ color: 'var(--text-primary)' }}>
+                                        {g.role_id}
+                                    </td>
+                                    <td className="px-3 py-2" style={{ color: 'var(--text-primary)' }}>
+                                        {g.connector}
+                                    </td>
                                     <td className="px-3 py-2 font-mono" style={{ color: 'var(--text-primary)' }}>
-                                        {g.ref_prefix === '' ? <span style={{ color: 'var(--text-muted)' }}>(all refs)</span> : g.ref_prefix}
+                                        {g.ref_prefix === '' ? (
+                                            <span style={{ color: 'var(--text-muted)' }}>(all refs)</span>
+                                        ) : (
+                                            g.ref_prefix
+                                        )}
                                     </td>
                                     <td className="px-3 py-2 text-right">
                                         <Button
@@ -279,7 +292,10 @@ const RefGrantsPanel: React.FC = () => {
             )}
 
             <form onSubmit={submit} className="space-y-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                <h3 className="text-xs font-semibold uppercase tracking-wider pt-3" style={{ color: 'var(--text-muted)' }}>
+                <h3
+                    className="text-xs font-semibold uppercase tracking-wider pt-3"
+                    style={{ color: 'var(--text-muted)' }}
+                >
                     Add a grant
                 </h3>
                 {formError && <Alert type="error" message={formError} />}
@@ -298,7 +314,11 @@ const RefGrantsPanel: React.FC = () => {
                         <select
                             aria-label="Grant connector"
                             className="text-sm px-3 py-2 rounded-md w-full"
-                            style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            style={{
+                                backgroundColor: 'var(--bg-app)',
+                                border: '1px solid var(--border)',
+                                color: 'var(--text-primary)',
+                            }}
                             value={effectiveConnector}
                             onChange={(e) => setConnector(e.target.value)}
                         >
@@ -340,10 +360,9 @@ export const KeyorixConnectPage: React.FC = () => (
 
         <SectionCard title="Overview">
             <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                Keyorix Connect lets you reach secrets held in AWS Secrets Manager, GCP Secret Manager, and
-                HashiCorp Vault through Keyorix's RBAC and audit trail — without migrating them. Reads are
-                read-only and proxied on demand; secrets do not leave their origin store, and Keyorix never
-                imports or persists their values.
+                Keyorix Connect lets you reach secrets held in AWS Secrets Manager, GCP Secret Manager, and HashiCorp
+                Vault through Keyorix's RBAC and audit trail — without migrating them. Reads are read-only and proxied
+                on demand; secrets do not leave their origin store, and Keyorix never imports or persists their values.
             </p>
         </SectionCard>
 

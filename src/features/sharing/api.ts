@@ -30,7 +30,7 @@ export const useDeleteShare = () => {
 export const useBulkDeleteShares = () => {
     return useMutation({
         mutationFn: async (shareIds: number[]) => {
-            await Promise.all(shareIds.map(id => sharingApi.delete(id)));
+            await Promise.all(shareIds.map((id) => sharingApi.delete(id)));
             return shareIds;
         },
         onSuccess: () => {
@@ -43,16 +43,22 @@ export const useBulkDeleteShares = () => {
 // useUpdateShare changes a share's permission and/or its time-bound expiry.
 export const useUpdateShare = () => {
     return useMutation({
-        mutationFn: ({ id, permission, expiresAt, clearExpiry }: {
+        mutationFn: ({
+            id,
+            permission,
+            expiresAt,
+            clearExpiry,
+        }: {
             id: number;
             permission: 'read' | 'write';
             expiresAt?: string;
             clearExpiry?: boolean;
-        }) => sharingApi.update(id, {
-            permission,
-            ...(expiresAt ? { expiresAt } : {}),
-            ...(clearExpiry ? { clearExpiry } : {}),
-        }),
+        }) =>
+            sharingApi.update(id, {
+                permission,
+                ...(expiresAt ? { expiresAt } : {}),
+                ...(clearExpiry ? { clearExpiry } : {}),
+            }),
         onSuccess: () => {
             invalidateQueries.sharing.all();
             invalidateQueries.secrets.all();
@@ -77,11 +83,17 @@ export const searchRecipients = (query: string) => usersApi.search(query);
 // Composite mutation: search user by username then create share in one step.
 export const useShareSecret = (secretId: number) => {
     return useMutation({
-        mutationFn: async ({ username, permission, expiresAt }: { username: string; permission: 'read' | 'write'; expiresAt?: string }) => {
+        mutationFn: async ({
+            username,
+            permission,
+            expiresAt,
+        }: {
+            username: string;
+            permission: 'read' | 'write';
+            expiresAt?: string;
+        }) => {
             const results = await usersApi.search(username.trim());
-            const match = results.find(
-                (r) => r.name.toLowerCase() === username.trim().toLowerCase()
-            );
+            const match = results.find((r) => r.name.toLowerCase() === username.trim().toLowerCase());
             if (!match) throw new Error(`User "${username}" not found.`);
             return sharingApi.create({
                 secretId,

@@ -2,9 +2,15 @@ import React, { useState } from 'react';
 import { PlusIcon, PencilSquareIcon, TrashIcon, UsersIcon, KeyIcon } from '@heroicons/react/24/outline';
 import { Button, Modal, Input, Spinner, Select } from '../../components/ui';
 import {
-    useGroups, useGroupRoles, useGroupSharedSecrets, useRoles,
-    useCreateGroup, useUpdateGroup, useDeleteGroup,
-    useAssignRoleToGroup, useRemoveRoleFromGroup,
+    useGroups,
+    useGroupRoles,
+    useGroupSharedSecrets,
+    useRoles,
+    useCreateGroup,
+    useUpdateGroup,
+    useDeleteGroup,
+    useAssignRoleToGroup,
+    useRemoveRoleFromGroup,
 } from '../../features/admin';
 import type { Group, Role } from '../../types/rbac';
 import { EXPIRY_OPTIONS, expiresAtFromPreset, formatRemaining } from '../../lib/expiry';
@@ -45,10 +51,12 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
             </td>
             <td className="px-4 py-3">
                 {roles.length === 0 ? (
-                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>None</span>
+                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                        None
+                    </span>
                 ) : (
                     <div className="flex flex-wrap gap-1">
-                        {roles.map(r => (
+                        {roles.map((r) => (
                             <span
                                 key={r.id}
                                 className="text-xs px-2 py-0.5 rounded-full font-medium"
@@ -71,8 +79,8 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
                         className="p-1.5 rounded-md transition-colors"
                         style={{ color: 'var(--text-muted)' }}
                         title="Manage roles"
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-primary)')}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
                     >
                         <UsersIcon className="h-4 w-4" />
                     </button>
@@ -82,8 +90,8 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
                         className="p-1.5 rounded-md transition-colors"
                         style={{ color: 'var(--text-muted)' }}
                         title="Shared secrets"
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-primary)')}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
                     >
                         <KeyIcon className="h-4 w-4" />
                     </button>
@@ -93,8 +101,8 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
                         className="p-1.5 rounded-md transition-colors"
                         style={{ color: 'var(--text-muted)' }}
                         title="Edit group"
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-primary)')}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
                     >
                         <PencilSquareIcon className="h-4 w-4" />
                     </button>
@@ -104,8 +112,8 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
                         className="p-1.5 rounded-md transition-colors"
                         style={{ color: 'var(--text-muted)' }}
                         title="Delete group"
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#ef4444'}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
                     >
                         <TrashIcon className="h-4 w-4" />
                     </button>
@@ -136,10 +144,10 @@ export const GroupsPage: React.FC = () => {
     const removeMutation = useRemoveRoleFromGroup();
 
     const groups = (groupsData?.data ?? []) as Group[];
-    const assignedRoleIds = new Set((groupRolesData?.roles ?? []).map(r => r.id));
+    const assignedRoleIds = new Set((groupRolesData?.roles ?? []).map((r) => r.id));
     // Per-grant expiry (ISO) by role id, for the time-bound badge on assigned roles.
     const roleExpiryById = new Map(
-        (groupRolesData?.roles ?? []).filter(r => r.expires_at).map(r => [r.id, r.expires_at as string]),
+        (groupRolesData?.roles ?? []).filter((r) => r.expires_at).map((r) => [r.id, r.expires_at as string])
     );
     const isMutatingRole = assignMutation.isPending || removeMutation.isPending;
 
@@ -173,7 +181,10 @@ export const GroupsPage: React.FC = () => {
     const handleDelete = () => {
         if (!deleteGroup) return;
         deleteMutation.mutate(deleteGroup.id, {
-            onSuccess: () => { deleteMutation.reset(); setDeleteGroup(null); },
+            onSuccess: () => {
+                deleteMutation.reset();
+                setDeleteGroup(null);
+            },
         });
     };
 
@@ -210,16 +221,36 @@ export const GroupsPage: React.FC = () => {
                 <table className="w-full text-sm">
                     <thead>
                         <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                            <th className="px-4 py-3 text-left text-xs font-medium"
-                                style={{ color: 'var(--text-muted)' }}>Name</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium"
-                                style={{ color: 'var(--text-muted)' }}>Description</th>
-                            <th className="px-4 py-3 text-center text-xs font-medium"
-                                style={{ color: 'var(--text-muted)' }}>Members</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium"
-                                style={{ color: 'var(--text-muted)' }}>Roles</th>
-                            <th className="px-4 py-3 text-right text-xs font-medium"
-                                style={{ color: 'var(--text-muted)' }}>Actions</th>
+                            <th
+                                className="px-4 py-3 text-left text-xs font-medium"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
+                                Name
+                            </th>
+                            <th
+                                className="px-4 py-3 text-left text-xs font-medium"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
+                                Description
+                            </th>
+                            <th
+                                className="px-4 py-3 text-center text-xs font-medium"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
+                                Members
+                            </th>
+                            <th
+                                className="px-4 py-3 text-left text-xs font-medium"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
+                                Roles
+                            </th>
+                            <th
+                                className="px-4 py-3 text-right text-xs font-medium"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
+                                Actions
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -232,30 +263,41 @@ export const GroupsPage: React.FC = () => {
                         )}
                         {groupsError !== null && (
                             <tr>
-                                <td colSpan={5} className="px-4 py-8 text-center text-sm"
-                                    style={{ color: 'var(--text-muted)' }}>
+                                <td
+                                    colSpan={5}
+                                    className="px-4 py-8 text-center text-sm"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
                                     Failed to load groups. Please try again.
                                 </td>
                             </tr>
                         )}
                         {!groupsLoading && !groupsError && groups.length === 0 && (
                             <tr>
-                                <td colSpan={5} className="px-4 py-8 text-center text-sm"
-                                    style={{ color: 'var(--text-muted)' }}>
+                                <td
+                                    colSpan={5}
+                                    className="px-4 py-8 text-center text-sm"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
                                     No groups yet. Create one to get started.
                                 </td>
                             </tr>
                         )}
-                        {!groupsLoading && !groupsError && groups.map(group => (
-                            <GroupRow
-                                key={group.id}
-                                group={group}
-                                onEdit={openEdit}
-                                onDelete={openDelete}
-                                onManageRoles={g => { setRoleTtl('never'); setManageGroupId(g.id); }}
-                                onViewSecrets={g => setSecretsGroup(g)}
-                            />
-                        ))}
+                        {!groupsLoading &&
+                            !groupsError &&
+                            groups.map((group) => (
+                                <GroupRow
+                                    key={group.id}
+                                    group={group}
+                                    onEdit={openEdit}
+                                    onDelete={openDelete}
+                                    onManageRoles={(g) => {
+                                        setRoleTtl('never');
+                                        setManageGroupId(g.id);
+                                    }}
+                                    onViewSecrets={(g) => setSecretsGroup(g)}
+                                />
+                            ))}
                     </tbody>
                 </table>
             </div>
@@ -266,17 +308,16 @@ export const GroupsPage: React.FC = () => {
                     <Input
                         label="Name"
                         value={formData.name}
-                        onChange={e => setFormData(d => ({ ...d, name: e.target.value }))}
+                        onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
                         placeholder="e.g. platform-team"
                     />
                     <div>
-                        <label className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <textarea
                             value={formData.description}
-                            onChange={e => setFormData(d => ({ ...d, description: e.target.value }))}
+                            onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
                             rows={3}
                             className="w-full px-3 py-2 rounded-md border text-sm resize-none"
                             style={{
@@ -291,7 +332,9 @@ export const GroupsPage: React.FC = () => {
                         <p className="text-sm text-red-600">Failed to create group. Please try again.</p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                        <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+                            Cancel
+                        </Button>
                         <Button
                             loading={createMutation.isPending}
                             disabled={!formData.name.trim()}
@@ -309,16 +352,15 @@ export const GroupsPage: React.FC = () => {
                     <Input
                         label="Name"
                         value={formData.name}
-                        onChange={e => setFormData(d => ({ ...d, name: e.target.value }))}
+                        onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
                     />
                     <div>
-                        <label className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <textarea
                             value={formData.description}
-                            onChange={e => setFormData(d => ({ ...d, description: e.target.value }))}
+                            onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
                             rows={3}
                             className="w-full px-3 py-2 rounded-md border text-sm resize-none"
                             style={{
@@ -332,7 +374,9 @@ export const GroupsPage: React.FC = () => {
                         <p className="text-sm text-red-600">Failed to update group. Please try again.</p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="secondary" onClick={() => setEditGroup(null)}>Cancel</Button>
+                        <Button variant="secondary" onClick={() => setEditGroup(null)}>
+                            Cancel
+                        </Button>
                         <Button
                             loading={updateMutation.isPending}
                             disabled={!formData.name.trim()}
@@ -356,7 +400,7 @@ export const GroupsPage: React.FC = () => {
                         label="Grant duration"
                         options={EXPIRY_OPTIONS}
                         value={roleTtl}
-                        onChange={e => setRoleTtl(e.target.value)}
+                        onChange={(e) => setRoleTtl(e.target.value)}
                         helperText="Applied to the next role you check. Time-bound grants expire automatically."
                         fullWidth
                     />
@@ -367,7 +411,7 @@ export const GroupsPage: React.FC = () => {
                     </div>
                 ) : (
                     <div className="space-y-1 max-h-[55vh] overflow-y-auto pr-1">
-                        {(allRoles ?? []).map(role => {
+                        {(allRoles ?? []).map((role) => {
                             const assigned = assignedRoleIds.has(role.id);
                             return (
                                 <label
@@ -383,20 +427,28 @@ export const GroupsPage: React.FC = () => {
                                         className="h-4 w-4 rounded-sm accent-blue-600"
                                     />
                                     <div className="min-w-0">
-                                        <span className="text-sm font-medium flex items-center gap-2"
-                                            style={{ color: 'var(--text-primary)' }}>
+                                        <span
+                                            className="text-sm font-medium flex items-center gap-2"
+                                            style={{ color: 'var(--text-primary)' }}
+                                        >
                                             {role.name}
                                             {assigned && roleExpiryById.has(role.id) && (
-                                                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-                                                    style={{ backgroundColor: 'var(--warning-subtle, #fef9c3)', color: 'var(--warning, #a16207)' }}
-                                                    title={new Date(roleExpiryById.get(role.id) as string).toLocaleString()}>
+                                                <span
+                                                    className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                                                    style={{
+                                                        backgroundColor: 'var(--warning-subtle, #fef9c3)',
+                                                        color: 'var(--warning, #a16207)',
+                                                    }}
+                                                    title={new Date(
+                                                        roleExpiryById.get(role.id) as string
+                                                    ).toLocaleString()}
+                                                >
                                                     {formatRemaining(roleExpiryById.get(role.id) as string)}
                                                 </span>
                                             )}
                                         </span>
                                         {role.description && (
-                                            <span className="text-xs"
-                                                style={{ color: 'var(--text-muted)' }}>
+                                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                                                 {role.description}
                                             </span>
                                         )}
@@ -412,28 +464,38 @@ export const GroupsPage: React.FC = () => {
                     </div>
                 )}
                 <div className="flex justify-end pt-4 mt-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                    <Button variant="secondary" onClick={() => setManageGroupId(null)}>Close</Button>
+                    <Button variant="secondary" onClick={() => setManageGroupId(null)}>
+                        Close
+                    </Button>
                 </div>
             </Modal>
 
             {/* Delete Group */}
             <Modal
                 isOpen={deleteGroup !== null}
-                onClose={() => { setDeleteGroup(null); deleteMutation.reset(); }}
+                onClose={() => {
+                    setDeleteGroup(null);
+                    deleteMutation.reset();
+                }}
                 title="Delete Group"
                 size="sm"
             >
                 <div className="space-y-4">
                     <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                        Delete group{' '}
-                        <strong style={{ color: 'var(--text-primary)' }}>{deleteGroup?.name}</strong>?
-                        This action cannot be undone.
+                        Delete group <strong style={{ color: 'var(--text-primary)' }}>{deleteGroup?.name}</strong>? This
+                        action cannot be undone.
                     </p>
                     {deleteMutation.isError && (
                         <p className="text-sm text-red-600">Failed to delete group. Please try again.</p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="secondary" onClick={() => { setDeleteGroup(null); deleteMutation.reset(); }}>
+                        <Button
+                            variant="secondary"
+                            onClick={() => {
+                                setDeleteGroup(null);
+                                deleteMutation.reset();
+                            }}
+                        >
                             Cancel
                         </Button>
                         <Button variant="destructive" loading={deleteMutation.isPending} onClick={handleDelete}>
@@ -451,26 +513,37 @@ export const GroupsPage: React.FC = () => {
                 size="sm"
             >
                 {sharedSecretsLoading ? (
-                    <div className="flex justify-center py-8"><Spinner /></div>
+                    <div className="flex justify-center py-8">
+                        <Spinner />
+                    </div>
                 ) : (sharedSecrets ?? []).length === 0 ? (
                     <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>
                         No secrets are shared with this group.
                     </p>
                 ) : (
                     <ul className="space-y-1 max-h-[55vh] overflow-y-auto pr-1">
-                        {(sharedSecrets ?? []).map(s => (
-                            <li key={s.id} className="flex items-center justify-between rounded-md px-3 py-2.5"
-                                style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                                <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                        {(sharedSecrets ?? []).map((s) => (
+                            <li
+                                key={s.id}
+                                className="flex items-center justify-between rounded-md px-3 py-2.5"
+                                style={{ backgroundColor: 'var(--bg-subtle)' }}
+                            >
+                                <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                    {s.name}
+                                </span>
                                 {s.type && (
-                                    <span className="text-xs ml-3 shrink-0" style={{ color: 'var(--text-muted)' }}>{s.type}</span>
+                                    <span className="text-xs ml-3 shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                        {s.type}
+                                    </span>
                                 )}
                             </li>
                         ))}
                     </ul>
                 )}
                 <div className="flex justify-end pt-4 mt-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                    <Button variant="secondary" onClick={() => setSecretsGroup(null)}>Close</Button>
+                    <Button variant="secondary" onClick={() => setSecretsGroup(null)}>
+                        Close
+                    </Button>
                 </div>
             </Modal>
         </div>

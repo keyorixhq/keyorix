@@ -36,9 +36,17 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-            <div className="w-full max-w-md rounded-xl p-6 shadow-2xl" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-                <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>New Project</h2>
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+        >
+            <div
+                className="w-full max-w-md rounded-xl p-6 shadow-2xl"
+                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)' }}
+            >
+                <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+                    New Project
+                </h2>
 
                 <div className="space-y-4">
                     <div>
@@ -48,12 +56,16 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                         <input
                             type="text"
                             value={name}
-                            onChange={e => setName(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                            onChange={(e) => setName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
                             placeholder="e.g. backend-api"
                             autoFocus
                             className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
-                            style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            style={{
+                                backgroundColor: 'var(--bg-app)',
+                                border: '1px solid var(--border)',
+                                color: 'var(--text-primary)',
+                            }}
                         />
                     </div>
                     <div>
@@ -63,10 +75,14 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                         <input
                             type="text"
                             value={description}
-                            onChange={e => setDescription(e.target.value)}
+                            onChange={(e) => setDescription(e.target.value)}
                             placeholder="Optional"
                             className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
-                            style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            style={{
+                                backgroundColor: 'var(--bg-app)',
+                                border: '1px solid var(--border)',
+                                color: 'var(--text-primary)',
+                            }}
                         />
                     </div>
                 </div>
@@ -76,13 +92,19 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                 </p>
 
                 <div className="flex justify-end gap-2 mt-6">
-                    <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg"
-                        style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-subtle)' }}>
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-2 text-sm rounded-lg"
+                        style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-subtle)' }}
+                    >
                         Cancel
                     </button>
-                    <button onClick={handleSubmit} disabled={!name.trim() || createProject.isPending}
+                    <button
+                        onClick={handleSubmit}
+                        disabled={!name.trim() || createProject.isPending}
                         className="px-4 py-2 text-sm rounded-lg font-medium disabled:opacity-50"
-                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
+                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                    >
                         {createProject.isPending ? 'Creating…' : 'Create Project'}
                     </button>
                 </div>
@@ -105,23 +127,38 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
     const deleted = project.deleted;
     return (
         <div
-            onClick={() => { if (!deleted) navigate(ROUTES.PROJECT_DETAIL(project.id)); }}
+            onClick={() => {
+                if (!deleted) navigate(ROUTES.PROJECT_DETAIL(project.id));
+            }}
             className={`flex items-center gap-4 px-4 py-3 rounded-lg transition-colors duration-100 group ${deleted ? '' : 'cursor-pointer'}`}
-            style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-surface)', opacity: deleted ? 0.7 : 1 }}
-            onMouseEnter={e => { if (!deleted) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'; }}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'}
+            style={{
+                border: '1px solid var(--border)',
+                backgroundColor: 'var(--bg-surface)',
+                opacity: deleted ? 0.7 : 1,
+            }}
+            onMouseEnter={(e) => {
+                if (!deleted) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)';
+            }}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)')}
         >
-            <div className="shrink-0 h-9 w-9 rounded-lg flex items-center justify-center"
-                style={{ backgroundColor: 'var(--accent-subtle)' }}>
+            <div
+                className="shrink-0 h-9 w-9 rounded-lg flex items-center justify-center"
+                style={{ backgroundColor: 'var(--accent-subtle)' }}
+            >
                 <FolderIcon className="h-5 w-5" style={{ color: 'var(--accent)' }} />
             </div>
 
             <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                <p
+                    className="text-sm font-medium truncate flex items-center gap-2"
+                    style={{ color: 'var(--text-primary)' }}
+                >
                     {project.name}
                     {deleted && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
-                            style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                        <span
+                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
+                            style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                        >
                             Deleted
                         </span>
                     )}
@@ -134,8 +171,14 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
             </div>
 
             <div className="hidden sm:flex items-center gap-4 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                <span><span style={{ color: 'var(--text-secondary)' }}>{project.secretCount ?? 0}</span> secret{project.secretCount === 1 ? '' : 's'}</span>
-                <span><span style={{ color: 'var(--text-secondary)' }}>{project.environmentCount ?? 0}</span> env{project.environmentCount === 1 ? '' : 's'}</span>
+                <span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{project.secretCount ?? 0}</span> secret
+                    {project.secretCount === 1 ? '' : 's'}
+                </span>
+                <span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{project.environmentCount ?? 0}</span> env
+                    {project.environmentCount === 1 ? '' : 's'}
+                </span>
                 {project.lastActivity && (
                     <span className="hidden md:block" title={`Last activity: ${formatDate(project.lastActivity)}`}>
                         {formatRelativeTime(project.lastActivity)}
@@ -143,7 +186,10 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
                 )}
                 {deleted ? (
                     <button
-                        onClick={e => { e.stopPropagation(); onRestore(project); }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onRestore(project);
+                        }}
                         disabled={restoring}
                         className="flex items-center gap-1 p-1.5 rounded-sm transition-colors disabled:opacity-50"
                         style={{ color: 'var(--accent)' }}
@@ -154,7 +200,10 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
                     </button>
                 ) : (
                     <button
-                        onClick={e => { e.stopPropagation(); onDeleteRequest(project); }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteRequest(project);
+                        }}
                         className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
                         style={{ color: 'var(--error)' }}
                         title="Delete project"
@@ -206,24 +255,29 @@ export const ProjectsListPage: React.FC = () => {
     };
 
     const filtered = search.trim()
-        ? projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) ||
-            (p.description ?? '').toLowerCase().includes(search.toLowerCase()))
+        ? projects.filter(
+              (p) =>
+                  p.name.toLowerCase().includes(search.toLowerCase()) ||
+                  (p.description ?? '').toLowerCase().includes(search.toLowerCase())
+          )
         : projects;
 
     const recent = [...projects]
-        .filter(p => !p.deleted)
+        .filter((p) => !p.deleted)
         .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
         .slice(0, 5);
 
-    const recentIds = new Set(recent.map(p => p.id));
-    const nonRecent = filtered.filter(p => !recentIds.has(p.id));
+    const recentIds = new Set(recent.map((p) => p.id));
+    const nonRecent = filtered.filter((p) => !recentIds.has(p.id));
 
     return (
         <div className="p-6 max-w-4xl mx-auto">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div>
-                    <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>Projects</h1>
+                    <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        Projects
+                    </h1>
                     <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
                         Each project has its own environments and secrets.
                     </p>
@@ -241,22 +295,28 @@ export const ProjectsListPage: React.FC = () => {
             {/* Search + show-deleted toggle */}
             <div className="flex items-center gap-3 mb-6">
                 <div className="relative flex-1">
-                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: 'var(--text-muted)' }} />
+                    <MagnifyingGlassIcon
+                        className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4"
+                        style={{ color: 'var(--text-muted)' }}
+                    />
                     <input
                         type="text"
                         value={search}
-                        onChange={e => setSearch(e.target.value)}
+                        onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search projects…"
                         className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-hidden"
-                        style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        style={{
+                            backgroundColor: 'var(--bg-surface)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
                     />
                 </div>
-                <label className="flex items-center gap-2 text-sm shrink-0 cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
-                    <input
-                        type="checkbox"
-                        checked={showDeleted}
-                        onChange={e => setShowDeleted(e.target.checked)}
-                    />
+                <label
+                    className="flex items-center gap-2 text-sm shrink-0 cursor-pointer"
+                    style={{ color: 'var(--text-secondary)' }}
+                >
+                    <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
                     Show deleted
                 </label>
             </div>
@@ -264,12 +324,17 @@ export const ProjectsListPage: React.FC = () => {
             {isLoading && (
                 <div className="text-center py-16">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-3" />
-                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading projects…</p>
+                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                        Loading projects…
+                    </p>
                 </div>
             )}
 
             {isError && !isLoading && (
-                <div className="rounded-lg px-4 py-3 text-sm" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                <div
+                    className="rounded-lg px-4 py-3 text-sm"
+                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                >
                     Failed to load projects. Check that the backend is running.
                 </div>
             )}
@@ -279,12 +344,21 @@ export const ProjectsListPage: React.FC = () => {
                     {/* Recent — only when no search */}
                     {!search && recent.length > 0 && (
                         <section className="mb-8">
-                            <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+                            <h2
+                                className="text-xs font-semibold uppercase tracking-wider mb-3"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
                                 Recent
                             </h2>
                             <div className="space-y-2">
-                                {recent.map(p => (
-                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} onRestore={handleRestore} restoring={restoreProject.isPending} />
+                                {recent.map((p) => (
+                                    <ProjectRow
+                                        key={p.id}
+                                        project={p}
+                                        onDeleteRequest={setProjectToDelete}
+                                        onRestore={handleRestore}
+                                        restoring={restoreProject.isPending}
+                                    />
                                 ))}
                             </div>
                         </section>
@@ -294,13 +368,22 @@ export const ProjectsListPage: React.FC = () => {
                     {(!search ? nonRecent : filtered).length > 0 && (
                         <section>
                             {!search && (
-                                <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+                                <h2
+                                    className="text-xs font-semibold uppercase tracking-wider mb-3"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
                                     All Projects
                                 </h2>
                             )}
                             <div className="space-y-2">
-                                {(!search ? nonRecent : filtered).map(p => (
-                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} onRestore={handleRestore} restoring={restoreProject.isPending} />
+                                {(!search ? nonRecent : filtered).map((p) => (
+                                    <ProjectRow
+                                        key={p.id}
+                                        project={p}
+                                        onDeleteRequest={setProjectToDelete}
+                                        onRestore={handleRestore}
+                                        restoring={restoreProject.isPending}
+                                    />
                                 ))}
                             </div>
                         </section>
@@ -341,24 +424,25 @@ export const ProjectsListPage: React.FC = () => {
             {/* Delete confirmation modal */}
             <Modal isOpen={projectToDelete !== null} onClose={closeDeleteModal} title="Delete Project" size="sm">
                 <div className="space-y-4">
-                    {deleteError && (
-                        <Alert type="error" title="Cannot delete project" message={deleteError} />
-                    )}
+                    {deleteError && <Alert type="error" title="Cannot delete project" message={deleteError} />}
                     {!deleteError && (
                         <>
                             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                Delete project <span className="font-semibold">{projectToDelete?.name}</span>?
-                                All secrets and environments will be soft-deleted.
-                                Type the project name to confirm.
+                                Delete project <span className="font-semibold">{projectToDelete?.name}</span>? All
+                                secrets and environments will be soft-deleted. Type the project name to confirm.
                             </p>
                             <input
                                 type="text"
                                 value={deleteConfirm}
-                                onChange={e => setDeleteConfirm(e.target.value)}
+                                onChange={(e) => setDeleteConfirm(e.target.value)}
                                 placeholder={projectToDelete?.name}
                                 autoFocus
                                 className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
-                                style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                                style={{
+                                    backgroundColor: 'var(--bg-app)',
+                                    color: 'var(--text-primary)',
+                                    borderColor: 'var(--border)',
+                                }}
                             />
                         </>
                     )}

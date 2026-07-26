@@ -8,7 +8,12 @@ const issueMutate = vi.fn((_: unknown, opts: { onSuccess: (c: unknown) => void }
         leaseId: 'lease-1',
         username: '',
         password: '',
-        fields: { access_key_id: 'AKIAEXAMPLE', secret_access_key: 'sekret', session_token: 'tok', expiration: '2026-06-15T12:00:00Z' },
+        fields: {
+            access_key_id: 'AKIAEXAMPLE',
+            secret_access_key: 'sekret',
+            session_token: 'tok',
+            expiration: '2026-06-15T12:00:00Z',
+        },
         expiresAt: '2026-06-15T12:00:00Z',
     })
 );

@@ -23,9 +23,12 @@ export const EnvironmentPills: React.FC<EnvironmentPillsProps> = ({
     if (isLoading) {
         return (
             <div className="flex gap-2 mb-5">
-                {[1, 2, 3].map(i => (
-                    <div key={i} className="h-7 w-24 rounded-full animate-pulse"
-                        style={{ backgroundColor: 'var(--bg-muted)' }} />
+                {[1, 2, 3].map((i) => (
+                    <div
+                        key={i}
+                        className="h-7 w-24 rounded-full animate-pulse"
+                        style={{ backgroundColor: 'var(--bg-muted)' }}
+                    />
                 ))}
             </div>
         );
@@ -35,7 +38,7 @@ export const EnvironmentPills: React.FC<EnvironmentPillsProps> = ({
 
     return (
         <div className="flex flex-wrap gap-2 mb-5">
-            {environments.map(env => {
+            {environments.map((env) => {
                 const active = env.name === activeEnvName;
                 return (
                     <button
@@ -43,17 +46,21 @@ export const EnvironmentPills: React.FC<EnvironmentPillsProps> = ({
                         type="button"
                         onClick={() => onChange(env.name)}
                         className={clsx(
-                            'px-3 py-1 rounded-full text-xs font-medium transition-colors duration-100 border',
+                            'px-3 py-1 rounded-full text-xs font-medium transition-colors duration-100 border'
                         )}
-                        style={active ? {
-                            backgroundColor: 'var(--accent)',
-                            borderColor: 'var(--accent)',
-                            color: '#fff',
-                        } : {
-                            backgroundColor: 'transparent',
-                            borderColor: 'var(--border-strong)',
-                            color: 'var(--text-secondary)',
-                        }}
+                        style={
+                            active
+                                ? {
+                                      backgroundColor: 'var(--accent)',
+                                      borderColor: 'var(--accent)',
+                                      color: '#fff',
+                                  }
+                                : {
+                                      backgroundColor: 'transparent',
+                                      borderColor: 'var(--border-strong)',
+                                      color: 'var(--text-secondary)',
+                                  }
+                        }
                     >
                         {env.name.charAt(0).toUpperCase() + env.name.slice(1)}
                     </button>

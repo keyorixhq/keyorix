@@ -39,7 +39,9 @@ const StatCard: React.FC<{
                     {value ?? '—'}
                 </div>
             )}
-            <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{label}</div>
+            <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                {label}
+            </div>
         </div>
     </div>
 );
@@ -95,12 +97,7 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
 
             {/* Stat cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-                <StatCard
-                    icon={KeyIcon}
-                    label="Secrets"
-                    value={project?.secretCount}
-                    loading={projectLoading}
-                />
+                <StatCard icon={KeyIcon} label="Secrets" value={project?.secretCount} loading={projectLoading} />
                 <StatCard
                     icon={ServerStackIcon}
                     label="Environments"
@@ -128,7 +125,6 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
                     >
                         <div className="h-4 w-56 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
                     </div>
-
                 ) : !drift || envCount < 2 ? (
                     <div
                         className="rounded-lg border px-4 py-3 flex items-center gap-3"
@@ -139,7 +135,6 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
                             Add at least two environments to enable drift detection.
                         </p>
                     </div>
-
                 ) : drifted.length === 0 ? (
                     <div
                         className="rounded-lg border px-4 py-3 flex items-center gap-3"
@@ -150,7 +145,6 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
                             All {envCount} environments in sync
                         </p>
                     </div>
-
                 ) : (
                     <div
                         className="rounded-lg border px-4 py-3"
@@ -170,8 +164,12 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
                             </Link>
                         </div>
                         <ul className="mt-2 space-y-1">
-                            {drifted.slice(0, 5).map(key => (
-                                <li key={key.name} className="text-xs font-mono" style={{ color: 'var(--text-secondary)' }}>
+                            {drifted.slice(0, 5).map((key) => (
+                                <li
+                                    key={key.name}
+                                    className="text-xs font-mono"
+                                    style={{ color: 'var(--text-secondary)' }}
+                                >
                                     {key.name} —{' '}
                                     {key.status === 'missing_in_some'
                                         ? 'missing in some environments'

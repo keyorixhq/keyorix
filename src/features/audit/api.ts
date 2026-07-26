@@ -9,12 +9,7 @@ export interface AuditLogEntry {
     timestamp: string;
 }
 
-export const useAuditLog = (params?: {
-    page?: number;
-    pageSize?: number;
-    action?: string;
-    projectId?: number;
-}) => {
+export const useAuditLog = (params?: { page?: number; pageSize?: number; action?: string; projectId?: number }) => {
     return useQuery({
         queryKey: ['audit-log', params],
         queryFn: async () => {

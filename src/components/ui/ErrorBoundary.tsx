@@ -49,9 +49,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
             <div className="min-h-screen flex flex-col items-center justify-center bg-app px-4">
                 <div className="w-full max-w-md rounded-lg border border-base bg-surface py-10 px-8 shadow-sm text-center">
                     <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-[var(--warning)]" />
-                    <h2 className="mt-4 text-lg font-semibold text-[var(--text-primary)]">
-                        Something went wrong
-                    </h2>
+                    <h2 className="mt-4 text-lg font-semibold text-[var(--text-primary)]">Something went wrong</h2>
                     <p className="mt-2 text-sm text-[var(--text-secondary)]">
                         An unexpected error occurred. Try again or reload the page.
                     </p>
@@ -96,9 +94,7 @@ const RouteErrorFallback: React.FC<RouteErrorFallbackProps> = ({ error, resetErr
     <div className="flex min-h-96 items-center justify-center p-8">
         <div className="text-center">
             <ExclamationTriangleIcon className="mx-auto h-10 w-10 text-[var(--warning)]" />
-            <h3 className="mt-3 text-base font-semibold text-[var(--text-primary)]">
-                Page failed to load
-            </h3>
+            <h3 className="mt-3 text-base font-semibold text-[var(--text-primary)]">Page failed to load</h3>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
                 {error.message || 'An unexpected error occurred'}
             </p>

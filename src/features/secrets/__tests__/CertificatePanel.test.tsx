@@ -36,7 +36,11 @@ describe('CertificatePanel', () => {
     });
 
     it('shows an expired badge', () => {
-        mockUseCert.mockReturnValue({ data: { ...baseCert, is_expired: true, days_until_expiry: -5 }, isLoading: false, isError: false });
+        mockUseCert.mockReturnValue({
+            data: { ...baseCert, is_expired: true, days_until_expiry: -5 },
+            isLoading: false,
+            isError: false,
+        });
         render(<CertificatePanel secretId={7} />);
         expect(screen.getByText('Expired')).toBeInTheDocument();
     });

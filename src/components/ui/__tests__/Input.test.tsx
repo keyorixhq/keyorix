@@ -16,7 +16,7 @@ describe('Input', () => {
         fireEvent.change(input, { target: { value: 'test@example.com' } });
         expect(handleChange).toHaveBeenCalledWith(
             expect.objectContaining({
-                target: expect.objectContaining({ value: 'test@example.com' })
+                target: expect.objectContaining({ value: 'test@example.com' }),
             })
         );
     });

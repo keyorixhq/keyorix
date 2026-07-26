@@ -16,11 +16,7 @@ export const useAdminStats = () => {
     });
 };
 
-export const useAdminUsers = (params?: {
-    page?: number;
-    pageSize?: number;
-    search?: string;
-}) => {
+export const useAdminUsers = (params?: { page?: number; pageSize?: number; search?: string }) => {
     return useQuery({
         queryKey: queryKeys.admin.users(params),
         queryFn: () => adminApi.getUsers(params),
@@ -101,8 +97,7 @@ export const useAdminCreateUser = () => {
 export const useAdminUpdateUser = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ id, body }: { id: number; body: object }) =>
-            usersApi.update(id, body),
+        mutationFn: ({ id, body }: { id: number; body: object }) => usersApi.update(id, body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
     });
 };
@@ -335,8 +330,11 @@ export const useRunComplianceDigest = () => useMutation({ mutationFn: () => admi
 export const useMigrateUserToMachine = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (vars: { projectId: number; userId: number; body: { username: string; identity_type?: string; name?: string; keep_user?: boolean } }) =>
-            adminApi.migrateUserToMachine(vars.projectId, vars.body),
+        mutationFn: (vars: {
+            projectId: number;
+            userId: number;
+            body: { username: string; identity_type?: string; name?: string; keep_user?: boolean };
+        }) => adminApi.migrateUserToMachine(vars.projectId, vars.body),
         onSuccess: (_data, { userId }) => {
             queryClient.invalidateQueries({ queryKey: ['user-detail', userId] });
             queryClient.invalidateQueries({ queryKey: ['admin-users'] });

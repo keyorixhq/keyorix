@@ -9,10 +9,7 @@ interface PublicRouteProps {
     redirectTo?: string;
 }
 
-export const PublicRoute: React.FC<PublicRouteProps> = ({
-    children,
-    redirectTo = ROUTES.DASHBOARD,
-}) => {
+export const PublicRoute: React.FC<PublicRouteProps> = ({ children, redirectTo = ROUTES.DASHBOARD }) => {
     const { isAuthenticated, isLoading } = useAuth();
     // const location = useLocation(); // Not needed for current implementation
 

@@ -26,11 +26,10 @@ export const apiClient: AxiosInstance = axios.create({
 
 apiClient.interceptors.request.use(
     async (interceptorConfig) => {
-
         const authStore = useAuthStore.getState();
 
-        const isAuthEndpoint = interceptorConfig.url?.includes('/auth/login') ||
-            interceptorConfig.url?.includes('/auth/refresh');
+        const isAuthEndpoint =
+            interceptorConfig.url?.includes('/auth/login') || interceptorConfig.url?.includes('/auth/refresh');
 
         // The session itself now rides an httpOnly cookie the browser attaches
         // automatically (withCredentials: true, below) — this interceptor no
@@ -120,9 +119,7 @@ apiClient.interceptors.response.use(
     }
 );
 
-export const makeAuthenticatedRequest = async <T>(
-    reqConfig: AxiosRequestConfig
-): Promise<T> => {
+export const makeAuthenticatedRequest = async <T>(reqConfig: AxiosRequestConfig): Promise<T> => {
     const response = await apiClient.request<T>(reqConfig);
     return response.data;
 };

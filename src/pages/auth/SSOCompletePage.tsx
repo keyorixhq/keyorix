@@ -19,7 +19,7 @@ function isSafeReturnTo(path: string): boolean {
 // fragment, and navigate into the app — or back to /login with an error.
 export const SSOCompletePage: React.FC = () => {
     const navigate = useNavigate();
-    const completeSSOLogin = useAuthStore(s => s.completeSSOLogin);
+    const completeSSOLogin = useAuthStore((s) => s.completeSSOLogin);
     const ran = useRef(false);
 
     useEffect(() => {
@@ -39,7 +39,7 @@ export const SSOCompletePage: React.FC = () => {
             try {
                 await completeSSOLogin(
                     params.get('expires_at') || undefined,
-                    params.get('absolute_expires_at') || undefined,
+                    params.get('absolute_expires_at') || undefined
                 );
                 // Scrub the fragment from the address bar before navigating onward.
                 window.history.replaceState(null, '', window.location.pathname);

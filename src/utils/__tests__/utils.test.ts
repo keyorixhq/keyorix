@@ -33,9 +33,7 @@ describe('maskSensitiveData', () => {
 describe('sanitizeInput', () => {
     it('escapes HTML to prevent injection', () => {
         expect(sanitizeInput('<b>x</b>')).toBe('&lt;b&gt;x&lt;/b&gt;');
-        expect(sanitizeInput('<script>alert(1)</script>')).toBe(
-            '&lt;script&gt;alert(1)&lt;/script&gt;'
-        );
+        expect(sanitizeInput('<script>alert(1)</script>')).toBe('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
 
     it('leaves plain text untouched', () => {

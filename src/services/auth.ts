@@ -7,7 +7,7 @@ import {
     PasswordResetConfirm,
     User,
     ApiResponse,
-    ProfileImpersonation
+    ProfileImpersonation,
 } from '../types';
 import { API_ENDPOINTS } from '../constants';
 import { getEnvConfig } from '../utils';
@@ -44,14 +44,11 @@ authApi.interceptors.request.use((requestConfig) => {
 export const authService = {
     async login(credentials: LoginFormData): Promise<LoginResponse> {
         try {
-            const response: AxiosResponse<ApiResponse<LoginResponse>> = await authApi.post(
-                API_ENDPOINTS.AUTH.LOGIN,
-                {
-                    username: credentials.username,
-                    password: credentials.password,
-                    rememberMe: credentials.rememberMe,
-                }
-            );
+            const response: AxiosResponse<ApiResponse<LoginResponse>> = await authApi.post(API_ENDPOINTS.AUTH.LOGIN, {
+                username: credentials.username,
+                password: credentials.password,
+                rememberMe: credentials.rememberMe,
+            });
 
             if (!response.data.data) {
                 throw new Error(response.data.message || 'Login failed');
@@ -107,9 +104,8 @@ export const authService = {
      */
     async getProfile(): Promise<User & { impersonation?: ProfileImpersonation }> {
         try {
-            const response: AxiosResponse<ApiResponse<User & { impersonation?: ProfileImpersonation }>> = await authApi.get(
-                API_ENDPOINTS.AUTH.PROFILE
-            );
+            const response: AxiosResponse<ApiResponse<User & { impersonation?: ProfileImpersonation }>> =
+                await authApi.get(API_ENDPOINTS.AUTH.PROFILE);
 
             if (!response.data.data) {
                 throw new Error(response.data.message || 'Failed to get profile');
@@ -136,17 +132,15 @@ export const authService = {
 
     async requestPasswordReset(data: PasswordResetRequest): Promise<void> {
         try {
-            const response: AxiosResponse<ApiResponse<void>> = await authApi.post(
-                '/api/auth/password-reset',
-                data
-            );
+            const response: AxiosResponse<ApiResponse<void>> = await authApi.post('/api/auth/password-reset', data);
 
             if (!response.data.message) {
                 throw new Error('Password reset request failed');
             }
         } catch (error) {
             if (axios.isAxiosError(error)) {
-                const message = error.response?.data?.error || error.response?.data?.message || 'Password reset request failed';
+                const message =
+                    error.response?.data?.error || error.response?.data?.message || 'Password reset request failed';
                 throw new Error(message, { cause: error });
             }
             throw error;

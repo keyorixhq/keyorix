@@ -27,7 +27,12 @@ export const PasswordResetForm: React.FC<PasswordResetFormProps> = ({
     error,
     success = false,
 }) => {
-    const { register, handleSubmit, getValues, formState: { errors } } = useForm<z.infer<typeof schema>>({
+    const {
+        register,
+        handleSubmit,
+        getValues,
+        formState: { errors },
+    } = useForm<z.infer<typeof schema>>({
         resolver: zodResolver(schema),
         defaultValues: { email: '' },
     });
@@ -35,16 +40,18 @@ export const PasswordResetForm: React.FC<PasswordResetFormProps> = ({
     if (success) {
         return (
             <div className="text-center">
-                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full mb-4"
-                    style={{ backgroundColor: 'var(--success-subtle)' }}>
+                <div
+                    className="mx-auto flex items-center justify-center h-12 w-12 rounded-full mb-4"
+                    style={{ backgroundColor: 'var(--success-subtle)' }}
+                >
                     <CheckCircleIcon className="h-6 w-6" style={{ color: 'var(--success)' }} />
                 </div>
                 <h3 className="text-lg font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
                     Reset Link Sent
                 </h3>
                 <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>
-                    We've sent a password reset link to {getValues('email')}. Please check
-                    your email and follow the instructions to reset your password.
+                    We've sent a password reset link to {getValues('email')}. Please check your email and follow the
+                    instructions to reset your password.
                 </p>
                 <Button variant="outline" className="w-full" onClick={onBack}>
                     Back to Login
@@ -80,13 +87,7 @@ export const PasswordResetForm: React.FC<PasswordResetFormProps> = ({
                 <Button type="submit" className="w-full" loading={isLoading} disabled={isLoading}>
                     Send Reset Link
                 </Button>
-                <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={onBack}
-                    disabled={isLoading}
-                >
+                <Button type="button" variant="outline" className="w-full" onClick={onBack} disabled={isLoading}>
                     Back to Login
                 </Button>
             </div>

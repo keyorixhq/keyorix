@@ -9,8 +9,8 @@ import { Alert } from '../../components/ui/Alert';
 import type { LoginFormData } from '../../types';
 
 const schema = z.object({
-    username:   z.string().min(1, 'Username is required'),
-    password:   z.string().min(6, 'Password must be at least 6 characters'),
+    username: z.string().min(1, 'Username is required'),
+    password: z.string().min(6, 'Password must be at least 6 characters'),
     rememberMe: z.boolean(),
 });
 
@@ -21,15 +21,14 @@ interface LoginFormProps {
     onForgotPassword?: () => void;
 }
 
-export const LoginForm: React.FC<LoginFormProps> = ({
-    onSubmit,
-    isLoading = false,
-    error,
-    onForgotPassword,
-}) => {
+export const LoginForm: React.FC<LoginFormProps> = ({ onSubmit, isLoading = false, error, onForgotPassword }) => {
     const [showPassword, setShowPassword] = useState(false);
 
-    const { register, handleSubmit, formState: { errors } } = useForm<z.infer<typeof schema>>({
+    const {
+        register,
+        handleSubmit,
+        formState: { errors },
+    } = useForm<z.infer<typeof schema>>({
         resolver: zodResolver(schema),
         defaultValues: { username: '', password: '', rememberMe: false },
     });
@@ -56,14 +55,16 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                 trailingElement={
                     <button
                         type="button"
-                        onClick={() => setShowPassword(v => !v)}
+                        onClick={() => setShowPassword((v) => !v)}
                         disabled={isLoading}
                         aria-label={showPassword ? 'Hide password' : 'Show password'}
                         className="focus:outline-hidden"
                     >
-                        {showPassword
-                            ? <EyeSlashIcon className="h-5 w-5 text-base-muted" />
-                            : <EyeIcon className="h-5 w-5 text-base-muted" />}
+                        {showPassword ? (
+                            <EyeSlashIcon className="h-5 w-5 text-base-muted" />
+                        ) : (
+                            <EyeIcon className="h-5 w-5 text-base-muted" />
+                        )}
                     </button>
                 }
                 {...register('password')}

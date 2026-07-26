@@ -57,7 +57,13 @@ describe('SetupPage', () => {
 
     it('consumes the token, lands the user logged in, and navigates to the dashboard', async () => {
         describeMock.mockResolvedValue({ purpose: 'account_setup', email: 'new@acme.io' });
-        consumeMock.mockResolvedValue({ token: 'sess-xyz', user_id: 1, username: 'dana', email: 'new@acme.io', expires_at: '2026-06-06T00:00:00Z' });
+        consumeMock.mockResolvedValue({
+            token: 'sess-xyz',
+            user_id: 1,
+            username: 'dana',
+            email: 'new@acme.io',
+            expires_at: '2026-06-06T00:00:00Z',
+        });
         render(<SetupPage />);
 
         await waitFor(() => expect(screen.getByLabelText('New password')).toBeInTheDocument());

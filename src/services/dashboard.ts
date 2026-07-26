@@ -12,10 +12,7 @@ export const dashboardApi = {
         pageSize?: number;
         type?: string;
     }): Promise<PaginatedResponse<ActivityItem>> {
-        const response = await apiClient.get<ApiResponse<any>>(
-            '/api/v1/dashboard/activity',
-            { params }
-        );
+        const response = await apiClient.get<ApiResponse<any>>('/api/v1/dashboard/activity', { params });
         const feed = response.data.data;
         return {
             data: feed.items ?? [],

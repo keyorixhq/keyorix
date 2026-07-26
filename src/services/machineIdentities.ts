@@ -28,13 +28,7 @@ export interface MachineIdentity {
     revokedAt?: string;
 }
 
-export const MACHINE_IDENTITY_TYPES: MachineIdentityType[] = [
-    'ci',
-    'k8s',
-    'service',
-    'automation',
-    'other',
-];
+export const MACHINE_IDENTITY_TYPES: MachineIdentityType[] = ['ci', 'k8s', 'service', 'automation', 'other'];
 
 // STALE_MACHINE_IDENTITY_DAYS mirrors the server's default stale window (#319).
 export const STALE_MACHINE_IDENTITY_DAYS = 90;
@@ -42,7 +36,11 @@ export const STALE_MACHINE_IDENTITY_DAYS = 90;
 // isStaleMachineIdentity reports whether an ACTIVE machine identity hasn't been seen
 // within `days` (a never-seen one counts from its creation, so a brand-new identity
 // isn't flagged until it has had the full window). A hint for revocation hygiene.
-export function isStaleMachineIdentity(m: MachineIdentity, now: number = Date.now(), days = STALE_MACHINE_IDENTITY_DAYS): boolean {
+export function isStaleMachineIdentity(
+    m: MachineIdentity,
+    now: number = Date.now(),
+    days = STALE_MACHINE_IDENTITY_DAYS
+): boolean {
     if (m.state !== 'active') return false;
     const ref = m.lastSeenAt ?? m.createdAt;
     if (!ref) return false;
@@ -124,26 +122,17 @@ export const machineIdentitiesApi = {
 
     // Advance the lifecycle. The server enforces the state machine (409 on an
     // illegal transition).
-    async transition(
-        projectId: number,
-        machineId: number,
-        action: MachineAction
-    ): Promise<MachineIdentity> {
-        const response = await apiClient.put(
-            `/api/v1/projects/${projectId}/machine-identities/${machineId}`,
-            { action }
-        );
+    async transition(projectId: number, machineId: number, action: MachineAction): Promise<MachineIdentity> {
+        const response = await apiClient.put(`/api/v1/projects/${projectId}/machine-identities/${machineId}`, {
+            action,
+        });
         const m = response.data.data?.machine_identity ?? response.data.data ?? response.data;
         return normalizeMachineIdentity(m);
     },
 
     // Set (or clear, with '') the machine identity's data-classification label
     // (ISO 27001 A.5.12).
-    async classify(
-        projectId: number,
-        machineId: number,
-        classification: string
-    ): Promise<MachineIdentity> {
+    async classify(projectId: number, machineId: number, classification: string): Promise<MachineIdentity> {
         const response = await apiClient.patch(
             `/api/v1/projects/${projectId}/machine-identities/${machineId}/classification`,
             { classification }
@@ -153,9 +142,7 @@ export const machineIdentitiesApi = {
     },
 
     async listTokens(projectId: number, machineId: number): Promise<MachineToken[]> {
-        const response = await apiClient.get(
-            `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens`
-        );
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens`);
         const rows = response.data.data?.tokens ?? response.data.tokens ?? [];
         return rows.map(normalizeToken);
     },
@@ -166,14 +153,11 @@ export const machineIdentitiesApi = {
         machineId: number,
         opts: { name: string; expiresInDays?: number; classification?: string }
     ): Promise<IssuedMachineToken> {
-        const response = await apiClient.post(
-            `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens`,
-            {
-                name: opts.name,
-                expires_in_days: opts.expiresInDays ?? 0,
-                classification: opts.classification ?? '',
-            }
-        );
+        const response = await apiClient.post(`/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens`, {
+            name: opts.name,
+            expires_in_days: opts.expiresInDays ?? 0,
+            classification: opts.classification ?? '',
+        });
         const t = response.data.data ?? response.data;
         return {
             token: t.token ?? '',
@@ -185,18 +169,11 @@ export const machineIdentitiesApi = {
     },
 
     async revokeToken(projectId: number, machineId: number, tokenId: number): Promise<void> {
-        await apiClient.delete(
-            `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens/${tokenId}`
-        );
+        await apiClient.delete(`/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens/${tokenId}`);
     },
 
     // Set (or clear, with '') a token's data-classification label (ISO A.5.12).
-    async classifyToken(
-        projectId: number,
-        machineId: number,
-        tokenId: number,
-        classification: string
-    ): Promise<void> {
+    async classifyToken(projectId: number, machineId: number, tokenId: number, classification: string): Promise<void> {
         await apiClient.patch(
             `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens/${tokenId}/classification`,
             { classification }

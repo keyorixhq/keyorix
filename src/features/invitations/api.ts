@@ -26,8 +26,7 @@ export function useCreateInvitation(projectId: number) {
     return useMutation({
         mutationFn: ({ email, role }: { email: string; role: string }) =>
             projectInvitationsApi.createInvitation(projectId, email, role),
-        onSuccess: () =>
-            queryClient.invalidateQueries({ queryKey: INVITATION_KEYS.invitations(projectId) }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: INVITATION_KEYS.invitations(projectId) }),
     });
 }
 
@@ -53,10 +52,8 @@ export function useCreateGlobalInvitation() {
 export function useRevokeInvitation(projectId: number) {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (invitationId: number) =>
-            projectInvitationsApi.revokeInvitation(projectId, invitationId),
-        onSuccess: () =>
-            queryClient.invalidateQueries({ queryKey: INVITATION_KEYS.invitations(projectId) }),
+        mutationFn: (invitationId: number) => projectInvitationsApi.revokeInvitation(projectId, invitationId),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: INVITATION_KEYS.invitations(projectId) }),
     });
 }
 

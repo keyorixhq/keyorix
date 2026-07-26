@@ -1,12 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import {
-    FolderIcon,
-    ChevronUpDownIcon,
-    MagnifyingGlassIcon,
-    PlusIcon,
-    CheckIcon,
-} from '@heroicons/react/24/outline';
+import { FolderIcon, ChevronUpDownIcon, MagnifyingGlassIcon, PlusIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { useProjects } from '../../features/projects/api';
 import { useProjectMruStore } from '../../store';
 
@@ -28,14 +22,14 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
     const navigate = useNavigate();
     const { data: projects = [], isLoading } = useProjects();
     const currentProjectId = useCurrentProjectId();
-    const recentIds = useProjectMruStore(s => s.recentIds);
+    const recentIds = useProjectMruStore((s) => s.recentIds);
 
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState('');
     const containerRef = useRef<HTMLDivElement>(null);
     const searchRef = useRef<HTMLInputElement>(null);
 
-    const currentProject = projects.find(p => p.id === currentProjectId) ?? null;
+    const currentProject = projects.find((p) => p.id === currentProjectId) ?? null;
 
     // Close on outside click
     useEffect(() => {
@@ -62,20 +56,21 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
     const filtered = (() => {
         if (searching) {
             const q = search.toLowerCase();
-            return projects.filter(p => p.name.toLowerCase().includes(q));
+            return projects.filter((p) => p.name.toLowerCase().includes(q));
         }
         const rank = new Map(recentIds.map((id, i) => [id, i]));
-        return [...projects]
-            .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity))
-            .slice(0, 5);
+        return [...projects].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity)).slice(0, 5);
     })();
 
-    const handleSelect = useCallback((id: number) => {
-        setOpen(false);
-        setSearch('');
-        navigate(`/projects/${id}`);
-        onNavigate?.();
-    }, [navigate, onNavigate]);
+    const handleSelect = useCallback(
+        (id: number) => {
+            setOpen(false);
+            setSearch('');
+            navigate(`/projects/${id}`);
+            onNavigate?.();
+        },
+        [navigate, onNavigate]
+    );
 
     const handleNewProject = useCallback(() => {
         setOpen(false);
@@ -89,17 +84,17 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
             {/* Trigger button */}
             <button
                 type="button"
-                onClick={() => setOpen(o => !o)}
+                onClick={() => setOpen((o) => !o)}
                 className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors duration-100"
                 style={{
                     backgroundColor: open ? 'var(--bg-subtle)' : 'transparent',
                     border: '1px solid var(--border)',
                     color: 'var(--text-secondary)',
                 }}
-                onMouseEnter={e => {
+                onMouseEnter={(e) => {
                     if (!open) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)';
                 }}
-                onMouseLeave={e => {
+                onMouseLeave={(e) => {
                     if (!open) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
                 }}
             >
@@ -109,7 +104,10 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                 >
                     <FolderIcon className="h-3 w-3" style={{ color: 'var(--accent)' }} />
                 </div>
-                <span className="flex-1 text-left truncate text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+                <span
+                    className="flex-1 text-left truncate text-xs font-medium"
+                    style={{ color: 'var(--text-primary)' }}
+                >
                     {isLoading ? 'Loading…' : currentProject ? currentProject.name : 'Select project'}
                 </span>
                 <ChevronUpDownIcon className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
@@ -136,7 +134,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                                 ref={searchRef}
                                 type="text"
                                 value={search}
-                                onChange={e => setSearch(e.target.value)}
+                                onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Search projects…"
                                 className="w-full pl-8 pr-3 py-1.5 text-xs rounded-md outline-hidden"
                                 style={{
@@ -150,7 +148,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
 
                     {/* Project list */}
                     <div className="max-h-48 overflow-y-auto py-1">
-                        {!searching && filtered.some(p => recentIds.includes(p.id)) && (
+                        {!searching && filtered.some((p) => recentIds.includes(p.id)) && (
                             <p
                                 className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wide"
                                 style={{ color: 'var(--text-muted)' }}
@@ -163,7 +161,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                                 {search ? `No projects matching "${search}"` : 'No projects yet'}
                             </p>
                         ) : (
-                            filtered.map(project => {
+                            filtered.map((project) => {
                                 const isCurrent = project.id === currentProjectId;
                                 return (
                                     <button
@@ -172,12 +170,19 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                                         onClick={() => handleSelect(project.id)}
                                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors duration-75"
                                         style={{ color: 'var(--text-secondary)' }}
-                                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
-                                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
+                                        onMouseEnter={(e) =>
+                                            ((e.currentTarget as HTMLElement).style.backgroundColor =
+                                                'var(--bg-subtle)')
+                                        }
+                                        onMouseLeave={(e) =>
+                                            ((e.currentTarget as HTMLElement).style.backgroundColor = '')
+                                        }
                                     >
                                         <div
                                             className="h-5 w-5 rounded-sm flex items-center justify-center shrink-0"
-                                            style={{ backgroundColor: isCurrent ? 'var(--accent-subtle)' : 'var(--bg-muted)' }}
+                                            style={{
+                                                backgroundColor: isCurrent ? 'var(--accent-subtle)' : 'var(--bg-muted)',
+                                            }}
                                         >
                                             <FolderIcon
                                                 className="h-3 w-3"
@@ -185,18 +190,25 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                                             />
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                            <p
+                                                className="text-xs font-medium truncate"
+                                                style={{ color: 'var(--text-primary)' }}
+                                            >
                                                 {project.name}
                                             </p>
                                             {project.secretCount != null && (
                                                 <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                                     {project.secretCount} secret{project.secretCount !== 1 ? 's' : ''}
-                                                    {project.environmentCount != null && ` · ${project.environmentCount} envs`}
+                                                    {project.environmentCount != null &&
+                                                        ` · ${project.environmentCount} envs`}
                                                 </p>
                                             )}
                                         </div>
                                         {isCurrent && (
-                                            <CheckIcon className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--accent)' }} />
+                                            <CheckIcon
+                                                className="h-3.5 w-3.5 shrink-0"
+                                                style={{ color: 'var(--accent)' }}
+                                            />
                                         )}
                                     </button>
                                 );
@@ -208,11 +220,17 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                     <div className="border-t py-1" style={{ borderColor: 'var(--border)' }}>
                         <Link
                             to="/projects"
-                            onClick={() => { setOpen(false); setSearch(''); onNavigate?.(); }}
+                            onClick={() => {
+                                setOpen(false);
+                                setSearch('');
+                                onNavigate?.();
+                            }}
                             className="flex items-center gap-2 px-3 py-2 text-xs transition-colors duration-75"
                             style={{ color: 'var(--text-muted)' }}
-                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
-                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
+                            onMouseEnter={(e) =>
+                                ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)')
+                            }
+                            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '')}
                         >
                             <FolderIcon className="h-3.5 w-3.5 shrink-0" />
                             All projects
@@ -222,8 +240,10 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                             onClick={handleNewProject}
                             className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors duration-75"
                             style={{ color: 'var(--text-muted)' }}
-                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
-                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
+                            onMouseEnter={(e) =>
+                                ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)')
+                            }
+                            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '')}
                         >
                             <PlusIcon className="h-3.5 w-3.5 shrink-0" />
                             New project

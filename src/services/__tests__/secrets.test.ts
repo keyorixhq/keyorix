@@ -62,12 +62,19 @@ describe('secretsApi.rotate', () => {
 describe('secretsApi usage analytics', () => {
     it('mostAccessed unwraps {data:{secrets}} and passes window/limit params', async () => {
         mocked.get.mockResolvedValue({
-            data: { data: { secrets: [{ secret_id: 1, secret_name: 'hot', read_count: 9, last_read: '2026-06-01T00:00:00Z' }], days: 60 } },
+            data: {
+                data: {
+                    secrets: [{ secret_id: 1, secret_name: 'hot', read_count: 9, last_read: '2026-06-01T00:00:00Z' }],
+                    days: 60,
+                },
+            },
         });
 
         const out = await secretsApi.mostAccessed({ days: 60, limit: 5 });
 
-        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/most-accessed', { params: { days: 60, limit: 5 } });
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/most-accessed', {
+            params: { days: 60, limit: 5 },
+        });
         expect(out).toHaveLength(1);
         expect(out[0]).toMatchObject({ secret_id: 1, read_count: 9 });
     });
@@ -85,7 +92,15 @@ describe('secretsApi usage analytics', () => {
 describe('secretsApi.risk', () => {
     it('fetches and unwraps the per-secret risk score', async () => {
         mocked.get.mockResolvedValue({
-            data: { data: { secret_id: 7, secret_name: 'k', score: 72, band: 'high', factors: [{ key: 'expiry', label: 'Expiry', score: 100, weight: 0.3, detail: 'Expired' }] } },
+            data: {
+                data: {
+                    secret_id: 7,
+                    secret_name: 'k',
+                    score: 72,
+                    band: 'high',
+                    factors: [{ key: 'expiry', label: 'Expiry', score: 100, weight: 0.3, detail: 'Expired' }],
+                },
+            },
         });
 
         const out = await secretsApi.risk(7);
@@ -101,15 +116,29 @@ describe('secretsApi.setAutoRotate', () => {
         mocked.patch.mockResolvedValue({ data: { message: 'ok' } });
         await secretsApi.setAutoRotate(7, { enabled: true });
         expect(mocked.patch).toHaveBeenCalledWith('/api/v1/secrets/7/auto-rotate', {
-            enabled: true, length: 0, charset: '', backend: '', ref: '',
+            enabled: true,
+            length: 0,
+            charset: '',
+            backend: '',
+            ref: '',
         });
     });
 
     it('passes a backend + ref + generator spec through', async () => {
         mocked.patch.mockResolvedValue({ data: { message: 'ok' } });
-        await secretsApi.setAutoRotate(9, { enabled: true, length: 24, charset: 'hex', backend: 'prod-pg', ref: 'app_svc' });
+        await secretsApi.setAutoRotate(9, {
+            enabled: true,
+            length: 24,
+            charset: 'hex',
+            backend: 'prod-pg',
+            ref: 'app_svc',
+        });
         expect(mocked.patch).toHaveBeenCalledWith('/api/v1/secrets/9/auto-rotate', {
-            enabled: true, length: 24, charset: 'hex', backend: 'prod-pg', ref: 'app_svc',
+            enabled: true,
+            length: 24,
+            charset: 'hex',
+            backend: 'prod-pg',
+            ref: 'app_svc',
         });
     });
 });

@@ -94,9 +94,9 @@ describe('authStore', () => {
     it('login failure records the error and rethrows', async () => {
         mockedLogin.mockRejectedValueOnce(new Error('Invalid credentials'));
 
-        await expect(
-            useAuthStore.getState().login({ username: 'x', password: 'y' } as never)
-        ).rejects.toThrow('Invalid credentials');
+        await expect(useAuthStore.getState().login({ username: 'x', password: 'y' } as never)).rejects.toThrow(
+            'Invalid credentials'
+        );
 
         const state = useAuthStore.getState();
         expect(state.isAuthenticated).toBe(false);

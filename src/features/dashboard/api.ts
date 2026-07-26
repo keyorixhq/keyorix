@@ -19,11 +19,7 @@ export const useDashboardStats = () => {
     });
 };
 
-export const useDashboardActivity = (params?: {
-    page?: number;
-    pageSize?: number;
-    type?: string;
-}) => {
+export const useDashboardActivity = (params?: { page?: number; pageSize?: number; type?: string }) => {
     return useQuery({
         queryKey: queryKeys.dashboard.activity(params),
         queryFn: () => dashboardApi.getActivity(params),
@@ -73,11 +69,7 @@ export const useAcknowledgeAnomaly = () => {
 
 // ── Users ──────────────────────────────────────────────────────────────────
 
-export const useUsers = (params?: {
-    page?: number;
-    pageSize?: number;
-    search?: string;
-}) => {
+export const useUsers = (params?: { page?: number; pageSize?: number; search?: string }) => {
     return useQuery({
         queryKey: queryKeys.users.list(params),
         queryFn: () => usersApi.list(params),
@@ -97,11 +89,7 @@ export const useUser = (id: number, enabled = true) => {
 
 // ── Groups ─────────────────────────────────────────────────────────────────
 
-export const useGroups = (params?: {
-    page?: number;
-    pageSize?: number;
-    search?: string;
-}) => {
+export const useGroups = (params?: { page?: number; pageSize?: number; search?: string }) => {
     return useQuery({
         queryKey: queryKeys.groups.list(params),
         queryFn: () => groupsApi.list(params),

@@ -8,7 +8,13 @@ import {
     EyeIcon,
     MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
-import { useShares, useDeleteShare, useBulkDeleteShares, useUpdateShare, expiresAtFromPreset } from '../../features/sharing';
+import {
+    useShares,
+    useDeleteShare,
+    useBulkDeleteShares,
+    useUpdateShare,
+    expiresAtFromPreset,
+} from '../../features/sharing';
 import { useUIStore } from '../../store/uiStore';
 import { ShareRecord, PaginationState } from '../../types';
 import { Button } from '../../components/ui/Button';
@@ -46,7 +52,7 @@ const EDIT_EXPIRY_OPTIONS = [
 // (no expiry), expired (in the past), or a short "in 3d / 5h / 12m" countdown.
 export const shareExpiry = (
     expiresAt: string | undefined,
-    now: number = Date.now(),
+    now: number = Date.now()
 ): { label: string; className: string } => {
     if (!expiresAt) {
         return { label: 'Permanent', className: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' };
@@ -84,12 +90,18 @@ export const SharingManagementPage: React.FC = () => {
     }, [activeModal, editShare?.id]);
     const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
     const [bulkActionMode, setBulkActionMode] = useState(false);
-    const toggleSelectedItem = (id: number) => setSelectedItems(prev => {
-        const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next;
-    });
+    const toggleSelectedItem = (id: number) =>
+        setSelectedItems((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     const clearSelectedItems = () => setSelectedItems(new Set());
-    const formatDate = (d: string) => new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
-    const formatTime = (d: string) => new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
+    const formatDate = (d: string) =>
+        new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
+    const formatTime = (d: string) =>
+        new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 
     // State for filters and pagination
     const [filters, setFilters] = useState({
@@ -116,7 +128,7 @@ export const SharingManagementPage: React.FC = () => {
     // Update pagination when data changes
     React.useEffect(() => {
         if (data) {
-            setPagination(prev => ({
+            setPagination((prev) => ({
                 ...prev,
                 total: data.total,
                 totalPages: data.totalPages,
@@ -129,8 +141,8 @@ export const SharingManagementPage: React.FC = () => {
 
     // Handle filter changes
     const handleFilterChange = (key: string, value: any) => {
-        setFilters(prev => ({ ...prev, [key]: value }));
-        setPagination(prev => ({ ...prev, page: 1 })); // Reset to first page
+        setFilters((prev) => ({ ...prev, [key]: value }));
+        setPagination((prev) => ({ ...prev, page: 1 })); // Reset to first page
     };
 
     // Handle search with debouncing
@@ -144,7 +156,7 @@ export const SharingManagementPage: React.FC = () => {
 
     // Handle pagination
     const handlePageChange = (page: number) => {
-        setPagination(prev => ({ ...prev, page }));
+        setPagination((prev) => ({ ...prev, page }));
     };
 
     // Handle individual share actions
@@ -169,7 +181,10 @@ export const SharingManagementPage: React.FC = () => {
             if (iso) args.expiresAt = iso;
         }
         updateShare.mutate(args, {
-            onSuccess: () => { closeModal(); refetch(); },
+            onSuccess: () => {
+                closeModal();
+                refetch();
+            },
         });
     };
 
@@ -187,9 +202,13 @@ export const SharingManagementPage: React.FC = () => {
         openModal('confirm-delete', {
             title: 'Delete Multiple Shares',
             message: `Are you sure you want to revoke ${selectedItems.size} share(s)?`,
-            onConfirm: () => bulkDeleteMutation.mutate(Array.from(selectedItems) as number[], {
-                onSuccess: () => { clearSelectedItems(); setBulkActionMode(false); },
-            }),
+            onConfirm: () =>
+                bulkDeleteMutation.mutate(Array.from(selectedItems) as number[], {
+                    onSuccess: () => {
+                        clearSelectedItems();
+                        setBulkActionMode(false);
+                    },
+                }),
         });
     };
 
@@ -202,15 +221,16 @@ export const SharingManagementPage: React.FC = () => {
         // Apply client-side search filter
         if (filters.search) {
             const searchLower = filters.search.toLowerCase();
-            result = result.filter(share =>
-                share.recipientName.toLowerCase().includes(searchLower) ||
-                share.createdBy.toLowerCase().includes(searchLower)
+            result = result.filter(
+                (share) =>
+                    share.recipientName.toLowerCase().includes(searchLower) ||
+                    share.createdBy.toLowerCase().includes(searchLower)
             );
         }
 
         // Apply permission filter
         if (filters.permission !== 'all') {
-            result = result.filter(share => share.permission === filters.permission);
+            result = result.filter((share) => share.permission === filters.permission);
         }
 
         return result;
@@ -224,7 +244,9 @@ export const SharingManagementPage: React.FC = () => {
                     title="Failed to load shares"
                     message="There was an error loading the sharing information. Please try again."
                 >
-                    <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+                    <Button variant="outline" size="sm" onClick={() => refetch()}>
+                        Retry
+                    </Button>
                 </Alert>
             </div>
         );
@@ -235,9 +257,7 @@ export const SharingManagementPage: React.FC = () => {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-semibold text-base-primary dark:text-white">
-                        Sharing Management
-                    </h1>
+                    <h1 className="text-2xl font-semibold text-base-primary dark:text-white">Sharing Management</h1>
                     <p className="mt-1 text-sm text-base-muted dark:text-base-muted">
                         Manage secret sharing permissions and access
                     </p>
@@ -270,11 +290,7 @@ export const SharingManagementPage: React.FC = () => {
                             </Button>
                         </div>
                     )}
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setBulkActionMode(!bulkActionMode)}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => setBulkActionMode(!bulkActionMode)}>
                         Select
                     </Button>
                 </div>
@@ -365,9 +381,7 @@ export const SharingManagementPage: React.FC = () => {
                         <div className="text-base-muted dark:text-base-muted mb-4">
                             <ShareIcon className="h-12 w-12 mx-auto" />
                         </div>
-                        <h3 className="text-lg font-medium text-base-primary dark:text-white mb-2">
-                            No shares found
-                        </h3>
+                        <h3 className="text-lg font-medium text-base-primary dark:text-white mb-2">No shares found</h3>
                         <p className="text-base-muted dark:text-base-muted">
                             {filters.search || filters.recipientType !== 'all' || filters.permission !== 'all'
                                 ? 'Try adjusting your filters.'
@@ -384,10 +398,13 @@ export const SharingManagementPage: React.FC = () => {
                                             <input
                                                 type="checkbox"
                                                 className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-                                                checked={filteredShares.length > 0 && filteredShares.every(s => selectedItems.has(s.id))}
+                                                checked={
+                                                    filteredShares.length > 0 &&
+                                                    filteredShares.every((s) => selectedItems.has(s.id))
+                                                }
                                                 onChange={(e) => {
                                                     if (e.target.checked) {
-                                                        filteredShares.forEach(s => toggleSelectedItem(s.id));
+                                                        filteredShares.forEach((s) => toggleSelectedItem(s.id));
                                                     } else {
                                                         clearSelectedItems();
                                                     }
@@ -456,10 +473,13 @@ export const SharingManagementPage: React.FC = () => {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${share.permission === 'write'
-                                                    ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                                                    : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                                                }`}>
+                                            <span
+                                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                                    share.permission === 'write'
+                                                        ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                                        : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                                }`}
+                                            >
                                                 {share.permission === 'write' ? 'Read & Write' : 'Read Only'}
                                             </span>
                                         </td>
@@ -550,8 +570,7 @@ export const SharingManagementPage: React.FC = () => {
                                                 <span className="font-medium">
                                                     {Math.min(pagination.page * pagination.pageSize, pagination.total)}
                                                 </span>{' '}
-                                                of{' '}
-                                                <span className="font-medium">{pagination.total}</span> results
+                                                of <span className="font-medium">{pagination.total}</span> results
                                             </p>
                                         </div>
                                         <div>
@@ -606,7 +625,11 @@ export const SharingManagementPage: React.FC = () => {
                         <Alert
                             type="error"
                             title="Error"
-                            message={updateShare.error instanceof Error ? updateShare.error.message : 'Failed to update share.'}
+                            message={
+                                updateShare.error instanceof Error
+                                    ? updateShare.error.message
+                                    : 'Failed to update share.'
+                            }
                         />
                     )}
                     <div>
@@ -615,8 +638,11 @@ export const SharingManagementPage: React.FC = () => {
                         </label>
                         <Select
                             value={editPermission}
-                            onChange={e => setEditPermission(e.target.value as 'read' | 'write')}
-                            options={[{ value: 'read', label: 'Read Only' }, { value: 'write', label: 'Read & Write' }]}
+                            onChange={(e) => setEditPermission(e.target.value as 'read' | 'write')}
+                            options={[
+                                { value: 'read', label: 'Read Only' },
+                                { value: 'write', label: 'Read & Write' },
+                            ]}
                             disabled={updateShare.isPending}
                         />
                     </div>
@@ -626,7 +652,7 @@ export const SharingManagementPage: React.FC = () => {
                         </label>
                         <Select
                             value={editExpiry}
-                            onChange={e => setEditExpiry(e.target.value)}
+                            onChange={(e) => setEditExpiry(e.target.value)}
                             options={EDIT_EXPIRY_OPTIONS}
                             disabled={updateShare.isPending}
                         />
@@ -636,7 +662,10 @@ export const SharingManagementPage: React.FC = () => {
                             </p>
                         )}
                     </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+                    <div
+                        className="flex items-center justify-end space-x-3 pt-4 border-t"
+                        style={{ borderColor: 'var(--border)' }}
+                    >
                         <Button variant="outline" onClick={closeModal} disabled={updateShare.isPending}>
                             Cancel
                         </Button>

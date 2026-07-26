@@ -16,25 +16,36 @@ const LegalHoldBanner: React.FC = () => {
         retry: false,
     });
     const invalidate = () => queryClient.invalidateQueries({ queryKey: ['compliance', 'posture'] });
-    const place = useMutation({ mutationFn: (reason: string) => complianceApi.placeLegalHold(reason), onSuccess: invalidate });
+    const place = useMutation({
+        mutationFn: (reason: string) => complianceApi.placeLegalHold(reason),
+        onSuccess: invalidate,
+    });
     const lift = useMutation({ mutationFn: () => complianceApi.liftLegalHold(), onSuccess: invalidate });
 
     const [placing, setPlacing] = useState(false);
     const [reason, setReason] = useState('');
     const [error, setError] = useState('');
-    const onError = (err: any) => setError(err?.response?.data?.error ?? err?.response?.data?.message ?? 'Action failed.');
+    const onError = (err: any) =>
+        setError(err?.response?.data?.error ?? err?.response?.data?.message ?? 'Action failed.');
 
     if (!p) return null;
     const active = p.legalHold.active;
 
     return (
-        <div className="rounded-xl border mb-6 px-6 py-4"
-            style={active
-                ? { borderColor: 'var(--error)', backgroundColor: 'var(--error-subtle)' }
-                : { borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+        <div
+            className="rounded-xl border mb-6 px-6 py-4"
+            style={
+                active
+                    ? { borderColor: 'var(--error)', backgroundColor: 'var(--error-subtle)' }
+                    : { borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }
+            }
+        >
             <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold" style={{ color: active ? 'var(--error)' : 'var(--text-primary)' }}>
+                    <p
+                        className="text-sm font-semibold"
+                        style={{ color: active ? 'var(--error)' : 'var(--text-primary)' }}
+                    >
                         {active ? 'Legal hold active — purges are blocked' : 'No legal hold'}
                     </p>
                     <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -44,36 +55,80 @@ const LegalHoldBanner: React.FC = () => {
                     </p>
                 </div>
                 {active ? (
-                    <button onClick={() => { setError(''); lift.mutate(undefined, { onError }); }} disabled={lift.isPending}
+                    <button
+                        onClick={() => {
+                            setError('');
+                            lift.mutate(undefined, { onError });
+                        }}
+                        disabled={lift.isPending}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
-                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                    >
                         Lift hold
                     </button>
                 ) : !placing ? (
-                    <button onClick={() => { setError(''); setPlacing(true); }}
+                    <button
+                        onClick={() => {
+                            setError('');
+                            setPlacing(true);
+                        }}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
-                        style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                        style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                    >
                         Place hold
                     </button>
                 ) : null}
             </div>
             {placing && !active && (
                 <div className="mt-3 flex items-center gap-2">
-                    <input value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason (e.g. litigation hold — case INC-7)" autoFocus
+                    <input
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        placeholder="Reason (e.g. litigation hold — case INC-7)"
+                        autoFocus
                         className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-hidden"
-                        style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                    <button onClick={() => { if (!reason.trim()) return; setError(''); place.mutate(reason.trim(), { onError, onSuccess: () => { invalidate(); setPlacing(false); setReason(''); } }); }}
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
+                    <button
+                        onClick={() => {
+                            if (!reason.trim()) return;
+                            setError('');
+                            place.mutate(reason.trim(), {
+                                onError,
+                                onSuccess: () => {
+                                    invalidate();
+                                    setPlacing(false);
+                                    setReason('');
+                                },
+                            });
+                        }}
                         disabled={place.isPending || !reason.trim()}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
-                        style={{ backgroundColor: 'var(--error)', color: '#fff' }}>
+                        style={{ backgroundColor: 'var(--error)', color: '#fff' }}
+                    >
                         Confirm hold
                     </button>
-                    <button onClick={() => { setPlacing(false); setReason(''); }} className="px-2.5 py-1.5 rounded-lg text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                    <button
+                        onClick={() => {
+                            setPlacing(false);
+                            setReason('');
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg text-xs shrink-0"
+                        style={{ color: 'var(--text-muted)' }}
+                    >
                         Cancel
                     </button>
                 </div>
             )}
-            {error && <p className="text-xs mt-2" style={{ color: 'var(--error)' }}>{error}</p>}
+            {error && (
+                <p className="text-xs mt-2" style={{ color: 'var(--error)' }}>
+                    {error}
+                </p>
+            )}
         </div>
     );
 };
@@ -83,12 +138,30 @@ interface SectionCardProps {
     children: React.ReactNode;
 }
 
-const Tile: React.FC<{ label: string; value: React.ReactNode; tone?: 'good' | 'warn' | 'bad' | undefined }> = ({ label, value, tone }) => {
-    const color = tone === 'good' ? 'var(--success)' : tone === 'warn' ? 'var(--warning)' : tone === 'bad' ? 'var(--error)' : 'var(--text-primary)';
+const Tile: React.FC<{ label: string; value: React.ReactNode; tone?: 'good' | 'warn' | 'bad' | undefined }> = ({
+    label,
+    value,
+    tone,
+}) => {
+    const color =
+        tone === 'good'
+            ? 'var(--success)'
+            : tone === 'warn'
+              ? 'var(--warning)'
+              : tone === 'bad'
+                ? 'var(--error)'
+                : 'var(--text-primary)';
     return (
-        <div className="rounded-lg border px-3 py-2.5" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-app)' }}>
-            <div className="text-lg font-semibold" style={{ color }}>{value}</div>
-            <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{label}</div>
+        <div
+            className="rounded-lg border px-3 py-2.5"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-app)' }}
+        >
+            <div className="text-lg font-semibold" style={{ color }}>
+                {value}
+            </div>
+            <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                {label}
+            </div>
         </div>
     );
 };
@@ -97,7 +170,12 @@ const Tile: React.FC<{ label: string; value: React.ReactNode; tone?: 'good' | 'w
 // It needs system.read; non-admins get 403 and the panel shows a quiet note rather
 // than failing the page.
 const PosturePanel: React.FC = () => {
-    const { data: p, isLoading, isError, error } = useQuery({
+    const {
+        data: p,
+        isLoading,
+        isError,
+        error,
+    } = useQuery({
         queryKey: ['compliance', 'posture'],
         queryFn: () => complianceApi.getPosture(),
         staleTime: 60_000,
@@ -106,9 +184,18 @@ const PosturePanel: React.FC = () => {
 
     if (isLoading) {
         return (
-            <div className="rounded-xl border mb-6 p-6" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div
+                className="rounded-xl border mb-6 p-6"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {[1, 2, 3, 4].map(i => <div key={i} className="h-16 rounded-lg animate-pulse" style={{ backgroundColor: 'var(--bg-muted)' }} />)}
+                    {[1, 2, 3, 4].map((i) => (
+                        <div
+                            key={i}
+                            className="h-16 rounded-lg animate-pulse"
+                            style={{ backgroundColor: 'var(--bg-muted)' }}
+                        />
+                    ))}
                 </div>
             </div>
         );
@@ -116,8 +203,17 @@ const PosturePanel: React.FC = () => {
     if (isError || !p) {
         const status = (error as any)?.response?.status;
         return (
-            <div className="rounded-xl border mb-6 px-6 py-4 text-sm" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
-                {status === 403 ? 'The live controls-posture report is available to administrators (system.read).' : 'Controls posture is currently unavailable.'}
+            <div
+                className="rounded-xl border mb-6 px-6 py-4 text-sm"
+                style={{
+                    borderColor: 'var(--border)',
+                    backgroundColor: 'var(--bg-surface)',
+                    color: 'var(--text-muted)',
+                }}
+            >
+                {status === 403
+                    ? 'The live controls-posture report is available to administrators (system.read).'
+                    : 'Controls posture is currently unavailable.'}
             </div>
         );
     }
@@ -125,36 +221,100 @@ const PosturePanel: React.FC = () => {
     const ag = p.accessGovernance;
     const reviewed = ag.projects - ag.projectsNeverReviewed;
     return (
-        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
-                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Controls posture</h2>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{p.generatedAt ? new Date(p.generatedAt).toLocaleString() : ''}</span>
+        <div
+            className="rounded-xl border mb-8 overflow-hidden"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <div
+                className="px-6 py-4 border-b flex items-center justify-between"
+                style={{ borderColor: 'var(--border)' }}
+            >
+                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    Controls posture
+                </h2>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {p.generatedAt ? new Date(p.generatedAt).toLocaleString() : ''}
+                </span>
             </div>
             <div className="px-6 py-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                <Tile label="Audit chain verified (A.5.28)" value={p.auditIntegrity.chainVerified ? 'Yes' : 'No'} tone={p.auditIntegrity.chainVerified ? 'good' : 'bad'} />
-                <Tile label="On-box checkpointed" value={p.auditIntegrity.checkpointed ? 'Yes' : 'No'} tone={p.auditIntegrity.checkpointed ? 'good' : undefined} />
-                <Tile label="Second-factor coverage" value={`${p.identity.secondFactorPercent}%`} tone={p.identity.secondFactorPercent >= 80 ? 'good' : 'warn'} />
+                <Tile
+                    label="Audit chain verified (A.5.28)"
+                    value={p.auditIntegrity.chainVerified ? 'Yes' : 'No'}
+                    tone={p.auditIntegrity.chainVerified ? 'good' : 'bad'}
+                />
+                <Tile
+                    label="On-box checkpointed"
+                    value={p.auditIntegrity.checkpointed ? 'Yes' : 'No'}
+                    tone={p.auditIntegrity.checkpointed ? 'good' : undefined}
+                />
+                <Tile
+                    label="Second-factor coverage"
+                    value={`${p.identity.secondFactorPercent}%`}
+                    tone={p.identity.secondFactorPercent >= 80 ? 'good' : 'warn'}
+                />
                 <Tile label="Active users" value={p.identity.activeUsers} />
-                <Tile label="Projects reviewed (A.5.18)" value={`${reviewed}/${ag.projects}`} tone={ag.projectsNeverReviewed > 0 ? 'warn' : 'good'} />
+                <Tile
+                    label="Projects reviewed (A.5.18)"
+                    value={`${reviewed}/${ag.projects}`}
+                    tone={ag.projectsNeverReviewed > 0 ? 'warn' : 'good'}
+                />
                 <Tile label="Open campaigns / pending" value={`${ag.openCampaigns} / ${ag.pendingItems}`} />
-                <Tile label="Dormant role grants" value={ag.dormantRoleGrants} tone={ag.dormantRoleGrants > 0 ? 'warn' : 'good'} />
-                <Tile label="SoD violations (A.5.3)" value={ag.sodViolations} tone={ag.sodViolations > 0 ? 'bad' : 'good'} />
-                <Tile label="Projects overdue for recert (A.5.18)" value={ag.projectsOverdue} tone={ag.projectsOverdue > 0 ? 'warn' : 'good'} />
-                <Tile label="Rotation overdue / due-soon (A.5.15)" value={`${p.rotation.overdue} / ${p.rotation.dueSoon}`} tone={p.rotation.overdue > 0 ? 'warn' : 'good'} />
-                <Tile label="Break-glass active / total" value={`${p.emergencyAccess.activeActivations} / ${p.emergencyAccess.totalActivations}`} tone={p.emergencyAccess.activeActivations > 0 ? 'warn' : undefined} />
-                <Tile label="Restricted secrets (A.5.12)" value={p.classification.restricted} tone={p.classification.restricted > 0 ? 'warn' : undefined} />
-                <Tile label="Unclassified secrets" value={`${p.classification.unclassified} / ${p.classification.totalSecrets}`} tone={p.classification.unclassified > 0 ? 'warn' : 'good'} />
-                <Tile label="Open anomalies (NIS2)" value={`${p.anomalies.unacknowledged}${p.anomalies.highSeverityOpen > 0 ? ` (${p.anomalies.highSeverityOpen} high)` : ''}`} tone={p.anomalies.highSeverityOpen > 0 ? 'bad' : p.anomalies.unacknowledged > 0 ? 'warn' : 'good'} />
+                <Tile
+                    label="Dormant role grants"
+                    value={ag.dormantRoleGrants}
+                    tone={ag.dormantRoleGrants > 0 ? 'warn' : 'good'}
+                />
+                <Tile
+                    label="SoD violations (A.5.3)"
+                    value={ag.sodViolations}
+                    tone={ag.sodViolations > 0 ? 'bad' : 'good'}
+                />
+                <Tile
+                    label="Projects overdue for recert (A.5.18)"
+                    value={ag.projectsOverdue}
+                    tone={ag.projectsOverdue > 0 ? 'warn' : 'good'}
+                />
+                <Tile
+                    label="Rotation overdue / due-soon (A.5.15)"
+                    value={`${p.rotation.overdue} / ${p.rotation.dueSoon}`}
+                    tone={p.rotation.overdue > 0 ? 'warn' : 'good'}
+                />
+                <Tile
+                    label="Break-glass active / total"
+                    value={`${p.emergencyAccess.activeActivations} / ${p.emergencyAccess.totalActivations}`}
+                    tone={p.emergencyAccess.activeActivations > 0 ? 'warn' : undefined}
+                />
+                <Tile
+                    label="Restricted secrets (A.5.12)"
+                    value={p.classification.restricted}
+                    tone={p.classification.restricted > 0 ? 'warn' : undefined}
+                />
+                <Tile
+                    label="Unclassified secrets"
+                    value={`${p.classification.unclassified} / ${p.classification.totalSecrets}`}
+                    tone={p.classification.unclassified > 0 ? 'warn' : 'good'}
+                />
+                <Tile
+                    label="Open anomalies (NIS2)"
+                    value={`${p.anomalies.unacknowledged}${p.anomalies.highSeverityOpen > 0 ? ` (${p.anomalies.highSeverityOpen} high)` : ''}`}
+                    tone={p.anomalies.highSeverityOpen > 0 ? 'bad' : p.anomalies.unacknowledged > 0 ? 'warn' : 'good'}
+                />
             </div>
             <div className="px-6 pb-5 pt-1">
-                <h3 className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: 'var(--text-muted)' }}>
+                <h3
+                    className="text-xs font-semibold uppercase tracking-widest mb-3"
+                    style={{ color: 'var(--text-muted)' }}
+                >
                     Data retention (A.5.33) — {p.retention.enabled ? 'enforced' : 'not configured'}
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <Tile label="Anomaly alerts" value={retentionWindow(p.retention.anomalyAlertsDays)} />
                     <Tile label="Closed access reviews" value={retentionWindow(p.retention.closedAccessReviewsDays)} />
                     <Tile label="Break-glass register" value={retentionWindow(p.retention.breakGlassDays)} />
-                    <Tile label="Resolved access requests" value={retentionWindow(p.retention.resolvedAccessRequestsDays)} />
+                    <Tile
+                        label="Resolved access requests"
+                        value={retentionWindow(p.retention.resolvedAccessRequestsDays)}
+                    />
                 </div>
             </div>
         </div>
@@ -187,9 +347,17 @@ const DigestPanel: React.FC = () => {
     };
 
     return (
-        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-            <div className="px-6 py-4 border-b flex items-center justify-between gap-3" style={{ borderColor: 'var(--border)' }}>
-                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Compliance digest</h2>
+        <div
+            className="rounded-xl border mb-8 overflow-hidden"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <div
+                className="px-6 py-4 border-b flex items-center justify-between gap-3"
+                style={{ borderColor: 'var(--border)' }}
+            >
+                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    Compliance digest
+                </h2>
                 <button
                     type="button"
                     onClick={onCopy}
@@ -200,8 +368,12 @@ const DigestPanel: React.FC = () => {
                 </button>
             </div>
             <div className="px-6 py-5">
-                <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>{data.title}</p>
-                <pre className="text-xs whitespace-pre-wrap font-sans" style={{ color: 'var(--text-secondary)' }}>{data.body}</pre>
+                <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                    {data.title}
+                </p>
+                <pre className="text-xs whitespace-pre-wrap font-sans" style={{ color: 'var(--text-secondary)' }}>
+                    {data.body}
+                </pre>
             </div>
         </div>
     );
@@ -218,7 +390,10 @@ const SoDViolationsSection: React.FC = () => {
     });
     if (isError || violations.length === 0) return null;
     return (
-        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+        <div
+            className="rounded-xl border mb-8 overflow-hidden"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
             <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
                 <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--error)' }}>
                     Separation-of-duties violations ({violations.length})
@@ -231,9 +406,14 @@ const SoDViolationsSection: React.FC = () => {
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                                 {v.email ? `${v.username} (${v.email})` : v.username}
                             </p>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{v.policyName}</p>
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                {v.policyName}
+                            </p>
                         </div>
-                        <span className="text-xs px-2 py-1 rounded-md shrink-0" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                        <span
+                            className="text-xs px-2 py-1 rounded-md shrink-0"
+                            style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                        >
                             {v.permissionA} + {v.permissionB}
                         </span>
                     </li>
@@ -244,11 +424,12 @@ const SoDViolationsSection: React.FC = () => {
 };
 
 const SectionCard: React.FC<SectionCardProps> = ({ title, children }) => (
-    <div className="rounded-xl border overflow-hidden mb-6"
-        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+    <div
+        className="rounded-xl border overflow-hidden mb-6"
+        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+    >
         <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-            <h2 className="text-sm font-semibold uppercase tracking-widest"
-                style={{ color: 'var(--text-muted)' }}>
+            <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
                 {title}
             </h2>
         </div>
@@ -297,7 +478,7 @@ const ControlMatrixPanel: React.FC = () => {
         }
     };
 
-    const refLine = (c: typeof m.controls[number]): string => {
+    const refLine = (c: (typeof m.controls)[number]): string => {
         const parts: string[] = [];
         if (c.frameworks.iso27001.length) parts.push(`ISO ${c.frameworks.iso27001.join(', ')}`);
         if (c.frameworks.soc2.length) parts.push(`SOC2 ${c.frameworks.soc2.join(', ')}`);
@@ -308,8 +489,14 @@ const ControlMatrixPanel: React.FC = () => {
     };
 
     return (
-        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
+        <div
+            className="rounded-xl border mb-8 overflow-hidden"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <div
+                className="px-6 py-4 border-b flex items-center justify-between"
+                style={{ borderColor: 'var(--border)' }}
+            >
                 <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
                     Control matrix (ISO 27001 / SOC 2 / NIS2 / DORA / ENS)
                 </h2>
@@ -329,20 +516,33 @@ const ControlMatrixPanel: React.FC = () => {
                 </div>
             </div>
             <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                {m.controls.map(c => {
+                {m.controls.map((c) => {
                     const s = STATUS_META[c.status] ?? NA_META;
                     return (
-                        <li key={c.id} className="px-6 py-3 flex items-start gap-3" style={{ borderColor: 'var(--border)' }}>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 mt-0.5"
-                                style={{ color: s.color, backgroundColor: s.bg }}>
+                        <li
+                            key={c.id}
+                            className="px-6 py-3 flex items-start gap-3"
+                            style={{ borderColor: 'var(--border)' }}
+                        >
+                            <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 mt-0.5"
+                                style={{ color: s.color, backgroundColor: s.bg }}
+                            >
                                 {s.label}
                             </span>
                             <div className="min-w-0">
                                 <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                    {c.name} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>· {c.area}</span>
+                                    {c.name}{' '}
+                                    <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>
+                                        · {c.area}
+                                    </span>
                                 </div>
-                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{c.detail}</div>
-                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{refLine(c)}</div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                    {c.detail}
+                                </div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                    {refLine(c)}
+                                </div>
                             </div>
                         </li>
                     );
@@ -370,7 +570,10 @@ const RiskRegisterPanel: React.FC = () => {
         queryClient.invalidateQueries({ queryKey: ['compliance', 'posture'] });
     };
     const create = useMutation({ mutationFn: complianceApi.createRiskException, onSuccess: invalidate });
-    const revoke = useMutation({ mutationFn: (id: number) => complianceApi.revokeRiskException(id), onSuccess: invalidate });
+    const revoke = useMutation({
+        mutationFn: (id: number) => complianceApi.revokeRiskException(id),
+        onSuccess: invalidate,
+    });
 
     const [adding, setAdding] = useState(false);
     const [form, setForm] = useState({ title: '', category: 'sod', reference: '', justification: '', expires: '' });
@@ -383,67 +586,179 @@ const RiskRegisterPanel: React.FC = () => {
         if (!form.title.trim() || !form.justification.trim() || !form.expires) return;
         setError('');
         create.mutate(
-            { title: form.title.trim(), category: form.category, reference: form.reference.trim(), justification: form.justification.trim(), expiresAt: `${form.expires}T00:00:00Z` },
-            { onError: onErr, onSuccess: () => { invalidate(); setAdding(false); setForm({ title: '', category: 'sod', reference: '', justification: '', expires: '' }); } },
+            {
+                title: form.title.trim(),
+                category: form.category,
+                reference: form.reference.trim(),
+                justification: form.justification.trim(),
+                expiresAt: `${form.expires}T00:00:00Z`,
+            },
+            {
+                onError: onErr,
+                onSuccess: () => {
+                    invalidate();
+                    setAdding(false);
+                    setForm({ title: '', category: 'sod', reference: '', justification: '', expires: '' });
+                },
+            }
         );
     };
 
     return (
-        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
+        <div
+            className="rounded-xl border mb-8 overflow-hidden"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <div
+                className="px-6 py-4 border-b flex items-center justify-between"
+                style={{ borderColor: 'var(--border)' }}
+            >
                 <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
                     Risk register (A.5.8) — {exceptions.length} active exception{exceptions.length === 1 ? '' : 's'}
                 </h2>
                 {!adding && (
-                    <button onClick={() => { setError(''); setAdding(true); }}
+                    <button
+                        onClick={() => {
+                            setError('');
+                            setAdding(true);
+                        }}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
-                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                    >
                         Add exception
                     </button>
                 )}
             </div>
 
             {adding && (
-                <div className="px-6 py-4 border-b grid grid-cols-1 sm:grid-cols-2 gap-2" style={{ borderColor: 'var(--border)' }}>
-                    <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Title (e.g. accept SoD during cutover)"
-                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                    <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-                        {RISK_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                <div
+                    className="px-6 py-4 border-b grid grid-cols-1 sm:grid-cols-2 gap-2"
+                    style={{ borderColor: 'var(--border)' }}
+                >
+                    <input
+                        value={form.title}
+                        onChange={(e) => setForm({ ...form, title: e.target.value })}
+                        placeholder="Title (e.g. accept SoD during cutover)"
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
+                    <select
+                        value={form.category}
+                        onChange={(e) => setForm({ ...form, category: e.target.value })}
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    >
+                        {RISK_CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                                {c}
+                            </option>
+                        ))}
                     </select>
-                    <input value={form.reference} onChange={e => setForm({ ...form, reference: e.target.value })} placeholder="Reference (a user, an SoD pair, a secret)"
-                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                    <input type="date" value={form.expires} onChange={e => setForm({ ...form, expires: e.target.value })} aria-label="Expires"
-                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-                    <input value={form.justification} onChange={e => setForm({ ...form, justification: e.target.value })} placeholder="Justification (recorded for audit)"
-                        className="sm:col-span-2 rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                    <input
+                        value={form.reference}
+                        onChange={(e) => setForm({ ...form, reference: e.target.value })}
+                        placeholder="Reference (a user, an SoD pair, a secret)"
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
+                    <input
+                        type="date"
+                        value={form.expires}
+                        onChange={(e) => setForm({ ...form, expires: e.target.value })}
+                        aria-label="Expires"
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
+                    <input
+                        value={form.justification}
+                        onChange={(e) => setForm({ ...form, justification: e.target.value })}
+                        placeholder="Justification (recorded for audit)"
+                        className="sm:col-span-2 rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
                     <div className="sm:col-span-2 flex items-center gap-2">
-                        <button onClick={submit} disabled={create.isPending || !form.title.trim() || !form.justification.trim() || !form.expires}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50" style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
+                        <button
+                            onClick={submit}
+                            disabled={
+                                create.isPending || !form.title.trim() || !form.justification.trim() || !form.expires
+                            }
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+                            style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                        >
                             Record exception
                         </button>
-                        <button onClick={() => { setAdding(false); setError(''); }} className="px-2.5 py-1.5 rounded-lg text-xs" style={{ color: 'var(--text-muted)' }}>Cancel</button>
-                        {error && <span className="text-xs" style={{ color: 'var(--error)' }}>{error}</span>}
+                        <button
+                            onClick={() => {
+                                setAdding(false);
+                                setError('');
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg text-xs"
+                            style={{ color: 'var(--text-muted)' }}
+                        >
+                            Cancel
+                        </button>
+                        {error && (
+                            <span className="text-xs" style={{ color: 'var(--error)' }}>
+                                {error}
+                            </span>
+                        )}
                     </div>
                 </div>
             )}
 
             {exceptions.length === 0 ? (
-                <div className="px-6 py-4 text-sm" style={{ color: 'var(--text-muted)' }}>No active risk exceptions.</div>
+                <div className="px-6 py-4 text-sm" style={{ color: 'var(--text-muted)' }}>
+                    No active risk exceptions.
+                </div>
             ) : (
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {exceptions.map(e => (
-                        <li key={e.id} className="px-6 py-3 flex items-start justify-between gap-3" style={{ borderColor: 'var(--border)' }}>
+                    {exceptions.map((e) => (
+                        <li
+                            key={e.id}
+                            className="px-6 py-3 flex items-start justify-between gap-3"
+                            style={{ borderColor: 'var(--border)' }}
+                        >
                             <div className="min-w-0">
                                 <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                    {e.title} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>· {e.category}{e.reference ? ` · ${e.reference}` : ''}</span>
+                                    {e.title}{' '}
+                                    <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>
+                                        · {e.category}
+                                        {e.reference ? ` · ${e.reference}` : ''}
+                                    </span>
                                 </div>
-                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{e.justification}</div>
-                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Expires {e.expiresAt ? new Date(e.expiresAt).toLocaleDateString() : '—'}</div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                    {e.justification}
+                                </div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                    Expires {e.expiresAt ? new Date(e.expiresAt).toLocaleDateString() : '—'}
+                                </div>
                             </div>
-                            <button onClick={() => revoke.mutate(e.id)} disabled={revoke.isPending}
+                            <button
+                                onClick={() => revoke.mutate(e.id)}
+                                disabled={revoke.isPending}
                                 className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50"
-                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                            >
                                 Revoke
                             </button>
                         </li>
@@ -473,39 +788,36 @@ export const CompliancePage: React.FC = () => (
         <SoDViolationsSection />
 
         <SectionCard title="NIS2 Directive">
-            Keyorix supports NIS2 Article 21 technical requirements — access controls, encryption
-            of data at rest and in transit, and audit logging. Every secret access, rotation, and
-            user action is logged with actor identity and timestamp. On-premise deployment means
-            audit data stays on your infrastructure under your data retention policy.
+            Keyorix supports NIS2 Article 21 technical requirements — access controls, encryption of data at rest and in
+            transit, and audit logging. Every secret access, rotation, and user action is logged with actor identity and
+            timestamp. On-premise deployment means audit data stays on your infrastructure under your data retention
+            policy.
         </SectionCard>
 
         <SectionCard title="DORA">
-            DORA Article 30 requires financial entities to maintain detailed ICT risk management
-            records including access logs and cryptographic controls. Keyorix provides tamper-evident
-            audit logs, envelope encryption with key rotation support, and PostgreSQL-backed storage
-            designed for long-term operational continuity. Air-gap compatibility means no dependency
-            on external cloud services for secret resolution.
+            DORA Article 30 requires financial entities to maintain detailed ICT risk management records including
+            access logs and cryptographic controls. Keyorix provides tamper-evident audit logs, envelope encryption with
+            key rotation support, and PostgreSQL-backed storage designed for long-term operational continuity. Air-gap
+            compatibility means no dependency on external cloud services for secret resolution.
         </SectionCard>
 
         <SectionCard title="ENS (Esquema Nacional de Seguridad)">
-            ENS is Spain's mandatory security certification framework for public-sector ICT systems
-            and their suppliers. Keyorix maps to the operational (op.acc, op.exp) and technical
-            (mp.s, mp.sw) control families required for ENS Medium and High categories — covering
-            identity and access management, audit traceability, and cryptographic key lifecycle.
-            On-premise deployment keeps processing within your jurisdiction, satisfying ENS data
-            localisation requirements without architectural concessions.
+            ENS is Spain's mandatory security certification framework for public-sector ICT systems and their suppliers.
+            Keyorix maps to the operational (op.acc, op.exp) and technical (mp.s, mp.sw) control families required for
+            ENS Medium and High categories — covering identity and access management, audit traceability, and
+            cryptographic key lifecycle. On-premise deployment keeps processing within your jurisdiction, satisfying ENS
+            data localisation requirements without architectural concessions.
         </SectionCard>
 
         <SectionCard title="ISO 27001">
-            Keyorix maps directly to ISO 27001 Annex A controls for access management (A.9),
-            cryptography (A.10), and operations security (A.12). RBAC, AES-256-GCM encryption, and
-            full audit trails are shipped by default — not add-ons. On-premise deployment supports
-            your organisation's asset management and boundary control requirements.
+            Keyorix maps directly to ISO 27001 Annex A controls for access management (A.9), cryptography (A.10), and
+            operations security (A.12). RBAC, AES-256-GCM encryption, and full audit trails are shipped by default — not
+            add-ons. On-premise deployment supports your organisation's asset management and boundary control
+            requirements.
         </SectionCard>
 
         <p className="text-xs text-center mt-8 pb-4" style={{ color: 'var(--text-muted)' }}>
-            Detailed compliance mapping reports — Q3 2026.{' '}
-            Contact support@keyorix.com for pre-release access.
+            Detailed compliance mapping reports — Q3 2026. Contact support@keyorix.com for pre-release access.
         </p>
     </div>
 );

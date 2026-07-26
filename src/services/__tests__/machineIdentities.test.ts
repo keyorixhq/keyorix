@@ -68,7 +68,11 @@ describe('machineIdentitiesApi.list', () => {
 describe('machineIdentitiesApi.create', () => {
     it('posts name + identity_type + description and unwraps {data:{machine_identity}}', async () => {
         mocked.post.mockResolvedValue({
-            data: { data: { machine_identity: { ID: 9, ProjectID: 2, Name: 'k8s-app', IdentityType: 'k8s', State: 'active' } } },
+            data: {
+                data: {
+                    machine_identity: { ID: 9, ProjectID: 2, Name: 'k8s-app', IdentityType: 'k8s', State: 'active' },
+                },
+            },
         });
 
         const m = await machineIdentitiesApi.create(2, 'k8s-app', 'k8s', 'prod workload');

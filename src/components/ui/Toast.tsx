@@ -25,22 +25,28 @@ export interface ToastProps extends Toast {
 
 const ICONS: Record<ToastType, React.ElementType> = {
     success: CheckCircleIcon,
-    error:   XCircleIcon,
+    error: XCircleIcon,
     warning: ExclamationTriangleIcon,
-    info:    InformationCircleIcon,
+    info: InformationCircleIcon,
 };
 
 const COLORS: Record<ToastType, { icon: string; title: string; body: string; bg: string }> = {
-    success: { icon: 'var(--success)',        title: 'var(--success)',        body: 'var(--success)',        bg: 'var(--success-subtle)' },
-    error:   { icon: 'var(--error)',          title: 'var(--error)',          body: 'var(--error)',          bg: 'var(--error-subtle)' },
-    warning: { icon: 'var(--warning)',        title: 'var(--warning)',        body: 'var(--warning)',        bg: 'var(--warning-subtle)' },
-    info:    { icon: 'var(--accent)',         title: 'var(--accent-text)',    body: 'var(--accent)',         bg: 'var(--accent-subtle)' },
+    success: { icon: 'var(--success)', title: 'var(--success)', body: 'var(--success)', bg: 'var(--success-subtle)' },
+    error: { icon: 'var(--error)', title: 'var(--error)', body: 'var(--error)', bg: 'var(--error-subtle)' },
+    warning: { icon: 'var(--warning)', title: 'var(--warning)', body: 'var(--warning)', bg: 'var(--warning-subtle)' },
+    info: { icon: 'var(--accent)', title: 'var(--accent-text)', body: 'var(--accent)', bg: 'var(--accent-subtle)' },
 };
 
 const LEAVE_MS = 200;
 
 const ToastComponent: React.FC<ToastProps> = ({
-    id, type, title, message, duration = 5000, persistent = false, onClose,
+    id,
+    type,
+    title,
+    message,
+    duration = 5000,
+    persistent = false,
+    onClose,
 }) => {
     const [visible, setVisible] = useState(false);
 
@@ -76,7 +82,7 @@ const ToastComponent: React.FC<ToastProps> = ({
                 'transition-all ease-out',
                 visible
                     ? 'opacity-100 translate-y-0 duration-300'
-                    : 'opacity-0 translate-y-2 sm:translate-x-2 duration-200',
+                    : 'opacity-0 translate-y-2 sm:translate-x-2 duration-200'
             )}
             style={{ backgroundColor: c.bg, borderColor: c.icon }}
         >
@@ -86,9 +92,13 @@ const ToastComponent: React.FC<ToastProps> = ({
                         <Icon className="h-6 w-6" aria-hidden="true" style={{ color: c.icon }} />
                     </div>
                     <div className="ml-3 w-0 flex-1 pt-0.5">
-                        <p className="text-sm font-medium" style={{ color: c.title }}>{title}</p>
+                        <p className="text-sm font-medium" style={{ color: c.title }}>
+                            {title}
+                        </p>
                         {message && (
-                            <p className="mt-1 text-sm" style={{ color: c.body }}>{message}</p>
+                            <p className="mt-1 text-sm" style={{ color: c.body }}>
+                                {message}
+                            </p>
                         )}
                     </div>
                     <div className="ml-4 shrink-0 flex">
@@ -116,22 +126,20 @@ export interface ToastContainerProps {
 }
 
 const POSITION: Record<NonNullable<ToastContainerProps['position']>, string> = {
-    'top-right':     'top-0 right-0',
-    'top-left':      'top-0 left-0',
-    'bottom-right':  'bottom-0 right-0',
-    'bottom-left':   'bottom-0 left-0',
-    'top-center':    'top-0 left-1/2 -translate-x-1/2',
+    'top-right': 'top-0 right-0',
+    'top-left': 'top-0 left-0',
+    'bottom-right': 'bottom-0 right-0',
+    'bottom-left': 'bottom-0 left-0',
+    'top-center': 'top-0 left-1/2 -translate-x-1/2',
     'bottom-center': 'bottom-0 left-1/2 -translate-x-1/2',
 };
 
-const ToastContainer: React.FC<ToastContainerProps> = ({
-    toasts, onClose, position = 'top-right',
-}) => (
+const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onClose, position = 'top-right' }) => (
     <div
         aria-live="assertive"
         className={cn(
             'fixed z-50 inset-0 flex items-end px-4 py-6 pointer-events-none sm:p-6 sm:items-start',
-            POSITION[position],
+            POSITION[position]
         )}
     >
         <div className="w-full flex flex-col items-center space-y-4 sm:items-end">

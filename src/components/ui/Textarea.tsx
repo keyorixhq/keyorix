@@ -10,20 +10,7 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
 }
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-    (
-        {
-            className,
-            label,
-            error,
-            helperText,
-            fullWidth = true,
-            resize = 'vertical',
-            id,
-            rows = 3,
-            ...props
-        },
-        ref
-    ) => {
+    ({ className, label, error, helperText, fullWidth = true, resize = 'vertical', id, rows = 3, ...props }, ref) => {
         const textareaId = id || `textarea-${Math.random().toString(36).substr(2, 9)}`;
         const hasError = Boolean(error);
 
@@ -35,13 +22,8 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         ];
 
         const textareaStateClasses = hasError
-            ? [
-                'border-red-300 text-red-900 focus:ring-red-500 focus:border-red-500',
-                'placeholder-red-300',
-            ]
-            : [
-                'border-gray-300 focus:ring-blue-500 focus:border-blue-500',
-            ];
+            ? ['border-red-300 text-red-900 focus:ring-red-500 focus:border-red-500', 'placeholder-red-300']
+            : ['border-gray-300 focus:ring-blue-500 focus:border-blue-500'];
 
         const resizeClasses = {
             none: 'resize-none',
@@ -50,9 +32,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
             both: 'resize',
         };
 
-        const containerClasses = [
-            fullWidth ? 'w-full' : 'w-auto',
-        ];
+        const containerClasses = [fullWidth ? 'w-full' : 'w-auto'];
 
         const textareaClasses = [
             ...baseTextareaClasses,
@@ -66,10 +46,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
                 {label && (
                     <label
                         htmlFor={textareaId}
-                        className={clsx(
-                            'block text-sm font-medium mb-1',
-                            hasError ? 'text-red-700' : 'text-gray-700'
-                        )}
+                        className={clsx('block text-sm font-medium mb-1', hasError ? 'text-red-700' : 'text-gray-700')}
                     >
                         {label}
                     </label>
@@ -89,11 +66,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
                     </p>
                 )}
 
-                {helperText && !error && (
-                    <p className="mt-1 text-sm text-gray-500">
-                        {helperText}
-                    </p>
-                )}
+                {helperText && !error && <p className="mt-1 text-sm text-gray-500">{helperText}</p>}
             </div>
         );
     }

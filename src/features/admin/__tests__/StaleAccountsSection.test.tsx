@@ -9,9 +9,7 @@ const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
 
 vi.mock('../api', () => ({
     useStaleAccounts: () => ({
-        data: [
-            { id: 7, username: 'ci-bot', display_name: 'CI Bot', email: 'ci@demo.test', created_at: tenDaysAgo },
-        ],
+        data: [{ id: 7, username: 'ci-bot', display_name: 'CI Bot', email: 'ci@demo.test', created_at: tenDaysAgo }],
     }),
     useResendSetupLink: () => ({ mutate: resendMutate, isPending: false }),
     useSuspendUser: () => ({ mutate: suspendMutate, isPending: false }),

@@ -23,7 +23,10 @@ const WINDOWS = [30, 60, 90] as const;
 // ── Section card shell ────────────────────────────────────────────────────────
 
 const SectionCard: React.FC<{ title: string; icon: React.ReactNode; subtitle?: string; children: React.ReactNode }> = ({
-    title, icon, subtitle, children,
+    title,
+    icon,
+    subtitle,
+    children,
 }) => (
     <div className="bg-surface border border-base rounded-xl shadow-xs">
         <div className="px-6 py-4 border-b border-base">
@@ -38,7 +41,9 @@ const SectionCard: React.FC<{ title: string; icon: React.ReactNode; subtitle?: s
 );
 
 const EmptyState: React.FC<{ message: string }> = ({ message }) => (
-    <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>{message}</div>
+    <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+        {message}
+    </div>
 );
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -54,7 +59,6 @@ export function UsageAnalyticsPage() {
     return (
         <div className="min-h-screen bg-app">
             <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
                     <div>
@@ -65,7 +69,7 @@ export function UsageAnalyticsPage() {
                     </div>
                     {/* Window toggle */}
                     <div className="inline-flex rounded-lg border border-base overflow-hidden self-start">
-                        {WINDOWS.map(w => (
+                        {WINDOWS.map((w) => (
                             <button
                                 key={w}
                                 onClick={() => setDays(w)}
@@ -82,7 +86,6 @@ export function UsageAnalyticsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
                     {/* Most accessed */}
                     <SectionCard
                         title="Most Accessed"
@@ -99,22 +102,37 @@ export function UsageAnalyticsPage() {
                                     <div key={s.secret_id} className="space-y-1">
                                         <div className="flex items-center justify-between text-sm">
                                             <span className="flex items-center gap-2 min-w-0">
-                                                <span className="tabular-nums text-xs w-5 shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                <span
+                                                    className="tabular-nums text-xs w-5 shrink-0"
+                                                    style={{ color: 'var(--text-muted)' }}
+                                                >
                                                     {i + 1}.
                                                 </span>
-                                                <span className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>
+                                                <span
+                                                    className="truncate font-medium"
+                                                    style={{ color: 'var(--text-primary)' }}
+                                                >
                                                     {s.secret_name}
                                                 </span>
                                             </span>
-                                            <span className="tabular-nums shrink-0 ml-3" style={{ color: 'var(--text-secondary)' }}>
+                                            <span
+                                                className="tabular-nums shrink-0 ml-3"
+                                                style={{ color: 'var(--text-secondary)' }}
+                                            >
                                                 {fmt(s.read_count)} {s.read_count === 1 ? 'read' : 'reads'}
                                             </span>
                                         </div>
-                                        <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                                        <div
+                                            className="h-1.5 rounded-full overflow-hidden"
+                                            style={{ backgroundColor: 'var(--bg-subtle)' }}
+                                        >
                                             <div
                                                 className="h-full rounded-full transition-all duration-700"
                                                 style={{
-                                                    width: maxReads > 0 ? `${Math.round((s.read_count / maxReads) * 100)}%` : '0%',
+                                                    width:
+                                                        maxReads > 0
+                                                            ? `${Math.round((s.read_count / maxReads) * 100)}%`
+                                                            : '0%',
                                                     backgroundColor: '#f59e0b',
                                                 }}
                                             />
@@ -138,15 +156,19 @@ export function UsageAnalyticsPage() {
                         ) : (
                             <>
                                 <div className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-                                    {fmt(unused.length)} secret{unused.length !== 1 ? 's' : ''} candidate{unused.length !== 1 ? 's' : ''} for review or retirement
+                                    {fmt(unused.length)} secret{unused.length !== 1 ? 's' : ''} candidate
+                                    {unused.length !== 1 ? 's' : ''} for review or retirement
                                 </div>
                                 <div className="space-y-1.5 max-h-96 overflow-y-auto">
-                                    {unused.map(s => (
+                                    {unused.map((s) => (
                                         <div
                                             key={s.secret_id}
                                             className="flex items-center justify-between py-2 px-3 rounded-lg border border-base"
                                         >
-                                            <span className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                            <span
+                                                className="truncate text-sm font-medium"
+                                                style={{ color: 'var(--text-primary)' }}
+                                            >
                                                 {s.secret_name}
                                             </span>
                                             <span
@@ -156,7 +178,9 @@ export function UsageAnalyticsPage() {
                                                     backgroundColor: 'var(--bg-subtle)',
                                                 }}
                                             >
-                                                {s.last_read ? `last read ${relativeFromNow(s.last_read)}` : 'never read'}
+                                                {s.last_read
+                                                    ? `last read ${relativeFromNow(s.last_read)}`
+                                                    : 'never read'}
                                             </span>
                                         </div>
                                     ))}
@@ -168,7 +192,8 @@ export function UsageAnalyticsPage() {
 
                 <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                     <ChartBarIcon className="h-4 w-4" />
-                    Based on recorded secret reads. Rotations and edits are tracked separately and do not count as reads.
+                    Based on recorded secret reads. Rotations and edits are tracked separately and do not count as
+                    reads.
                 </div>
             </div>
         </div>

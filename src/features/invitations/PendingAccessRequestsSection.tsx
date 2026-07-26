@@ -5,7 +5,7 @@ import { AccessRequest } from '../../services/projectInvitations';
 import { useProjectAccessRequests, useResolveAccessRequest } from './api';
 
 // "project_developer" → "Developer"
-const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, c => c.toUpperCase());
+const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
 interface UserLite {
     id: number;
@@ -25,16 +25,13 @@ interface PendingAccessRequestsSectionProps {
  * requests with approve-with-role / reject-with-reason. No bulk approve — each
  * request is resolved individually so the granted role is a deliberate choice.
  */
-export const PendingAccessRequestsSection: React.FC<PendingAccessRequestsSectionProps> = ({
-    projectId,
-    users,
-}) => {
+export const PendingAccessRequestsSection: React.FC<PendingAccessRequestsSectionProps> = ({ projectId, users }) => {
     const { data: requests = [] } = useProjectAccessRequests(projectId);
-    const pending = useMemo(() => requests.filter(r => r.state === 'pending'), [requests]);
+    const pending = useMemo(() => requests.filter((r) => r.state === 'pending'), [requests]);
 
     const userById = useMemo(() => {
         const m = new Map<number, UserLite>();
-        users.forEach(u => m.set(u.id, u));
+        users.forEach((u) => m.set(u.id, u));
         return m;
     }, [users]);
 
@@ -59,7 +56,7 @@ export const PendingAccessRequestsSection: React.FC<PendingAccessRequestsSection
                 style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
             >
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {pending.map(req => (
+                    {pending.map((req) => (
                         <AccessRequestRow
                             key={req.id}
                             projectId={projectId}
@@ -152,13 +149,13 @@ const AccessRequestRow: React.FC<AccessRequestRowProps> = ({ projectId, request,
                     <>
                         <select
                             value={grantRole}
-                            onChange={e => setGrantRole(e.target.value)}
+                            onChange={(e) => setGrantRole(e.target.value)}
                             disabled={resolve.isPending}
                             className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0"
                             style={controlStyle}
                             title="Role to grant on approval"
                         >
-                            {PROJECT_ROLES.map(r => (
+                            {PROJECT_ROLES.map((r) => (
                                 <option key={r} value={r}>
                                     {roleLabel(r)}
                                 </option>
@@ -193,7 +190,7 @@ const AccessRequestRow: React.FC<AccessRequestRowProps> = ({ projectId, request,
                     <input
                         type="text"
                         value={reason}
-                        onChange={e => setReason(e.target.value)}
+                        onChange={(e) => setReason(e.target.value)}
                         placeholder="Reason (optional)"
                         autoFocus
                         className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-hidden"

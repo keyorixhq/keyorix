@@ -10,8 +10,7 @@ const SIGNALS: { key: keyof HygieneCounts; label: string }[] = [
     { key: 'rotation_overdue', label: 'Rotation overdue' },
 ];
 
-const totalDebt = (c: HygieneCounts) =>
-    SIGNALS.reduce((sum, s) => sum + (c[s.key] ?? 0), 0);
+const totalDebt = (c: HygieneCounts) => SIGNALS.reduce((sum, s) => sum + (c[s.key] ?? 0), 0);
 
 /**
  * Deployment-wide secret-hygiene rollup (#365), the install-wide counterpart to the
@@ -66,7 +65,9 @@ export const DeploymentHygieneSection: React.FC = () => {
                             >
                                 {n}
                             </p>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{s.label}</p>
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                {s.label}
+                            </p>
                         </div>
                     );
                 })}
@@ -82,7 +83,10 @@ export const DeploymentHygieneSection: React.FC = () => {
                     >
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                {p.project_name} <span className="font-normal" style={{ color: 'var(--text-muted)' }}>#{p.project_id}</span>
+                                {p.project_name}{' '}
+                                <span className="font-normal" style={{ color: 'var(--text-muted)' }}>
+                                    #{p.project_id}
+                                </span>
                             </p>
                             <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
                                 {SIGNALS.filter((s) => (p[s.key] ?? 0) > 0)

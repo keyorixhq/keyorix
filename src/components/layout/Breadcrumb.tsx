@@ -34,10 +34,7 @@ const Breadcrumb: React.FC<BreadcrumbProps> = ({ items, className }) => {
                 {items.map((item) => (
                     <li key={item.name}>
                         <div className="flex items-center">
-                            <ChevronRightIcon
-                                className="h-5 w-5 shrink-0 text-gray-400"
-                                aria-hidden="true"
-                            />
+                            <ChevronRightIcon className="h-5 w-5 shrink-0 text-gray-400" aria-hidden="true" />
                             {item.href && !item.current ? (
                                 <Link
                                     to={item.href}
@@ -50,9 +47,7 @@ const Breadcrumb: React.FC<BreadcrumbProps> = ({ items, className }) => {
                                 <span
                                     className={clsx(
                                         'ml-2 text-sm font-medium',
-                                        item.current
-                                            ? 'text-gray-900'
-                                            : 'text-gray-500'
+                                        item.current ? 'text-gray-900' : 'text-gray-500'
                                     )}
                                     aria-current={item.current ? 'page' : undefined}
                                 >

@@ -8,9 +8,16 @@ interface ProjectRotationPlanTabProps {
 }
 
 const SummaryStat: React.FC<{ label: string; value: number; tone?: string | undefined }> = ({ label, value, tone }) => (
-    <div className="rounded-lg border px-4 py-3" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-        <div className="text-2xl font-semibold" style={{ color: tone ?? 'var(--text-primary)' }}>{value}</div>
-        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{label}</div>
+    <div
+        className="rounded-lg border px-4 py-3"
+        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+    >
+        <div className="text-2xl font-semibold" style={{ color: tone ?? 'var(--text-primary)' }}>
+            {value}
+        </div>
+        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            {label}
+        </div>
     </div>
 );
 
@@ -23,9 +30,12 @@ const statusBadge = (s: PlannedRotation): { bg: string; text: string; label: str
 
 const riskTone = (band: string): string => {
     switch (band) {
-        case 'high': return 'var(--error)';
-        case 'medium': return 'var(--warning)';
-        default: return 'var(--text-muted)';
+        case 'high':
+            return 'var(--error)';
+        case 'medium':
+            return 'var(--warning)';
+        default:
+            return 'var(--text-muted)';
     }
 };
 
@@ -48,24 +58,35 @@ export const ProjectRotationPlanTab: React.FC<ProjectRotationPlanTabProps> = ({ 
                     Rotation Plan
                 </h2>
                 <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    The project's overdue and due-soon secrets, ordered into dependency-safe waves.
-                    Rotate a wave at a time, top to bottom; within a wave, most urgent first.
+                    The project's overdue and due-soon secrets, ordered into dependency-safe waves. Rotate a wave at a
+                    time, top to bottom; within a wave, most urgent first.
                 </p>
             </div>
 
             {data && !isLoading && !isError && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                     <SummaryStat label="To rotate" value={data.totalSecrets} />
-                    <SummaryStat label="Overdue" value={data.overdueCount} tone={data.overdueCount > 0 ? 'var(--error)' : undefined} />
-                    <SummaryStat label="Due soon" value={data.dueSoonCount} tone={data.dueSoonCount > 0 ? 'var(--warning)' : undefined} />
+                    <SummaryStat
+                        label="Overdue"
+                        value={data.overdueCount}
+                        tone={data.overdueCount > 0 ? 'var(--error)' : undefined}
+                    />
+                    <SummaryStat
+                        label="Due soon"
+                        value={data.dueSoonCount}
+                        tone={data.dueSoonCount > 0 ? 'var(--warning)' : undefined}
+                    />
                     <SummaryStat label="Waves" value={waves.length} />
                 </div>
             )}
 
-            <div className="rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div
+                className="rounded-lg border"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
                 {isLoading ? (
                     <div className="p-6 space-y-3">
-                        {[1, 2, 3].map(i => (
+                        {[1, 2, 3].map((i) => (
                             <div key={i} className="flex items-center gap-3 animate-pulse">
                                 <div className="h-3 w-40 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
                                 <div className="h-3 flex-1 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
@@ -74,7 +95,9 @@ export const ProjectRotationPlanTab: React.FC<ProjectRotationPlanTabProps> = ({ 
                     </div>
                 ) : isError ? (
                     <div className="p-6 text-center">
-                        <p className="text-sm" style={{ color: 'var(--error)' }}>Failed to load the rotation plan.</p>
+                        <p className="text-sm" style={{ color: 'var(--error)' }}>
+                            Failed to load the rotation plan.
+                        </p>
                     </div>
                 ) : waves.length === 0 ? (
                     <div className="p-10 text-center">
@@ -88,51 +111,73 @@ export const ProjectRotationPlanTab: React.FC<ProjectRotationPlanTabProps> = ({ 
                     </div>
                 ) : (
                     <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                        {waves.map(wave => (
+                        {waves.map((wave) => (
                             <div key={wave.index} className="p-4">
                                 <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                                        style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}>
+                                    <span
+                                        className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                                        style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}
+                                    >
                                         Wave {wave.index + 1}
                                     </span>
                                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                        {wave.secrets.length} secret{wave.secrets.length === 1 ? '' : 's'} — safe to rotate together
+                                        {wave.secrets.length} secret{wave.secrets.length === 1 ? '' : 's'} — safe to
+                                        rotate together
                                     </span>
                                 </div>
                                 <div className="space-y-2">
-                                    {wave.secrets.map(s => {
+                                    {wave.secrets.map((s) => {
                                         const badge = statusBadge(s);
                                         return (
-                                            <div key={s.secretId}
+                                            <div
+                                                key={s.secretId}
                                                 className="flex items-start justify-between gap-4 rounded-md px-3 py-2"
-                                                style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                                                style={{ backgroundColor: 'var(--bg-subtle)' }}
+                                            >
                                                 <div className="min-w-0">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="font-mono text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+                                                        <span
+                                                            className="font-mono text-xs font-medium"
+                                                            style={{ color: 'var(--text-primary)' }}
+                                                        >
                                                             {s.secretName}
                                                         </span>
-                                                        <span className="text-xs px-2 py-0.5 rounded-full"
-                                                            style={{ backgroundColor: badge.bg, color: badge.text }}>
+                                                        <span
+                                                            className="text-xs px-2 py-0.5 rounded-full"
+                                                            style={{ backgroundColor: badge.bg, color: badge.text }}
+                                                        >
                                                             {badge.label}
                                                         </span>
                                                         {s.autoRotate && (
-                                                            <span className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                                            <span
+                                                                className="inline-flex items-center gap-1 text-xs"
+                                                                style={{ color: 'var(--text-muted)' }}
+                                                            >
                                                                 <ArrowPathIcon className="h-3 w-3" /> self-rotating
                                                             </span>
                                                         )}
                                                     </div>
                                                     {s.reasons.length > 0 && (
-                                                        <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                                                        <div
+                                                            className="text-xs mt-1"
+                                                            style={{ color: 'var(--text-muted)' }}
+                                                        >
                                                             {s.reasons.join(' · ')}
                                                         </div>
                                                     )}
                                                 </div>
                                                 <div className="text-right shrink-0">
-                                                    <div className="text-xs font-medium" style={{ color: riskTone(s.riskBand) }}>
+                                                    <div
+                                                        className="text-xs font-medium"
+                                                        style={{ color: riskTone(s.riskBand) }}
+                                                    >
                                                         {s.riskBand ? `${s.riskBand} risk` : '—'}
                                                     </div>
                                                     {s.riskScore > 0 && (
-                                                        <div className="text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                                                        <div
+                                                            className="text-xs tabular-nums"
+                                                            style={{ color: 'var(--text-muted)' }}
+                                                        >
                                                             score {s.riskScore}
                                                         </div>
                                                     )}

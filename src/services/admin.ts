@@ -17,15 +17,8 @@ export const adminApi = {
         return response.data.data;
     },
 
-    async getUsers(params?: {
-        page?: number;
-        pageSize?: number;
-        search?: string;
-    }): Promise<PaginatedResponse<User>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<User>>>(
-            '/api/v1/users',
-            { params }
-        );
+    async getUsers(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<User>> {
+        const response = await apiClient.get<ApiResponse<PaginatedResponse<User>>>('/api/v1/users', { params });
         return response.data.data;
     },
 
@@ -44,17 +37,12 @@ export const adminApi = {
         startDate?: string;
         endDate?: string;
     }): Promise<PaginatedResponse<any>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<any>>>(
-            '/api/v1/audit/logs',
-            { params }
-        );
+        const response = await apiClient.get<ApiResponse<PaginatedResponse<any>>>('/api/v1/audit/logs', { params });
         return response.data.data;
     },
 
     async getUserRoles(userId: number): Promise<{ id: number; name: string }[]> {
-        const response = await apiClient.get(
-            `/api/v1/users/${userId}/roles`
-        );
+        const response = await apiClient.get(`/api/v1/users/${userId}/roles`);
         const data = response.data.data;
         const roles = data?.roles ?? data ?? [];
         return Array.isArray(roles) ? roles.map(normalizeRole) : [];
@@ -75,11 +63,17 @@ export const adminApi = {
 
     // On-demand triggers for the scheduled notification/alert jobs (system.write).
     async runAnomalyAlerts(): Promise<{ alerted: number }> {
-        const response = await apiClient.post<ApiResponse<{ alerted: number }>>('/api/v1/admin/jobs/anomaly-alerts', {});
+        const response = await apiClient.post<ApiResponse<{ alerted: number }>>(
+            '/api/v1/admin/jobs/anomaly-alerts',
+            {}
+        );
         return response.data.data;
     },
     async runRotationReminders(): Promise<{ sent: number }> {
-        const response = await apiClient.post<ApiResponse<{ sent: number }>>('/api/v1/admin/jobs/rotation-reminders', {});
+        const response = await apiClient.post<ApiResponse<{ sent: number }>>(
+            '/api/v1/admin/jobs/rotation-reminders',
+            {}
+        );
         return response.data.data;
     },
     async runExpiryReminders(): Promise<{ sent: number }> {
@@ -87,7 +81,10 @@ export const adminApi = {
         return response.data.data;
     },
     async runComplianceDigest(): Promise<{ sent: boolean }> {
-        const response = await apiClient.post<ApiResponse<{ sent: boolean }>>('/api/v1/admin/jobs/compliance-digest', {});
+        const response = await apiClient.post<ApiResponse<{ sent: boolean }>>(
+            '/api/v1/admin/jobs/compliance-digest',
+            {}
+        );
         return response.data.data;
     },
 
@@ -95,11 +92,11 @@ export const adminApi = {
     // Unless keep_user is set, the source user is suspended.
     async migrateUserToMachine(
         projectId: number,
-        body: { username: string; identity_type?: string; name?: string; keep_user?: boolean },
+        body: { username: string; identity_type?: string; name?: string; keep_user?: boolean }
     ): Promise<{ machine_identity: { id: number; name: string } }> {
         const response = await apiClient.post(
             `/api/v1/projects/${projectId}/machine-identities/migrate-from-user`,
-            body,
+            body
         );
         return response.data.data;
     },
@@ -109,10 +106,9 @@ export const adminApi = {
     // hold; the caller re-syncs via authStore.checkAuth() to load the
     // impersonated user's full profile.
     async impersonate(userId: number): Promise<ImpersonationResponse> {
-        const response = await apiClient.post<ApiResponse<ImpersonationResponse>>(
-            '/api/v1/admin/impersonate',
-            { user_id: userId }
-        );
+        const response = await apiClient.post<ApiResponse<ImpersonationResponse>>('/api/v1/admin/impersonate', {
+            user_id: userId,
+        });
         return response.data.data;
     },
 };

@@ -31,11 +31,7 @@ export interface CreateUserResult {
 }
 
 // AccountState mirrors the ADR-025 lifecycle states on the user DTO.
-export type AccountState =
-    | 'active'
-    | 'pending_first_login'
-    | 'password_reset_required'
-    | 'suspended';
+export type AccountState = 'active' | 'pending_first_login' | 'password_reset_required' | 'suspended';
 
 // AdminUser is the admin-facing user row (snake_case from the Go DTO), including
 // the ADR-025 account state and the per-user project tallies the backend now merges.
@@ -80,15 +76,10 @@ export interface ProjectAssignment {
 export const SYSTEM_ROLES = ['system_admin', 'system_auditor', 'system_viewer'] as const;
 
 export const usersApi = {
-    async list(params?: {
-        page?: number;
-        pageSize?: number;
-        search?: string;
-    }): Promise<PaginatedResponse<User>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<User>>>(
-            API_ENDPOINTS.USERS.LIST,
-            { params }
-        );
+    async list(params?: { page?: number; pageSize?: number; search?: string }): Promise<PaginatedResponse<User>> {
+        const response = await apiClient.get<ApiResponse<PaginatedResponse<User>>>(API_ENDPOINTS.USERS.LIST, {
+            params,
+        });
         return response.data.data;
     },
 

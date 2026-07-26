@@ -17,9 +17,15 @@ const expiryBadge = (isExpired: boolean, days: number): { cls: string; label: st
         return { cls: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200', label: 'Expired' };
     }
     if (days <= 30) {
-        return { cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200', label: `Expires in ${days}d` };
+        return {
+            cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+            label: `Expires in ${days}d`,
+        };
     }
-    return { cls: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200', label: `Valid · ${days}d left` };
+    return {
+        cls: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200',
+        label: `Valid · ${days}d left`,
+    };
 };
 
 const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
@@ -43,7 +49,9 @@ export const CertificatePanel: React.FC<CertificatePanelProps> = ({ secretId }) 
             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
                 <div className="h-4 w-32 mb-4 rounded bg-gray-100 dark:bg-gray-700 animate-pulse" />
                 <div className="space-y-2">
-                    {[1, 2, 3].map(i => <div key={i} className="h-3 w-full rounded bg-gray-100 dark:bg-gray-700 animate-pulse" />)}
+                    {[1, 2, 3].map((i) => (
+                        <div key={i} className="h-3 w-full rounded bg-gray-100 dark:bg-gray-700 animate-pulse" />
+                    ))}
                 </div>
             </div>
         );
@@ -69,7 +77,9 @@ export const CertificatePanel: React.FC<CertificatePanelProps> = ({ secretId }) 
                 <Row label="Subject">{cert.subject}</Row>
                 <Row label="Issuer">
                     {cert.issuer}
-                    {cert.self_signed && <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">(self-signed)</span>}
+                    {cert.self_signed && (
+                        <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">(self-signed)</span>
+                    )}
                 </Row>
                 <Row label="Valid">
                     {fmtDate(cert.not_before)} → {fmtDate(cert.not_after)}
@@ -83,7 +93,8 @@ export const CertificatePanel: React.FC<CertificatePanelProps> = ({ secretId }) 
                     <span className="font-mono text-xs">{cert.serial_number}</span>
                 </Row>
                 <Row label="Type">
-                    {cert.is_ca ? 'Certificate Authority' : 'Leaf certificate'} · {cert.signature_algorithm} / {cert.public_key_algorithm}
+                    {cert.is_ca ? 'Certificate Authority' : 'Leaf certificate'} · {cert.signature_algorithm} /{' '}
+                    {cert.public_key_algorithm}
                 </Row>
             </div>
         </div>

@@ -5,10 +5,15 @@ import { complianceApi } from '../../../services/compliance';
 
 vi.mock('../../../services/compliance', () => ({
     complianceApi: {
-        getPosture: vi.fn(), getControls: vi.fn(), getSoDViolations: vi.fn(),
+        getPosture: vi.fn(),
+        getControls: vi.fn(),
+        getSoDViolations: vi.fn(),
         getDigest: vi.fn(),
-        placeLegalHold: vi.fn(), liftLegalHold: vi.fn(),
-        getRiskExceptions: vi.fn(), createRiskException: vi.fn(), revokeRiskException: vi.fn(),
+        placeLegalHold: vi.fn(),
+        liftLegalHold: vi.fn(),
+        getRiskExceptions: vi.fn(),
+        createRiskException: vi.fn(),
+        revokeRiskException: vi.fn(),
     },
 }));
 
@@ -17,19 +22,38 @@ vi.mock('../../../services/client', () => ({
     apiClient: { get: (...args: any[]) => mockGet(...args) },
 }));
 
-const emptyMatrix = { generatedAt: '2026-06-14T10:00:00Z', summary: { total: 0, pass: 0, gap: 0, notConfigured: 0 }, controls: [] };
+const emptyMatrix = {
+    generatedAt: '2026-06-14T10:00:00Z',
+    summary: { total: 0, pass: 0, gap: 0, notConfigured: 0 },
+    controls: [],
+};
 
 const posture = {
     generatedAt: '2026-06-14T10:00:00Z',
     auditIntegrity: { chainVerified: true, chainedEvents: 12, checkpointed: true },
-    accessGovernance: { projects: 4, projectsWithOpenCampaign: 1, projectsNeverReviewed: 1, openCampaigns: 1, pendingItems: 3, projectsOverdue: 7, dormantRoleGrants: 2, sodViolations: 1 },
+    accessGovernance: {
+        projects: 4,
+        projectsWithOpenCampaign: 1,
+        projectsNeverReviewed: 1,
+        openCampaigns: 1,
+        pendingItems: 3,
+        projectsOverdue: 7,
+        dormantRoleGrants: 2,
+        sodViolations: 1,
+    },
     rotation: { coveredSecrets: 10, overdue: 1, dueSoon: 2 },
     identity: { activeUsers: 5, usersWithSecondFactor: 4, secondFactorPercent: 80 },
     emergencyAccess: { activeActivations: 0, totalActivations: 1 },
     classification: { totalSecrets: 12, public: 1, internal: 4, confidential: 1, restricted: 6, unclassified: 0 },
     anomalies: { unacknowledged: 3, highSeverityOpen: 1 },
     legalHold: { active: false, reason: '' },
-    retention: { enabled: true, anomalyAlertsDays: 90, closedAccessReviewsDays: 730, breakGlassDays: 365, resolvedAccessRequestsDays: 0 },
+    retention: {
+        enabled: true,
+        anomalyAlertsDays: 90,
+        closedAccessReviewsDays: 730,
+        breakGlassDays: 365,
+        resolvedAccessRequestsDays: 0,
+    },
 };
 
 describe('CompliancePage posture panel', () => {
@@ -50,16 +74,16 @@ describe('CompliancePage posture panel', () => {
         render(<CompliancePage />);
 
         expect(await screen.findByText('Controls posture')).toBeInTheDocument();
-        expect(screen.getByText('80%')).toBeInTheDocument();        // second-factor coverage
-        expect(screen.getByText('3/4')).toBeInTheDocument();        // projects reviewed
-        expect(screen.getByText('2')).toBeInTheDocument();          // dormant role grants
-        expect(screen.getByText('0 / 12')).toBeInTheDocument();     // unclassified / total secrets
+        expect(screen.getByText('80%')).toBeInTheDocument(); // second-factor coverage
+        expect(screen.getByText('3/4')).toBeInTheDocument(); // projects reviewed
+        expect(screen.getByText('2')).toBeInTheDocument(); // dormant role grants
+        expect(screen.getByText('0 / 12')).toBeInTheDocument(); // unclassified / total secrets
         expect(screen.getByText('3 (1 high)')).toBeInTheDocument(); // open anomalies (1 high-severity)
-        expect(screen.getByText('7')).toBeInTheDocument();          // projects overdue for recert
+        expect(screen.getByText('7')).toBeInTheDocument(); // projects overdue for recert
         // Data-retention section: configured windows, "Keep" for a 0 window.
         expect(screen.getByText(/Data retention .* enforced/i)).toBeInTheDocument();
-        expect(screen.getByText('90d')).toBeInTheDocument();        // anomaly-alerts window
-        expect(screen.getByText('Keep')).toBeInTheDocument();       // resolved-requests window = 0
+        expect(screen.getByText('90d')).toBeInTheDocument(); // anomaly-alerts window
+        expect(screen.getByText('Keep')).toBeInTheDocument(); // resolved-requests window = 0
         // The static regulatory cards still render below.
         expect(screen.getByText('NIS2 Directive')).toBeInTheDocument();
     });
@@ -67,7 +91,13 @@ describe('CompliancePage posture panel', () => {
     it('lists separation-of-duties violations when present', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);
         (complianceApi.getSoDViolations as any).mockResolvedValue([
-            { policyName: 'approve-vs-admin', username: 'alice', email: 'a@x.io', permissionA: 'roles.assign', permissionB: 'secrets.delete' },
+            {
+                policyName: 'approve-vs-admin',
+                username: 'alice',
+                email: 'a@x.io',
+                permissionA: 'roles.assign',
+                permissionB: 'secrets.delete',
+            },
         ]);
         render(<CompliancePage />);
 
@@ -77,7 +107,10 @@ describe('CompliancePage posture panel', () => {
     });
 
     it('shows a legal-hold banner when a hold is active', async () => {
-        (complianceApi.getPosture as any).mockResolvedValue({ ...posture, legalHold: { active: true, reason: 'litigation INC-7' } });
+        (complianceApi.getPosture as any).mockResolvedValue({
+            ...posture,
+            legalHold: { active: true, reason: 'litigation INC-7' },
+        });
         render(<CompliancePage />);
         expect(await screen.findByText(/Legal hold active/i)).toBeInTheDocument();
         expect(screen.getByText(/litigation INC-7/)).toBeInTheDocument();
@@ -103,8 +136,22 @@ describe('CompliancePage posture panel', () => {
             generatedAt: '2026-06-14T10:00:00Z',
             summary: { total: 2, pass: 1, gap: 1, notConfigured: 0 },
             controls: [
-                { id: 'sep', name: 'Separation of duties', area: 'Access governance', status: 'gap', detail: '1 SoD violation', frameworks: { iso27001: ['A.5.3'], soc2: ['CC5.1'], nis2: [], dora: ['Art.5'], ens: ['op.acc.3'] } },
-                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: '100% covered', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [], ens: [] } },
+                {
+                    id: 'sep',
+                    name: 'Separation of duties',
+                    area: 'Access governance',
+                    status: 'gap',
+                    detail: '1 SoD violation',
+                    frameworks: { iso27001: ['A.5.3'], soc2: ['CC5.1'], nis2: [], dora: ['Art.5'], ens: ['op.acc.3'] },
+                },
+                {
+                    id: 'mfa',
+                    name: 'Second-factor coverage',
+                    area: 'Identity',
+                    status: 'pass',
+                    detail: '100% covered',
+                    frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [], ens: [] },
+                },
             ],
         });
         render(<CompliancePage />);
@@ -121,7 +168,14 @@ describe('CompliancePage posture panel', () => {
             generatedAt: '2026-06-14T10:00:00Z',
             summary: { total: 1, pass: 1, gap: 0, notConfigured: 0 },
             controls: [
-                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: 'ok', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [], ens: [] } },
+                {
+                    id: 'mfa',
+                    name: 'Second-factor coverage',
+                    area: 'Identity',
+                    status: 'pass',
+                    detail: 'ok',
+                    frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [], ens: [] },
+                },
             ],
         });
         mockGet.mockResolvedValue({ data: new Blob(['id,name\n'], { type: 'text/csv' }) });
@@ -129,7 +183,7 @@ describe('CompliancePage posture panel', () => {
 
         fireEvent.click(await screen.findByRole('button', { name: /download csv/i }));
         await waitFor(() =>
-            expect(mockGet).toHaveBeenCalledWith('/api/v1/compliance/controls.csv', { responseType: 'blob' }),
+            expect(mockGet).toHaveBeenCalledWith('/api/v1/compliance/controls.csv', { responseType: 'blob' })
         );
         expect((URL as any).createObjectURL).toHaveBeenCalled();
     });
@@ -155,7 +209,16 @@ describe('CompliancePage posture panel', () => {
     it('lists active risk exceptions in the register', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);
         (complianceApi.getRiskExceptions as any).mockResolvedValue([
-            { id: 1, title: 'accept SoD during cutover', category: 'sod', reference: 'alice', justification: 'temporary', status: 'active', expiresAt: '2026-12-31T00:00:00Z', createdBy: 9 },
+            {
+                id: 1,
+                title: 'accept SoD during cutover',
+                category: 'sod',
+                reference: 'alice',
+                justification: 'temporary',
+                status: 'active',
+                expiresAt: '2026-12-31T00:00:00Z',
+                createdBy: 9,
+            },
         ]);
         render(<CompliancePage />);
 

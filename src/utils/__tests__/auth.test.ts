@@ -7,8 +7,7 @@ const { memStore } = vi.hoisted(() => {
     return {
         memStore: {
             map,
-            get: <T>(key: string, def?: T): T | null =>
-                map.has(key) ? (map.get(key) as T) : (def ?? null),
+            get: <T>(key: string, def?: T): T | null => (map.has(key) ? (map.get(key) as T) : (def ?? null)),
             set: (key: string, value: unknown): void => {
                 map.set(key, value);
             },

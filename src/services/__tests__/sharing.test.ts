@@ -24,7 +24,11 @@ describe('buildUpdateShareBody', () => {
     });
 
     it('prefers clear over a stale expiresAt when both somehow arrive', () => {
-        const body = buildUpdateShareBody({ permission: 'read', clearExpiry: true, expiresAt: '2026-07-01T00:00:00.000Z' });
+        const body = buildUpdateShareBody({
+            permission: 'read',
+            clearExpiry: true,
+            expiresAt: '2026-07-01T00:00:00.000Z',
+        });
         expect(body.clear_expiry).toBe(true);
         // both keys may be present; the server treats clear_expiry as authoritative.
         expect(body.permission).toBe('read');

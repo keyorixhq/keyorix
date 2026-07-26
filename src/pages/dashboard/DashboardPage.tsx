@@ -18,7 +18,9 @@ import {
 
 const fmt = (n: number) => n.toLocaleString();
 const fmtDate = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(d));
+    new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
+        new Date(d)
+    );
 
 function parseUptime(raw: string): string {
     if (!raw) return '—';
@@ -47,34 +49,33 @@ interface StatCardProps {
 }
 
 const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue, accent, onClick }) => {
-    const delta = trend && prevValue != null
-        ? Math.round((typeof value === 'number' ? value : 0) - prevValue)
-        : null;
+    const delta = trend && prevValue != null ? Math.round((typeof value === 'number' ? value : 0) - prevValue) : null;
     return (
-    <div
-        onClick={onClick}
-        className={`relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs
+        <div
+            onClick={onClick}
+            className={`relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs
             ${onClick ? 'cursor-pointer hover:shadow-md hover:border-base transition-all duration-150' : ''}`}
-    >
-        <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
-        <span className="text-xs font-semibold text-base-muted uppercase tracking-widest pl-3">{label}</span>
-        <span className="text-4xl font-bold text-base-primary pl-3 tabular-nums leading-none">
-            {typeof value === 'number' ? fmt(value) : value}
-        </span>
-        <div className="pl-3 flex items-center gap-2 flex-wrap">
-            {trend && (
-                <span className={`text-xs font-semibold ${trend.isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
-                    {trend.isPositive ? '↑' : '↓'} {trend.value}%
-                    {delta !== null && (
-                        <span className="font-normal opacity-70 ml-1">
-                            ({delta > 0 ? '+' : ''}{delta})
-                        </span>
-                    )}
-                </span>
-            )}
-            {sub && <span className="text-xs text-base-muted">{sub}</span>}
+        >
+            <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
+            <span className="text-xs font-semibold text-base-muted uppercase tracking-widest pl-3">{label}</span>
+            <span className="text-4xl font-bold text-base-primary pl-3 tabular-nums leading-none">
+                {typeof value === 'number' ? fmt(value) : value}
+            </span>
+            <div className="pl-3 flex items-center gap-2 flex-wrap">
+                {trend && (
+                    <span className={`text-xs font-semibold ${trend.isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {trend.isPositive ? '↑' : '↓'} {trend.value}%
+                        {delta !== null && (
+                            <span className="font-normal opacity-70 ml-1">
+                                ({delta > 0 ? '+' : ''}
+                                {delta})
+                            </span>
+                        )}
+                    </span>
+                )}
+                {sub && <span className="text-xs text-base-muted">{sub}</span>}
+            </div>
         </div>
-    </div>
     );
 };
 
@@ -82,34 +83,42 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue
 
 const FeaturePill: React.FC<{ label: string; active: boolean }> = ({ label, active }) => {
     const { theme } = useUIStore();
-    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const isDark =
+        theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     return (
         <div
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border"
-            style={active ? {
-                backgroundColor: isDark ? 'rgba(16,185,129,0.10)' : '#dcfce7',
-                borderColor: isDark ? 'rgba(16,185,129,0.25)' : '#86efac',
-                color: isDark ? '#34d399' : '#166534',
-            } : {
-                backgroundColor: 'var(--bg-subtle)',
-                borderColor: 'var(--border)',
-                color: 'var(--text-muted)',
-            }}
+            style={
+                active
+                    ? {
+                          backgroundColor: isDark ? 'rgba(16,185,129,0.10)' : '#dcfce7',
+                          borderColor: isDark ? 'rgba(16,185,129,0.25)' : '#86efac',
+                          color: isDark ? '#34d399' : '#166534',
+                      }
+                    : {
+                          backgroundColor: 'var(--bg-subtle)',
+                          borderColor: 'var(--border)',
+                          color: 'var(--text-muted)',
+                      }
+            }
         >
-            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: active ? (isDark ? '#34d399' : '#16a34a') : 'var(--text-muted)' }} />
+            <div
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ backgroundColor: active ? (isDark ? '#34d399' : '#16a34a') : 'var(--text-muted)' }}
+            />
             {label}
         </div>
     );
 };
 
 const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
-    created:      { dot: 'bg-emerald-500', label: 'created secret' },
-    updated:      { dot: 'bg-blue-500',    label: 'updated secret' },
-    accessed:     { dot: 'bg-amber-500',   label: 'accessed secret' },
-    shared:       { dot: 'bg-purple-500',  label: 'shared secret' },
-    login:        { dot: 'bg-gray-400',    label: 'logged in' },
-    logout:       { dot: 'bg-gray-300',    label: 'logged out' },
-    deleted:      { dot: 'bg-red-500',     label: 'deleted secret' },
+    created: { dot: 'bg-emerald-500', label: 'created secret' },
+    updated: { dot: 'bg-blue-500', label: 'updated secret' },
+    accessed: { dot: 'bg-amber-500', label: 'accessed secret' },
+    shared: { dot: 'bg-purple-500', label: 'shared secret' },
+    login: { dot: 'bg-gray-400', label: 'logged in' },
+    logout: { dot: 'bg-gray-300', label: 'logged out' },
+    deleted: { dot: 'bg-red-500', label: 'deleted secret' },
 };
 
 const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
@@ -122,8 +131,11 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
             </div>
             <div className="flex-1 min-w-0">
                 <p className="text-sm text-base-primary">
-                    <span className="font-semibold">{item.actor}</span>
-                    {' '}<span className="text-base-muted">{style.label}{secretPart}</span>
+                    <span className="font-semibold">{item.actor}</span>{' '}
+                    <span className="text-base-muted">
+                        {style.label}
+                        {secretPart}
+                    </span>
                 </p>
                 <p className="text-xs text-base-muted mt-0.5">{fmtDate(item.timestamp)}</p>
             </div>
@@ -141,26 +153,29 @@ interface SignalCardProps {
 
 const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, onClick }) => {
     const { theme } = useUIStore();
-    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const isDark =
+        theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
     const styles: React.CSSProperties =
-        severity === 'neutral' ? {
-            backgroundColor: 'var(--bg-subtle)',
-            borderColor: 'var(--border)',
-            color: 'var(--text-secondary)',
-        } : severity === 'warn' ? {
-            backgroundColor: isDark ? 'rgba(245,158,11,0.08)' : 'rgba(245,158,11,0.06)',
-            borderColor: isDark ? 'rgba(245,158,11,0.25)' : 'rgba(245,158,11,0.30)',
-            color: isDark ? '#fbbf24' : '#92400e',
-        } : {
-            backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.06)',
-            borderColor: isDark ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.30)',
-            color: isDark ? '#f87171' : '#991b1b',
-        };
+        severity === 'neutral'
+            ? {
+                  backgroundColor: 'var(--bg-subtle)',
+                  borderColor: 'var(--border)',
+                  color: 'var(--text-secondary)',
+              }
+            : severity === 'warn'
+              ? {
+                    backgroundColor: isDark ? 'rgba(245,158,11,0.08)' : 'rgba(245,158,11,0.06)',
+                    borderColor: isDark ? 'rgba(245,158,11,0.25)' : 'rgba(245,158,11,0.30)',
+                    color: isDark ? '#fbbf24' : '#92400e',
+                }
+              : {
+                    backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.06)',
+                    borderColor: isDark ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.30)',
+                    color: isDark ? '#f87171' : '#991b1b',
+                };
 
-    const valueColor = severity === 'neutral'
-        ? 'var(--text-primary)'
-        : styles.color as string;
+    const valueColor = severity === 'neutral' ? 'var(--text-primary)' : (styles.color as string);
 
     return (
         <div
@@ -173,7 +188,9 @@ const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, o
                 <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
                 <p className="text-xs opacity-60 mt-0.5">{hint}</p>
             </div>
-            <span className="text-2xl font-bold tabular-nums" style={{ color: valueColor }}>{value}</span>
+            <span className="text-2xl font-bold tabular-nums" style={{ color: valueColor }}>
+                {value}
+            </span>
         </div>
     );
 };
@@ -206,7 +223,6 @@ export const DashboardPage: React.FC = () => {
     return (
         <div className="min-h-screen bg-app">
             <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-
                 {/* ── Header ─────────────────────────────────────────────── */}
                 <div className="flex items-end justify-between">
                     <div>
@@ -231,27 +247,33 @@ export const DashboardPage: React.FC = () => {
                     <StatCard
                         label="Active Users"
                         value={stats?.activeUsers ?? 0}
-                        sub={(stats?.sharedSecrets ?? 0) > 0
-                            ? `${stats!.sharedSecrets} shared secret${stats!.sharedSecrets === 1 ? '' : 's'}`
-                            : 'registered accounts'}
+                        sub={
+                            (stats?.sharedSecrets ?? 0) > 0
+                                ? `${stats!.sharedSecrets} shared secret${stats!.sharedSecrets === 1 ? '' : 's'}`
+                                : 'registered accounts'
+                        }
                         accent="bg-purple-500"
                         onClick={() => navigate(ROUTES.ADMIN_USERS)}
                     />
                     <StatCard
                         label="Audit Events (30d)"
                         value={stats?.auditEvents30d ?? 0}
-                        sub={(stats?.auditLogins30d != null && stats?.auditSecretReads30d != null)
-                            ? `${stats.auditLogins30d} logins · ${stats.auditSecretReads30d} reads`
-                            : 'all events logged'}
+                        sub={
+                            stats?.auditLogins30d != null && stats?.auditSecretReads30d != null
+                                ? `${stats.auditLogins30d} logins · ${stats.auditSecretReads30d} reads`
+                                : 'all events logged'
+                        }
                         accent="bg-indigo-500"
                         onClick={() => navigate(ROUTES.AUDIT)}
                     />
                     <StatCard
                         label={alertCount > 0 ? `Alerts (${alertCount})` : 'Security'}
                         value={alertCount > 0 ? alertCount : '✓'}
-                        sub={alertCount > 0
-                            ? `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} · ${expiredSecrets.length} expired · ${expiringSecrets.length} expiring`
-                            : 'No active alerts'}
+                        sub={
+                            alertCount > 0
+                                ? `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} · ${expiredSecrets.length} expired · ${expiringSecrets.length} expiring`
+                                : 'No active alerts'
+                        }
                         accent={alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500'}
                         {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT + '?tab=anomalies') } : {})}
                     />
@@ -260,21 +282,41 @@ export const DashboardPage: React.FC = () => {
                 {/* ── Operational Signals ────────────────────────────────── */}
                 <div className="bg-surface border border-base rounded-xl shadow-xs">
                     <div className="px-6 py-4 border-b border-base">
-                        <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Operational Signals</h2>
+                        <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">
+                            Operational Signals
+                        </h2>
                     </div>
                     <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                         <SignalCard
                             label="Expiring Secrets"
                             value={expiring.length}
-                            hint={expiredSecrets.length > 0 ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d` : 'within 30 days'}
-                            severity={expiring.length === 0 ? 'neutral' : expiredSecrets.length > 0 ? 'alert' : expiringSecrets.some((s: any) => s.daysLeft <= 7) ? 'alert' : 'warn'}
+                            hint={
+                                expiredSecrets.length > 0
+                                    ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d`
+                                    : 'within 30 days'
+                            }
+                            severity={
+                                expiring.length === 0
+                                    ? 'neutral'
+                                    : expiredSecrets.length > 0
+                                      ? 'alert'
+                                      : expiringSecrets.some((s: any) => s.daysLeft <= 7)
+                                        ? 'alert'
+                                        : 'warn'
+                            }
                             onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc&filter=expiring')}
                         />
                         <SignalCard
                             label="Failed Auth (24h)"
                             value={stats?.failedAuthAttempts24h ?? 0}
                             hint="unsuccessful attempts"
-                            severity={(stats?.failedAuthAttempts24h ?? 0) === 0 ? 'neutral' : (stats?.failedAuthAttempts24h ?? 0) >= 5 ? 'alert' : 'warn'}
+                            severity={
+                                (stats?.failedAuthAttempts24h ?? 0) === 0
+                                    ? 'neutral'
+                                    : (stats?.failedAuthAttempts24h ?? 0) >= 5
+                                      ? 'alert'
+                                      : 'warn'
+                            }
                             onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=failed')}
                         />
                         <SignalCard
@@ -296,11 +338,12 @@ export const DashboardPage: React.FC = () => {
 
                 {/* ── Main Grid ──────────────────────────────────────────── */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
                     {/* Recent Activity */}
                     <div className="lg:col-span-2 bg-surface border border-base rounded-xl shadow-xs">
                         <div className="flex items-center justify-between px-6 py-4 border-b border-base">
-                            <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Recent Activity</h2>
+                            <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">
+                                Recent Activity
+                            </h2>
                             <button
                                 onClick={() => navigate(ROUTES.AUDIT)}
                                 className="text-xs font-medium text-base-muted hover:text-base-secondary transition-colors"
@@ -311,23 +354,26 @@ export const DashboardPage: React.FC = () => {
                         <div className="px-6 py-2">
                             {!activityData?.data?.length ? (
                                 <div className="py-12 text-center">
-                                    <p className="text-sm text-base-muted">No activity yet. Create your first secret to get started.</p>
+                                    <p className="text-sm text-base-muted">
+                                        No activity yet. Create your first secret to get started.
+                                    </p>
                                 </div>
                             ) : (
-                                activityData.data.slice(0, 8).map((item: ActivityItem) => (
-                                    <ActivityRow key={item.id} item={item} />
-                                ))
+                                activityData.data
+                                    .slice(0, 8)
+                                    .map((item: ActivityItem) => <ActivityRow key={item.id} item={item} />)
                             )}
                         </div>
                     </div>
 
                     {/* Right column */}
                     <div className="space-y-4">
-
                         {/* System Health */}
                         <div className="bg-surface border border-base rounded-xl shadow-xs">
                             <div className="px-5 py-4 border-b border-base">
-                                <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">System Health</h2>
+                                <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">
+                                    System Health
+                                </h2>
                             </div>
                             <div className="px-5 py-4 space-y-3">
                                 <div className="flex items-center justify-between">
@@ -379,27 +425,49 @@ export const DashboardPage: React.FC = () => {
                                     </h2>
                                 </div>
                                 <div className="p-4 space-y-2">
-                                    {anomalies.map(a => (
-                                        <div key={a.ID} className="flex items-start justify-between gap-2 p-3 bg-red-50 rounded-lg">
+                                    {anomalies.map((a) => (
+                                        <div
+                                            key={a.ID}
+                                            className="flex items-start justify-between gap-2 p-3 bg-red-50 rounded-lg"
+                                        >
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-xs font-semibold text-red-700">{humanizeAlertType(a.AlertType)}</p>
+                                                <p className="text-xs font-semibold text-red-700">
+                                                    {humanizeAlertType(a.AlertType)}
+                                                </p>
                                                 <p className="text-xs text-red-600 mt-0.5 truncate">{a.SecretName}</p>
-                                                <p className="text-xs text-base-muted mt-0.5">{a.AccessedBy} · {a.IPAddress}</p>
+                                                <p className="text-xs text-base-muted mt-0.5">
+                                                    {a.AccessedBy} · {a.IPAddress}
+                                                </p>
                                             </div>
                                             <button
                                                 onClick={() => acknowledgeAnomaly.mutate(a.ID)}
                                                 className="text-xs text-base-muted hover:text-base-secondary shrink-0 mt-0.5"
                                                 title="Dismiss"
-                                            >✓</button>
+                                            >
+                                                ✓
+                                            </button>
                                         </div>
                                     ))}
                                     {expiring.map((s: any) => (
-                                        <div key={s.id} className={`flex items-center justify-between p-3 rounded-lg ${s.expired ? 'bg-red-950/30 border border-red-900/40' : 'bg-amber-50 dark:bg-amber-950/20'}`}>
+                                        <div
+                                            key={s.id}
+                                            className={`flex items-center justify-between p-3 rounded-lg ${s.expired ? 'bg-red-950/30 border border-red-900/40' : 'bg-amber-50 dark:bg-amber-950/20'}`}
+                                        >
                                             <div>
-                                                <p className={`text-xs font-semibold ${s.expired ? 'text-red-400' : 'text-amber-700'}`}>{s.name}</p>
-                                                <p className={`text-xs ${s.expired ? 'text-red-500' : 'text-amber-600'}`}>{s.environment}</p>
+                                                <p
+                                                    className={`text-xs font-semibold ${s.expired ? 'text-red-400' : 'text-amber-700'}`}
+                                                >
+                                                    {s.name}
+                                                </p>
+                                                <p
+                                                    className={`text-xs ${s.expired ? 'text-red-500' : 'text-amber-600'}`}
+                                                >
+                                                    {s.environment}
+                                                </p>
                                             </div>
-                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-sm ${s.expired ? 'bg-red-500/20 text-red-400' : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}>
+                                            <span
+                                                className={`text-xs font-bold px-1.5 py-0.5 rounded-sm ${s.expired ? 'bg-red-500/20 text-red-400' : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}
+                                            >
                                                 {s.expired ? `${Math.abs(s.daysLeft)}d overdue` : `${s.daysLeft}d`}
                                             </span>
                                         </div>
@@ -411,11 +479,15 @@ export const DashboardPage: React.FC = () => {
                         {/* Audit Health */}
                         <div className="bg-surface border border-base rounded-xl shadow-xs">
                             <div className="px-5 py-4 border-b border-base flex items-center justify-between">
-                                <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Audit (30d)</h2>
+                                <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">
+                                    Audit (30d)
+                                </h2>
                                 <button
                                     onClick={() => navigate(ROUTES.AUDIT)}
                                     className="text-xs text-base-muted hover:text-base-secondary transition-colors"
-                                >View →</button>
+                                >
+                                    View →
+                                </button>
                             </div>
                             <div className="px-5 py-4 space-y-3">
                                 <div className="flex items-center justify-between">
@@ -439,12 +511,18 @@ export const DashboardPage: React.FC = () => {
                                 <div className="flex items-center justify-between">
                                     <span className="text-sm text-base-muted">Other events</span>
                                     <span className="text-sm font-semibold text-base-muted tabular-nums">
-                                        {fmt(Math.max(0, (stats?.auditEvents30d ?? 0) - (stats?.auditLogins30d ?? 0) - (stats?.auditSecretReads30d ?? 0)))}
+                                        {fmt(
+                                            Math.max(
+                                                0,
+                                                (stats?.auditEvents30d ?? 0) -
+                                                    (stats?.auditLogins30d ?? 0) -
+                                                    (stats?.auditSecretReads30d ?? 0)
+                                            )
+                                        )}
                                     </span>
                                 </div>
                             </div>
                         </div>
-
                     </div>
                 </div>
 
@@ -453,7 +531,6 @@ export const DashboardPage: React.FC = () => {
                         Some statistics unavailable — other features are unaffected.
                     </p>
                 )}
-
             </div>
         </div>
     );

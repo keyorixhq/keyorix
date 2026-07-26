@@ -11,5 +11,5 @@ export const ADMIN_ROLES = ['admin', 'system_admin', 'super_admin'];
 export const userIsAdmin = (user?: Pick<User, 'role' | 'roles'> | null): boolean => {
     if (!user) return false;
     if (user.role && ADMIN_ROLES.includes(user.role)) return true;
-    return (user.roles ?? []).some(r => ADMIN_ROLES.includes(r));
+    return (user.roles ?? []).some((r) => ADMIN_ROLES.includes(r));
 };

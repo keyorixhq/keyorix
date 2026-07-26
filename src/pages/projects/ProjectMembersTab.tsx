@@ -20,8 +20,7 @@ interface ProjectMembersTabProps {
 }
 
 // "project_developer" → "Developer"
-const roleLabel = (role: string) =>
-    role.replace(/^project_/, '').replace(/^\w/, c => c.toUpperCase());
+const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
 /**
  * ADR-021 Members tab. Project-scoped membership: shows the users who hold a
@@ -49,11 +48,8 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
 
     const allUsers = useMemo(() => usersResp?.data ?? [], [usersResp]);
 
-    const memberIds = useMemo(() => new Set(members.map(m => m.userId)), [members]);
-    const candidates = useMemo(
-        () => allUsers.filter((u: any) => !memberIds.has(u.id)),
-        [allUsers, memberIds]
-    );
+    const memberIds = useMemo(() => new Set(members.map((m) => m.userId)), [members]);
+    const candidates = useMemo(() => allUsers.filter((u: any) => !memberIds.has(u.id)), [allUsers, memberIds]);
 
     const handleAdd = () => {
         if (!newUserId) return;
@@ -78,10 +74,12 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
         <div>
             <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
-                    <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Members</h2>
+                    <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        Members
+                    </h2>
                     <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        Users with a role in this project. Add existing users and assign a project role;
-                        create new user accounts from Access Control → Users.
+                        Users with a role in this project. Add existing users and assign a project role; create new user
+                        accounts from Access Control → Users.
                     </p>
                 </div>
                 <button
@@ -89,40 +87,49 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium shrink-0"
                     style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
                 >
-                    <EnvelopeIcon className="h-4 w-4" />Invite by email
+                    <EnvelopeIcon className="h-4 w-4" />
+                    Invite by email
                 </button>
             </div>
 
             {error && (
-                <div className="rounded-lg px-3 py-2 text-sm mb-3" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                <div
+                    className="rounded-lg px-3 py-2 text-sm mb-3"
+                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                >
                     {error}
                 </div>
             )}
 
             {/* Add member */}
-            <div className="rounded-lg border p-3 mb-4 flex flex-wrap items-center gap-2"
-                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div
+                className="rounded-lg border p-3 mb-4 flex flex-wrap items-center gap-2"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
                 <select
                     value={newUserId}
-                    onChange={e => setNewUserId(e.target.value)}
+                    onChange={(e) => setNewUserId(e.target.value)}
                     className="flex-1 min-w-[12rem] rounded-lg px-3 py-1.5 text-sm outline-hidden"
                     style={selectStyle}
                 >
                     <option value="">Select a user to add…</option>
                     {candidates.map((u: any) => (
                         <option key={u.id} value={u.id}>
-                            {(u.displayName ?? u.username)}{u.email ? ` (${u.email})` : ''}
+                            {u.displayName ?? u.username}
+                            {u.email ? ` (${u.email})` : ''}
                         </option>
                     ))}
                 </select>
                 <select
                     value={newRole}
-                    onChange={e => setNewRole(e.target.value)}
+                    onChange={(e) => setNewRole(e.target.value)}
                     className="rounded-lg px-3 py-1.5 text-sm outline-hidden"
                     style={selectStyle}
                 >
-                    {PROJECT_ROLES.map(r => (
-                        <option key={r} value={r}>{roleLabel(r)}</option>
+                    {PROJECT_ROLES.map((r) => (
+                        <option key={r} value={r}>
+                            {roleLabel(r)}
+                        </option>
                     ))}
                 </select>
                 <button
@@ -131,7 +138,8 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
                     style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
                 >
-                    <PlusIcon className="h-4 w-4" />Add
+                    <PlusIcon className="h-4 w-4" />
+                    Add
                 </button>
             </div>
 
@@ -140,15 +148,24 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
             <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                 Human members
             </h3>
-            <div className="rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div
+                className="rounded-lg border"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
                 {isLoading ? (
                     <div className="p-6 space-y-3">
-                        {[1, 2, 3].map(i => (
+                        {[1, 2, 3].map((i) => (
                             <div key={i} className="flex items-center gap-3 animate-pulse">
                                 <div className="h-8 w-8 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
                                 <div className="flex-1">
-                                    <div className="h-3 w-32 rounded-sm mb-1.5" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                                    <div className="h-2.5 w-48 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                    <div
+                                        className="h-3 w-32 rounded-sm mb-1.5"
+                                        style={{ backgroundColor: 'var(--bg-muted)' }}
+                                    />
+                                    <div
+                                        className="h-2.5 w-48 rounded-sm"
+                                        style={{ backgroundColor: 'var(--bg-muted)' }}
+                                    />
                                 </div>
                             </div>
                         ))}
@@ -162,21 +179,28 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     </div>
                 ) : (
                     <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                        {members.map(m => (
+                        {members.map((m) => (
                             <li key={m.userId} className="flex items-center gap-3 px-4 py-3">
-                                <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold"
-                                    style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' }}>
+                                <div
+                                    className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold"
+                                    style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' }}
+                                >
                                     {(m.displayName || m.username || '?').charAt(0).toUpperCase()}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                    <p
+                                        className="text-sm font-medium truncate"
+                                        style={{ color: 'var(--text-primary)' }}
+                                    >
                                         {m.displayName || m.username}
                                     </p>
-                                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{m.email}</p>
+                                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                        {m.email}
+                                    </p>
                                 </div>
                                 <select
                                     value={m.roleName}
-                                    onChange={e => updateRole.mutate({ userId: m.userId, role: e.target.value })}
+                                    onChange={(e) => updateRole.mutate({ userId: m.userId, role: e.target.value })}
                                     disabled={updateRole.isPending}
                                     className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0"
                                     style={selectStyle}
@@ -185,8 +209,10 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                                     {!PROJECT_ROLES.includes(m.roleName as any) && (
                                         <option value={m.roleName}>{roleLabel(m.roleName)}</option>
                                     )}
-                                    {PROJECT_ROLES.map(r => (
-                                        <option key={r} value={r}>{roleLabel(r)}</option>
+                                    {PROJECT_ROLES.map((r) => (
+                                        <option key={r} value={r}>
+                                            {roleLabel(r)}
+                                        </option>
                                     ))}
                                 </select>
                                 <button

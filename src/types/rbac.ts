@@ -52,9 +52,6 @@ export interface Group {
     updated_at: string;
 }
 
-export type BuiltInRole =
-    'super_admin' | 'admin' | 'editor' | 'viewer' | 'auditor';
+export type BuiltInRole = 'super_admin' | 'admin' | 'editor' | 'viewer' | 'auditor';
 
-export const BUILT_IN_ROLES: BuiltInRole[] = [
-    'super_admin', 'admin', 'editor', 'viewer', 'auditor',
-];
+export const BUILT_IN_ROLES: BuiltInRole[] = ['super_admin', 'admin', 'editor', 'viewer', 'auditor'];

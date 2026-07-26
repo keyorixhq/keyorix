@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { PlusIcon, CheckIcon, NoSymbolIcon, ClipboardDocumentCheckIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import {
+    PlusIcon,
+    CheckIcon,
+    NoSymbolIcon,
+    ClipboardDocumentCheckIcon,
+    ArrowDownTrayIcon,
+} from '@heroicons/react/24/outline';
 import {
     useAccessReviewCampaigns,
     useAccessReviewCampaign,
@@ -16,7 +22,10 @@ interface Props {
 
 // lastUsedInfo renders a user principal's recency (dormant-access signal); empty
 // for groups (last-use is not aggregated server-side). Shared with the live review.
-export const lastUsedInfo = (e: { principalType: string; lastUsedAt?: string }): { label: string; dormant: boolean } => {
+export const lastUsedInfo = (e: {
+    principalType: string;
+    lastUsedAt?: string;
+}): { label: string; dormant: boolean } => {
     if (e.principalType !== 'user') return { label: '', dormant: false };
     if (!e.lastUsedAt) return { label: 'never used', dormant: true };
     const days = Math.floor((Date.now() - new Date(e.lastUsedAt).getTime()) / 86_400_000);
@@ -68,17 +77,21 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
                         Recertification campaigns
                     </h3>
                     <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        Run access reviews on a schedule (A.5.18). Opening a campaign snapshots who has access
-                        today; decide each grant, then close it as the audit evidence the review happened.
+                        Run access reviews on a schedule (A.5.18). Opening a campaign snapshots who has access today;
+                        decide each grant, then close it as the audit evidence the review happened.
                     </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                     <input
                         value={newName}
-                        onChange={e => setNewName(e.target.value)}
+                        onChange={(e) => setNewName(e.target.value)}
                         placeholder="Campaign name"
                         className="rounded-lg px-2.5 py-1.5 text-sm outline-hidden w-44"
-                        style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
                     />
                     <button
                         onClick={handleOpen}
@@ -86,41 +99,73 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
                         className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
                         style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
                     >
-                        <PlusIcon className="h-4 w-4" />Open
+                        <PlusIcon className="h-4 w-4" />
+                        Open
                     </button>
                 </div>
             </div>
 
             {error && (
-                <div className="rounded-lg px-3 py-2 text-sm mb-3" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                <div
+                    className="rounded-lg px-3 py-2 text-sm mb-3"
+                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                >
                     {error}
                 </div>
             )}
 
-            <div className="rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div
+                className="rounded-lg border"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
                 {isLoading ? (
                     <div className="p-6 space-y-2">
-                        {[1, 2].map(i => <div key={i} className="h-8 rounded-sm animate-pulse" style={{ backgroundColor: 'var(--bg-muted)' }} />)}
+                        {[1, 2].map((i) => (
+                            <div
+                                key={i}
+                                className="h-8 rounded-sm animate-pulse"
+                                style={{ backgroundColor: 'var(--bg-muted)' }}
+                            />
+                        ))}
                     </div>
                 ) : campaigns.length === 0 ? (
                     <div className="p-8 text-center">
-                        <ClipboardDocumentCheckIcon className="h-9 w-9 mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No campaigns yet. Open one to start a recertification cycle.</p>
+                        <ClipboardDocumentCheckIcon
+                            className="h-9 w-9 mx-auto mb-2"
+                            style={{ color: 'var(--text-muted)' }}
+                        />
+                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                            No campaigns yet. Open one to start a recertification cycle.
+                        </p>
                     </div>
                 ) : (
                     <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                         {campaigns.map(({ campaign, progress }) => (
                             <li key={campaign.id} className="px-4 py-3">
                                 <div className="flex items-center gap-3">
-                                    <span className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
-                                        style={campaign.state === 'open'
-                                            ? { backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' }
-                                            : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                                    <span
+                                        className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
+                                        style={
+                                            campaign.state === 'open'
+                                                ? {
+                                                      backgroundColor: 'var(--accent-subtle)',
+                                                      color: 'var(--accent-text)',
+                                                  }
+                                                : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
+                                        }
+                                    >
                                         {campaign.state}
                                     </span>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{campaign.name}</p>
-                                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{progressLabel(progress)}</p>
+                                        <p
+                                            className="text-sm font-medium truncate"
+                                            style={{ color: 'var(--text-primary)' }}
+                                        >
+                                            {campaign.name}
+                                        </p>
+                                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                            {progressLabel(progress)}
+                                        </p>
                                     </div>
                                     <button
                                         onClick={() => setSelectedId(selectedId === campaign.id ? null : campaign.id)}
@@ -149,7 +194,7 @@ interface DetailProps {
 }
 
 const itemDetail = (it: AccessReviewItem) =>
-    it.source === 'role' ? `Role: ${it.roleName || '—'}` : (it.secretName ? `Secret: ${it.secretName}` : '—');
+    it.source === 'role' ? `Role: ${it.roleName || '—'}` : it.secretName ? `Secret: ${it.secretName}` : '—';
 
 const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError }) => {
     const { data, isLoading } = useAccessReviewCampaign(projectId, campaignId);
@@ -176,7 +221,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
         try {
             const res = await apiClient.get(
                 `/api/v1/projects/${projectId}/access-review/campaigns/${campaignId}/export.csv`,
-                { responseType: 'blob' },
+                { responseType: 'blob' }
             );
             const url = URL.createObjectURL(res.data as Blob);
             const a = document.createElement('a');
@@ -196,22 +241,30 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
     return (
         <div className="mt-3 rounded-lg border" style={{ borderColor: 'var(--border)' }}>
             {data.items.length === 0 ? (
-                <p className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>No items captured.</p>
+                <p className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>
+                    No items captured.
+                </p>
             ) : (
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {data.items.map(it => {
+                    {data.items.map((it) => {
                         const info = lastUsedInfo(it);
                         return (
                             <li key={it.id} className="flex items-center gap-3 px-3 py-2">
-                                <span className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0 w-20 text-center" style={decisionStyle(it.decision)}>
+                                <span
+                                    className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0 w-20 text-center"
+                                    style={decisionStyle(it.decision)}
+                                >
                                     {it.decision}
                                 </span>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
-                                        {it.principalType === 'user' && it.email ? `${it.principalName} (${it.email})` : it.principalName}
+                                        {it.principalType === 'user' && it.email
+                                            ? `${it.principalName} (${it.email})`
+                                            : it.principalName}
                                     </p>
                                     <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                        {itemDetail(it)}{info.dormant ? ' · dormant' : ''}
+                                        {itemDetail(it)}
+                                        {info.dormant ? ' · dormant' : ''}
                                     </p>
                                 </div>
                                 {open && it.decision === 'pending' && (
@@ -220,26 +273,46 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                                             onClick={() => onDecide(it.id, 'attest')}
                                             disabled={decide.isPending}
                                             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
-                                            style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                                            style={{
+                                                border: '1px solid var(--border)',
+                                                color: 'var(--text-secondary)',
+                                            }}
                                         >
-                                            <CheckIcon className="h-3.5 w-3.5" />Attest
+                                            <CheckIcon className="h-3.5 w-3.5" />
+                                            Attest
                                         </button>
-                                        {it.source !== 'owner' && (
-                                            confirmItem === it.id ? (
+                                        {it.source !== 'owner' &&
+                                            (confirmItem === it.id ? (
                                                 <>
-                                                    <button onClick={() => onDecide(it.id, 'revoke')} disabled={decide.isPending}
+                                                    <button
+                                                        onClick={() => onDecide(it.id, 'revoke')}
+                                                        disabled={decide.isPending}
                                                         className="px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
-                                                        style={{ backgroundColor: 'var(--error)', color: '#fff' }}>Confirm</button>
-                                                    <button onClick={() => setConfirmItem(null)} className="px-1.5 py-1 rounded-lg text-xs" style={{ color: 'var(--text-muted)' }}>Cancel</button>
+                                                        style={{ backgroundColor: 'var(--error)', color: '#fff' }}
+                                                    >
+                                                        Confirm
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setConfirmItem(null)}
+                                                        className="px-1.5 py-1 rounded-lg text-xs"
+                                                        style={{ color: 'var(--text-muted)' }}
+                                                    >
+                                                        Cancel
+                                                    </button>
                                                 </>
                                             ) : (
-                                                <button onClick={() => setConfirmItem(it.id)}
+                                                <button
+                                                    onClick={() => setConfirmItem(it.id)}
                                                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium"
-                                                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
-                                                    <NoSymbolIcon className="h-3.5 w-3.5" />Revoke
+                                                    style={{
+                                                        backgroundColor: 'var(--error-subtle)',
+                                                        color: 'var(--error)',
+                                                    }}
+                                                >
+                                                    <NoSymbolIcon className="h-3.5 w-3.5" />
+                                                    Revoke
                                                 </button>
-                                            )
-                                        )}
+                                            ))}
                                     </div>
                                 )}
                             </li>
@@ -248,10 +321,14 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                 </ul>
             )}
             <div className="flex items-center gap-2 px-3 py-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                <button onClick={onDownloadCsv} disabled={csvBusy || data.items.length === 0}
+                <button
+                    onClick={onDownloadCsv}
+                    disabled={csvBusy || data.items.length === 0}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                    style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                    <ArrowDownTrayIcon className="h-3.5 w-3.5" />{csvBusy ? 'Exporting…' : 'Download CSV'}
+                    style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                >
+                    <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+                    {csvBusy ? 'Exporting…' : 'Download CSV'}
                 </button>
                 {open && (
                     <div className="ml-auto flex items-center gap-2">
@@ -259,15 +336,21 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                             {pending > 0 ? `${pending} item(s) still pending` : 'All items decided'}
                         </span>
                         {pending > 0 ? (
-                            <button onClick={() => onClose(true)} disabled={close.isPending}
+                            <button
+                                onClick={() => onClose(true)}
+                                disabled={close.isPending}
                                 className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                            >
                                 Close anyway
                             </button>
                         ) : (
-                            <button onClick={() => onClose(false)} disabled={close.isPending}
+                            <button
+                                onClick={() => onClose(false)}
+                                disabled={close.isPending}
                                 className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                                style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
+                                style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                            >
                                 Close campaign
                             </button>
                         )}

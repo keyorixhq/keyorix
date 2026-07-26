@@ -19,7 +19,10 @@ const STYLE: Record<string, React.CSSProperties> = {
     deleted: { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' },
 };
 
-export const AccountStateBadge: React.FC<{ state?: string | undefined; deleted?: boolean | undefined }> = ({ state, deleted }) => {
+export const AccountStateBadge: React.FC<{ state?: string | undefined; deleted?: boolean | undefined }> = ({
+    state,
+    deleted,
+}) => {
     const key = deleted ? 'deleted' : state || 'active';
     return (
         <span

@@ -43,10 +43,14 @@ export const OrgInventoryExport: React.FC = () => {
                     Secret asset inventory (all projects)
                 </p>
                 <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    CSV manifest of every secret's metadata — names, projects, environments, classification,
-                    owners, timestamps. Never values. For audit hand-off (ISO 27001 A.5.9).
+                    CSV manifest of every secret's metadata — names, projects, environments, classification, owners,
+                    timestamps. Never values. For audit hand-off (ISO 27001 A.5.9).
                 </p>
-                {msg && <p className="text-xs mt-1" style={{ color: 'var(--error)' }}>{msg}</p>}
+                {msg && (
+                    <p className="text-xs mt-1" style={{ color: 'var(--error)' }}>
+                        {msg}
+                    </p>
+                )}
             </div>
             <button
                 type="button"
@@ -55,7 +59,8 @@ export const OrgInventoryExport: React.FC = () => {
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm shrink-0 border transition-opacity disabled:opacity-50"
                 style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
-                <ArrowDownTrayIcon className="h-4 w-4" />{busy ? 'Exporting…' : 'Export inventory'}
+                <ArrowDownTrayIcon className="h-4 w-4" />
+                {busy ? 'Exporting…' : 'Export inventory'}
             </button>
         </div>
     );

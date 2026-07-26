@@ -124,7 +124,7 @@ export interface SecretAccessor {
     user_id: number;
     username: string;
     permission: string; // read | write | owner
-    source: string;     // owner | direct_share | group_share:<group>
+    source: string; // owner | direct_share | group_share:<group>
 }
 
 export interface Recipient {
@@ -150,15 +150,15 @@ export interface ExpiringSecret {
 }
 
 export interface AnomalyAlert {
-  ID: number;
-  SecretName: string;
-  AlertType: string;
-  Severity: string;
-  Description: string;
-  AccessedBy: string;
-  IPAddress: string;
-  DetectedAt: string;
-  Acknowledged: boolean;
+    ID: number;
+    SecretName: string;
+    AlertType: string;
+    Severity: string;
+    Description: string;
+    AccessedBy: string;
+    IPAddress: string;
+    DetectedAt: string;
+    Acknowledged: boolean;
 }
 
 export interface DashboardStats {
@@ -364,7 +364,7 @@ export type RiskBand = 'low' | 'medium' | 'high';
 export interface SecretRiskFactor {
     key: string;
     label: string;
-    score: number;  // 0-100 risk (higher = riskier)
+    score: number; // 0-100 risk (higher = riskier)
     weight: number;
     detail: string;
 }
@@ -372,7 +372,7 @@ export interface SecretRiskFactor {
 export interface SecretRiskScore {
     secret_id: number;
     secret_name: string;
-    score: number;  // 0-100 weighted composite
+    score: number; // 0-100 weighted composite
     band: RiskBand;
     factors: SecretRiskFactor[];
 }

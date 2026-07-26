@@ -5,9 +5,11 @@ import { API_ENDPOINTS } from '../constants';
 // buildUpdateShareBody maps the edit-share form into the PUT /shares/{id} payload.
 // Only the requested change is sent: clear_expiry to make a share permanent, or
 // expires_at to set/extend/shorten it; sending neither preserves the current expiry.
-export const buildUpdateShareBody = (
-    data: { permission: 'read' | 'write'; expiresAt?: string; clearExpiry?: boolean },
-): { permission: 'read' | 'write'; clear_expiry?: boolean; expires_at?: string } => ({
+export const buildUpdateShareBody = (data: {
+    permission: 'read' | 'write';
+    expiresAt?: string;
+    clearExpiry?: boolean;
+}): { permission: 'read' | 'write'; clear_expiry?: boolean; expires_at?: string } => ({
     permission: data.permission,
     ...(data.clearExpiry ? { clear_expiry: true } : {}),
     ...(data.expiresAt ? { expires_at: data.expiresAt } : {}),
@@ -20,10 +22,9 @@ export const sharingApi = {
         secretId?: number;
         recipientType?: 'user' | 'group';
     }): Promise<PaginatedResponse<ShareRecord>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<ShareRecord>>>(
-            API_ENDPOINTS.SHARING.LIST,
-            { params }
-        );
+        const response = await apiClient.get<ApiResponse<PaginatedResponse<ShareRecord>>>(API_ENDPOINTS.SHARING.LIST, {
+            params,
+        });
         return response.data.data;
     },
 
@@ -33,16 +34,13 @@ export const sharingApi = {
     },
 
     async create(data: ShareFormData & { secretId: number }): Promise<ShareRecord> {
-        const response = await apiClient.post<ApiResponse<ShareRecord>>(
-            API_ENDPOINTS.SHARING.CREATE(data.secretId),
-            {
-                recipient_id: data.recipientId,
-                is_group: data.recipientType === 'group',
-                permission: data.permission,
-                // Only send expires_at for a time-bound share; omit it for a permanent one.
-                ...(data.expiresAt ? { expires_at: data.expiresAt } : {}),
-            }
-        );
+        const response = await apiClient.post<ApiResponse<ShareRecord>>(API_ENDPOINTS.SHARING.CREATE(data.secretId), {
+            recipient_id: data.recipientId,
+            is_group: data.recipientType === 'group',
+            permission: data.permission,
+            // Only send expires_at for a time-bound share; omit it for a permanent one.
+            ...(data.expiresAt ? { expires_at: data.expiresAt } : {}),
+        });
         return response.data.data;
     },
 
@@ -51,11 +49,11 @@ export const sharingApi = {
     // neither preserves the current expiry. The server validates a future expiry.
     async update(
         id: number,
-        data: { permission: 'read' | 'write'; expiresAt?: string; clearExpiry?: boolean },
+        data: { permission: 'read' | 'write'; expiresAt?: string; clearExpiry?: boolean }
     ): Promise<ShareRecord> {
         const response = await apiClient.put<ApiResponse<ShareRecord>>(
             API_ENDPOINTS.SHARING.UPDATE(id),
-            buildUpdateShareBody(data),
+            buildUpdateShareBody(data)
         );
         return response.data.data;
     },

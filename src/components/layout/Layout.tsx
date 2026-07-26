@@ -14,12 +14,7 @@ export interface LayoutProps {
     className?: string;
 }
 
-const Layout: React.FC<LayoutProps> = ({
-    children,
-    breadcrumbs,
-    showFooter = true,
-    className,
-}) => {
+const Layout: React.FC<LayoutProps> = ({ children, breadcrumbs, showFooter = true, className }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [cmdkOpen, setCmdkOpen] = useState(false);
 
@@ -28,7 +23,7 @@ const Layout: React.FC<LayoutProps> = ({
         const handler = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
-                setCmdkOpen(prev => !prev);
+                setCmdkOpen((prev) => !prev);
             }
         };
         window.addEventListener('keydown', handler);
@@ -52,7 +47,10 @@ const Layout: React.FC<LayoutProps> = ({
                 <main className="flex-1">
                     {/* Breadcrumbs */}
                     {breadcrumbs && breadcrumbs.length > 0 && (
-                        <div className="border-b" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+                        <div
+                            className="border-b"
+                            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                        >
                             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                                 <div className="py-4">
                                     <Breadcrumb items={breadcrumbs} />
@@ -62,9 +60,7 @@ const Layout: React.FC<LayoutProps> = ({
                     )}
 
                     {/* Page content */}
-                    <div className={clsx('flex-1', className)}>
-                        {children}
-                    </div>
+                    <div className={clsx('flex-1', className)}>{children}</div>
                 </main>
 
                 {/* Footer */}
@@ -86,13 +82,7 @@ export interface PageProps {
     className?: string;
 }
 
-const Page: React.FC<PageProps> = ({
-    children,
-    title,
-    subtitle,
-    actions,
-    className,
-}) => {
+const Page: React.FC<PageProps> = ({ children, title, subtitle, actions, className }) => {
     return (
         <div className={clsx('max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8', className)}>
             {(title || subtitle || actions) && (
@@ -100,7 +90,10 @@ const Page: React.FC<PageProps> = ({
                     <div className="md:flex md:items-center md:justify-between">
                         <div className="flex-1 min-w-0">
                             {title && (
-                                <h1 className="text-2xl font-bold leading-7 sm:text-3xl sm:truncate" style={{ color: 'var(--text-primary)' }}>
+                                <h1
+                                    className="text-2xl font-bold leading-7 sm:text-3xl sm:truncate"
+                                    style={{ color: 'var(--text-primary)' }}
+                                >
                                     {title}
                                 </h1>
                             )}
@@ -110,11 +103,7 @@ const Page: React.FC<PageProps> = ({
                                 </p>
                             )}
                         </div>
-                        {actions && (
-                            <div className="mt-4 flex md:mt-0 md:ml-4">
-                                {actions}
-                            </div>
-                        )}
+                        {actions && <div className="mt-4 flex md:mt-0 md:ml-4">{actions}</div>}
                     </div>
                 </div>
             )}

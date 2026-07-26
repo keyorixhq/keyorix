@@ -10,7 +10,12 @@ import { Loading } from '../../components/ui/Loading';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
 import { useAuth } from '../../features/auth';
 import { classificationMeta, CLASSIFICATION_LEVELS } from '../../features/secrets/classification';
-import { DYNAMIC_BACKENDS, DynamicBackend, isCloudBackend, CLOUD_CONFIG_PLACEHOLDER } from '../../services/dynamicSecrets';
+import {
+    DYNAMIC_BACKENDS,
+    DynamicBackend,
+    isCloudBackend,
+    CLOUD_CONFIG_PLACEHOLDER,
+} from '../../services/dynamicSecrets';
 import {
     useDynamicConfigs,
     useCreateDynamicConfig,
@@ -69,7 +74,8 @@ const DynamicSecretsPage: React.FC = () => {
                 )}
             </div>
             <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
-                On-demand database credentials (ADR-035) — short-lived leases minted from a registered target and auto-revoked at expiry.
+                On-demand database credentials (ADR-035) — short-lived leases minted from a registered target and
+                auto-revoked at expiry.
             </p>
 
             {/* Project / environment scope picker. */}
@@ -78,8 +84,8 @@ const DynamicSecretsPage: React.FC = () => {
                     <Select
                         label="Project"
                         value={String(projectId)}
-                        onChange={e => setProjectId(Number(e.target.value))}
-                        options={projects.map(p => ({ value: String(p.id), label: p.name }))}
+                        onChange={(e) => setProjectId(Number(e.target.value))}
+                        options={projects.map((p) => ({ value: String(p.id), label: p.name }))}
                         placeholder="Select a project…"
                     />
                 </div>
@@ -87,15 +93,18 @@ const DynamicSecretsPage: React.FC = () => {
                     <Select
                         label="Environment"
                         value={String(environmentId)}
-                        onChange={e => setEnvironmentId(Number(e.target.value))}
-                        options={environments.map(env => ({ value: String(env.id), label: env.name }))}
+                        onChange={(e) => setEnvironmentId(Number(e.target.value))}
+                        options={environments.map((env) => ({ value: String(env.id), label: env.name }))}
                         placeholder="All environments"
                     />
                 </div>
             </div>
 
             {error ? (
-                <Alert type="error" message="Failed to load dynamic-secret configs (you may lack secrets.read on this scope)." />
+                <Alert
+                    type="error"
+                    message="Failed to load dynamic-secret configs (you may lack secrets.read on this scope)."
+                />
             ) : isLoading ? (
                 <Loading />
             ) : configs.length === 0 ? (
@@ -109,8 +118,11 @@ const DynamicSecretsPage: React.FC = () => {
                     </p>
                 </div>
             ) : (
-                <div className="rounded-lg border divide-y" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-                    {configs.map(c => (
+                <div
+                    className="rounded-lg border divide-y"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+                >
+                    {configs.map((c) => (
                         <div key={c.id}>
                             <div className="flex items-center gap-3 px-4 py-3">
                                 <button
@@ -120,10 +132,16 @@ const DynamicSecretsPage: React.FC = () => {
                                 >
                                     <ChevronRightIcon
                                         className="h-4 w-4 shrink-0 transition-transform"
-                                        style={{ color: 'var(--text-muted)', transform: expanded === c.id ? 'rotate(90deg)' : 'none' }}
+                                        style={{
+                                            color: 'var(--text-muted)',
+                                            transform: expanded === c.id ? 'rotate(90deg)' : 'none',
+                                        }}
                                     />
                                     <span className="min-w-0">
-                                        <span className="text-sm font-medium block truncate" style={{ color: 'var(--text-primary)' }}>
+                                        <span
+                                            className="text-sm font-medium block truncate"
+                                            style={{ color: 'var(--text-primary)' }}
+                                        >
                                             {c.name}
                                         </span>
                                         <span className="text-xs block truncate" style={{ color: 'var(--text-muted)' }}>
@@ -137,12 +155,16 @@ const DynamicSecretsPage: React.FC = () => {
                                         aria-label={`Classification for ${c.name}`}
                                         value={c.classification ?? ''}
                                         disabled={classify.isPending}
-                                        onChange={e => reclassify(c.id, e.target.value, c.classification ?? '')}
+                                        onChange={(e) => reclassify(c.id, e.target.value, c.classification ?? '')}
                                         className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 disabled:opacity-50"
-                                        style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                                        style={{
+                                            backgroundColor: 'var(--bg-app)',
+                                            border: '1px solid var(--border)',
+                                            color: 'var(--text-primary)',
+                                        }}
                                         title="Data classification (ISO 27001 A.5.12)"
                                     >
-                                        {CLASSIFICATION_LEVELS.map(level => (
+                                        {CLASSIFICATION_LEVELS.map((level) => (
                                             <option key={level || 'unclassified'} value={level}>
                                                 {classificationMeta(level).label}
                                             </option>
@@ -201,7 +223,9 @@ const CreateConfigModal: React.FC<{
     const submit = (e: React.FormEvent) => {
         e.preventDefault();
         if (!name.trim() || !adminDsn.trim()) {
-            setError(cloud ? 'Name and cloud config (JSON) are required.' : 'Name and admin connection string are required.');
+            setError(
+                cloud ? 'Name and cloud config (JSON) are required.' : 'Name and admin connection string are required.'
+            );
             return;
         }
         setError('');
@@ -229,18 +253,23 @@ const CreateConfigModal: React.FC<{
         <Modal isOpen onClose={onClose} title="New dynamic-secret config" size="lg">
             <form onSubmit={submit} className="space-y-3">
                 {error && <Alert type="error" message={error} />}
-                <Input label="Name" value={name} onChange={e => setName(e.target.value)} placeholder="analytics-readonly" />
+                <Input
+                    label="Name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="analytics-readonly"
+                />
                 <Select
                     label="Backend"
                     value={backendType}
-                    onChange={e => setBackendType(e.target.value as DynamicBackend)}
-                    options={DYNAMIC_BACKENDS.map(b => ({ value: b, label: b }))}
+                    onChange={(e) => setBackendType(e.target.value as DynamicBackend)}
+                    options={DYNAMIC_BACKENDS.map((b) => ({ value: b, label: b }))}
                 />
                 {cloud ? (
                     <Textarea
                         label="Cloud config (JSON)"
                         value={adminDsn}
-                        onChange={e => setAdminDsn(e.target.value)}
+                        onChange={(e) => setAdminDsn(e.target.value)}
                         rows={3}
                         placeholder={CLOUD_CONFIG_PLACEHOLDER[backendType]}
                         helperText="Encrypted at rest; never returned. Cloud credentials for the mint call come from the ambient identity (AWS chain / GCP ADC / Azure DefaultAzureCredential)."
@@ -250,7 +279,7 @@ const CreateConfigModal: React.FC<{
                         label="Admin connection string"
                         type="password"
                         value={adminDsn}
-                        onChange={e => setAdminDsn(e.target.value)}
+                        onChange={(e) => setAdminDsn(e.target.value)}
                         placeholder="postgres://admin:****@host:5432/db"
                         helperText="Encrypted at rest; never returned by the API."
                     />
@@ -264,7 +293,7 @@ const CreateConfigModal: React.FC<{
                                 : 'Creation template (SQL run per lease; {{name}} = generated role)'
                         }
                         value={creationTemplate}
-                        onChange={e => setCreationTemplate(e.target.value)}
+                        onChange={(e) => setCreationTemplate(e.target.value)}
                         rows={3}
                         placeholder={
                             backendType === 'aws-sts'
@@ -278,24 +307,31 @@ const CreateConfigModal: React.FC<{
                         label="Default TTL (seconds)"
                         type="number"
                         value={String(defaultTtl)}
-                        onChange={e => setDefaultTtl(Number(e.target.value))}
+                        onChange={(e) => setDefaultTtl(Number(e.target.value))}
                     />
                     <Input
                         label="Max TTL (seconds, 0 = no cap)"
                         type="number"
                         value={String(maxTtl)}
-                        onChange={e => setMaxTtl(Number(e.target.value))}
+                        onChange={(e) => setMaxTtl(Number(e.target.value))}
                     />
                 </div>
                 <Select
                     label="Classification"
                     value={classification}
-                    onChange={e => setClassification(e.target.value)}
-                    options={CLASSIFICATION_LEVELS.map(level => ({ value: level, label: classificationMeta(level).label }))}
+                    onChange={(e) => setClassification(e.target.value)}
+                    options={CLASSIFICATION_LEVELS.map((level) => ({
+                        value: level,
+                        label: classificationMeta(level).label,
+                    }))}
                 />
                 <div className="flex justify-end gap-2 pt-1">
-                    <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-                    <Button type="submit" disabled={pending}>Create</Button>
+                    <Button type="button" variant="secondary" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="submit" disabled={pending}>
+                        Create
+                    </Button>
                 </div>
             </form>
         </Modal>

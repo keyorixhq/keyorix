@@ -2,8 +2,13 @@ import React, { useState } from 'react';
 import { PlusIcon, PencilSquareIcon, TrashIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import { Button, Modal, Input, Spinner } from '../../components/ui';
 import {
-    useRoles, usePermissions, useCreateRole, useUpdateRole,
-    useDeleteRole, useAssignPermissionToRole, useRemovePermissionFromRole,
+    useRoles,
+    usePermissions,
+    useCreateRole,
+    useUpdateRole,
+    useDeleteRole,
+    useAssignPermissionToRole,
+    useRemovePermissionFromRole,
 } from '../../features/admin';
 import type { Role, RoleWithPermissions, Permission } from '../../types/rbac';
 import { BUILT_IN_ROLES } from '../../types/rbac';
@@ -15,8 +20,7 @@ interface RoleFormData {
     description: string;
 }
 
-const isBuiltIn = (name: string): boolean =>
-    (BUILT_IN_ROLES as readonly string[]).includes(name);
+const isBuiltIn = (name: string): boolean => (BUILT_IN_ROLES as readonly string[]).includes(name);
 
 const groupByResource = (perms: Permission[]): Record<string, Permission[]> =>
     perms.reduce<Record<string, Permission[]>>((acc, p) => {
@@ -39,24 +43,32 @@ interface RoleCardProps {
 const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage }) => {
     const builtIn = isBuiltIn(role.name);
     return (
-        <div className="rounded-xl border flex flex-col"
-            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-            <div className="px-5 py-4 border-b flex items-start justify-between gap-2"
-                style={{ borderColor: 'var(--border)' }}>
+        <div
+            className="rounded-xl border flex flex-col"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <div
+                className="px-5 py-4 border-b flex items-start justify-between gap-2"
+                style={{ borderColor: 'var(--border)' }}
+            >
                 <div className="min-w-0">
                     <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                         {role.name}
                     </h3>
                     {role.description && (
-                        <p className="mt-0.5 text-xs leading-relaxed line-clamp-2"
-                            style={{ color: 'var(--text-muted)' }}>
+                        <p
+                            className="mt-0.5 text-xs leading-relaxed line-clamp-2"
+                            style={{ color: 'var(--text-muted)' }}
+                        >
                             {role.description}
                         </p>
                     )}
                 </div>
                 {builtIn && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide shrink-0"
-                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                    <span
+                        className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide shrink-0"
+                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
+                    >
                         Built-in
                     </span>
                 )}
@@ -66,10 +78,8 @@ const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage })
                     {role.permissions.length} permission{role.permissions.length !== 1 ? 's' : ''}
                 </p>
             </div>
-            <div className="px-5 py-3 border-t flex items-center gap-2"
-                style={{ borderColor: 'var(--border)' }}>
-                <Button size="sm" variant="outline" onClick={() => onManage(role)}
-                    className="flex-1">
+            <div className="px-5 py-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border)' }}>
+                <Button size="sm" variant="outline" onClick={() => onManage(role)} className="flex-1">
                     <ShieldCheckIcon className="size-4" />
                     Permissions
                 </Button>
@@ -79,8 +89,8 @@ const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage })
                     className="p-1.5 rounded-md transition-colors"
                     style={{ color: 'var(--text-muted)' }}
                     title="Edit role"
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-primary)')}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--text-muted)')}
                 >
                     <PencilSquareIcon className="h-4 w-4" />
                 </button>
@@ -91,10 +101,10 @@ const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage })
                     className="p-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                     style={{ color: 'var(--text-muted)' }}
                     title={builtIn ? 'Built-in roles cannot be deleted' : 'Delete role'}
-                    onMouseEnter={e => {
+                    onMouseEnter={(e) => {
                         if (!builtIn) (e.currentTarget as HTMLElement).style.color = '#ef4444';
                     }}
-                    onMouseLeave={e => {
+                    onMouseLeave={(e) => {
                         (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)';
                     }}
                 >
@@ -121,7 +131,7 @@ export const RolesPoliciesPage: React.FC = () => {
     const assignMutation = useAssignPermissionToRole();
     const removeMutation = useRemovePermissionFromRole();
 
-    const manageRole = roles?.find(r => r.id === manageRoleId) ?? null;
+    const manageRole = roles?.find((r) => r.id === manageRoleId) ?? null;
     const permsByResource = groupByResource(permissions ?? []);
     const isMutatingPerm = assignMutation.isPending || removeMutation.isPending;
 
@@ -155,13 +165,16 @@ export const RolesPoliciesPage: React.FC = () => {
     const handleDelete = () => {
         if (!deleteRole) return;
         deleteMutation.mutate(deleteRole.id, {
-            onSuccess: () => { deleteMutation.reset(); setDeleteRole(null); },
+            onSuccess: () => {
+                deleteMutation.reset();
+                setDeleteRole(null);
+            },
         });
     };
 
     const handleTogglePerm = (perm: Permission) => {
         if (!manageRole) return;
-        const assigned = manageRole.permissions.some(p => p.id === perm.id);
+        const assigned = manageRole.permissions.some((p) => p.id === perm.id);
         if (assigned) {
             removeMutation.mutate({ roleId: manageRole.id, permissionId: perm.id });
         } else {
@@ -182,7 +195,7 @@ export const RolesPoliciesPage: React.FC = () => {
 
             {/* Tab bar */}
             <div className="flex gap-1 mb-6 border-b" style={{ borderColor: 'var(--border)' }}>
-                {(['roles', 'permissions'] as const).map(t => (
+                {(['roles', 'permissions'] as const).map((t) => (
                     <button
                         key={t}
                         type="button"
@@ -220,17 +233,20 @@ export const RolesPoliciesPage: React.FC = () => {
                     )}
                     {!rolesLoading && !rolesError && (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {(roles ?? []).map(role => (
+                            {(roles ?? []).map((role) => (
                                 <RoleCard
                                     key={role.id}
                                     role={role}
                                     onEdit={openEdit}
                                     onDelete={openDelete}
-                                    onManage={r => setManageRoleId(r.id)}
+                                    onManage={(r) => setManageRoleId(r.id)}
                                 />
                             ))}
                             {roles?.length === 0 && (
-                                <p className="col-span-full text-sm py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                                <p
+                                    className="col-span-full text-sm py-8 text-center"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
                                     No roles found.
                                 </p>
                             )}
@@ -250,48 +266,70 @@ export const RolesPoliciesPage: React.FC = () => {
                             <Spinner />
                         </div>
                     )}
-                    {!permsLoading && Object.entries(permsByResource).map(([resource, perms]) => (
-                        <div key={resource} className="mb-6">
-                            <h3 className="text-xs font-semibold uppercase tracking-wider mb-2"
-                                style={{ color: 'var(--text-muted)' }}>
-                                {resource}
-                            </h3>
-                            <div className="rounded-xl border overflow-hidden"
-                                style={{ borderColor: 'var(--border)' }}>
-                                <table className="w-full text-sm">
-                                    <thead>
-                                        <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                                            <th className="px-4 py-2 text-left text-xs font-medium"
-                                                style={{ color: 'var(--text-muted)' }}>Action</th>
-                                            <th className="px-4 py-2 text-left text-xs font-medium"
-                                                style={{ color: 'var(--text-muted)' }}>Name</th>
-                                            <th className="px-4 py-2 text-left text-xs font-medium"
-                                                style={{ color: 'var(--text-muted)' }}>Description</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {perms.map((perm, i) => (
-                                            <tr key={perm.id}
-                                                style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
-                                                <td className="px-4 py-2.5 font-mono text-xs"
-                                                    style={{ color: 'var(--text-secondary)' }}>
-                                                    {perm.action}
-                                                </td>
-                                                <td className="px-4 py-2.5"
-                                                    style={{ color: 'var(--text-primary)' }}>
-                                                    {perm.name}
-                                                </td>
-                                                <td className="px-4 py-2.5"
-                                                    style={{ color: 'var(--text-muted)' }}>
-                                                    {perm.description}
-                                                </td>
+                    {!permsLoading &&
+                        Object.entries(permsByResource).map(([resource, perms]) => (
+                            <div key={resource} className="mb-6">
+                                <h3
+                                    className="text-xs font-semibold uppercase tracking-wider mb-2"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
+                                    {resource}
+                                </h3>
+                                <div
+                                    className="rounded-xl border overflow-hidden"
+                                    style={{ borderColor: 'var(--border)' }}
+                                >
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                                                <th
+                                                    className="px-4 py-2 text-left text-xs font-medium"
+                                                    style={{ color: 'var(--text-muted)' }}
+                                                >
+                                                    Action
+                                                </th>
+                                                <th
+                                                    className="px-4 py-2 text-left text-xs font-medium"
+                                                    style={{ color: 'var(--text-muted)' }}
+                                                >
+                                                    Name
+                                                </th>
+                                                <th
+                                                    className="px-4 py-2 text-left text-xs font-medium"
+                                                    style={{ color: 'var(--text-muted)' }}
+                                                >
+                                                    Description
+                                                </th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            {perms.map((perm, i) => (
+                                                <tr
+                                                    key={perm.id}
+                                                    style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}
+                                                >
+                                                    <td
+                                                        className="px-4 py-2.5 font-mono text-xs"
+                                                        style={{ color: 'var(--text-secondary)' }}
+                                                    >
+                                                        {perm.action}
+                                                    </td>
+                                                    <td
+                                                        className="px-4 py-2.5"
+                                                        style={{ color: 'var(--text-primary)' }}
+                                                    >
+                                                        {perm.name}
+                                                    </td>
+                                                    <td className="px-4 py-2.5" style={{ color: 'var(--text-muted)' }}>
+                                                        {perm.description}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        ))}
                     {!permsLoading && Object.keys(permsByResource).length === 0 && (
                         <p className="text-sm py-8 text-center" style={{ color: 'var(--text-muted)' }}>
                             No permissions found.
@@ -306,17 +344,16 @@ export const RolesPoliciesPage: React.FC = () => {
                     <Input
                         label="Name"
                         value={formData.name}
-                        onChange={e => setFormData(d => ({ ...d, name: e.target.value }))}
+                        onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
                         placeholder="e.g. developer"
                     />
                     <div>
-                        <label className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <textarea
                             value={formData.description}
-                            onChange={e => setFormData(d => ({ ...d, description: e.target.value }))}
+                            onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
                             rows={3}
                             className="w-full px-3 py-2 rounded-md border text-sm resize-none"
                             style={{
@@ -331,7 +368,9 @@ export const RolesPoliciesPage: React.FC = () => {
                         <p className="text-sm text-red-600">Failed to create role. Please try again.</p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                        <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+                            Cancel
+                        </Button>
                         <Button
                             loading={createMutation.isPending}
                             disabled={!formData.name.trim()}
@@ -349,16 +388,15 @@ export const RolesPoliciesPage: React.FC = () => {
                     <Input
                         label="Name"
                         value={formData.name}
-                        onChange={e => setFormData(d => ({ ...d, name: e.target.value }))}
+                        onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
                     />
                     <div>
-                        <label className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <textarea
                             value={formData.description}
-                            onChange={e => setFormData(d => ({ ...d, description: e.target.value }))}
+                            onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
                             rows={3}
                             className="w-full px-3 py-2 rounded-md border text-sm resize-none"
                             style={{
@@ -372,7 +410,9 @@ export const RolesPoliciesPage: React.FC = () => {
                         <p className="text-sm text-red-600">Failed to update role. Please try again.</p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="secondary" onClick={() => setEditRole(null)}>Cancel</Button>
+                        <Button variant="secondary" onClick={() => setEditRole(null)}>
+                            Cancel
+                        </Button>
                         <Button
                             loading={updateMutation.isPending}
                             disabled={!formData.name.trim()}
@@ -399,13 +439,15 @@ export const RolesPoliciesPage: React.FC = () => {
                     <div className="max-h-[55vh] overflow-y-auto space-y-5 pr-1">
                         {Object.entries(permsByResource).map(([resource, perms]) => (
                             <div key={resource}>
-                                <h4 className="text-xs font-semibold uppercase tracking-wider mb-2"
-                                    style={{ color: 'var(--text-muted)' }}>
+                                <h4
+                                    className="text-xs font-semibold uppercase tracking-wider mb-2"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
                                     {resource}
                                 </h4>
                                 <div className="space-y-1">
-                                    {perms.map(perm => {
-                                        const assigned = manageRole.permissions.some(p => p.id === perm.id);
+                                    {perms.map((perm) => {
+                                        const assigned = manageRole.permissions.some((p) => p.id === perm.id);
                                         return (
                                             <label
                                                 key={perm.id}
@@ -420,13 +462,17 @@ export const RolesPoliciesPage: React.FC = () => {
                                                     className="h-4 w-4 rounded-sm accent-blue-600"
                                                 />
                                                 <div className="min-w-0">
-                                                    <span className="text-sm font-medium"
-                                                        style={{ color: 'var(--text-primary)' }}>
+                                                    <span
+                                                        className="text-sm font-medium"
+                                                        style={{ color: 'var(--text-primary)' }}
+                                                    >
                                                         {perm.name}
                                                     </span>
                                                     {perm.description && (
-                                                        <span className="text-xs ml-2"
-                                                            style={{ color: 'var(--text-muted)' }}>
+                                                        <span
+                                                            className="text-xs ml-2"
+                                                            style={{ color: 'var(--text-muted)' }}
+                                                        >
                                                             {perm.description}
                                                         </span>
                                                     )}
@@ -445,28 +491,38 @@ export const RolesPoliciesPage: React.FC = () => {
                     </div>
                 )}
                 <div className="flex justify-end pt-4 mt-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                    <Button variant="secondary" onClick={() => setManageRoleId(null)}>Close</Button>
+                    <Button variant="secondary" onClick={() => setManageRoleId(null)}>
+                        Close
+                    </Button>
                 </div>
             </Modal>
 
             {/* Delete Role */}
             <Modal
                 isOpen={deleteRole !== null}
-                onClose={() => { setDeleteRole(null); deleteMutation.reset(); }}
+                onClose={() => {
+                    setDeleteRole(null);
+                    deleteMutation.reset();
+                }}
                 title="Delete Role"
                 size="sm"
             >
                 <div className="space-y-4">
                     <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                        Delete role{' '}
-                        <strong style={{ color: 'var(--text-primary)' }}>{deleteRole?.name}</strong>?
-                        This action cannot be undone.
+                        Delete role <strong style={{ color: 'var(--text-primary)' }}>{deleteRole?.name}</strong>? This
+                        action cannot be undone.
                     </p>
                     {deleteMutation.isError && (
                         <p className="text-sm text-red-600">Failed to delete role. Please try again.</p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="secondary" onClick={() => { setDeleteRole(null); deleteMutation.reset(); }}>
+                        <Button
+                            variant="secondary"
+                            onClick={() => {
+                                setDeleteRole(null);
+                                deleteMutation.reset();
+                            }}
+                        >
                             Cancel
                         </Button>
                         <Button variant="destructive" loading={deleteMutation.isPending} onClick={handleDelete}>

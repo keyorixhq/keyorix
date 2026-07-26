@@ -48,14 +48,9 @@ export const getPostLoginRedirect = (defaultPath: string = ROUTES.DASHBOARD): st
  * Checks if a route requires authentication
  */
 export const isProtectedRoute = (path: string): boolean => {
-    const publicRoutes = [
-        ROUTES.LOGIN,
-        '/auth',
-        '/forgot-password',
-        '/reset-password',
-    ];
+    const publicRoutes = [ROUTES.LOGIN, '/auth', '/forgot-password', '/reset-password'];
 
-    return !publicRoutes.some(route => path.startsWith(route));
+    return !publicRoutes.some((route) => path.startsWith(route));
 };
 
 /**

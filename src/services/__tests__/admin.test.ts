@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../client', () => ({
     apiClient: {
-        get:    vi.fn(),
-        post:   vi.fn(),
-        put:    vi.fn(),
+        get: vi.fn(),
+        post: vi.fn(),
+        put: vi.fn(),
         delete: vi.fn(),
     },
 }));
@@ -13,9 +13,9 @@ import { apiClient } from '../client';
 import { adminApi } from '../admin';
 
 const mock = apiClient as unknown as {
-    get:    ReturnType<typeof vi.fn>;
-    post:   ReturnType<typeof vi.fn>;
-    put:    ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
+    post: ReturnType<typeof vi.fn>;
+    put: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
 };
 
@@ -175,10 +175,9 @@ describe('adminApi.migrateUserToMachine', () => {
         const response = { machine_identity: { id: 10, name: 'svc-alice' } };
         mock.post.mockResolvedValueOnce(ok(response));
         const result = await adminApi.migrateUserToMachine(3, { username: 'alice' });
-        expect(mock.post).toHaveBeenCalledWith(
-            '/api/v1/projects/3/machine-identities/migrate-from-user',
-            { username: 'alice' },
-        );
+        expect(mock.post).toHaveBeenCalledWith('/api/v1/projects/3/machine-identities/migrate-from-user', {
+            username: 'alice',
+        });
         expect(result).toEqual(response);
     });
 });
@@ -189,9 +188,8 @@ describe('adminApi.getAuditLogs', () => {
     it('passes filter params to the API', async () => {
         mock.get.mockResolvedValueOnce(ok({ items: [], total: 0 }));
         await adminApi.getAuditLogs({ userId: 1, action: 'login', page: 1 });
-        expect(mock.get).toHaveBeenCalledWith(
-            '/api/v1/audit/logs',
-            { params: { userId: 1, action: 'login', page: 1 } },
-        );
+        expect(mock.get).toHaveBeenCalledWith('/api/v1/audit/logs', {
+            params: { userId: 1, action: 'login', page: 1 },
+        });
     });
 });

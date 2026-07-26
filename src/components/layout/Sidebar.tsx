@@ -143,13 +143,11 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
 
     // Hide admin-only groups (e.g. Access Control) from non-admins. The backend
     // still enforces every API; this just keeps the nav honest per role.
-    const navItems = NAV.filter(item => !(item.kind === 'group' && item.adminOnly && !isAdmin));
+    const navItems = NAV.filter((item) => !(item.kind === 'group' && item.adminOnly && !isAdmin));
 
-    const isActive = (href: string) =>
-        location.pathname === href || location.pathname.startsWith(href + '/');
+    const isActive = (href: string) => location.pathname === href || location.pathname.startsWith(href + '/');
 
-    const isGroupActive = (group: NavGroup) =>
-        group.children.some(c => isActive(c.href));
+    const isGroupActive = (group: NavGroup) => group.children.some((c) => isActive(c.href));
 
     // ── Leaf link ────────────────────────────────────────────────────────────
     const Leaf: React.FC<{ item: NavLeaf; indent?: boolean }> = ({ item, indent }) => {
@@ -168,25 +166,28 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                     backgroundColor: active ? 'var(--accent-subtle)' : undefined,
                     color: active ? 'var(--accent-text)' : item.soon ? 'var(--text-muted)' : 'var(--text-secondary)',
                 }}
-                onMouseEnter={e => {
+                onMouseEnter={(e) => {
                     if (!active && !item.soon)
                         (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)';
                 }}
-                onMouseLeave={e => {
-                    if (!active)
-                        (e.currentTarget as HTMLElement).style.backgroundColor = '';
+                onMouseLeave={(e) => {
+                    if (!active) (e.currentTarget as HTMLElement).style.backgroundColor = '';
                 }}
             >
                 <span className="flex items-center gap-2.5 truncate">
                     {item.icon && (
-                        <item.icon className="h-4 w-4 shrink-0"
-                            style={{ color: active ? 'var(--accent)' : 'var(--text-muted)' }} />
+                        <item.icon
+                            className="h-4 w-4 shrink-0"
+                            style={{ color: active ? 'var(--accent)' : 'var(--text-muted)' }}
+                        />
                     )}
                     {item.name}
                 </span>
                 {item.soon && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide shrink-0"
-                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+                    <span
+                        className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide shrink-0"
+                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
+                    >
                         Soon
                     </span>
                 )}
@@ -208,23 +209,27 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                         color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                         fontWeight: active ? 500 : 400,
                     }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)')}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '')}
                 >
                     <span className="flex items-center gap-2.5">
-                        <item.icon className="h-4 w-4 shrink-0"
-                            style={{ color: active ? 'var(--accent)' : 'var(--text-muted)' }} />
+                        <item.icon
+                            className="h-4 w-4 shrink-0"
+                            style={{ color: active ? 'var(--accent)' : 'var(--text-muted)' }}
+                        />
                         {item.name}
                     </span>
                     <ChevronDownIcon
-                        className={clsx('h-3.5 w-3.5 shrink-0 transition-transform duration-200',
-                            expanded && 'rotate-180')}
+                        className={clsx(
+                            'h-3.5 w-3.5 shrink-0 transition-transform duration-200',
+                            expanded && 'rotate-180'
+                        )}
                         style={{ color: 'var(--text-muted)' }}
                     />
                 </button>
                 {expanded && (
                     <div className="mt-0.5 space-y-0.5">
-                        {item.children.map(child => (
+                        {item.children.map((child) => (
                             <Leaf key={child.href} item={child} indent />
                         ))}
                     </div>
@@ -237,8 +242,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     const SidebarContent = () => (
         <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--bg-surface)' }}>
             {/* Logo */}
-            <div className="flex items-center px-5 py-5 border-b shrink-0"
-                style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-center px-5 py-5 border-b shrink-0" style={{ borderColor: 'var(--border)' }}>
                 <Link to="/dashboard" className="flex items-center space-x-2" onClick={onClose}>
                     <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
                         <span className="text-white font-bold text-sm">K</span>
@@ -256,21 +260,24 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
 
             {/* Nav */}
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
-                {navItems.map(item =>
-                    item.kind === 'leaf'
-                        ? <Leaf key={item.href} item={item} />
-                        : <Group key={item.id} item={item} />
+                {navItems.map((item) =>
+                    item.kind === 'leaf' ? <Leaf key={item.href} item={item} /> : <Group key={item.id} item={item} />
                 )}
             </nav>
 
             {/* Footer */}
-            <div className="px-4 py-3 border-t shrink-0 flex items-center justify-between"
-                style={{ borderColor: 'var(--border)' }}>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Keyorix v0.1.0</p>
+            <div
+                className="px-4 py-3 border-t shrink-0 flex items-center justify-between"
+                style={{ borderColor: 'var(--border)' }}
+            >
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Keyorix v0.1.0
+                </p>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    <kbd className="px-1 py-0.5 rounded-sm text-[10px]"
-                        style={{ backgroundColor: 'var(--bg-muted)' }}>⌘K</kbd>
-                    {' '}search
+                    <kbd className="px-1 py-0.5 rounded-sm text-[10px]" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                        ⌘K
+                    </kbd>{' '}
+                    search
                 </span>
             </div>
         </div>
@@ -279,14 +286,19 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     return (
         <>
             {/* Mobile — Radix Dialog used for focus-trap + Esc handling */}
-            <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+            <Dialog.Root
+                open={isOpen}
+                onOpenChange={(open) => {
+                    if (!open) onClose();
+                }}
+            >
                 <Dialog.Portal>
                     <Dialog.Overlay
                         className={cn(
                             'fixed inset-0 z-40 bg-black/60 lg:hidden',
                             'data-[state=open]:animate-in data-[state=open]:fade-in-0',
                             'data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
-                            'duration-300',
+                            'duration-300'
                         )}
                     />
                     <Dialog.Content
@@ -294,16 +306,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                             'fixed inset-y-0 left-0 z-40 flex flex-col max-w-xs w-full lg:hidden',
                             'data-[state=open]:animate-in data-[state=open]:slide-in-from-left',
                             'data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left',
-                            'duration-300',
+                            'duration-300'
                         )}
                         style={{ backgroundColor: 'var(--bg-surface)' }}
                         aria-describedby={undefined}
                     >
                         <Dialog.Title className="sr-only">Navigation menu</Dialog.Title>
                         <div className="absolute top-0 right-0 -mr-12 pt-2">
-                            <Dialog.Close
-                                className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-white"
-                            >
+                            <Dialog.Close className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-white">
                                 <XMarkIcon className="h-6 w-6 text-white" />
                             </Dialog.Close>
                         </div>
@@ -314,8 +324,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
 
             {/* Desktop */}
             <div className={clsx('hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0', className)}>
-                <div className="flex flex-col grow border-r overflow-y-auto"
-                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+                <div
+                    className="flex flex-col grow border-r overflow-y-auto"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                >
                     <SidebarContent />
                 </div>
             </div>

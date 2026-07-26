@@ -199,7 +199,8 @@ export function useDecideCampaignItem(projectId: number, campaignId: number) {
 export function useCloseCampaign(projectId: number) {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (v: { campaignId: number; force: boolean }) => projectsApi.closeCampaign(projectId, v.campaignId, v.force),
+        mutationFn: (v: { campaignId: number; force: boolean }) =>
+            projectsApi.closeCampaign(projectId, v.campaignId, v.force),
         onSuccess: () => invalidateCampaigns(queryClient, projectId),
     });
 }

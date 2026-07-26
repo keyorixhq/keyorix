@@ -50,17 +50,19 @@ export const useUIStore = create<UIState>()(
                     applyTheme(theme);
                     set({ theme });
                 },
-                toggleTheme: () => set((state) => {
-                    const next: Theme = state.theme === 'dark' ? 'light' : 'dark';
-                    applyTheme(next);
-                    return { theme: next };
-                }),
-                toggleSidebarGroup: (id) => set((state) => ({
-                    sidebarExpanded: {
-                        ...state.sidebarExpanded,
-                        [id]: !state.sidebarExpanded[id],
-                    },
-                })),
+                toggleTheme: () =>
+                    set((state) => {
+                        const next: Theme = state.theme === 'dark' ? 'light' : 'dark';
+                        applyTheme(next);
+                        return { theme: next };
+                    }),
+                toggleSidebarGroup: (id) =>
+                    set((state) => ({
+                        sidebarExpanded: {
+                            ...state.sidebarExpanded,
+                            [id]: !state.sidebarExpanded[id],
+                        },
+                    })),
             }),
             {
                 name: 'keyorix-ui',

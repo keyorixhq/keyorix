@@ -11,19 +11,18 @@ import { cn } from '@/lib/utils';
 
 // ── Variants ─────────────────────────────────────────────────────────────────
 
-const alertVariants = cva(
-    'rounded-md border p-4',
-    {
-        variants: {
-            type: {
-                success: '[--alert-icon:var(--success)] [--alert-bg:var(--success-subtle)] [--alert-border:var(--success)] [--alert-title:var(--success)] [--alert-body:var(--success)]',
-                error:   '[--alert-icon:var(--error)]   [--alert-bg:var(--error-subtle)]   [--alert-border:var(--error)]   [--alert-title:var(--error)]   [--alert-body:var(--error)]',
-                warning: '[--alert-icon:var(--warning)] [--alert-bg:var(--warning-subtle)] [--alert-border:var(--warning)] [--alert-title:var(--warning)] [--alert-body:var(--warning)]',
-                info:    '[--alert-icon:var(--accent)]  [--alert-bg:var(--accent-subtle)]  [--alert-border:var(--accent)]  [--alert-title:var(--accent-text)] [--alert-body:var(--accent)]',
-            },
+const alertVariants = cva('rounded-md border p-4', {
+    variants: {
+        type: {
+            success:
+                '[--alert-icon:var(--success)] [--alert-bg:var(--success-subtle)] [--alert-border:var(--success)] [--alert-title:var(--success)] [--alert-body:var(--success)]',
+            error: '[--alert-icon:var(--error)]   [--alert-bg:var(--error-subtle)]   [--alert-border:var(--error)]   [--alert-title:var(--error)]   [--alert-body:var(--error)]',
+            warning:
+                '[--alert-icon:var(--warning)] [--alert-bg:var(--warning-subtle)] [--alert-border:var(--warning)] [--alert-title:var(--warning)] [--alert-body:var(--warning)]',
+            info: '[--alert-icon:var(--accent)]  [--alert-bg:var(--accent-subtle)]  [--alert-border:var(--accent)]  [--alert-title:var(--accent-text)] [--alert-body:var(--accent)]',
         },
-    }
-);
+    },
+});
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -41,22 +40,14 @@ export interface AlertProps extends VariantProps<typeof alertVariants> {
 
 const ICONS: Record<AlertType, React.ElementType> = {
     success: CheckCircleIcon,
-    error:   XCircleIcon,
+    error: XCircleIcon,
     warning: ExclamationTriangleIcon,
-    info:    InformationCircleIcon,
+    info: InformationCircleIcon,
 };
 
 // ── Alert ─────────────────────────────────────────────────────────────────────
 
-const Alert: React.FC<AlertProps> = ({
-    type,
-    title,
-    message,
-    children,
-    dismissible = false,
-    onDismiss,
-    className,
-}) => {
+const Alert: React.FC<AlertProps> = ({ type, title, message, children, dismissible = false, onDismiss, className }) => {
     const Icon = ICONS[type];
 
     return (
@@ -69,18 +60,11 @@ const Alert: React.FC<AlertProps> = ({
         >
             <div className="flex">
                 <div className="shrink-0">
-                    <Icon
-                        className="h-5 w-5"
-                        aria-hidden="true"
-                        style={{ color: 'var(--alert-icon)' }}
-                    />
+                    <Icon className="h-5 w-5" aria-hidden="true" style={{ color: 'var(--alert-icon)' }} />
                 </div>
                 <div className="ml-3 flex-1">
                     {title && (
-                        <h3
-                            className="text-sm font-medium"
-                            style={{ color: 'var(--alert-title)' }}
-                        >
+                        <h3 className="text-sm font-medium" style={{ color: 'var(--alert-title)' }}>
                             {title}
                         </h3>
                     )}

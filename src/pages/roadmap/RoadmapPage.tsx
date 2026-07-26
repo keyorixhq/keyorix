@@ -23,15 +23,15 @@ interface QuarterCardProps {
 }
 
 const QuarterCard: React.FC<QuarterCardProps> = ({ quarter, badge, items }) => (
-    <div className="rounded-xl border overflow-hidden mb-6"
-        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
-        <div className="px-6 py-4 border-b flex items-center justify-between"
-            style={{ borderColor: 'var(--border)' }}>
+    <div
+        className="rounded-xl border overflow-hidden mb-6"
+        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+    >
+        <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {quarter}
             </h2>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                style={BADGE_STYLES[badge]}>
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={BADGE_STYLES[badge]}>
                 {BADGE_LABELS[badge]}
             </span>
         </div>
@@ -39,9 +39,13 @@ const QuarterCard: React.FC<QuarterCardProps> = ({ quarter, badge, items }) => (
             <ul className="space-y-2">
                 {items.map((item, i) => (
                     <li key={i} className="flex items-start gap-2.5">
-                        <span className="h-1.5 w-1.5 rounded-full shrink-0 mt-1.5 opacity-60"
-                            style={{ backgroundColor: 'var(--text-muted)' }} />
-                        <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{item}</span>
+                        <span
+                            className="h-1.5 w-1.5 rounded-full shrink-0 mt-1.5 opacity-60"
+                            style={{ backgroundColor: 'var(--text-muted)' }}
+                        />
+                        <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                            {item}
+                        </span>
                     </li>
                 ))}
             </ul>
@@ -122,8 +126,7 @@ export const RoadmapPage: React.FC = () => (
         />
 
         <p className="text-xs text-center mt-8 pb-4" style={{ color: 'var(--text-muted)' }}>
-            Roadmap reflects current intentions and may change.{' '}
-            Enterprise features require a commercial licence.
+            Roadmap reflects current intentions and may change. Enterprise features require a commercial licence.
         </p>
     </div>
 );

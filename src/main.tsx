@@ -14,9 +14,8 @@ import './index.css';
         const stored = localStorage.getItem('keyorix-ui');
         const parsed = stored ? JSON.parse(stored) : null;
         const theme = parsed?.state?.theme ?? 'dark';
-        const resolved = theme === 'system'
-            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-            : theme;
+        const resolved =
+            theme === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
         document.documentElement.setAttribute('data-theme', resolved);
     } catch {
         document.documentElement.setAttribute('data-theme', 'dark');
@@ -24,11 +23,11 @@ import './index.css';
 })();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </QueryClientProvider>
-  </React.StrictMode>
+    <React.StrictMode>
+        <QueryClientProvider client={queryClient}>
+            <BrowserRouter>
+                <App />
+            </BrowserRouter>
+        </QueryClientProvider>
+    </React.StrictMode>
 );

@@ -30,11 +30,11 @@ export const SecretDependenciesSection: React.FC<{ secret: Secret }> = ({ secret
     const candidates = useMemo(() => {
         const linked = new Set<number>([
             secret.id,
-            ...(deps?.depends_on ?? []).map(e => e.secret_id),
-            ...(deps?.dependents ?? []).map(e => e.secret_id),
+            ...(deps?.depends_on ?? []).map((e) => e.secret_id),
+            ...(deps?.dependents ?? []).map((e) => e.secret_id),
         ]);
         return (secretList?.data ?? []).filter(
-            (s: Secret) => !linked.has(s.id) && s.projectId === secret.projectId && s.environment === secret.environment,
+            (s: Secret) => !linked.has(s.id) && s.projectId === secret.projectId && s.environment === secret.environment
         );
     }, [secretList, deps, secret]);
 
@@ -60,7 +60,10 @@ export const SecretDependenciesSection: React.FC<{ secret: Secret }> = ({ secret
     const affected = impact?.affected ?? [];
 
     const edgeRow = (label: string, edgeId: number, edgeNote?: string) => (
-        <div key={edgeId} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+        <div
+            key={edgeId}
+            className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
+        >
             <div className="min-w-0">
                 <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{label}</span>
                 {edgeNote && <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">— {edgeNote}</span>}
@@ -80,7 +83,8 @@ export const SecretDependenciesSection: React.FC<{ secret: Secret }> = ({ secret
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Dependencies</h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                Relationships used for rotation impact analysis and ordering. Confined to this project &amp; environment.
+                Relationships used for rotation impact analysis and ordering. Confined to this project &amp;
+                environment.
             </p>
 
             {/* Blast radius */}
@@ -92,10 +96,11 @@ export const SecretDependenciesSection: React.FC<{ secret: Secret }> = ({ secret
                 ) : (
                     <>
                         <p className="text-sm font-medium text-gray-900 dark:text-white">
-                            Rotating this secret affects {affected.length} other secret{affected.length === 1 ? '' : 's'}:
+                            Rotating this secret affects {affected.length} other secret
+                            {affected.length === 1 ? '' : 's'}:
                         </p>
                         <div className="mt-2 flex flex-wrap gap-2">
-                            {affected.map(a => (
+                            {affected.map((a) => (
                                 <span
                                     key={a.secret_id}
                                     className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
@@ -115,7 +120,7 @@ export const SecretDependenciesSection: React.FC<{ secret: Secret }> = ({ secret
                     {dependsOn.length === 0 ? (
                         <p className="text-sm text-gray-400 dark:text-gray-500">Nothing — this secret stands alone.</p>
                     ) : (
-                        dependsOn.map(e => edgeRow(e.secret_name, e.id, e.note))
+                        dependsOn.map((e) => edgeRow(e.secret_name, e.id, e.note))
                     )}
                 </div>
                 <div>
@@ -123,7 +128,7 @@ export const SecretDependenciesSection: React.FC<{ secret: Secret }> = ({ secret
                     {dependents.length === 0 ? (
                         <p className="text-sm text-gray-400 dark:text-gray-500">No other secret depends on this one.</p>
                     ) : (
-                        dependents.map(e => edgeRow(e.secret_name, e.id, e.note))
+                        dependents.map((e) => edgeRow(e.secret_name, e.id, e.note))
                     )}
                 </div>
             </div>
@@ -134,18 +139,20 @@ export const SecretDependenciesSection: React.FC<{ secret: Secret }> = ({ secret
                 <div className="flex flex-col sm:flex-row gap-2">
                     <select
                         value={dependsOnId}
-                        onChange={e => setDependsOnId(e.target.value)}
+                        onChange={(e) => setDependsOnId(e.target.value)}
                         className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
                     >
                         <option value="">This secret depends on…</option>
-                        {candidates.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
+                        {candidates.map((c) => (
+                            <option key={c.id} value={c.id}>
+                                {c.name}
+                            </option>
                         ))}
                     </select>
                     <input
                         type="text"
                         value={note}
-                        onChange={e => setNote(e.target.value)}
+                        onChange={(e) => setNote(e.target.value)}
                         placeholder="Note (optional)"
                         className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white"
                     />

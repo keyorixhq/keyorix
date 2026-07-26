@@ -1,0 +1,15 @@
+title = "keyorix-web"
+
+# Global allowlist — covers test fixtures (mock credentials) that are not real
+# secrets.  Real secrets must never appear in source; code review is the guard.
+# This only suppresses gitleaks findings in paths that never hold production
+# credentials.
+[allowlist]
+description = "Test fixtures and mock values in non-production files"
+paths = [
+    '''__tests__''',
+    '''\.test\.(ts|tsx)$''',
+    '''\.spec\.(ts|tsx)$''',
+    '''(^|/)src/test/''',
+    '''(^|/)e2e/''',
+]

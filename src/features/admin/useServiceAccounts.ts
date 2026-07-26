@@ -22,13 +22,8 @@ export const useCreateServiceAccount = () => {
 export const useUpdateServiceAccount = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({
-            id,
-            body,
-        }: {
-            id: number;
-            body: { name?: string; description?: string; scopes?: string };
-        }) => serviceAccountsApi.updateServiceAccount(id, body),
+        mutationFn: ({ id, body }: { id: number; body: { name?: string; description?: string; scopes?: string } }) =>
+            serviceAccountsApi.updateServiceAccount(id, body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [SA_KEY] }),
     });
 };
@@ -68,8 +63,7 @@ export const useCreateToken = () => {
 export const useRevokeToken = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ tokenId }: { tokenId: number }) =>
-            serviceAccountsApi.revokeToken(tokenId),
+        mutationFn: ({ tokenId }: { tokenId: number }) => serviceAccountsApi.revokeToken(tokenId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [TOKEN_KEY] });
         },

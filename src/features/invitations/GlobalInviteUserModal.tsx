@@ -13,7 +13,7 @@ interface GlobalInviteUserModalProps {
 }
 
 // "system_auditor" → "Auditor"
-const systemRoleLabel = (role: string) => role.replace(/^system_/, '').replace(/^\w/, c => c.toUpperCase());
+const systemRoleLabel = (role: string) => role.replace(/^system_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -71,7 +71,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                 assignments: assignments.map(({ project_id, role }) => ({ project_id, role })),
             },
             {
-                onSuccess: res => {
+                onSuccess: (res) => {
                     if (res.setup_link) {
                         setResult(res.setup_link);
                     } else {
@@ -118,7 +118,9 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         </p>
                     )}
                     <div className="flex justify-end pt-2">
-                        <Button variant="default" onClick={handleClose}>Done</Button>
+                        <Button variant="default" onClick={handleClose}>
+                            Done
+                        </Button>
                     </div>
                 </div>
             ) : deliveryError ? (
@@ -132,7 +134,9 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         the user’s detail page.
                     </p>
                     <div className="flex justify-end pt-2">
-                        <Button variant="default" onClick={handleClose}>Done</Button>
+                        <Button variant="default" onClick={handleClose}>
+                            Done
+                        </Button>
                     </div>
                 </div>
             ) : (
@@ -149,7 +153,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         <input
                             type="email"
                             value={email}
-                            onChange={e => setEmail(e.target.value)}
+                            onChange={(e) => setEmail(e.target.value)}
                             placeholder="jane@example.com"
                             autoFocus
                             className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
@@ -162,12 +166,14 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         </label>
                         <select
                             value={systemRole}
-                            onChange={e => setSystemRole(e.target.value)}
+                            onChange={(e) => setSystemRole(e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-surface"
                         >
                             <option value="">Default (Viewer)</option>
-                            {SYSTEM_ROLES.map(r => (
-                                <option key={r} value={r}>{systemRoleLabel(r)}</option>
+                            {SYSTEM_ROLES.map((r) => (
+                                <option key={r} value={r}>
+                                    {systemRoleLabel(r)}
+                                </option>
                             ))}
                         </select>
                     </div>
@@ -179,7 +185,9 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                     />
 
                     <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={handleClose} disabled={invite.isPending}>Cancel</Button>
+                        <Button variant="ghost" onClick={handleClose} disabled={invite.isPending}>
+                            Cancel
+                        </Button>
                         <Button variant="default" onClick={handleSubmit} disabled={invite.isPending || !email.trim()}>
                             {invite.isPending ? 'Sending…' : 'Send Invitation'}
                         </Button>

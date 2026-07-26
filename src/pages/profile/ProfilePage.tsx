@@ -105,13 +105,7 @@ const BasicInfoTab: React.FC = () => {
                 onChange={(e) => setDisplayName(e.target.value)}
                 required
             />
-            <Input
-                label="Email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-            />
+            <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
 
             <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
@@ -348,14 +342,11 @@ const TokensTab: React.FC = () => {
     const { data: scopeEnvironments } = useProjectEnvironments(projectScope);
 
     const togglePermission = (value: string) =>
-        setPermissions((prev) =>
-            prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value]
-        );
+        setPermissions((prev) => (prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value]));
 
     // A "limited" token with no permission and no project chosen would silently be
     // unrestricted — guide the user to pick at least one constraint.
-    const noConstraintChosen =
-        limited && permissions.length === 0 && !extraPermissions.trim() && projectScope === 0;
+    const noConstraintChosen = limited && permissions.length === 0 && !extraPermissions.trim() && projectScope === 0;
 
     const openCreate = () => {
         setName('');
@@ -385,8 +376,7 @@ const TokensTab: React.FC = () => {
         createToken.mutate(body, { onSuccess: (res) => setNewToken(res.token) });
     };
 
-    const projectName = (id: number) =>
-        projects?.find((p) => p.id === id)?.name ?? `project #${id}`;
+    const projectName = (id: number) => projects?.find((p) => p.id === id)?.name ?? `project #${id}`;
 
     const copy = async () => {
         if (!newToken) return;
@@ -402,8 +392,8 @@ const TokensTab: React.FC = () => {
                         Personal Access Tokens
                     </h3>
                     <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-                        Tokens authenticate API and CLI requests as you. By default they carry all of
-                        your permissions — restrict a token to least privilege when you create it.
+                        Tokens authenticate API and CLI requests as you. By default they carry all of your permissions —
+                        restrict a token to least privilege when you create it.
                     </p>
                 </div>
                 <Button size="sm" onClick={openCreate}>
@@ -424,18 +414,28 @@ const TokensTab: React.FC = () => {
                         <div
                             key={t.id}
                             className="rounded-lg p-4 flex items-center justify-between"
-                            style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', opacity: t.revoked ? 0.5 : 1 }}
+                            style={{
+                                backgroundColor: 'var(--bg-surface)',
+                                border: '1px solid var(--border)',
+                                opacity: t.revoked ? 0.5 : 1,
+                            }}
                         >
                             <div className="min-w-0">
                                 <div className="flex items-center gap-2">
                                     <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                                         {t.name}
                                     </span>
-                                    <code className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                    <code
+                                        className="text-xs"
+                                        style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+                                    >
                                         {t.token_prefix}…
                                     </code>
                                     {t.revoked && (
-                                        <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-app)' }}>
+                                        <span
+                                            className="text-xs px-2 py-0.5 rounded-full"
+                                            style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-app)' }}
+                                        >
                                             revoked
                                         </span>
                                     )}
@@ -444,7 +444,7 @@ const TokensTab: React.FC = () => {
                                     created {formatDate(t.created_at)} · last used {formatDate(t.last_used_at)} ·{' '}
                                     {t.expires_at ? `expires ${formatDate(t.expires_at)}` : 'never expires'}
                                 </p>
-                                {(t.scopes.length > 0 || t.project_scope > 0 || t.environment_scope > 0) ? (
+                                {t.scopes.length > 0 || t.project_scope > 0 || t.environment_scope > 0 ? (
                                     <div className="mt-1.5 flex flex-wrap items-center gap-1">
                                         {t.project_scope > 0 && (
                                             <ScopeChip label={projectName(t.project_scope)} kind="project" />
@@ -495,11 +495,18 @@ const TokensTab: React.FC = () => {
                             className="rounded-md p-3 flex items-center justify-between gap-2"
                             style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)' }}
                         >
-                            <code className="text-sm break-all" style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
+                            <code
+                                className="text-sm break-all"
+                                style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}
+                            >
                                 {newToken}
                             </code>
                             <Button variant="outline" size="sm" onClick={copy} title="Copy token">
-                                {copied ? <CheckIcon className="h-4 w-4" /> : <ClipboardDocumentIcon className="h-4 w-4" />}
+                                {copied ? (
+                                    <CheckIcon className="h-4 w-4" />
+                                ) : (
+                                    <ClipboardDocumentIcon className="h-4 w-4" />
+                                )}
                             </Button>
                         </div>
                         <div className="flex justify-end">
@@ -544,8 +551,8 @@ const TokensTab: React.FC = () => {
                                     className="mt-0.5"
                                 />
                                 <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                    <span style={{ color: 'var(--text-primary)' }}>Full access</span> — all of
-                                    your current permissions
+                                    <span style={{ color: 'var(--text-primary)' }}>Full access</span> — all of your
+                                    current permissions
                                 </span>
                             </label>
                             <label className="flex items-start gap-2 cursor-pointer">
@@ -557,8 +564,8 @@ const TokensTab: React.FC = () => {
                                     className="mt-0.5"
                                 />
                                 <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                    <span style={{ color: 'var(--text-primary)' }}>Limited access</span> —
-                                    restrict to specific permissions and/or one project
+                                    <span style={{ color: 'var(--text-primary)' }}>Limited access</span> — restrict to
+                                    specific permissions and/or one project
                                 </span>
                             </label>
                         </fieldset>
@@ -574,7 +581,10 @@ const TokensTab: React.FC = () => {
                                     </p>
                                     <div className="flex flex-wrap gap-3">
                                         {PRESET_PERMISSIONS.map((perm) => (
-                                            <label key={perm.value} className="flex items-center gap-1.5 cursor-pointer">
+                                            <label
+                                                key={perm.value}
+                                                className="flex items-center gap-1.5 cursor-pointer"
+                                            >
                                                 <input
                                                     type="checkbox"
                                                     checked={permissions.includes(perm.value)}
@@ -582,7 +592,13 @@ const TokensTab: React.FC = () => {
                                                 />
                                                 <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                                                     {perm.label}{' '}
-                                                    <code className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                                    <code
+                                                        className="text-xs"
+                                                        style={{
+                                                            color: 'var(--text-muted)',
+                                                            fontFamily: 'var(--font-mono)',
+                                                        }}
+                                                    >
                                                         {perm.value}
                                                     </code>
                                                 </span>
@@ -598,7 +614,10 @@ const TokensTab: React.FC = () => {
                                     onChange={(e) => setExtraPermissions(e.target.value)}
                                 />
                                 <div>
-                                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                                    <label
+                                        className="block text-sm font-medium mb-1"
+                                        style={{ color: 'var(--text-primary)' }}
+                                    >
                                         Project
                                     </label>
                                     <select
@@ -624,7 +643,10 @@ const TokensTab: React.FC = () => {
                                 </div>
                                 {projectScope > 0 && (
                                     <div>
-                                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                                        <label
+                                            className="block text-sm font-medium mb-1"
+                                            style={{ color: 'var(--text-primary)' }}
+                                        >
                                             Environment
                                         </label>
                                         <select

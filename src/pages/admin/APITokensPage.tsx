@@ -17,7 +17,9 @@ function formatDate(iso: string): string {
     if (!iso) return '—';
     try {
         return new Date(iso).toLocaleDateString(undefined, {
-            year: 'numeric', month: 'short', day: 'numeric',
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
         });
     } catch {
         return iso;
@@ -30,13 +32,7 @@ function getTokenStatus(token: APIToken): 'active' | 'revoked' | 'expired' {
     return 'active';
 }
 
-function TokenStatusBadge({
-    status,
-    isDark,
-}: {
-    status: 'active' | 'revoked' | 'expired';
-    isDark: boolean;
-}) {
+function TokenStatusBadge({ status, isDark }: { status: 'active' | 'revoked' | 'expired'; isDark: boolean }) {
     const styles: Record<string, React.CSSProperties> = {
         active: {
             backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7',
@@ -116,18 +112,12 @@ export const APITokensPage: React.FC = () => {
                 className="p-3 mb-6 rounded-lg border text-sm text-base-secondary"
                 style={{ backgroundColor: 'var(--bg-subtle)', borderColor: 'var(--border)' }}
             >
-                Tokens are created from individual Service Account pages. This view shows all tokens for
-                monitoring and revocation.
+                Tokens are created from individual Service Account pages. This view shows all tokens for monitoring and
+                revocation.
             </div>
 
             {pageError && (
-                <Alert
-                    type="error"
-                    title={pageError}
-                    dismissible
-                    onDismiss={() => setPageError('')}
-                    className="mb-4"
-                />
+                <Alert type="error" title={pageError} dismissible onDismiss={() => setPageError('')} className="mb-4" />
             )}
 
             {saLoading || tokensLoading ? (
@@ -240,16 +230,14 @@ export const APITokensPage: React.FC = () => {
                                                             color: inactive
                                                                 ? 'var(--text-muted)'
                                                                 : isDark
-                                                                ? '#f87171'
-                                                                : '#dc2626',
+                                                                  ? '#f87171'
+                                                                  : '#dc2626',
                                                             backgroundColor: 'transparent',
                                                         }}
                                                         onMouseEnter={(e) => {
                                                             if (!inactive)
                                                                 (e.currentTarget as HTMLElement).style.backgroundColor =
-                                                                    isDark
-                                                                        ? 'rgba(239,68,68,0.12)'
-                                                                        : '#fee2e2';
+                                                                    isDark ? 'rgba(239,68,68,0.12)' : '#fee2e2';
                                                         }}
                                                         onMouseLeave={(e) => {
                                                             (e.currentTarget as HTMLElement).style.backgroundColor =

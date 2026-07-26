@@ -83,19 +83,14 @@ describe('ProtectedRoute', () => {
 
     it('renders children when all required permissions are present', () => {
         setAuth({ isAuthenticated: true, user: { role: 'user', permissions: ['secrets:read'] } });
-        renderGuard(
-            <ProtectedRoute requiredPermissions={['secrets:read']}>secret</ProtectedRoute>
-        );
+        renderGuard(<ProtectedRoute requiredPermissions={['secrets:read']}>secret</ProtectedRoute>);
         expect(screen.getByText('secret')).toBeInTheDocument();
     });
 
     it('lists missing permissions on Access Denied when redirectOnFailure is false', () => {
         setAuth({ isAuthenticated: true, user: { role: 'user', permissions: ['secrets:read'] } });
         renderGuard(
-            <ProtectedRoute
-                requiredPermissions={['secrets:read', 'secrets:write']}
-                redirectOnFailure={false}
-            >
+            <ProtectedRoute requiredPermissions={['secrets:read', 'secrets:write']} redirectOnFailure={false}>
                 secret
             </ProtectedRoute>
         );

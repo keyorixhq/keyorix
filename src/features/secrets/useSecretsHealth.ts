@@ -26,18 +26,18 @@ export function useSecretsHealth() {
         const now = new Date();
 
         // ── Expiry ────────────────────────────────────────────────────────
-        const expired = secrets.filter(s => {
+        const expired = secrets.filter((s) => {
             if (!s.Expiration) return false;
             return new Date(s.Expiration) < now;
         }).length;
 
-        const expiring7d = secrets.filter(s => {
+        const expiring7d = secrets.filter((s) => {
             if (!s.Expiration) return false;
             const d = Math.ceil((new Date(s.Expiration).getTime() - now.getTime()) / 86_400_000);
             return d >= 0 && d <= 7;
         }).length;
 
-        const expiring30d = secrets.filter(s => {
+        const expiring30d = secrets.filter((s) => {
             if (!s.Expiration) return false;
             const d = Math.ceil((new Date(s.Expiration).getTime() - now.getTime()) / 86_400_000);
             return d > 7 && d <= 30;
@@ -51,20 +51,16 @@ export function useSecretsHealth() {
         // classified overdue/due_soon/ok). Unavailable only when no rotation
         // policy covers any secret, in which case it stays neutral in the score.
         const rotationCovered = rotationEntries.length;
-        const rotationOverdue = rotationEntries.filter(e => e.status === 'overdue').length;
-        const rotationDueSoon = rotationEntries.filter(e => e.status === 'due_soon').length;
-        const rotationOk = rotationEntries.filter(e => e.status === 'ok').length;
+        const rotationOverdue = rotationEntries.filter((e) => e.status === 'overdue').length;
+        const rotationDueSoon = rotationEntries.filter((e) => e.status === 'due_soon').length;
+        const rotationOk = rotationEntries.filter((e) => e.status === 'ok').length;
         const rotationAvailable = rotationCovered > 0;
-        const rotationPct = rotationAvailable
-            ? Math.round((rotationOk / rotationCovered) * 100)
-            : 100; // neutral weight when no policy covers anything
+        const rotationPct = rotationAvailable ? Math.round((rotationOk / rotationCovered) * 100) : 100; // neutral weight when no policy covers anything
 
         // ── Access ────────────────────────────────────────────────────────
         // Approximate: reads in last 30d vs total secrets count
         const reads30d = stats?.auditSecretReads30d ?? 0;
-        const accessPct = total === 0
-            ? 100
-            : Math.min(100, Math.round((reads30d / total) * 100));
+        const accessPct = total === 0 ? 100 : Math.min(100, Math.round((reads30d / total) * 100));
 
         // ── Overall score ─────────────────────────────────────────────────
         const score = Math.round(expiryPct * 0.4 + rotationPct * 0.3 + accessPct * 0.3);

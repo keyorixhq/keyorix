@@ -64,7 +64,12 @@ describe('GlobalInviteUserModal', () => {
         mutate.mockImplementation((_vars, opts) =>
             opts.onSuccess({
                 invitation: { id: 12 },
-                setup_link: { email: 'carol@x.io', channel: 'out_of_band', delivered: false, link_for_admin: 'https://k/x/abc' },
+                setup_link: {
+                    email: 'carol@x.io',
+                    channel: 'out_of_band',
+                    delivered: false,
+                    link_for_admin: 'https://k/x/abc',
+                },
             })
         );
 

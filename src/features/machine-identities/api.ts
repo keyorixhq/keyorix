@@ -1,9 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-    machineIdentitiesApi,
-    MachineAction,
-    MachineIdentityType,
-} from '../../services/machineIdentities';
+import { machineIdentitiesApi, MachineAction, MachineIdentityType } from '../../services/machineIdentities';
 
 // ADR-023 query keys, namespaced per project.
 export const MACHINE_IDENTITY_KEYS = {
@@ -35,8 +31,7 @@ export function useCreateMachineIdentity(projectId: number) {
             identityType: MachineIdentityType;
             description?: string;
         }) => machineIdentitiesApi.create(projectId, name, identityType, description),
-        onSuccess: () =>
-            queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
     });
 }
 
@@ -45,8 +40,7 @@ export function useTransitionMachineIdentity(projectId: number) {
     return useMutation({
         mutationFn: ({ machineId, action }: { machineId: number; action: MachineAction }) =>
             machineIdentitiesApi.transition(projectId, machineId, action),
-        onSuccess: () =>
-            queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
     });
 }
 
@@ -55,8 +49,7 @@ export function useClassifyMachineIdentity(projectId: number) {
     return useMutation({
         mutationFn: ({ machineId, classification }: { machineId: number; classification: string }) =>
             machineIdentitiesApi.classify(projectId, machineId, classification),
-        onSuccess: () =>
-            queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
     });
 }
 
