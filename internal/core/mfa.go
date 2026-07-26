@@ -96,7 +96,12 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	if err != nil {
 		return nil, fmt.Errorf("no pending MFA enrolment; begin enrolment first")
 	}
-	if !c.validateTOTP(secret, code) {
+	step, ok := c.validateTOTPStep(secret, code)
+	if !ok {
+		c.auditMFAFailed(ctx, userID, "activate")
+		return nil, fmt.Errorf("invalid code")
+	}
+	if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil || !fresh {
 		c.auditMFAFailed(ctx, userID, "activate")
 		return nil, fmt.Errorf("invalid code")
 	}
@@ -376,18 +381,6 @@ func (c *KeyorixCore) loadTOTPSecret(ctx context.Context, userID uint) (string, 
 	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta, encryption.MFASecretAAD(userID))
 }
 
-func (c *KeyorixCore) validateTOTP(secret, code string) bool {
-	code = strings.TrimSpace(code)
-	if code == "" {
-		return false
-	}
-	// ±1 time-step skew (clock drift); standard 30s SHA-1 6-digit TOTP.
-	valid, _ := totp.ValidateCustom(code, secret, c.now().UTC(), totp.ValidateOpts{
-		Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
-	})
-	return valid
-}
-
 // totpPeriod is the TOTP step length in seconds.
 const totpPeriod = 30
 
@@ -437,8 +430,15 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	}
 	ok := false
 	if user.MFAEnabled {
-		if secret, err := c.loadTOTPSecret(ctx, user.ID); err == nil && c.validateTOTP(secret, codeOrPassword) {
-			ok = true
+		if secret, err := c.loadTOTPSecret(ctx, user.ID); err == nil {
+			// Use the same anti-replay path as VerifyMFACredentials: identify the
+			// matched time-step and atomically mark it used so a stolen code cannot
+			// be replayed within the ±1 step (~90 s) window.
+			if step, matched := c.validateTOTPStep(secret, codeOrPassword); matched {
+				if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, user.ID, step); ferr == nil && fresh {
+					ok = true
+				}
+			}
 		}
 	}
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
