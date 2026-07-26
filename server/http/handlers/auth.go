@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,6 +55,8 @@ func (h *AuthHandler) setSessionCookies(w http.ResponseWriter, session *models.S
 	middleware.SetSessionCookie(w, session.SessionToken, session.ExpiresAt, h.tlsEnabled)
 	if csrfToken, err := middleware.GenerateCSRFToken(); err == nil {
 		middleware.SetCSRFCookie(w, csrfToken, h.tlsEnabled)
+	} else {
+		log.Printf("setSessionCookies: CSRF token generation failed: %v; session issued without CSRF cookie", err)
 	}
 }
 
@@ -242,6 +245,10 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	ip := r.RemoteAddr
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
 		ip = ip[:idx]
+	}
+	if h.checkLoginRateLimit(r.Context(), ip) {
+		sendError(w, "TooManyRequests", "Too many requests. Try again later.", http.StatusTooManyRequests, nil)
+		return
 	}
 	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip)
 	// The new password was accepted, but the account has MFA (TOTP) or a passkey
@@ -493,7 +500,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
 			return
 		}
-		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+		log.Printf("ChangePassword: user %d error: %v", userCtx.UserID, err)
+		sendError(w, "BadRequest", clientSafe(err), http.StatusBadRequest, nil)
 		return
 	}
 	// Evict the cached identity so a restriction cleared by this change (ADR-025)
