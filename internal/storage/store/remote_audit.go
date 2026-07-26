@@ -21,9 +21,12 @@ import (
 )
 
 
-// LogAuditEvent logs an audit event via remote API.
+// LogAuditEvent proxies to POST /api/v1/system/audit/event, persisting the
+// event in the upstream server's own storage backend. This is the only write
+// path for a remote-storage follower's emitAudit calls; the hub's /audit/logs
+// (GET) and /audit/rbac-logs (GET) routes only serve reads.
 func (rs *RemoteStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
-	resp, err := rs.client.Post(ctx, apiAuditEventsPath, event)
+	resp, err := rs.client.Post(ctx, apiAuditIngestPath, event)
 	if err != nil {
 		return fmt.Errorf("failed to log audit event: %w", err)
 	}
@@ -65,10 +68,10 @@ func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.Audit
 	return result.Events, result.Total, nil
 }
 
-// buildAuditFilterPath constructs the /api/v1/audit/events query string.
+// buildAuditFilterPath constructs the GET /api/v1/audit/logs query string.
 func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	if filter == nil {
-		return apiAuditEventsPath
+		return apiAuditLogsPath
 	}
 	params := newQueryBuilder()
 	params.addUint("user_id", filter.UserID)
@@ -84,7 +87,7 @@ func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	params.addString("actor_username", filter.ActorUsername)
 	params.addString("resource_type", filter.ResourceType)
 	params.addPage(filter.Page, filter.PageSize)
-	return apiAuditEventsPath + params.String()
+	return apiAuditLogsPath + params.String()
 }
 
 // GetRBACAuditLogs retrieves RBAC audit logs with optional filtering via remote API.
@@ -107,10 +110,10 @@ func (rs *RemoteStorage) GetRBACAuditLogs(ctx context.Context, filter *storage.R
 	return result.Logs, result.Total, nil
 }
 
-// buildRBACAuditFilterPath constructs the /api/v1/audit/rbac query string.
+// buildRBACAuditFilterPath constructs the GET /api/v1/audit/rbac-logs query string.
 func buildRBACAuditFilterPath(filter *storage.RBACAuditFilter) string {
 	if filter == nil {
-		return "/api/v1/audit/rbac"
+		return apiAuditRBACLogsPath
 	}
 	params := newQueryBuilder()
 	params.addUint("user_id", filter.UserID)
@@ -120,7 +123,7 @@ func buildRBACAuditFilterPath(filter *storage.RBACAuditFilter) string {
 	params.addTime("start_time", filter.StartTime)
 	params.addTime("end_time", filter.EndTime)
 	params.addPage(filter.Page, filter.PageSize)
-	return "/api/v1/audit/rbac" + params.String()
+	return apiAuditRBACLogsPath + params.String()
 }
 
 // ListSecretAccessLogs is not available in remote mode; server handles access logs.

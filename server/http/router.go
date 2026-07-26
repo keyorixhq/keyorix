@@ -1795,6 +1795,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// exists to prevent.
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/scheduler-lock/acquire", authHandler.AcquireSchedulerLockProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/scheduler-lock/release", authHandler.ReleaseSchedulerLockProxy)
+
+			// Audit-event ingest proxy (#r122-A). Lets a downstream Keyorix server
+			// booted with storage.type: remote persist its emitAudit-emitted events
+			// in THIS server's real storage backend, instead of them silently 404-ing
+			// (RemoteStorage.LogAuditEvent used to POST to /api/v1/audit/events, a
+			// path that has never existed on the hub). See audit_ingest_proxy.go for
+			// the full analysis. system.write: raw storage write, same tier as every
+			// other mutating proxy in this group; no audit POLICY decision is made
+			// here.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/audit/event", auditHandler.IngestAuditEventProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.

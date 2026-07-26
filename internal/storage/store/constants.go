@@ -1,7 +1,13 @@
 package store
 
 const (
-	apiAuditEventsPath = "/api/v1/audit/events"
+	// apiAuditLogsPath is the server's GET /api/v1/audit/logs route (GetAuditLogs).
+	apiAuditLogsPath = "/api/v1/audit/logs"
+	// apiAuditRBACLogsPath is the server's GET /api/v1/audit/rbac-logs route (GetRBACAuditLogs).
+	apiAuditRBACLogsPath = "/api/v1/audit/rbac-logs"
+	// apiAuditIngestPath is the system-write proxy route that persists a
+	// single AuditEvent from a remote-storage follower (#r122-A).
+	apiAuditIngestPath = "/api/v1/system/audit/event"
 	apiSecretsPath = "/api/v1/secrets" // #nosec G101 -- API path constant, not a hardcoded credential
 	apiUsersPath = "/api/v1/users"
 	sqlIncrReadCount = "read_count + 1"
