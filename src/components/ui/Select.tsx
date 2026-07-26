@@ -1,6 +1,6 @@
-import React from 'react';
-import { clsx } from 'clsx';
+import * as React from 'react';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import { cn } from '@/lib/utils';
 
 export interface SelectOption {
     value: string;
@@ -28,46 +28,22 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
             placeholder,
             fullWidth = true,
             id,
-            ...props
+            ...rest
         },
         ref
     ) => {
-        const selectId = id || `select-${Math.random().toString(36).substr(2, 9)}`;
+        const generatedId = React.useId();
+        const selectId = id ?? generatedId;
         const hasError = Boolean(error);
 
-        const baseSelectClasses = [
-            'block px-3 py-2 pr-10 border rounded-md shadow-xs',
-            'focus:outline-hidden focus:ring-2 focus:ring-offset-0',
-            'transition-colors duration-200 appearance-none',
-            'disabled:bg-gray-50 disabled:text-base-muted disabled:cursor-not-allowed',
-        ];
-
-        const selectStateClasses = hasError
-            ? [
-                'border-red-300 text-red-900 focus:ring-red-500 focus:border-red-500',
-            ]
-            : [
-                'border-base focus:ring-blue-500 focus:border-blue-500',
-            ];
-
-        const containerClasses = [
-            fullWidth ? 'w-full' : 'w-auto',
-        ];
-
-        const selectClasses = [
-            ...baseSelectClasses,
-            ...selectStateClasses,
-            fullWidth ? 'w-full' : 'w-auto',
-        ];
-
         return (
-            <div className={clsx(containerClasses)}>
+            <div className={cn(fullWidth ? 'w-full' : 'w-auto')}>
                 {label && (
                     <label
                         htmlFor={selectId}
-                        className={clsx(
+                        className={cn(
                             'block text-sm font-medium mb-1',
-                            hasError ? 'text-red-700' : 'text-base-secondary'
+                            hasError ? 'text-[var(--error)]' : 'text-base-secondary'
                         )}
                     >
                         {label}
@@ -78,9 +54,26 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                     <select
                         ref={ref}
                         id={selectId}
-                        className={clsx(selectClasses, className)}
-                        style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
-                        {...props}
+                        aria-invalid={hasError || undefined}
+                        {...rest}
+                        aria-describedby={
+                            error ? `${selectId}-error` :
+                            helperText ? `${selectId}-hint` :
+                            undefined
+                        }
+                        className={cn(
+                            'block px-3 py-2 pr-10 rounded-md shadow-xs',
+                            'border border-strong',
+                            'text-sm appearance-none',
+                            'transition-colors duration-150',
+                            'focus:outline-hidden focus:ring-2 focus:ring-offset-0',
+                            'disabled:opacity-50 disabled:cursor-not-allowed',
+                            fullWidth ? 'w-full' : 'w-auto',
+                            hasError
+                                ? 'border-[var(--error)] focus:ring-[var(--error)]'
+                                : 'focus:ring-[var(--accent)]',
+                            className
+                        )}
                     >
                         {placeholder && (
                             <option value="" disabled>
@@ -88,11 +81,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                             </option>
                         )}
                         {options.map((option) => (
-                            <option
-                                key={option.value}
-                                value={option.value}
-                                disabled={option.disabled}
-                            >
+                            <option key={option.value} value={option.value} disabled={option.disabled}>
                                 {option.label}
                             </option>
                         ))}
@@ -100,22 +89,22 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
 
                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
                         <ChevronDownIcon
-                            className={clsx(
-                                'h-5 w-5',
-                                hasError ? 'text-red-400' : 'text-base-muted'
+                            className={cn(
+                                'h-4 w-4',
+                                hasError ? 'text-[var(--error)]' : 'text-base-muted'
                             )}
                         />
                     </div>
                 </div>
 
                 {error && (
-                    <p className="mt-1 text-sm text-red-600" role="alert">
+                    <p id={`${selectId}-error`} className="mt-1 text-sm text-[var(--error)]" role="alert">
                         {error}
                     </p>
                 )}
 
                 {helperText && !error && (
-                    <p className="mt-1 text-sm text-base-muted">
+                    <p id={`${selectId}-hint`} className="mt-1 text-sm text-base-muted">
                         {helperText}
                     </p>
                 )}
