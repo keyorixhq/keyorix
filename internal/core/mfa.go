@@ -381,18 +381,6 @@ func (c *KeyorixCore) loadTOTPSecret(ctx context.Context, userID uint) (string, 
 	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta, encryption.MFASecretAAD(userID))
 }
 
-func (c *KeyorixCore) validateTOTP(secret, code string) bool {
-	code = strings.TrimSpace(code)
-	if code == "" {
-		return false
-	}
-	// ±1 time-step skew (clock drift); standard 30s SHA-1 6-digit TOTP.
-	valid, _ := totp.ValidateCustom(code, secret, c.now().UTC(), totp.ValidateOpts{
-		Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
-	})
-	return valid
-}
-
 // totpPeriod is the TOTP step length in seconds.
 const totpPeriod = 30
 

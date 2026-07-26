@@ -16,6 +16,33 @@ import (
 )
 
 
+// oauthErrorAllowlist is the fixed set of error codes defined by RFC 6749 §4.1.2.1 and
+// RFC 6749 §5.2, plus common OIDC extensions. Any error code NOT in this list is
+// replaced with a generic message to prevent injection via a crafted callback URL.
+var oauthErrorAllowlist = map[string]bool{
+	"access_denied":              true,
+	"invalid_request":            true,
+	"unauthorized_client":        true,
+	"unsupported_response_type":  true,
+	"invalid_scope":              true,
+	"server_error":               true,
+	"temporarily_unavailable":    true,
+	"interaction_required":       true,
+	"login_required":             true,
+	"account_selection_required": true,
+	"consent_required":           true,
+}
+
+// sanitiseSSOError returns the IdP-supplied error code if it is a known OAuth 2.0 / OIDC
+// code, or a generic "SSO login failed" string otherwise, preventing untrusted input from
+// being reflected into the SPA fragment.
+func sanitiseSSOError(code string) string {
+	if oauthErrorAllowlist[code] {
+		return code
+	}
+	return "SSO login failed"
+}
+
 // isSafeSSOError reports whether msg is one of the small set of deliberately-
 // crafted, safe messages core.CompleteSSO itself produces without wrapping a
 // lower-layer error. Everything else — an authorization-code exchange failure,
@@ -81,8 +108,9 @@ func (h *AuthHandler) CompleteSSO(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	if errParam := q.Get("error"); errParam != "" {
-		// The IdP itself reported an error (e.g. access_denied).
-		h.redirectFragment(w, r, completeURL, url.Values{"error": {errParam}})
+		// Validate against the OAuth 2.0 error code allowlist before reflecting
+		// into the fragment — the raw IdP parameter is untrusted input.
+		h.redirectFragment(w, r, completeURL, url.Values{"error": {sanitiseSSOError(errParam)}})
 		return
 	}
 	code, state := q.Get("code"), q.Get("state")
