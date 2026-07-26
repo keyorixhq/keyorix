@@ -160,7 +160,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// no-store default (above) rather than a group-local one.
 	r.Group(func(r chi.Router) {
 		r.Post("/auth/login", authHandler.Login)
-		r.Post("/auth/logout", authHandler.Logout)
+		// RequireCSRF is applied individually: logout lives in the unauthenticated
+		// group because it accepts both session-cookie and Bearer callers, but a
+		// cookie-carrying browser is still susceptible to logout-CSRF without this
+		// check. Bearer-only callers (no session cookie) pass through unchanged per
+		// RequireCSRF's own logic (#r124).
+		r.With(customMiddleware.RequireCSRF).Post("/auth/logout", authHandler.Logout)
 		r.Post("/auth/refresh", authHandler.RefreshToken)
 		r.Post("/auth/password-reset", authHandler.PasswordReset)
 		// MFA second-step: unauthenticated — the bearer is the single-use challenge

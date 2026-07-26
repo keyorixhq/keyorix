@@ -35,7 +35,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
-	g, err := service.CreateGroup(ctx, 0, &core.CreateGroupRequest{ // actorID 0: local/unauthenticated CLI
+	g, err := service.CreateGroup(ctx, common.ResolveActorID(), &core.CreateGroupRequest{
 		Name:        createName,
 		Description: createDescription,
 	})
