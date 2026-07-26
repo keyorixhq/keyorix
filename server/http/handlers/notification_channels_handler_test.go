@@ -33,6 +33,7 @@ func newNotifChannelHandler(t *testing.T) (*NotificationChannelHandler, *gorm.DB
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs.SetWebhookURLValidator(func(_ string) error { return nil })
 	return NewNotificationChannelHandler(cs), db
 }
 

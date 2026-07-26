@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -159,7 +160,7 @@ func (c *KeyorixCore) RunAlertEscalation(ctx context.Context) (*EscalationResult
 // splitChannelIDs splits a comma-separated channel-ID string into trimmed, non-empty tokens.
 func splitChannelIDs(ids string) []string {
 	var out []string
-	for _, s := range strings.Split(ids, ",") {
+	for s := range strings.SplitSeq(ids, ",") {
 		s = strings.TrimSpace(s)
 		if s != "" {
 			out = append(out, s)
@@ -175,15 +176,16 @@ func splitChannelIDs(ids string) []string {
 func (c *KeyorixCore) dispatchToChannel(ctx context.Context, ch *models.NotificationChannel, alert *models.AnomalyAlert, policy *models.AlertEscalationPolicy) error {
 	switch ch.Type {
 	case "webhook", "slack":
-		return c.postJSONToURL(ctx, ch.URL, map[string]interface{}{
+		// accessed_by and ip_address are intentionally omitted: PII must not be
+		// forwarded to an external webhook receiver. The server-side audit log
+		// already captures this data for incident investigation.
+		return c.postJSONToURL(ctx, ch.URL, map[string]any{
 			"event":       "anomaly.escalated",
 			"alert_id":    alert.ID,
 			"severity":    alert.Severity,
 			"alert_type":  alert.AlertType,
 			"description": alert.Description,
 			"secret_name": alert.SecretName,
-			"accessed_by": alert.AccessedBy,
-			"ip_address":  alert.IPAddress,
 			"detected_at": alert.DetectedAt.Format(time.RFC3339),
 			"policy_name": policy.Name,
 			"channel":     ch.Name,
@@ -195,8 +197,8 @@ func (c *KeyorixCore) dispatchToChannel(ctx context.Context, ch *models.Notifica
 	}
 }
 
-// postJSONToURL marshals payload to JSON and sends a best-effort HTTP POST to url.
-func (c *KeyorixCore) postJSONToURL(_ context.Context, url string, payload interface{}) error {
+// postJSONToURL marshals payload to JSON and sends a best-effort HTTP POST to rawURL.
+func (c *KeyorixCore) postJSONToURL(_ context.Context, rawURL string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -205,13 +207,20 @@ func (c *KeyorixCore) postJSONToURL(_ context.Context, url string, payload inter
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(body)) // #nosec G107 -- URL is operator-configured
+	// Compute a redacted form of the URL for use in error messages so that
+	// embedded credentials (e.g. https://token:secret@hooks.example.com) are
+	// never written to logs (CWE-312).
+	redactedURL := rawURL
+	if u, perr := url.Parse(rawURL); perr == nil {
+		redactedURL = u.Redacted()
+	}
+	resp, err := client.Post(rawURL, "application/json", bytes.NewReader(body)) // #nosec G107 -- URL is operator-configured; SSRF-guarded at write time
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", url, err)
+		return fmt.Errorf("POST %s: %w", redactedURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("POST %s: unexpected status %d", url, resp.StatusCode)
+		return fmt.Errorf("POST %s: unexpected status %d", redactedURL, resp.StatusCode)
 	}
 	return nil
 }
@@ -243,7 +252,7 @@ func (c *KeyorixCore) ListAlertEscalationPolicies(ctx context.Context) ([]models
 }
 
 // UpdateAlertEscalationPolicy applies field updates to the policy identified by id.
-func (c *KeyorixCore) UpdateAlertEscalationPolicy(ctx context.Context, id uint, updates map[string]interface{}) (*models.AlertEscalationPolicy, error) {
+func (c *KeyorixCore) UpdateAlertEscalationPolicy(ctx context.Context, id uint, updates map[string]any) (*models.AlertEscalationPolicy, error) {
 	p, err := c.storage.GetAlertEscalationPolicy(ctx, id)
 	if err != nil {
 		return nil, err
