@@ -15,20 +15,19 @@ import { getCsrfToken, CSRF_HEADER_NAME, CSRF_PROTECTED_METHODS } from '../utils
 
 const config = getEnvConfig();
 
-// Create axios instance for auth requests (separate from main API client to avoid circular dependencies)
+// Separate instance for auth endpoints to avoid the circular import that would
+// arise from auth.ts → client.ts → authStore.ts → auth.ts. The auth surface
+// needs no proactive-refresh interceptor (it IS the refresh); it does need CSRF
+// and a consistent X-Request-ID for log correlation, both wired below.
 const authApi = axios.create({
-    baseURL: config.API_BASE_URL,
+    baseURL: '',
     timeout: config.API_TIMEOUT,
     withCredentials: true, // sends/receives the httpOnly session cookie
+    headers: { 'Content-Type': 'application/json' },
 });
 
-// The session cookie rides automatically — this interceptor's only remaining
-// job is the CSRF double-submit header on state-changing requests (e.g.
-// end-impersonation, which is under /api/v1 and CSRF-protected; login/logout/
-// refresh live outside /api/v1 and aren't, but attaching a harmless header
-// there too is fine — the backend only checks it when a session cookie is
-// actually present).
 authApi.interceptors.request.use((requestConfig) => {
+    // CSRF double-submit on state-changing requests.
     const method = requestConfig.method?.toLowerCase();
     if (method && CSRF_PROTECTED_METHODS.has(method)) {
         const csrfToken = getCsrfToken();
@@ -36,14 +35,13 @@ authApi.interceptors.request.use((requestConfig) => {
             requestConfig.headers[CSRF_HEADER_NAME] = csrfToken;
         }
     }
+    // Consistent request ID for log correlation (matches apiClient).
+    requestConfig.headers['X-Request-ID'] = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     return requestConfig;
 });
 
 // Auth service functions
 export const authService = {
-    /**
-     * Login user with email and password
-     */
     async login(credentials: LoginFormData): Promise<LoginResponse> {
         try {
             const response: AxiosResponse<ApiResponse<LoginResponse>> = await authApi.post(
@@ -55,7 +53,7 @@ export const authService = {
                 }
             );
 
-            if (!response.data.data?.token) {
+            if (!response.data.data) {
                 throw new Error(response.data.message || 'Login failed');
             }
 
@@ -69,37 +67,26 @@ export const authService = {
         }
     },
 
-    /**
-     * Logout user and invalidate session
-     */
     async logout(): Promise<void> {
         try {
             await authApi.post(API_ENDPOINTS.AUTH.LOGOUT);
         } catch (error) {
-            // Even if logout fails on server, we should clear local state
+            // Even if logout fails on server, we clear local state.
             console.warn('Logout request failed:', error);
         }
     },
 
-    /**
-     * End the current impersonation session. The Bearer token in the request is
-     * the impersonation token (authApi reads it from persisted state); the server
-     * logs the impersonation.end event and drops that session.
-     */
     async endImpersonation(): Promise<void> {
         await authApi.post('/api/v1/auth/end-impersonation');
     },
 
-    /**
-     * Refresh authentication token
-     */
     async refreshToken(): Promise<RefreshTokenResponse> {
         try {
             const response: AxiosResponse<ApiResponse<RefreshTokenResponse>> = await authApi.post(
                 API_ENDPOINTS.AUTH.REFRESH
             );
 
-            if (!response.data.data?.token) {
+            if (!response.data.data) {
                 throw new Error(response.data.message || 'Token refresh failed');
             }
 
@@ -115,9 +102,8 @@ export const authService = {
 
     /**
      * Get current user profile. `impersonation` is present only while the
-     * current session is impersonating another user — server-validated (from
-     * the session, not a client-supplied claim), since the client has no
-     * token to inspect anymore under cookie auth.
+     * current session is impersonating another user — server-validated from
+     * the session cookie, not a client-supplied claim.
      */
     async getProfile(): Promise<User & { impersonation?: ProfileImpersonation }> {
         try {
@@ -139,22 +125,15 @@ export const authService = {
         }
     },
 
-    /**
-     * List the configured SSO providers (empty when SSO is disabled). Used by the
-     * login page to render the "Sign in with …" buttons.
-     */
     async getSSOProviders(): Promise<string[]> {
         try {
             const response = await authApi.get('/auth/sso/providers');
             return response.data?.data?.providers ?? [];
         } catch {
-            return []; // SSO not configured / endpoint absent — no buttons
+            return []; // SSO not configured / endpoint absent
         }
     },
 
-    /**
-     * Request password reset
-     */
     async requestPasswordReset(data: PasswordResetRequest): Promise<void> {
         try {
             const response: AxiosResponse<ApiResponse<void>> = await authApi.post(
@@ -174,9 +153,6 @@ export const authService = {
         }
     },
 
-    /**
-     * Confirm password reset with token
-     */
     async confirmPasswordReset(data: PasswordResetConfirm): Promise<void> {
         try {
             const response: AxiosResponse<ApiResponse<void>> = await authApi.post(
@@ -196,9 +172,6 @@ export const authService = {
         }
     },
 
-    /**
-     * Check if user is authenticated by validating current session
-     */
     async checkAuth(): Promise<User | null> {
         try {
             return await this.getProfile();
@@ -207,6 +180,3 @@ export const authService = {
         }
     },
 };
-
-// Export the axios instance for use in other services
-export { authApi };
