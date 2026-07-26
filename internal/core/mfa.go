@@ -342,6 +342,12 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	if err != nil {
 		return nil, nil, err
 	}
+	// Apply the same password-expiry hard gate as the non-MFA login path (ADR-025).
+	// Idempotent: the gate is a no-op when the state is already password_reset_required
+	// (set during the initial credential check for MFA-enabled accounts).
+	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
+		return nil, nil, err
+	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err

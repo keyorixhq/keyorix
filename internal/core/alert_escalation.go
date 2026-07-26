@@ -201,7 +201,10 @@ func (c *KeyorixCore) postJSONToURL(_ context.Context, url string, payload inter
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := c.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body)) // #nosec G107 -- URL is operator-configured
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", url, err)

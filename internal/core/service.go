@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log"
+	"net/http"
 	"regexp"
 	"sync"
 	"time"
@@ -36,6 +37,10 @@ import (
 //   - catalog.go       — Project / environment passthrough
 type KeyorixCore struct {
 	storage storage.Storage
+	// httpClient is used for outbound webhook/Slack POSTs (alert escalation).
+	// nil = a fresh &http.Client{Timeout: 10s} per call. Overridable in tests to
+	// inject a custom transport so no TCP port binding is needed.
+	httpClient *http.Client
 	// secretValueEncryptor encrypts secret VALUES at rest (ADR-004 envelope
 	// AES-256-GCM, AAD-bound per #94). nil = encryption disabled (plaintext at
 	// rest, dev/test only — the loud startup banner covers it). Wired from the

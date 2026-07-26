@@ -194,3 +194,7 @@ certs/
 
 # throwaway binaries / test artifacts
 /.scratch/
+
+# Claude Code internal state and local tooling
+/.claire/
+/tools

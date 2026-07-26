@@ -10,6 +10,11 @@ _(nothing claimed)_
 
 ## Done
 
+- **Password expiry hard gate** — `enforcePasswordExpiryGate` wired into `Login`
+  and `VerifyMFALogin`: when `max_age_days` is exceeded for an active user, the
+  account state is transitioned to `password_reset_required` before the session is
+  minted, so `EnforceAccountRestriction` blocks all subsequent API requests.
+  Fails closed on storage error. ADR-025. Commit 871cc520.
 - **Scoped list UX** — ACL-only users (no project role) now see their
   per-secret / per-folder ACL-granted secrets on both scoped
   (`?project_id=X`) and unfiltered `GET /secrets` requests. Previously
