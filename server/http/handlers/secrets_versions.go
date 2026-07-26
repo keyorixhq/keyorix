@@ -57,7 +57,7 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 		}) // #nosec G118
 	}
 
-	h.sendSuccess(w, map[string]interface{}{"versions": versions}, "")
+	h.sendSuccess(w, map[string]any{"versions": versions}, "")
 }
 
 // RotateSecret handles POST /api/v1/secrets/{id}/rotate
@@ -106,7 +106,8 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 			// distinctly (502) so the caller never mistakes this for a clean success,
 			// even though a partial attempt may have stored a new value; see the audit
 			// trail (secret.rotate_failed / secret.rotate_incomplete) for the outcome.
-			h.sendError(w, "BackendRotationFailed", err.Error(), http.StatusBadGateway, nil)
+			log.Printf("rotation backend error for secret %d: %v", uint(id), err)
+			h.sendError(w, "BackendRotationFailed", "Rotation backend call failed; see server logs for details", http.StatusBadGateway, nil)
 		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:

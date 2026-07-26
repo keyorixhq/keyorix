@@ -12,6 +12,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -28,7 +29,8 @@ func (h *SecretHandler) GetSecretSchedule(w http.ResponseWriter, r *http.Request
 	}
 	sched, err := h.coreService.GetSecretSchedule(r.Context(), uint(secretID))
 	if err != nil {
-		h.sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("GetSecretSchedule error for secret %d: %v", uint(secretID), err)
+		h.sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	if sched == nil {
@@ -78,7 +80,8 @@ func (h *SecretHandler) DeleteSecretSchedule(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.coreService.DeleteSecretSchedule(r.Context(), uint(secretID)); err != nil {
-		h.sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("DeleteSecretSchedule error for secret %d: %v", uint(secretID), err)
+		h.sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	h.sendSuccess(w, map[string]bool{"deleted": true}, "schedule removed")
