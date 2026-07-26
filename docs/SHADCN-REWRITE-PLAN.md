@@ -14,6 +14,39 @@ explicitly marked "not in this tree / out of scope" there. This plan starts from
 zero. BACKLOG.md's existing "shadcn/ui rewrite (umbrella)" item is the origin of
 this plan; treat this file as its detailed breakdown.
 
+## 2026-07-27 review addendum (three additions)
+
+A fresh review of the stack against the current half-migrated state (Button +
+Input on shadcn/radix; the other 13 UI components + `Dropdown`/`Modal`/`Toast`/
+`Sidebar` still on `@headlessui/react`) surfaced three corrections to the plan
+below. Each is folded into its phase; collected here so they aren't lost:
+
+1. **The half-migration itself is the top risk — time-box Phases 3-4.** Carrying
+   two headless-primitive libraries at once (`radix-ui` in `Button` **and**
+   `@headlessui/react` in 4 files) is precisely the framework duplication the
+   guiding principle forbids, and we're carrying it *today*. This state is worse
+   than either endpoint. Treat Phases 3-4 (which retire the last headlessui
+   import) as a single bounded push with a deadline, not an open-ended track —
+   finishing them is what actually collects the "no duplication" win. Everything
+   after Phase 4 can schedule independently.
+
+2. **Kill the inline-style pattern as each page is migrated — it's a CSP lever,
+   not just cosmetics.** 69 files style via `style={{ … 'var(--…)' }}` (56 in
+   `pages/`+`features/`), which the component migration otherwise never touches.
+   This is *why* `nginx.conf`'s CSP still carries `style-src 'unsafe-inline'`
+   (note `script-src` is already the clean `'self'`). Moving these to Tailwind
+   classes as part of each Phase-5 feature pass lets us drop `'unsafe-inline'`
+   from `style-src` and tighten the CSP — a security win the rewrite pays for
+   as a side effect. Folded into Phase 5 and cross-referenced from Phase 0 #10.
+
+3. **Decouple the auth-surface test coverage from the rewrite — do it now.** The
+   baseline already flags `services/auth.ts` 6.1%, `admin.ts` 3.0%,
+   `serviceAccounts.ts` 3.4%, `rbac.ts` 17.6% — the highest-value security work
+   in this whole effort, and it has nothing to do with shadcn. Don't wait for
+   Phase 8; write these tests against the *current* code now (they also become
+   the regression net that makes the rewrite safe). Pulled out of Phase 8 into
+   its own always-available track below.
+
 ## Guiding principle
 
 The current stack (React 19, Vite, TanStack Query, Zustand, Tailwind v4, RHF/Zod as
@@ -105,6 +138,12 @@ adversarially re-verify anything rated HIGH before trusting it, tag every findin
 ### Build, deploy, and supply chain
 10. `nginx.conf` — CSP, `X-Frame-Options`/`frame-ancestors`, HSTS; confirm no
     dev-only convenience (source maps, `ENABLE_DEBUG`) ships to the prod image.
+    (Status 2026-07-27: CSP + HSTS + `X-Frame-Options: SAMEORIGIN` +
+    `X-Content-Type-Options: nosniff` are already set on every location block,
+    and `script-src` is already the clean `'self'`. The one remaining weakness
+    is `style-src 'unsafe-inline'`, forced by the 69-file inline-style pattern —
+    see addendum #2; dropping it is gated on the Phase-5 de-inline-style work,
+    not on nginx.)
 11. `Dockerfile` — no secrets/`.env` baked into a layer; multi-stage build drops
     dev dependencies.
 12. `VITE_*` env vars — anything prefixed `VITE_` is inlined into the client bundle
@@ -310,6 +349,16 @@ to these components as they're rebuilt.
 Rebuild each hand-rolled form on RHF + Zod + shadcn `Form`, applying any Phase 0
 auth/validation findings for that flow as it's touched.
 
+**Also de-inline-style each page/feature as it's touched here (addendum #2).**
+The component migration (Phases 3-4) only fixes the 15 UI primitives; the bulk
+of the 69 `style={{ … 'var(--…)' }}` files live in `pages/`+`features/` and are
+only reached during this per-feature pass. Convert them to Tailwind utility
+classes (the tokens are already bridged via `@theme inline`, so `bg-accent`,
+`text-muted`, `border`, etc. resolve to the same CSS vars). This is the
+prerequisite for dropping `style-src 'unsafe-inline'` from `nginx.conf`'s CSP —
+once no runtime inline styles remain, tighten the header as the final step of
+this phase and re-verify nothing renders unstyled.
+
 ## Phase 6 — Auth & API consolidation
 
 Implement the Phase 1 auth-storage decision and the single-axios-client
@@ -326,6 +375,14 @@ add route-level `Suspense`/lazy imports across all migrated pages.
 Add stable `data-testid`s to new components as they land (Phases 3-6); add
 MSW/`page.route` mocking; rewrite `e2e/auth.spec.ts` and `e2e/secrets.spec.ts`
 against the new components; wire `test:e2e` into CI.
+
+**Not gated on the rewrite — auth-surface unit coverage (addendum #3):** the
+service-layer auth tests (`services/auth.ts` 6.1%, `admin.ts` 3.0%,
+`serviceAccounts.ts` 3.4%, `rbac.ts` 17.6%) are the highest-value security work
+here and depend on nothing shadcn touches. Write them against the *current* code
+immediately, out of band from the phase order — they double as the regression
+net that makes Phases 3-6 safe to land. Only the e2e rebuild above genuinely
+needs the new components.
 
 ## Phase 9 — Formatting & cleanup
 
