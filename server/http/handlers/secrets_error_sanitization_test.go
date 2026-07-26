@@ -49,7 +49,8 @@ func secretErrSanitizationFixture(t *testing.T) (*SecretHandler, *core.KeyorixCo
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{},
 		&models.Permission{}, &models.RolePermission{}, &models.Group{}, &models.GroupRole{},
 		&models.UserGroup{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{},
-		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessLog{}, &models.ShareRecord{}))
+		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessLog{}, &models.ShareRecord{},
+		&models.SecretACL{}))
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", AccountState: "active"}).Error)
 	adminRole := &models.Role{Name: "admin"}
