@@ -311,7 +311,7 @@ const ControlMatrixPanel: React.FC = () => {
         <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
             <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
                 <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                    Control matrix (ISO 27001 / SOC 2 / NIS2 / DORA)
+                    Control matrix (ISO 27001 / SOC 2 / NIS2 / DORA / ENS)
                 </h2>
                 <div className="flex items-center gap-3 shrink-0">
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -485,6 +485,15 @@ export const CompliancePage: React.FC = () => (
             audit logs, envelope encryption with key rotation support, and PostgreSQL-backed storage
             designed for long-term operational continuity. Air-gap compatibility means no dependency
             on external cloud services for secret resolution.
+        </SectionCard>
+
+        <SectionCard title="ENS (Esquema Nacional de Seguridad)">
+            ENS is Spain's mandatory security certification framework for public-sector ICT systems
+            and their suppliers. Keyorix maps to the operational (op.acc, op.exp) and technical
+            (mp.s, mp.sw) control families required for ENS Medium and High categories — covering
+            identity and access management, audit traceability, and cryptographic key lifecycle.
+            On-premise deployment keeps processing within your jurisdiction, satisfying ENS data
+            localisation requirements without architectural concessions.
         </SectionCard>
 
         <SectionCard title="ISO 27001">

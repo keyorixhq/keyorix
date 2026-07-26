@@ -89,6 +89,14 @@ describe('CompliancePage posture panel', () => {
         expect(await screen.findByText(/available to administrators/i)).toBeInTheDocument();
     });
 
+    it('renders ENS in the matrix title and shows the ENS section card', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue(posture);
+        render(<CompliancePage />);
+
+        expect(await screen.findByText(/Control matrix.*ENS/i)).toBeInTheDocument();
+        expect(screen.getByText(/ENS \(Esquema Nacional de Seguridad\)/i)).toBeInTheDocument();
+    });
+
     it('renders the control matrix with status and framework refs', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);
         (complianceApi.getControls as any).mockResolvedValue({

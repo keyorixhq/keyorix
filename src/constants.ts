@@ -69,7 +69,7 @@ export const ROUTES = {
     // Projects hierarchy
     PROJECTS: '/projects',
     PROJECT_DETAIL: (id: number) => `/projects/${id}`,
-    PROJECT_SECRETS: (id: number) => `/projects/${id}`,
+    PROJECT_SECRETS: (id: number) => `/projects/${id}/secrets`,
     PROJECT_MEMBERS: (id: number) => `/projects/${id}/members`,
     PROJECT_ACTIVITY: (id: number) => `/projects/${id}/activity`,
     PROJECT_SETTINGS: (id: number) => `/projects/${id}/settings`,

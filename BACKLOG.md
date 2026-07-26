@@ -12,6 +12,12 @@ The planned migration of the UI to shadcn/ui is the single largest pending
 item, and several smaller deferrals are blocked on it. Until it is scoped,
 the dependents below stay parked. When it lands, revisit each.
 
+**Now scoped: see `docs/SHADCN-REWRITE-PLAN.md`** for the full phased plan
+(Phase 0 pre-rewrite security audit, architecture decisions, migration order,
+test-suite rebuild, post-rewrite re-audit). That plan is currently QUEUED —
+deliberately held until the concurrent keyorix (Go backend) hardening campaign
+finishes, to avoid running two audit/fix efforts at once.
+
 **Unblocks / should be done as part of it:**
 
 - **Restore `App` test coverage.** The old `App.test.tsx` was a tombstone stub

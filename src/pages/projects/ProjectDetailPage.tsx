@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { useProject } from '../../features/projects/api';
+import { ProjectOverviewTab } from './ProjectOverviewTab';
 import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
 import { ProjectDriftTab } from './ProjectDriftTab';
@@ -17,7 +18,8 @@ import { useProjectMruStore } from '../../store';
 interface Tab { id: string; label: string; path: string; }
 
 const TABS: Tab[] = [
-    { id: 'secrets',  label: 'Secrets',  path: '' },
+    { id: 'overview', label: 'Overview', path: '' },
+    { id: 'secrets',  label: 'Secrets',  path: '/secrets' },
     { id: 'members',  label: 'Members',  path: '/members' },
     { id: 'drift',    label: 'Drift',    path: '/drift' },
     { id: 'rotation-plan', label: 'Rotation Plan', path: '/rotation-plan' },
@@ -126,7 +128,8 @@ export const ProjectDetailPage: React.FC = () => {
             <TabNav projectId={projectId} />
 
             <Routes>
-                <Route index element={<ProjectSecretsTab projectId={projectId} />} />
+                <Route index element={<ProjectOverviewTab projectId={projectId} />} />
+                <Route path="secrets" element={<ProjectSecretsTab projectId={projectId} />} />
                 <Route path="members" element={<ProjectMembersTab projectId={projectId} />} />
                 <Route path="drift" element={<ProjectDriftTab projectId={projectId} />} />
                 <Route path="rotation-plan" element={<ProjectRotationPlanTab projectId={projectId} />} />
