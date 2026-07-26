@@ -96,7 +96,12 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	if err != nil {
 		return nil, fmt.Errorf("no pending MFA enrolment; begin enrolment first")
 	}
-	if !c.validateTOTP(secret, code) {
+	step, ok := c.validateTOTPStep(secret, code)
+	if !ok {
+		c.auditMFAFailed(ctx, userID, "activate")
+		return nil, fmt.Errorf("invalid code")
+	}
+	if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil || !fresh {
 		c.auditMFAFailed(ctx, userID, "activate")
 		return nil, fmt.Errorf("invalid code")
 	}

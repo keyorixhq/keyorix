@@ -79,7 +79,7 @@ func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	project, err := h.coreService.GetProject(r.Context(), id)
 	if err != nil {
 		if strings.Contains(err.Error(), errNotFound) {
-			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
+			sendError(w, "NotFound", "Project not found", http.StatusNotFound, nil)
 			return
 		}
 		log.Printf("Error getting project %d: %v", id, err)
@@ -148,7 +148,7 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error creating project: %v", err)
 		switch {
 		case strings.Contains(err.Error(), "already exists"):
-			sendError(w, "ConflictError", err.Error(), http.StatusConflict, nil)
+			sendError(w, "ConflictError", "A project with that name already exists", http.StatusConflict, nil)
 		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
