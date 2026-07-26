@@ -41,6 +41,10 @@ type KeyorixCore struct {
 	// nil = a fresh &http.Client{Timeout: 10s} per call. Overridable in tests to
 	// inject a custom transport so no TCP port binding is needed.
 	httpClient *http.Client
+	// webhookURLValidator enforces SSRF rules on notification channel URLs (scheme
+	// + private-IP rejection). nil = use the real validateWebhookURL (which does a
+	// live DNS lookup); overridable in tests to avoid network calls.
+	webhookURLValidator func(string) error
 	// secretValueEncryptor encrypts secret VALUES at rest (ADR-004 envelope
 	// AES-256-GCM, AAD-bound per #94). nil = encryption disabled (plaintext at
 	// rest, dev/test only — the loud startup banner covers it). Wired from the
@@ -466,6 +470,14 @@ func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 		passwordPolicy: DefaultPasswordPolicy(),
 		auditStream:    newAuditBroker(),
 	}
+}
+
+// SetWebhookURLValidator replaces the SSRF guard applied to notification channel
+// URLs on create and update. The default (nil) uses validateWebhookURL which
+// enforces https-only and rejects private/loopback destinations via a live DNS
+// lookup. Tests call this with a no-op to avoid real network calls.
+func (c *KeyorixCore) SetWebhookURLValidator(fn func(string) error) {
+	c.webhookURLValidator = fn
 }
 
 // SetAuthEncryptor wires the encryption service used to protect reversibly-

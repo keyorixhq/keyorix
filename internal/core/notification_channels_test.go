@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -58,9 +59,14 @@ func TestCreateNotificationChannel_WebhookRequiresURL(t *testing.T) {
 	})
 }
 
+// noopWebhookURLValidator bypasses the real DNS-based SSRF check in tests that
+// focus on storage / field logic rather than URL security validation.
+func noopWebhookURLValidator(_ string) error { return nil }
+
 func TestNotificationChannel_CRUD(t *testing.T) {
 	store := new(MockStorage)
 	c := NewKeyorixCore(store)
+	c.webhookURLValidator = noopWebhookURLValidator
 	ctx := context.Background()
 
 	created := &models.NotificationChannel{
@@ -125,6 +131,7 @@ func TestNotificationChannel_CRUD(t *testing.T) {
 func TestCreateNotificationChannel_StorageError(t *testing.T) {
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
+	c.webhookURLValidator = noopWebhookURLValidator
 	ctx := context.Background()
 
 	st.On("CreateNotificationChannel", ctx, mock.AnythingOfType("*models.NotificationChannel")).
@@ -158,6 +165,7 @@ func TestUpdateNotificationChannel_GetError(t *testing.T) {
 func TestUpdateNotificationChannel_UpdateStorageError(t *testing.T) {
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
+	c.webhookURLValidator = noopWebhookURLValidator
 	ctx := context.Background()
 
 	existing := &models.NotificationChannel{
@@ -195,6 +203,7 @@ func TestValidateNotificationChannel_TeamsRequiresURL(t *testing.T) {
 func TestUpdateNotificationChannel_AllFieldUpdates(t *testing.T) {
 	st := new(MockStorage)
 	c := NewKeyorixCore(st)
+	c.webhookURLValidator = noopWebhookURLValidator
 	ctx := context.Background()
 
 	existing := &models.NotificationChannel{
@@ -246,4 +255,68 @@ func TestUpdateNotificationChannel_ValidationFails(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "URL is required")
 	st.AssertExpectations(t)
+}
+
+// ---- validateWebhookURL (SSRF guard) ----
+
+func TestValidateWebhookURL_RequiresHTTPS(t *testing.T) {
+	err := validateWebhookURL("http://hooks.example.com/webhook")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "https")
+}
+
+func TestValidateWebhookURL_RejectsPrivateIPs(t *testing.T) {
+	disallowed := []string{
+		"https://127.0.0.1/hook",
+		"https://192.168.1.100/hook",
+		"https://10.0.0.1/hook",
+		"https://172.16.0.1/hook",
+		"https://169.254.169.254/latest/meta-data",
+		"https://[::1]/hook",
+	}
+	for _, u := range disallowed {
+		err := validateWebhookURL(u)
+		require.Error(t, err, "expected error for %s", u)
+		assert.Contains(t, err.Error(), "private/link-local", "wrong error for %s", u)
+	}
+}
+
+func TestValidateWebhookURL_AcceptsPublicIP(t *testing.T) {
+	// 93.184.216.34 is the well-known IANA example.com address — public, non-private.
+	err := validateWebhookURL("https://93.184.216.34/hook")
+	require.NoError(t, err)
+}
+
+func TestValidateWebhookURL_InvalidURL(t *testing.T) {
+	err := validateWebhookURL("://bad-url")
+	require.Error(t, err)
+}
+
+// ---- PII: accessed_by / ip_address must not appear in webhook payload ----
+
+func TestDispatchToChannel_WebhookPayload_NoPII(t *testing.T) {
+	var capturedBody []byte
+	tr := &fakeWebhookTransport{
+		capture: func(b []byte) { capturedBody = b },
+	}
+
+	store := new(MockStorage)
+	c := NewKeyorixCore(store)
+	c.httpClient = &http.Client{Transport: tr}
+
+	ch := &models.NotificationChannel{ID: 1, Name: "wh", Type: "webhook", URL: "https://fake.test/hook", Enabled: true}
+	alert := &models.AnomalyAlert{
+		ID: 5, Severity: "high", AlertType: "off_hours",
+		Description: "late access", SecretName: "db-password",
+		AccessedBy: "alice", IPAddress: "10.0.0.1",
+	}
+	policy := &models.AlertEscalationPolicy{ID: 1, Name: "p1"}
+
+	err := c.dispatchToChannel(context.Background(), ch, alert, policy)
+	require.NoError(t, err)
+
+	body := string(capturedBody)
+	assert.NotContains(t, body, "alice", "accessed_by must not be in webhook payload")
+	assert.NotContains(t, body, "10.0.0.1", "ip_address must not be in webhook payload")
+	assert.Contains(t, body, "db-password")
 }

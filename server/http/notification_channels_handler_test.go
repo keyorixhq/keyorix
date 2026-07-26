@@ -110,6 +110,7 @@ func notificationChannelTestSetup(t *testing.T) (*httptest.Server, string) {
 	t.Cleanup(i18n.ResetForTesting)
 
 	c := newNotificationChannelCore(t)
+	c.SetWebhookURLValidator(func(_ string) error { return nil })
 	token := createTestToken(t, c)
 
 	router, err := NewRouter(&config.Config{}, c)
@@ -564,7 +565,9 @@ func newBrokenNotificationChannelCore(t *testing.T) *core.KeyorixCore {
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
 		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs.SetWebhookURLValidator(func(_ string) error { return nil })
+	return cs
 }
 
 // notificationChannelBrokenDBSetup builds a server backed by a DB that lacks

@@ -49,14 +49,19 @@ func makeAlert(id uint, sev string, ageMinutes int) models.AnomalyAlert {
 // fakeWebhookTransport is a sandbox-safe http.RoundTripper that intercepts
 // outbound webhook POSTs without binding a TCP port.
 type fakeWebhookTransport struct {
-	statusCode int          // returned status; 0 → 200
-	err        error        // if non-nil, returned instead of a response
-	called     chan struct{} // signalled on each call when non-nil
+	statusCode int              // returned status; 0 → 200
+	err        error            // if non-nil, returned instead of a response
+	called     chan struct{}     // signalled on each call when non-nil
+	capture    func(body []byte) // called with the raw request body when non-nil
 }
 
-func (t *fakeWebhookTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+func (t *fakeWebhookTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.err != nil {
 		return nil, t.err
+	}
+	if t.capture != nil && req.Body != nil {
+		b, _ := io.ReadAll(req.Body)
+		t.capture(b)
 	}
 	if t.called != nil {
 		select {
