@@ -39,7 +39,7 @@ func freshCoreACL(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.AuditEvent{}, &models.AnomalyAlert{},
-		&models.ShareRecord{}, &models.SecretACL{},
+		&models.ShareRecord{}, &models.SecretACL{}, &models.SecretAccessLog{},
 	))
 	// Seed project + environment so secrets can resolve scope.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
@@ -47,8 +47,21 @@ func freshCoreACL(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	// Make user 1 a global admin so they can call all handlers.
 	adminRole := &models.Role{Name: "system_admin", Description: "Administrator"}
 	require.NoError(t, db.Create(adminRole).Error)
+	// memberRole is a minimal role used to make grant-target users project members.
+	memberRole := &models.Role{Name: "member", Description: "Project member"}
+	require.NoError(t, db.Create(memberRole).Error)
 	require.NoError(t, db.Create(&models.User{Username: "testuser_acl", Email: "testuser_acl@example.com", AccountState: "active"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
+	// Seed grant-target users used across ACL happy-path tests and give them project membership.
+	// GrantSecretACL verifies the target is a project member (IsProjectMember checks project_id).
+	for _, uid := range []uint{77, 88, 99, 123} {
+		require.NoError(t, db.Create(&models.User{
+			ID:       uid,
+			Username: fmt.Sprintf("testgrant_%d", uid),
+			Email:    fmt.Sprintf("grant%d@example.com", uid),
+		}).Error)
+		require.NoError(t, db.Create(&models.UserRole{UserID: uid, RoleID: memberRole.ID, ProjectID: 1}).Error)
+	}
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
