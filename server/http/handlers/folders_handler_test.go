@@ -53,7 +53,7 @@ func freshFolderFixture(t *testing.T) (*FolderHandler, *core.KeyorixCore, *gorm.
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.AuditEvent{}, &models.SecretVersion{}, &models.SecretAccessLog{},
-		&models.ShareRecord{},
+		&models.ShareRecord{}, &models.SecretACL{},
 	))
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice-folder", AccountState: "active"}).Error)
@@ -83,7 +83,7 @@ func withFolderAdminCtx(r *http.Request) *http.Request {
 func TestCreateFolder_HappyPath(t *testing.T) {
 	h, _, _ := freshFolderFixture(t)
 
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"name":           "configs",
 		"project_id":     1,
 		"environment_id": 10,
@@ -102,7 +102,7 @@ func TestCreateFolder_HappyPath(t *testing.T) {
 func TestCreateFolder_MissingName(t *testing.T) {
 	h, _, _ := freshFolderFixture(t)
 
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"project_id":     1,
 		"environment_id": 10,
 	})
@@ -118,7 +118,7 @@ func TestCreateFolder_MissingName(t *testing.T) {
 func TestCreateFolder_MissingProjectID(t *testing.T) {
 	h, _, _ := freshFolderFixture(t)
 
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"name":           "configs",
 		"environment_id": 10,
 	})
@@ -134,7 +134,7 @@ func TestCreateFolder_MissingProjectID(t *testing.T) {
 func TestCreateFolder_NoUserContext_401(t *testing.T) {
 	h, _, _ := freshFolderFixture(t)
 
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"name": "configs", "project_id": 1, "environment_id": 10,
 	})
 	// No user context injected.

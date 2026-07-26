@@ -124,7 +124,12 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		ActorID:           userCtx.PrincipalID(),
 	})
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		msg := err.Error()
+		if !isSafeDynamicSecretError(msg) {
+			log.Printf("Error creating dynamic-secret config: %v", err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, http.StatusBadRequest, nil)
 		return
 	}
 	// Never echo the admin DSN ciphertext back.
@@ -147,7 +152,7 @@ func (h *DynamicSecretHandler) ListConfigs(w http.ResponseWriter, r *http.Reques
 		sendError(w, "InternalError", "Failed to list configs", http.StatusInternalServerError, nil)
 		return
 	}
-	out := make([]map[string]interface{}, 0, len(cfgs))
+	out := make([]map[string]any, 0, len(cfgs))
 	for _, c := range cfgs {
 		out = append(out, sanitizeConfig(c))
 	}
@@ -201,7 +206,7 @@ func (h *DynamicSecretHandler) ListLeases(w http.ResponseWriter, r *http.Request
 		sendError(w, "InternalError", "Failed to list leases", http.StatusInternalServerError, nil)
 		return
 	}
-	out := make([]map[string]interface{}, 0, len(leases))
+	out := make([]map[string]any, 0, len(leases))
 	for _, l := range leases {
 		out = append(out, sanitizeLease(l))
 	}
@@ -234,7 +239,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"lease_id": leaseID, "status": "revoked"}, "Lease revoked.")
+	sendSuccess(w, map[string]any{"lease_id": leaseID, "status": "revoked"}, "Lease revoked.")
 }
 
 // RenewLease handles POST /api/v1/dynamic-secrets/leases/{leaseID}/renew
@@ -268,7 +273,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"lease_id": leaseID, "expires_at": newExpiry}, "Lease renewed.")
+	sendSuccess(w, map[string]any{"lease_id": leaseID, "expires_at": newExpiry}, "Lease renewed.")
 }
 
 // RevokeAllLeases handles POST /api/v1/dynamic-secrets/configs/{id}/revoke-all —
@@ -289,7 +294,7 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{
+	sendSuccess(w, map[string]any{
 		"config_id": cfg.ID, "revoked": revoked, "failed": failed,
 	}, fmt.Sprintf("Revoked %d active lease(s); %d failed.", revoked, failed))
 }
@@ -311,7 +316,12 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 	}
 	updated, err := h.coreService.ClassifyDynamicSecretConfig(r.Context(), userCtx.UserID, cfg.ID, body.Classification)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		msg := err.Error()
+		if !isSafeDynamicSecretError(msg) {
+			log.Printf("Error classifying dynamic-secret config %d: %v", cfg.ID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, http.StatusBadRequest, nil)
 		return
 	}
 	sendSuccess(w, sanitizeConfig(updated), "Classification updated.")
@@ -366,8 +376,8 @@ func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *ht
 
 // sanitizeConfig returns the safe public view of a config — never the encrypted
 // admin DSN bytes.
-func sanitizeConfig(c *models.DynamicSecretConfig) map[string]interface{} {
-	return map[string]interface{}{
+func sanitizeConfig(c *models.DynamicSecretConfig) map[string]any {
+	return map[string]any{
 		"id":                  c.ID,
 		"name":                c.Name,
 		"project_id":          c.ProjectID,
@@ -386,8 +396,8 @@ func sanitizeConfig(c *models.DynamicSecretConfig) map[string]interface{} {
 
 // sanitizeLease returns the safe public view of a lease — never the encrypted
 // credential bytes.
-func sanitizeLease(l *models.DynamicSecretLease) map[string]interface{} {
-	return map[string]interface{}{
+func sanitizeLease(l *models.DynamicSecretLease) map[string]any {
+	return map[string]any{
 		"lease_id":      l.LeaseID,
 		"config_id":     l.ConfigID,
 		"role_name":     l.RoleName,

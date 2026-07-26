@@ -119,7 +119,7 @@ func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, 
 		sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
 		return
 	}
-	sendCreated(w, map[string]interface{}{
+	sendCreated(w, map[string]any{
 		"user":              userToAPIResponse(created),
 		"one_time_password": otp,
 	}, i18n.T("SuccessUserCreated", nil))
@@ -144,7 +144,7 @@ func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Req
 		sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
 		return
 	}
-	sendCreated(w, map[string]interface{}{
+	sendCreated(w, map[string]any{
 		"user":       userToAPIResponse(created),
 		"setup_link": prov,
 	}, i18n.T("SuccessUserCreated", nil))
@@ -228,7 +228,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := userToAPIResponse(u)
-	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	h.attachProjectCounts(r.Context(), []map[string]any{resp}, []uint{u.ID})
 	sendSuccess(w, resp, "")
 }
 
@@ -265,7 +265,7 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := userToAPIResponse(u)
-	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	h.attachProjectCounts(r.Context(), []map[string]any{resp}, []uint{u.ID})
 	sendSuccess(w, resp, "")
 }
 
@@ -295,7 +295,7 @@ func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	resp := userToAPIResponse(u)
-	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	h.attachProjectCounts(r.Context(), []map[string]any{resp}, []uint{u.ID})
 	sendSuccess(w, resp, "")
 }
 
@@ -324,7 +324,7 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 		return
 	}
 	resp := userToAPIResponse(u)
-	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	h.attachProjectCounts(r.Context(), []map[string]any{resp}, []uint{u.ID})
 	sendSuccess(w, resp, "")
 }
 
@@ -409,7 +409,7 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"id":               u.ID,
 		"username":         u.Username,
 		"email":            u.Email,
@@ -422,7 +422,7 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 	// no session to report in that case; the spoke applies its own MFA gate from
 	// mfa_enabled/webauthn_enabled above.
 	if session != nil {
-		resp["session"] = map[string]interface{}{
+		resp["session"] = map[string]any{
 			"id":                  session.ID,
 			"token":               session.SessionToken,
 			"family_id":           session.FamilyID,
@@ -470,7 +470,7 @@ func (h *UserHandler) IssueMFAChallenge(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"challenge": challenge}, "")
+	sendSuccess(w, map[string]any{"challenge": challenge}, "")
 }
 
 // VerifyMFACredentials handles POST /api/v1/users/verify-mfa (#509) — the
@@ -519,7 +519,7 @@ func (h *UserHandler) VerifyMFACredentials(w http.ResponseWriter, r *http.Reques
 		sendError(w, "Unauthorized", "Invalid code", http.StatusUnauthorized, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{
+	sendSuccess(w, map[string]any{
 		"id":                  u.ID,
 		"username":            u.Username,
 		"used_recovery":       usedRecovery,
@@ -796,8 +796,10 @@ func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request,
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), errNotFound) {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("account state transition error for user %d: %v", uint(id), err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", clientSafe(err), status, nil)
 		return
 	}
 	sendSuccess(w, nil, okMessage)
@@ -842,11 +844,13 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), errNotFound) {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("revoke sessions error for user %d: %v", uint(id), err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", clientSafe(err), status, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"revoked": n}, "Sessions revoked")
+	sendSuccess(w, map[string]any{"revoked": n}, "Sessions revoked")
 }
 
 // ResendSetupLink handles POST /api/v1/users/{id}/resend-setup-link (ADR-028). It

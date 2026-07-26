@@ -49,7 +49,8 @@ func secretErrSanitizationFixture(t *testing.T) (*SecretHandler, *core.KeyorixCo
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{},
 		&models.Permission{}, &models.RolePermission{}, &models.Group{}, &models.GroupRole{},
 		&models.UserGroup{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{},
-		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessLog{}, &models.ShareRecord{}))
+		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessLog{}, &models.ShareRecord{},
+		&models.SecretACL{}))
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", AccountState: "active"}).Error)
 	adminRole := &models.Role{Name: "admin"}
@@ -107,7 +108,7 @@ func captureLog(t *testing.T) func() string {
 func assertSanitizedInternalError(t *testing.T, w *httptest.ResponseRecorder, rawErr error, logs func() string) {
 	t.Helper()
 	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	msg, _ := resp["message"].(string)
 	assert.NotEmpty(t, msg)

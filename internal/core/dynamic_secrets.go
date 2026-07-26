@@ -411,7 +411,8 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	pid := lease.ProjectID
 	if rerr := engine.Revoke(ctx, adminDSN, lease.RoleName); rerr != nil {
 		lease.Status = "revoke_failed"
-		lease.RevokeError = rerr.Error()
+		log.Printf("failed to revoke dynamic secret lease %s: %v", lease.LeaseID, rerr)
+		lease.RevokeError = "backend revoke failed — see server audit log for details"
 		// Deliberately NOT stamping RevokedAt here: the target drop failed, so the
 		// credential is still live. Stamping it would make the audit trail / API
 		// falsely claim the role was dropped at this time, even though it wasn't —
