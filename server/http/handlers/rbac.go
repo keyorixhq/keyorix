@@ -126,7 +126,7 @@ func (h *RBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, map[string]interface{}{"roles": roles, "total": len(roles)}, "")
+	sendSuccess(w, map[string]any{"roles": roles, "total": len(roles)}, "")
 }
 
 // CreateRole handles POST /api/v1/roles
@@ -191,7 +191,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 
 	h.coreService.LogRoleCreated(r.Context(), userCtx.UserID, role.ID, role.Name)
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"role": role, "permissions": assignedPerms}, "Role created successfully")
+	sendSuccess(w, map[string]any{"role": role, "permissions": assignedPerms}, "Role created successfully")
 }
 
 // resolveAndAuthorizePermissions resolves each named permission and checks the actor
@@ -241,7 +241,7 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, map[string]interface{}{"role": role, "permissions": perms}, "")
+	sendSuccess(w, map[string]any{"role": role, "permissions": perms}, "")
 }
 
 // GetRoleByName handles GET /api/v1/roles/by-name?name=X — looks up a role by
@@ -334,7 +334,8 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 			if strings.Contains(aerr.Error(), "cannot bundle") {
 				sendError(w, "Forbidden", aerr.Error(), http.StatusForbidden, nil)
 			} else {
-				sendError(w, "InternalError", aerr.Error(), http.StatusInternalServerError, nil)
+				log.Printf("failed to resolve permissions for role update: %v", aerr)
+				sendError(w, "InternalError", clientSafe(aerr), http.StatusInternalServerError, nil)
 			}
 			return
 		}
@@ -356,7 +357,7 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	}
 
 	perms, _ := h.coreService.Storage().GetRolePermissions(r.Context(), id)
-	sendSuccess(w, map[string]interface{}{"role": role, "permissions": perms}, "Role updated successfully")
+	sendSuccess(w, map[string]any{"role": role, "permissions": perms}, "Role updated successfully")
 }
 
 func (h *RBACHandler) authorizeAndCollectPermissions(ctx context.Context, userCtx *middleware.UserContext, permNames []string) ([]*models.Permission, error) {
@@ -484,7 +485,7 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"user_id": req.UserID, "role_id": req.RoleID, "expires_at": req.ExpiresAt}, "Role assigned successfully")
+	sendSuccess(w, map[string]any{"user_id": req.UserID, "role_id": req.RoleID, "expires_at": req.ExpiresAt}, "Role assigned successfully")
 }
 
 // RemoveRole handles DELETE /api/v1/user-roles
@@ -570,7 +571,7 @@ func (h *RBACHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 		perms = filtered
 	}
 
-	sendSuccess(w, map[string]interface{}{"permissions": perms, "total": len(perms)}, "")
+	sendSuccess(w, map[string]any{"permissions": perms, "total": len(perms)}, "")
 }
 
 // GetPermission handles GET /api/v1/permissions/{id} — added for #526 as the
@@ -631,7 +632,7 @@ func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	sendSuccess(w, map[string]interface{}{"role_id": role.ID, "role_name": role.Name, "permissions": perms}, "")
+	sendSuccess(w, map[string]any{"role_id": role.ID, "role_name": role.Name, "permissions": perms}, "")
 }
 
 // AssignPermissionToRole handles POST /api/v1/roles/{id}/permissions
@@ -673,7 +674,7 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"role_id": roleID, "permission_id": body.PermissionID}, "Permission assigned successfully")
+	sendSuccess(w, map[string]any{"role_id": roleID, "permission_id": body.PermissionID}, "Permission assigned successfully")
 }
 
 // RemovePermissionFromRole handles DELETE /api/v1/roles/{id}/permissions/{permissionId}
@@ -730,7 +731,7 @@ func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, map[string]interface{}{"group_id": groupID, "roles": roles}, "")
+	sendSuccess(w, map[string]any{"group_id": groupID, "roles": roles}, "")
 }
 
 // AssignRoleToGroup handles POST /api/v1/groups/{id}/roles
@@ -784,7 +785,7 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"group_id": groupID, "role_id": body.RoleID, "expires_at": body.ExpiresAt}, "Role assigned to group successfully")
+	sendSuccess(w, map[string]any{"group_id": groupID, "role_id": body.RoleID, "expires_at": body.ExpiresAt}, "Role assigned to group successfully")
 }
 
 // RemoveRoleFromGroup handles DELETE /api/v1/groups/{id}/roles/{roleId}
@@ -830,7 +831,7 @@ func ListRoles(w http.ResponseWriter, r *http.Request) {
 	if _, ok := mustGetUser(w, r); !ok {
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"roles": []interface{}{}, "total": 0}, "")
+	sendSuccess(w, map[string]any{"roles": []any{}, "total": 0}, "")
 }
 
 func CreateRole(w http.ResponseWriter, r *http.Request) {
@@ -847,7 +848,7 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"name": req.Name}, "Role created successfully")
+	sendSuccess(w, map[string]any{"name": req.Name}, "Role created successfully")
 }
 
 // GetRole returns a mock 200 for IDs in the predefined stub set, 404 otherwise.
@@ -863,7 +864,7 @@ func GetRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id >= 1 && id <= 10 {
-		sendSuccess(w, map[string]interface{}{"id": id, "name": "mock-role", "permissions": []interface{}{}}, "")
+		sendSuccess(w, map[string]any{"id": id, "name": "mock-role", "permissions": []any{}}, "")
 		return
 	}
 	sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
@@ -886,7 +887,7 @@ func UpdateRole(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", errInvalidRequestData, http.StatusBadRequest, err)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{}, "Role updated successfully")
+	sendSuccess(w, map[string]any{}, "Role updated successfully")
 }
 
 func DeleteRole(w http.ResponseWriter, r *http.Request) {
@@ -914,7 +915,7 @@ func AssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"user_id": req.UserID, "role_id": req.RoleID}, "Role assigned successfully")
+	sendSuccess(w, map[string]any{"user_id": req.UserID, "role_id": req.RoleID}, "Role assigned successfully")
 }
 
 func RemoveRole(w http.ResponseWriter, r *http.Request) {
@@ -941,7 +942,7 @@ func GetUserRoles(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"roles": []interface{}{}, "total": 0}, "")
+	sendSuccess(w, map[string]any{"roles": []any{}, "total": 0}, "")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1027,5 +1028,5 @@ func (h *RBACHandler) GetPermissionMatrix(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	sendSuccess(w, map[string]interface{}{"rows": rows, "total": len(rows)}, "")
+	sendSuccess(w, map[string]any{"rows": rows, "total": len(rows)}, "")
 }

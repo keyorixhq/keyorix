@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -20,11 +21,27 @@ import (
 // POST /auth/password-reset).
 var sensitiveURIPattern = regexp.MustCompile(`(?i)^(/(?:api/v1/)?auth/(?:setup|invite|password-reset)/)[^/?]+`)
 
+// sensitiveQueryPattern matches paths whose query-string parameters carry secret
+// identifiers — /secrets/value and /secrets/by-name accept a ?ref= or ?name=
+// query param that is the secret reference or name. Logging these verbatim would
+// write secret names/references to the access log (container logs, log-aggregation
+// SaaS, on-call terminal), leaking the secret catalogue to log readers.
+var sensitiveQueryPattern = regexp.MustCompile(`(?i)/secrets/(?:value|by-name)\b`)
+
 // redactSensitiveURI replaces the credential segment of a known-sensitive path
-// with a fixed placeholder, leaving the rest of the path/query untouched. It
-// returns the input unchanged when no sensitive pattern matches.
+// with a fixed placeholder, and strips the entire query string for paths that
+// carry secret identifiers in query parameters. It returns the input unchanged
+// when no sensitive pattern matches.
 func redactSensitiveURI(uri string) string {
-	return sensitiveURIPattern.ReplaceAllString(uri, "${1}[REDACTED]")
+	// First redact path-segment credentials (setup/invite/password-reset tokens).
+	uri = sensitiveURIPattern.ReplaceAllString(uri, "${1}[REDACTED]")
+	// Then redact query strings for endpoints that accept secret ref/name params.
+	if idx := strings.IndexByte(uri, '?'); idx != -1 {
+		if sensitiveQueryPattern.MatchString(uri[:idx]) {
+			uri = uri[:idx] + "?[redacted]"
+		}
+	}
+	return uri
 }
 
 // Logger returns a middleware that logs HTTP requests. It behaves like chi's

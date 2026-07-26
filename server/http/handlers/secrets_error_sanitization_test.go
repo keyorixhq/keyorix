@@ -107,7 +107,7 @@ func captureLog(t *testing.T) func() string {
 func assertSanitizedInternalError(t *testing.T, w *httptest.ResponseRecorder, rawErr error, logs func() string) {
 	t.Helper()
 	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
-	var resp map[string]interface{}
+	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	msg, _ := resp["message"].(string)
 	assert.NotEmpty(t, msg)

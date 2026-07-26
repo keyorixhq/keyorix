@@ -9,12 +9,15 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -133,7 +136,7 @@ func (h *PATHandler) PATHygiene(w http.ResponseWriter, r *http.Request) {
 			Stale:       e.Stale,
 		})
 	}
-	sendSuccess(w, map[string]interface{}{"tokens": out, "total": len(out)}, "")
+	sendSuccess(w, map[string]any{"tokens": out, "total": len(out)}, "")
 }
 
 type createPATRequestBody struct {
@@ -176,14 +179,19 @@ func (h *PATHandler) CreatePAT(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.coreService.CreateOwnPAT(r.Context(), userCtx.UserID, body.Name, expiresAt, body.Scopes, body.ProjectScope, body.EnvironmentScope, body.AllowedCIDRs)
 	if err != nil {
-		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+		} else {
+			log.Printf("CreateOwnPAT storage error for user %d: %v", userCtx.UserID, err)
+			sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
+		}
 		return
 	}
 
 	resp := toPATResponse(result.Token)
 	w.WriteHeader(http.StatusCreated)
 	// The plaintext token is included once here and never again.
-	sendSuccess(w, map[string]interface{}{
+	sendSuccess(w, map[string]any{
 		"token": result.PlainToken,
 		"pat":   resp,
 	}, "Token created — copy it now, it will not be shown again")
