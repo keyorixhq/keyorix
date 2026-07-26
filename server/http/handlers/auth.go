@@ -328,6 +328,18 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // RefreshToken handles POST /auth/refresh.
 // Issues a new session token and invalidates the old one.
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	// Rate-limit failed refresh attempts by IP, mirroring Login and VerifyMFA.
+	// /auth/refresh is unauthenticated so an attacker can flood it to brute-force
+	// session tokens or DoS the DB with unlimited queries (#r124).
+	if h.checkLoginRateLimit(r.Context(), ip) {
+		sendError(w, "TooManyRequests", "Too many requests. Try again later.", http.StatusTooManyRequests, nil)
+		return
+	}
+
 	token := extractBearerToken(r)
 	if token == "" {
 		sendError(w, "BadRequest", "Missing authorization token", http.StatusBadRequest, nil)
@@ -336,6 +348,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 
 	session, err := h.coreService.RefreshSession(r.Context(), token)
 	if err != nil {
+		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Session not found or expired", http.StatusUnauthorized, nil)
 		return
 	}
