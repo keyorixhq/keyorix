@@ -35,9 +35,10 @@ type aclTestRig struct {
 }
 
 const (
-	aclAdminRoleID = 10
-	aclAdminUserID = 1
-	aclGuestUserID = 2
+	aclAdminRoleID  = 10
+	aclMemberRoleID = 11 // no permissions — makes a user a project member without any manage access
+	aclAdminUserID  = 1
+	aclGuestUserID  = 2
 )
 
 func newACLTestRig(t *testing.T) *aclTestRig {
@@ -61,7 +62,8 @@ func newACLTestRig(t *testing.T) *aclTestRig {
 		&models.SecretVersion{}, &models.User{}, &models.Role{}, &models.ShareRecord{},
 		&models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.DynamicSecretConfig{}, &models.SecretACL{},
+		&models.DynamicSecretConfig{}, &models.SecretACL{}, &models.SecretAccessLog{},
+		&models.AuditEvent{},
 	))
 
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
@@ -83,8 +85,16 @@ func newACLTestRig(t *testing.T) *aclTestRig {
 	for _, p := range perms {
 		require.NoError(t, db.Create(&models.RolePermission{RoleID: aclAdminRoleID, PermissionID: p.ID}).Error)
 	}
-	// Assign the role globally (project 0, env 0) to the admin user.
+	// Seed a no-permission "member" role for the guest user: gives project membership
+	// without any manage grants, so PermissionDenied tests still pass.
+	require.NoError(t, db.Create(&models.Role{ID: aclMemberRoleID, Name: "acl-member"}).Error)
+	// Assign the admin role globally (project 0, env 0) to the admin user.
 	require.NoError(t, db.Create(&models.UserRole{UserID: aclAdminUserID, RoleID: aclAdminRoleID}).Error)
+	// Also assign at project 1 so IsProjectMember returns true.
+	// GrantSecretACL verifies the grant target is a project member (IsProjectMember checks project_id).
+	require.NoError(t, db.Create(&models.UserRole{UserID: aclAdminUserID, RoleID: aclAdminRoleID, ProjectID: 1}).Error)
+	// Guest gets the no-permission member role at project 1: a project member but cannot manage ACLs.
+	require.NoError(t, db.Create(&models.UserRole{UserID: aclGuestUserID, RoleID: aclMemberRoleID, ProjectID: 1}).Error)
 
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	svc := NewSecretService(coreService)

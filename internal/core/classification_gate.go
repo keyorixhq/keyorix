@@ -186,6 +186,10 @@ func (c *KeyorixCore) checkRestrictedMFAGate(ctx context.Context, secret *models
 // approved with no grant TTL — mirrored here for consistency rather than
 // inventing a second expiry model.
 //
+// Future: a grant_expires_at nullable field on AccessRequest would allow
+// time-bounded approvals (e.g. "approved for 4 hours"). Until then,
+// revoke the AccessRequest row directly to end access.
+//
 // Listing by project and filtering in memory reuses the existing
 // ListAccessRequests storage method as-is (no storage interface change): access
 // requests per project are not high-cardinality, and this mirrors the same

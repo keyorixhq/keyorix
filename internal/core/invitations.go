@@ -76,7 +76,7 @@ func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, proj
 // rotation backend to a secret (#90): the backend often carries org-wide admin
 // credentials, so the same escalation-by-proxy ceiling applies.
 func (c *KeyorixCore) requireAdminAuthorityAt(ctx context.Context, actorID, projectID uint) error {
-	ids, err := c.storage.GetUserRoleIDsAt(ctx, actorID, storage.Scope{ProjectID: projectID})
+	ids, err := c.scopedRoleIDs(ctx, actorID, storage.Scope{ProjectID: projectID})
 	if err != nil {
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}

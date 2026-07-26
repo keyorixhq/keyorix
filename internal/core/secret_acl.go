@@ -91,6 +91,14 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 		return err
 	}
 
+	// Check that the grant target is a project member — granting access to a
+	// non-member is confusing and potentially unintended.
+	if isMember, merr := c.storage.IsProjectMember(ctx, userID, secret.ProjectID); merr != nil {
+		return fmt.Errorf("failed to verify project membership: %w", merr)
+	} else if !isMember {
+		return fmt.Errorf("%s: user %d is not a member of this secret's project", i18n.T("ErrorValidation", nil), userID)
+	}
+
 	permsJSON, err := EncodeSecretACLPerms(perms)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
