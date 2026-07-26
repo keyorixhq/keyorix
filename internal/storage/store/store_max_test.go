@@ -370,7 +370,7 @@ func newSecretsStore(t *testing.T) *LocalStorage {
 	ls := newMaxStore(t, "sec_"+t.Name(),
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.SecretVersion{}, &models.Tag{}, &models.SecretTag{},
-		&models.ShareRecord{}, &models.DynamicSecretConfig{},
+		&models.ShareRecord{}, &models.SecretACL{}, &models.DynamicSecretConfig{},
 		&models.UserRole{}, &models.GroupRole{},
 	)
 	// Partial unique indexes for name uniqueness (replicate migrateDatabase).
@@ -999,7 +999,7 @@ func newPurgeStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	return newMaxStore(t, "purge_"+t.Name(),
 		&models.User{}, &models.UserRole{}, &models.UserGroup{},
-		&models.ShareRecord{}, &models.PersonalAccessToken{}, &models.Session{},
+		&models.ShareRecord{}, &models.SecretACL{}, &models.PersonalAccessToken{}, &models.Session{},
 		&models.Project{}, &models.Environment{},
 		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{},
 		&models.GroupRole{}, &models.Group{},

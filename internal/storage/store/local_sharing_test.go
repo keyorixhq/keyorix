@@ -27,6 +27,7 @@ func sharingConcurrentDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Group{}, &models.UserGroup{}, &models.SecretNode{}, &models.ShareRecord{},
+		&models.SecretACL{},
 	))
 	require.NoError(t, db.Exec(
 		"CREATE UNIQUE INDEX IF NOT EXISTS uniq_share_records_active ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL",
@@ -53,7 +54,7 @@ func TestCreateShareRecord_ConcurrentGrantsNoDuplicateRow(t *testing.T) {
 	errs := make([]error, n)
 	var start sync.WaitGroup
 	start.Add(1)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -428,4 +429,40 @@ func TestCheckSharePermission_DirectVsGroupConflict_StrongestWins(t *testing.T) 
 		require.NoError(t, err)
 		assert.Equal(t, "write", perm, "a stronger direct grant must win over a weaker group grant")
 	})
+}
+
+// CWE-284 / sibling of #370: DeleteSecret must also delete SecretACL rows in the
+// same transaction so that ACL-based access cannot silently reactivate when the
+// secret is later restored from the recycle bin (the same class of bug fixed for
+// ShareRecord in #370).
+func TestDeleteSecret_RevokesSecretACLs(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretACL{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "grantee", Email: "g@x.io"}).Error)
+	proj, err := ls.CreateProject(ctx, &models.Project{Name: "acl-app"})
+	require.NoError(t, err)
+	env, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: proj.ID})
+	require.NoError(t, err)
+	sec, err := ls.CreateSecret(ctx, &models.SecretNode{
+		ProjectID: proj.ID, EnvironmentID: env.ID, Name: "acl-secret", IsSecret: true, Type: "text",
+		Status: "active", OwnerID: 1,
+	})
+	require.NoError(t, err)
+
+	// Grant user 2 an ACL on the secret.
+	acl := &models.SecretACL{SecretID: sec.ID, UserID: 2, Permissions: `["secrets.read"]`, GrantedBy: 1}
+	require.NoError(t, db.Create(acl).Error)
+	aclID := acl.ID
+
+	// Delete the secret — both the soft-delete and the ACL row must be transacted together.
+	require.NoError(t, ls.DeleteSecret(ctx, sec.ID))
+
+	// The ACL row must be gone (hard-deleted by the Where+Delete call).
+	var count int64
+	require.NoError(t, db.Model(&models.SecretACL{}).Where("id = ?", aclID).Count(&count).Error)
+	assert.Equal(t, int64(0), count, "SecretACL row must be deleted alongside the secret")
 }

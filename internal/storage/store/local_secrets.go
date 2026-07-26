@@ -499,6 +499,12 @@ func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
 			Delete(&models.ShareRecord{}).Error; err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
+		// CWE-284: revoke SecretACL grants in the same transaction so that
+		// ACL-based access cannot silently reactivate on restore (same class of
+		// bug fixed for ShareRecord in #370).
+		if err := tx.Where("secret_id = ?", id).Delete(&models.SecretACL{}).Error; err != nil {
+			return fmt.Errorf("failed to revoke secret ACLs: %w", err)
+		}
 		return nil
 	})
 }
@@ -888,7 +894,7 @@ func (ls *LocalStorage) GetSecretAncestors(ctx context.Context, nodeID uint) ([]
 	var ancestors []uint
 	visited := make(map[uint]struct{})
 	currentID := nodeID
-	for depth := 0; depth < maxAncestorDepth; depth++ {
+	for range maxAncestorDepth {
 		var node models.SecretNode
 		err := ls.db.WithContext(ctx).
 			Select("id", "parent_id").

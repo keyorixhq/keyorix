@@ -2,12 +2,12 @@
 // edge-case paths not reached by secrets_list_scoped_test.go or secrets_list_s38_test.go.
 //
 // Covers:
-//   - Machine identity ListSecretsInScope error → 500 (line 147–151)
-//   - Scoped request ListSecretsWithSharingInfo error → 500 (line 178–182)
-//   - GetReadableScopes error → 500 (line 207–211)
-//   - Env-scoped role (EnvironmentID != 0) in the union loop (line 236–239)
-//   - Page beyond total results → start > totalInt clamp (line 260–262)
-//   - Zero secrets in union → totalPages == 0 → set to 1 (line 267–269)
+//   - Machine identity missing project_id → 400 (CWE-862 param gate)
+//   - Scoped request ListSecretsWithSharingInfo error → 500
+//   - GetReadableScopes error → 500
+//   - Env-scoped role (EnvironmentID != 0) in the union loop
+//   - Page beyond total results → start > totalInt clamp
+//   - Zero secrets in union → totalPages == 0 → set to 1
 package handlers
 
 import (
@@ -86,9 +86,11 @@ func withCovUserCtx(r *http.Request, userID uint) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), middleware.GetUserContextKey(), uc))
 }
 
-// TestListSecrets_MachineIdentity_ListError closes the DB so ListSecretsInScope
-// fails and the machine-principal path returns 500 (line 147–151).
-func TestListSecrets_MachineIdentity_ListError(t *testing.T) {
+// TestListSecrets_MachineIdentity_NoProjectID verifies that a machine principal
+// without an explicit ?project_id= query parameter receives 400 (CWE-862 gate).
+// The DB does not need to be reachable for this check — it is a param-validation
+// guard that runs before any storage call.
+func TestListSecrets_MachineIdentity_NoProjectID(t *testing.T) {
 	h, db := freshCovListFixture(t)
 
 	sqlDB, err := db.DB()
@@ -98,7 +100,7 @@ func TestListSecrets_MachineIdentity_ListError(t *testing.T) {
 	req := withMachineCtx(httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil))
 	w := httptest.NewRecorder()
 	h.ListSecrets(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // TestListSecrets_ScopedRequest_ListError closes the DB so ListSecretsWithSharingInfo

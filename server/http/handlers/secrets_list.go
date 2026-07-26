@@ -105,7 +105,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	// Tag filter: repeatable ?tag=a&tag=b or a single comma-separated ?tag=a,b.
 	// A secret must carry every requested tag (AND).
 	for _, raw := range r.URL.Query()["tag"] {
-		for _, part := range strings.Split(raw, ",") {
+		for part := range strings.SplitSeq(raw, ",") {
 			if t := strings.TrimSpace(part); t != "" {
 				filter.Tags = append(filter.Tags, t)
 			}
@@ -140,9 +140,28 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 
 	// Machine principals (ADR-030) have no user identity for the owned/shared
 	// model; they list by their authorized scope without the scoped-union logic.
+	// Security gate (CWE-862): a machine token must supply an explicit project_id
+	// and must be authorized for secrets.read within that project. Without this
+	// gate, any machine token (regardless of its assigned project scope) could
+	// enumerate secrets from arbitrary projects or across all projects.
 	var response *models.SecretListResponse
 	var err error
 	if userCtx.MachineIdentityID != nil {
+		if filter.ProjectID == nil {
+			h.sendError(w, "BadRequest", "machine tokens must specify project_id", http.StatusBadRequest, nil)
+			return
+		}
+		scope := core.Scope{ProjectID: *filter.ProjectID}
+		if filter.EnvironmentID != nil {
+			scope.EnvironmentID = *filter.EnvironmentID
+		}
+		allowed, aerr := h.coreService.AuthorizePrincipal(
+			r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, scope,
+		)
+		if aerr != nil || !allowed {
+			h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+			return
+		}
 		response, err = h.coreService.ListSecretsInScope(r.Context(), filter)
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)

@@ -19,7 +19,7 @@ func newSoftDeleteTestStore(t *testing.T) *LocalStorage {
 	require.NoError(t, err)
 	// #370: DeleteSecret revokes ShareRecord rows in the same transaction as the
 	// secret's own soft-delete.
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.SecretNode{}, &models.SecretVersion{}, &models.Environment{}, &models.SecretDependency{}, &models.ShareRecord{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.SecretNode{}, &models.SecretVersion{}, &models.Environment{}, &models.SecretDependency{}, &models.ShareRecord{}, &models.SecretACL{}))
 	return NewLocalStorage(db)
 }
 
@@ -46,10 +46,11 @@ func TestSecretSoftDeleteLifecycle(t *testing.T) {
 	assert.True(t, got.DeletedAt.Valid, "row retained with deleted_at set")
 
 	// ListSecrets excludes by default, includes with IncludeDeleted.
-	live, _, err := ls.ListSecrets(ctx, &storage.SecretFilter{ProjectID: ptr(projectID), Page: 1, PageSize: 50})
+	pid := uint(projectID)
+	live, _, err := ls.ListSecrets(ctx, &storage.SecretFilter{ProjectID: &pid, Page: 1, PageSize: 50})
 	require.NoError(t, err)
 	assert.Len(t, live, 0, "soft-deleted secret excluded from default listing")
-	all, _, err := ls.ListSecrets(ctx, &storage.SecretFilter{ProjectID: ptr(projectID), Page: 1, PageSize: 50, IncludeDeleted: true})
+	all, _, err := ls.ListSecrets(ctx, &storage.SecretFilter{ProjectID: &pid, Page: 1, PageSize: 50, IncludeDeleted: true})
 	require.NoError(t, err)
 	assert.Len(t, all, 1, "IncludeDeleted surfaces it for the restore UI")
 
@@ -107,4 +108,3 @@ func TestPurgeDeletedSecretsBefore_CascadesDependencyEdges(t *testing.T) {
 	assert.Equal(t, int64(0), edges, "the edge incident to the purged secret is removed (no orphan)")
 }
 
-func ptr[T any](v T) *T { return &v }

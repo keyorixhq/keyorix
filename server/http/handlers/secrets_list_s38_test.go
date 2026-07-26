@@ -174,8 +174,10 @@ func TestListSecrets_ExpiresBeforeParam_S38(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestListSecrets_MachineIdentityPath_S38 exercises the machine-identity dispatch branch
-// (ListSecretsInScope rather than ListSecretsWithSharingInfo).
+// TestListSecrets_MachineIdentityPath_S38 exercises the machine-identity dispatch branch.
+// A machine token without project_id must now receive 400 (CWE-862 gate).
+// The authorized path (with project_id + a matching role) is covered by the
+// secrets_list_machine_authz_test.go suite.
 func TestListSecrets_MachineIdentityPath_S38(t *testing.T) {
 	t.Parallel()
 	h, _ := freshListFixtureS38(t)
@@ -190,8 +192,8 @@ func TestListSecrets_MachineIdentityPath_S38(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), middleware.GetUserContextKey(), uc))
 	w := httptest.NewRecorder()
 	h.ListSecrets(w, req)
-	// Machine identity path uses ListSecretsInScope — must return 200.
-	assert.Equal(t, http.StatusOK, w.Code)
+	// Machine tokens without an explicit project_id are rejected with 400.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // TestListSecrets_TagCommaList_S38 exercises the comma-separated tag syntax.
