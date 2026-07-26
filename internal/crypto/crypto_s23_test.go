@@ -112,7 +112,8 @@ func TestShamirKeyProvider_S23_TwoOfTwoSplit(t *testing.T) {
 	require.NoError(t, os.WriteFile(f1, []byte(hex.EncodeToString(shares[0])), 0600))
 	require.NoError(t, os.WriteFile(f2, []byte(hex.EncodeToString(shares[1])), 0600))
 
-	got, err := NewShamirKeyProvider([]string{f1, f2}, nil, "").KEK()
+	commitmentHex := hex.EncodeToString(CommitKEK(kek))
+	got, err := NewShamirKeyProvider([]string{f1, f2}, nil, commitmentHex).KEK()
 	require.NoError(t, err)
 	assert.Equal(t, kek, got)
 }
@@ -127,7 +128,8 @@ func TestShamirKeyProvider_S23_TwoSharesViaEnvOnly(t *testing.T) {
 	t.Setenv("KX_S23_ENVSHARE1", base64.StdEncoding.EncodeToString(shares[0]))
 	t.Setenv("KX_S23_ENVSHARE2", base64.StdEncoding.EncodeToString(shares[1]))
 
-	got, err := NewShamirKeyProvider(nil, []string{"KX_S23_ENVSHARE1", "KX_S23_ENVSHARE2"}, "").KEK()
+	commitmentHex := hex.EncodeToString(CommitKEK(kek))
+	got, err := NewShamirKeyProvider(nil, []string{"KX_S23_ENVSHARE1", "KX_S23_ENVSHARE2"}, commitmentHex).KEK()
 	require.NoError(t, err)
 	assert.Equal(t, kek, got)
 }
