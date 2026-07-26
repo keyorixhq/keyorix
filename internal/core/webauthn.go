@@ -348,6 +348,14 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	if err != nil {
 		return nil, nil, err
 	}
+	// Record the MFA step-up window when the classification gate requires it,
+	// matching the existing TOTP path in VerifyMFALogin. WebAuthn (possession +
+	// user-verification) is at least as strong as TOTP, so it must satisfy the
+	// same restricted_requires_mfa_stepup gate. Best-effort: a write failure
+	// does not block the login.
+	if c.classificationRestrictedRequiresMFAStepUp {
+		_ = c.storage.UpsertMFAStepupToken(ctx, ch.UserID, c.now().Add(c.mfaStepUpWindow()))
+	}
 	uid := ch.UserID
 	c.writeAuditEventFull(ctx, "webauthn.login_verified", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s passed WebAuthn", wu.user.Username))
@@ -431,6 +439,12 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	session, err := c.mintSession(ctx, resolved.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err
+	}
+	// Record the MFA step-up window when the classification gate requires it,
+	// matching both VerifyMFALogin and FinishWebAuthnLogin. A passkey satisfies
+	// user-verification and is at minimum as strong as TOTP. Best-effort.
+	if c.classificationRestrictedRequiresMFAStepUp {
+		_ = c.storage.UpsertMFAStepupToken(ctx, resolved.ID, c.now().Add(c.mfaStepUpWindow()))
 	}
 	uid := resolved.ID
 	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,

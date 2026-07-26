@@ -437,8 +437,15 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	}
 	ok := false
 	if user.MFAEnabled {
-		if secret, err := c.loadTOTPSecret(ctx, user.ID); err == nil && c.validateTOTP(secret, codeOrPassword) {
-			ok = true
+		if secret, err := c.loadTOTPSecret(ctx, user.ID); err == nil {
+			// Use the same anti-replay path as VerifyMFACredentials: identify the
+			// matched time-step and atomically mark it used so a stolen code cannot
+			// be replayed within the ±1 step (~90 s) window.
+			if step, matched := c.validateTOTPStep(secret, codeOrPassword); matched {
+				if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, user.ID, step); ferr == nil && fresh {
+					ok = true
+				}
+			}
 		}
 	}
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
