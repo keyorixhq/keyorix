@@ -435,20 +435,31 @@ type verifyMFAWireRequest struct {
 	Code      string `json:"code"`
 }
 
-// verifyMFAWireResponse is deliberately narrow — it carries exactly what
-// core.VerifyMFALogin needs after a successful verdict (enough identity to
-// mint/describe the session, plus whether a recovery code was used for the
-// matching audit event) and nothing else: no TOTP secret, no recovery-code
-// hashes, no lockout-accounting counters (meaningless here — the upstream
-// already applied/cleared them before ever returning success).
+// verifyMFAWireResponse carries what core.VerifyMFALogin needs after a
+// successful verdict: enough identity to mint/describe the session, whether a
+// recovery code was used (for the audit event), and the two password-age fields
+// that enforcePasswordExpiryGate (ADR-025) reads. PasswordChangedAt and
+// CreatedAt are intentionally included: without them toModel() returns a sparse
+// User where both fields are zero/nil, causing PasswordExpired() to always
+// return false and silently bypassing the password-expiry hard gate on
+// storage.type: remote spoke deployments. No TOTP secret, no recovery-code
+// hashes, no lockout counters — those are meaningless here: the upstream already
+// applied/cleared them before ever returning success.
 type verifyMFAWireResponse struct {
-	ID           uint   `json:"id"`
-	Username     string `json:"username"`
-	UsedRecovery bool   `json:"used_recovery"`
+	ID                uint       `json:"id"`
+	Username          string     `json:"username"`
+	UsedRecovery      bool       `json:"used_recovery"`
+	PasswordChangedAt *time.Time `json:"password_changed_at"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 func (w verifyMFAWireResponse) toModel() *models.User {
-	return &models.User{ID: w.ID, Username: w.Username}
+	return &models.User{
+		ID:                w.ID,
+		Username:          w.Username,
+		PasswordChangedAt: w.PasswordChangedAt,
+		CreatedAt:         w.CreatedAt,
+	}
 }
 
 // VerifyMFALoginCredentials implements core.RemoteMFAVerifier: it proxies the

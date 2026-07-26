@@ -546,6 +546,33 @@ func TestMFA_TOTPSecretTransplantBetweenUsersFailsToDecrypt(t *testing.T) {
 	require.Error(t, err, "a TOTP secret transplanted from another user's row must fail to decrypt, not silently succeed")
 }
 
+// requireReauth must consume a TOTP code as single-use: a code accepted once for
+// DisableMFA / RegenerateMFARecoveryCodes / FinishWebAuthnRegistration /
+// DeleteWebAuthnCredential must be rejected on a second call within the same
+// ±1 time-step window (~90 s). Before the fix, requireReauth used validateTOTP
+// (no replay tracking) instead of validateTOTPStep+MarkTOTPStepUsed; this test
+// confirms the correct anti-replay path now applies.
+func TestRequireReauth_TOTPCodeNotReplayable(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	secret, _ := activateMFAForTest(t, c, fixed)
+
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	user, err := c.storage.GetUser(ctx, 1)
+	require.NoError(t, err)
+
+	// First use must succeed.
+	require.NoError(t, c.requireReauth(ctx, user, code, "test_phase"),
+		"first requireReauth with a valid TOTP code must succeed")
+
+	// Second use of the SAME code within the same step window must be rejected.
+	err = c.requireReauth(ctx, user, code, "test_phase")
+	require.Error(t, err, "replaying the same TOTP code must be rejected by requireReauth")
+	assert.Contains(t, err.Error(), "invalid", "replay must surface as an invalid-code error, not a lock error")
+}
+
 // VerifyMFALogin must record a MFA step-up token when the classification gate
 // requires it. The write is best-effort (error discarded), so VerifyMFALogin
 // must still succeed even if UpsertMFAStepupToken were to fail. This test

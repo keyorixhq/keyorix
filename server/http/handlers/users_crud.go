@@ -520,9 +520,11 @@ func (h *UserHandler) VerifyMFACredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
-		"id":            u.ID,
-		"username":      u.Username,
-		"used_recovery": usedRecovery,
+		"id":                  u.ID,
+		"username":            u.Username,
+		"used_recovery":       usedRecovery,
+		"password_changed_at": u.PasswordChangedAt,
+		"created_at":          u.CreatedAt,
 	}, "")
 }
 
