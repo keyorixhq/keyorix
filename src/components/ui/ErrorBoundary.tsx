@@ -17,45 +17,23 @@ interface ErrorBoundaryProps {
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     constructor(props: ErrorBoundaryProps) {
         super(props);
-        this.state = {
-            hasError: false,
-            error: null,
-            errorInfo: null,
-        };
+        this.state = { hasError: false, error: null, errorInfo: null };
     }
 
     static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-        return {
-            hasError: true,
-            error,
-            errorInfo: null,
-        };
+        return { hasError: true, error, errorInfo: null };
     }
 
     override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-        this.setState({
-            error,
-            errorInfo,
-        });
-
-        // Call the onError callback if provided
-        if (this.props.onError) {
-            this.props.onError(error, errorInfo);
-        }
-
-        // Log error to console in development
+        this.setState({ error, errorInfo });
+        this.props.onError?.(error, errorInfo);
         if (import.meta.env.DEV) {
-            console.error('Error caught by ErrorBoundary:', error);
-            console.error('Error info:', errorInfo);
+            console.error('ErrorBoundary caught:', error, errorInfo);
         }
     }
 
     handleRetry = () => {
-        this.setState({
-            hasError: false,
-            error: null,
-            errorInfo: null,
-        });
+        this.setState({ hasError: false, error: null, errorInfo: null });
     };
 
     handleReload = () => {
@@ -63,125 +41,107 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     };
 
     override render() {
-        if (this.state.hasError) {
-            // Custom fallback UI
-            if (this.props.fallback) {
-                return this.props.fallback;
-            }
+        if (!this.state.hasError) return this.props.children;
 
-            // Default error UI
-            return (
-                <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-                    <div className="sm:mx-auto sm:w-full sm:max-w-md">
-                        <div className="bg-white py-8 px-4 shadow-sm sm:rounded-lg sm:px-10">
-                            <div className="text-center">
-                                <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-red-400" />
-                                <h2 className="mt-4 text-lg font-medium text-gray-900">
-                                    Something went wrong
-                                </h2>
-                                <p className="mt-2 text-sm text-gray-600">
-                                    We're sorry, but something unexpected happened. Please try again.
-                                </p>
+        if (this.props.fallback) return this.props.fallback;
 
-                                {import.meta.env.DEV && this.state.error && (
-                                    <details className="mt-4 text-left">
-                                        <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900">
-                                            Error Details (Development)
-                                        </summary>
-                                        <div className="mt-2 p-3 bg-gray-100 rounded-md">
-                                            <pre className="text-xs text-red-600 whitespace-pre-wrap">
-                                                {this.state.error.toString()}
-                                                {this.state.errorInfo?.componentStack}
-                                            </pre>
-                                        </div>
-                                    </details>
-                                )}
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center bg-app px-4">
+                <div className="w-full max-w-md rounded-lg border border-base bg-surface py-10 px-8 shadow-sm text-center">
+                    <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-[var(--warning)]" />
+                    <h2 className="mt-4 text-lg font-semibold text-[var(--text-primary)]">
+                        Something went wrong
+                    </h2>
+                    <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                        An unexpected error occurred. Try again or reload the page.
+                    </p>
 
-                                <div className="mt-6 flex flex-col space-y-3 sm:flex-row sm:space-y-0 sm:space-x-3">
-                                    <Button
-                                        onClick={this.handleRetry}
-                                        className="flex-1"
-                                    >
-                                        <ArrowPathIcon className="size-4" />
-                                        Try Again
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        onClick={this.handleReload}
-                                        className="flex-1"
-                                    >
-                                        Reload Page
-                                    </Button>
-                                </div>
-                            </div>
-                        </div>
+                    {import.meta.env.DEV && this.state.error && (
+                        <details className="mt-4 text-left">
+                            <summary className="cursor-pointer text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                                Error details (dev only)
+                            </summary>
+                            <pre className="mt-2 rounded-md bg-[var(--error-subtle)] p-3 text-xs text-[var(--error)] whitespace-pre-wrap break-words">
+                                {this.state.error.toString()}
+                                {this.state.errorInfo?.componentStack}
+                            </pre>
+                        </details>
+                    )}
+
+                    <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                        <Button onClick={this.handleRetry} className="flex-1">
+                            <ArrowPathIcon className="size-4" />
+                            Try again
+                        </Button>
+                        <Button variant="outline" onClick={this.handleReload} className="flex-1">
+                            Reload page
+                        </Button>
                     </div>
                 </div>
-            );
-        }
-
-        return this.props.children;
+            </div>
+        );
     }
 }
 
-// Hook-based error boundary for functional components
-interface ErrorFallbackProps {
+// ── RouteErrorFallback ────────────────────────────────────────────────────────
+// Inline error UI for route-level boundaries — keeps the nav visible while
+// showing an error in the content area.
+
+interface RouteErrorFallbackProps {
     error: Error;
     resetError: () => void;
 }
 
-const ErrorFallback: React.FC<ErrorFallbackProps> = ({ error, resetError }) => {
-    return (
-        <div className="min-h-96 flex items-center justify-center">
-            <div className="text-center">
-                <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-red-400" />
-                <h3 className="mt-4 text-lg font-medium text-gray-900">
-                    Something went wrong
-                </h3>
-                <p className="mt-2 text-sm text-gray-600">
-                    {error.message || 'An unexpected error occurred'}
-                </p>
-                <div className="mt-6">
-                    <Button variant="default" onClick={resetError}>
-                        Try again
-                    </Button>
-                </div>
-            </div>
+const RouteErrorFallback: React.FC<RouteErrorFallbackProps> = ({ error, resetError }) => (
+    <div className="flex min-h-96 items-center justify-center p-8">
+        <div className="text-center">
+            <ExclamationTriangleIcon className="mx-auto h-10 w-10 text-[var(--warning)]" />
+            <h3 className="mt-3 text-base font-semibold text-[var(--text-primary)]">
+                Page failed to load
+            </h3>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                {error.message || 'An unexpected error occurred'}
+            </p>
+            <Button variant="default" className="mt-5" onClick={resetError}>
+                Try again
+            </Button>
         </div>
-    );
-};
+    </div>
+);
 
-// Simple error boundary wrapper for specific components
-interface ComponentErrorBoundaryProps {
-    children: ReactNode;
-    componentName?: string;
+// ── RouteErrorBoundary ────────────────────────────────────────────────────────
+// Stateful wrapper around RouteErrorFallback — used inside Layout so the nav
+// stays mounted while the content area shows the error UI.
+
+interface RouteErrorBoundaryState {
+    hasError: boolean;
+    error: Error | null;
 }
 
-const ComponentErrorBoundary: React.FC<ComponentErrorBoundaryProps> = ({
-    children,
-    componentName = 'Component',
-}) => {
-    return (
-        <ErrorBoundary
-            fallback={
-                <div className="p-4 bg-red-50 border border-red-200 rounded-md">
-                    <div className="flex">
-                        <ExclamationTriangleIcon className="h-5 w-5 text-red-400" />
-                        <div className="ml-3">
-                            <h3 className="text-sm font-medium text-red-800">
-                                {componentName} Error
-                            </h3>
-                            <p className="mt-1 text-sm text-red-700">
-                                This component failed to load. Please refresh the page or try again later.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            }
-        >
-            {children}
-        </ErrorBoundary>
-    );
-};
+class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBoundaryState> {
+    constructor(props: { children: ReactNode }) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
 
-export { ErrorBoundary, ErrorFallback, ComponentErrorBoundary };
+    static getDerivedStateFromError(error: Error): RouteErrorBoundaryState {
+        return { hasError: true, error };
+    }
+
+    override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+        if (import.meta.env.DEV) {
+            console.error('RouteErrorBoundary caught:', error, errorInfo);
+        }
+    }
+
+    reset = () => this.setState({ hasError: false, error: null });
+
+    override render() {
+        if (this.state.hasError && this.state.error) {
+            return <RouteErrorFallback error={this.state.error} resetError={this.reset} />;
+        }
+        return this.props.children;
+    }
+}
+
+export { ErrorBoundary, RouteErrorBoundary, RouteErrorFallback };

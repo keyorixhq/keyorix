@@ -2,7 +2,7 @@ import React, { Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './features/auth';
 import { ProtectedRoute, PublicRoute, AdminRoute, Layout, RequirePasswordChange } from './components/layout';
-import { SessionTimeoutWarning, AbsoluteSessionExpiryWarning, Spinner } from './components/ui';
+import { SessionTimeoutWarning, AbsoluteSessionExpiryWarning, Spinner, ErrorBoundary, RouteErrorBoundary } from './components/ui';
 import { ROUTES } from './constants';
 
 // ── Page-level lazy bundles ───────────────────────────────────────────────────
@@ -53,7 +53,7 @@ function App() {
     useAuth();
 
     return (
-        <>
+        <ErrorBoundary>
             <Suspense fallback={<PageSpinner />}>
                 <Routes>
                     {/* Public Routes */}
@@ -75,6 +75,7 @@ function App() {
                             <ProtectedRoute>
                                 <RequirePasswordChange>
                                     <Layout>
+                                        <RouteErrorBoundary>
                                         <Routes>
                                             <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                                             <Route path={ROUTES.SECRETS} element={<SecretsListPage />} />
@@ -100,6 +101,7 @@ function App() {
                                             <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />
                                             <Route path={ROUTES.ROADMAP} element={<RoadmapPage />} />
                                         </Routes>
+                                        </RouteErrorBoundary>
                                     </Layout>
                                 </RequirePasswordChange>
                             </ProtectedRoute>
@@ -130,7 +132,7 @@ function App() {
 
             <SessionTimeoutWarning />
             <AbsoluteSessionExpiryWarning />
-        </>
+        </ErrorBoundary>
     );
 }
 
