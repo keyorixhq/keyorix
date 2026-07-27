@@ -121,7 +121,41 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 		}
 	}
 
+	// RBAC fallback: a project editor/admin whose role grants secrets.write (or
+	// secrets.delete for owner-level operations) passes the HTTP router's
+	// RequireScopedPermission gate but was silently denied here because
+	// CheckSecretPermission only recognized ownership and share records. This
+	// unifies the two authorization models so both the middleware and the core
+	// function accept the same set of legitimate callers (#r124).
+	if rbacPerm := permissionLevelToRBACPerm(requiredPermission); rbacPerm != "" {
+		actorType := actorTypeFromContext(ctx)
+		scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+		if ok, aerr := c.AuthorizePrincipal(ctx, actorType, userID, rbacPerm, scope); aerr == nil && ok {
+			return &PermissionContext{
+				SecretID:   secretID,
+				UserID:     userID,
+				Permission: requiredPermission,
+				Source:     "rbac",
+			}, nil
+		}
+	}
+
 	return nil, fmt.Errorf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
+}
+
+// permissionLevelToRBACPerm maps a PermissionLevel to the equivalent RBAC permission
+// string used by AuthorizePrincipal. PermissionOwner maps to secrets.delete (the most
+// restrictive mutation the RBAC model expresses). Returns "" for PermissionNone.
+func permissionLevelToRBACPerm(level PermissionLevel) string {
+	switch level {
+	case PermissionRead:
+		return "secrets.read"
+	case PermissionWrite:
+		return "secrets.write"
+	case PermissionOwner:
+		return "secrets.delete"
+	}
+	return ""
 }
 
 // hasRequiredPermission checks if the user's permission level meets the required level.

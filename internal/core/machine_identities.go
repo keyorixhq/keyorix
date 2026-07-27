@@ -190,6 +190,17 @@ func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, 
 	if err != nil {
 		return nil, err
 	}
+	// Suspend or revoke must evict every credential from the auth cache
+	// immediately so the identity stops authenticating on the next HTTP request
+	// rather than after validTokenTTL (30s). The HTTP handler also calls
+	// InvalidateTokenCacheByHash directly (defence-in-depth); this call moves
+	// the eviction into the core so gRPC callers (which have no HTTP middleware
+	// reference) get the same guarantee automatically (#r124).
+	if to == MachineSuspended || to == MachineRevoked {
+		if hashes, herr := c.MachineTokenHashes(ctx, id); herr == nil {
+			c.invalidateTokenCache(hashes...)
+		}
+	}
 	c.logMachineEvent(ctx, "machine_identity."+machineVerb(to), result, actorID)
 	return result, nil
 }

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -104,6 +105,9 @@ func TestCheckSecretPermission(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+				// RBAC fallback: no roles at this scope — deny.
+				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
+				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 			},
 			expectError: true,
 		},
@@ -136,6 +140,9 @@ func TestCheckSecretPermission(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(4)).Return([]*models.Group{}, nil)
+				// RBAC fallback: no roles at this scope — deny.
+				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
+				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 			},
 			expectError: true,
 		},
@@ -252,6 +259,9 @@ func TestEnforceSecretWritePermission(t *testing.T) {
 		},
 	}, nil)
 	mockStorage.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+	// RBAC fallback: no roles — deny.
+	mockStorage.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
+	mockStorage.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 
 	core := NewKeyorixCore(mockStorage)
 
@@ -329,6 +339,9 @@ func TestCanUserModifySecret(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				// RBAC fallback: no roles — deny.
+				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
+				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 			},
 			expected: false,
 		},
@@ -406,6 +419,9 @@ func TestCanUserShareSecret(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				// RBAC fallback: no roles — deny.
+				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
+				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 			},
 			expected: false,
 		},
@@ -493,6 +509,9 @@ func TestGetEffectivePermission(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				// RBAC fallback: no roles — deny.
+				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
+				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 			},
 			expectedPermission: PermissionNone,
 		},
@@ -632,6 +651,9 @@ func TestGetSecretWithPermissionCheck(t *testing.T) {
 		mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 		mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 		mockStorage.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+		// RBAC fallback: no roles — deny.
+		mockStorage.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
+		mockStorage.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 
 		core := NewKeyorixCore(mockStorage)
 
@@ -642,4 +664,53 @@ func TestGetSecretWithPermissionCheck(t *testing.T) {
 
 		mockStorage.AssertExpectations(t)
 	})
+}
+
+func TestPermissionLevelToRBACPerm(t *testing.T) {
+	cases := []struct {
+		level PermissionLevel
+		want  string
+	}{
+		{PermissionRead, "secrets.read"},
+		{PermissionWrite, "secrets.write"},
+		{PermissionOwner, "secrets.delete"},
+		{PermissionNone, ""},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, permissionLevelToRBACPerm(tc.level), "level=%s", tc.level)
+	}
+}
+
+// TestCheckSecretPermission_RBACFallback_GrantsAccess verifies that a user
+// with no ownership or share record but a project-scoped RBAC role granting
+// secrets.read is still admitted via the RBAC fallback path (#r124).
+func TestCheckSecretPermission_RBACFallback_GrantsAccess(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+
+	mockStorage := &MockStorage{}
+	// Secret owned by userID=99 (not our caller, userID=7)
+	secret := &models.SecretNode{
+		ID: 1, OwnerID: 99, Name: "rbac-fallback-secret",
+		ProjectID: 5, EnvironmentID: 10,
+	}
+	mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+	mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
+	mockStorage.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
+
+	// RBAC fallback: user 7 has role [55] in this project scope.
+	mockStorage.On("GetUserRoleIDsAt", mock.Anything, uint(7), mock.Anything).Return([]uint{55}, nil)
+	mockStorage.On("GetUserGroupRoleIDsAt", mock.Anything, uint(7), mock.Anything).Return([]uint{}, nil)
+	// Role 55 is not an admin role — GetRoleByName returns not found for each admin name.
+	mockStorage.On("GetRoleByName", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("not found"))
+	// Role 55 grants secrets.read.
+	mockStorage.On("RoleSetHasPermission", mock.Anything, []uint{55}, "secrets.read").Return(true, nil)
+
+	c := NewKeyorixCore(mockStorage)
+
+	permCtx, err := c.CheckSecretPermission(context.Background(), 1, 7, PermissionRead)
+	require.NoError(t, err)
+	require.NotNil(t, permCtx)
+	assert.Equal(t, "rbac", permCtx.Source)
+	assert.Equal(t, PermissionRead, permCtx.Permission)
+	mockStorage.AssertExpectations(t)
 }

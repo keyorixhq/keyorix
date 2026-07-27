@@ -130,10 +130,14 @@ func TestGetSecretVersions_InternalError_S13(t *testing.T) {
 	}
 	require.NoError(t, db.Create(secret).Error)
 
-	req := withUserCtx(withChiParam(
+	// Use a non-admin UserID (99) with no project roles, ownership, or shares.
+	// UserID=1 is the global admin; the RBAC fallback added in #r124 now grants
+	// admins RBAC access so they return 200, not 403. An unprivileged actor with
+	// no grants exercises the permission-denied branch correctly.
+	req := withUserCtxID2(withChiParam(
 		httptest.NewRequest(http.MethodGet, "/", nil),
 		"id", itoa(secret.ID),
-	))
+	), 99, "noperm-user")
 	w := httptest.NewRecorder()
 	h.GetSecretVersions(w, req)
 	// Permission denied → "permission denied" in error → 403.
