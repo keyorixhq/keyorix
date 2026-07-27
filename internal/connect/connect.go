@@ -57,12 +57,19 @@ func prefixAllowed(allowed []string, ref string) bool {
 	return false
 }
 
-// refWithinPrefix reports whether ref is scoped by prefix p on a path-segment
+// RefWithinPrefix reports whether ref is scoped by prefix p on a path-segment
 // boundary rather than a bare substring match: ref must equal p exactly, or extend
 // it starting with '/'. This stops a prefix such as "db/prod" from also matching
 // the unrelated sibling "db/production-other-team" — an over-grant a plain
 // strings.HasPrefix would allow. A prefix already ending in '/' is treated as
-// already segment-scoped (any continuation is fine).
+// already segment-scoped (any continuation is fine). An empty prefix p matches
+// nothing (use a separate empty-prefix guard to mean "allow all").
+func RefWithinPrefix(p, ref string) bool {
+	return refWithinPrefix(p, ref)
+}
+
+// refWithinPrefix is the unexported implementation; callers inside this package
+// use it directly while external callers (e.g. core.refMatches) use RefWithinPrefix.
 func refWithinPrefix(p, ref string) bool {
 	if ref == p {
 		return true
