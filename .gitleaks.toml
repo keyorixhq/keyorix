@@ -1,9 +1,13 @@
 title = "keyorix-web"
 
-# Global allowlist — covers test fixtures (mock credentials) that are not real
-# secrets.  Real secrets must never appear in source; code review is the guard.
-# This only suppresses gitleaks findings in paths that never hold production
-# credentials.
+# Inherit all built-in gitleaks rules so a custom --config does not silently
+# disable detection.  Without this stanza a --config flag that points here
+# would run zero rules (config replaces defaults; extend restores them).
+[extend]
+useDefault = true
+
+# Global allowlist — suppresses findings in test fixtures (mock credentials).
+# Real secrets must never appear in source; code review is the guard for that.
 [allowlist]
 description = "Test fixtures and mock values in non-production files"
 paths = [

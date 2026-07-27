@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import noUnsanitized from 'eslint-plugin-no-unsanitized';
 import globals from 'globals';
 
 export default tseslint.config(
@@ -16,6 +17,11 @@ export default tseslint.config(
     // Scope eslint:recommended to TS/TSX to mirror the old --ext ts,tsx behavior.
     { files: ['**/*.{ts,tsx}'], ...js.configs.recommended },
     ...tseslint.configs.recommended,
+
+    // Catch dangerous DOM sinks (innerHTML, outerHTML, insertAdjacentHTML, etc.)
+    // that bypass React's XSS protections.  Scoped to TS/TSX so config files
+    // written in plain JS aren't covered by DOM-only rules.
+    { files: ['**/*.{ts,tsx}'], ...noUnsanitized.configs.recommended },
 
     // Restore ESLint 8 behavior: unused eslint-disable directives are a warning,
     // not an error (ESLint 9+ changed the default severity of this flag to error).
