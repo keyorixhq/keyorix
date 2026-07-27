@@ -23,6 +23,7 @@ func rotationExecCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.UserRole{},
+		&models.GroupRole{}, &models.UserGroup{}, &models.Group{},
 	))
 	// ListSecrets(ProjectID) JOINs environments, so the scope needs a real env row.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)

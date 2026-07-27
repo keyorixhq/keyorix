@@ -29,8 +29,8 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
 		// Actor 2 has NO role grants at global scope (project_id=0) — only within
 		// project 1, which requireAuthorityForRole(..., projectID=0, ...) never sees.
-		store.On("GetUserRoleIDsAt", ctx, uint(2), mock.MatchedBy(func(s interface{}) bool { return true })).Return([]uint{}, nil)
-		store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.MatchedBy(func(s interface{}) bool { return true })).Return([]uint{}, nil)
+		store.On("GetUserRoleIDsAt", ctx, uint(2), mock.MatchedBy(func(s any) bool { return true })).Return([]uint{}, nil)
+		store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.MatchedBy(func(s any) bool { return true })).Return([]uint{}, nil)
 
 		_, err := c.CreateOIDCBinding(ctx, 1, 5, "https://idp.test", "system:serviceaccount:victim:ci", 2)
 		require.Error(t, err)

@@ -89,6 +89,8 @@ func TestTransitionMachineIdentity(t *testing.T) {
 			return m.State == MachineSuspended
 		}), MachineActive).Return(true, nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+		// Cache eviction: suspend calls MachineTokenHashes which calls ListMachineIdentityCredentials.
+		store.On("ListMachineIdentityCredentials", ctx, uint(10)).Return([]*models.MachineIdentityCredential{}, nil)
 
 		m, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineSuspended, 9)
 		require.NoError(t, err)
@@ -104,6 +106,8 @@ func TestTransitionMachineIdentity(t *testing.T) {
 			return m.State == MachineRevoked && m.RevokedAt != nil
 		}), MachineActive).Return(true, nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+		// Cache eviction: revoke calls MachineTokenHashes which calls ListMachineIdentityCredentials.
+		store.On("ListMachineIdentityCredentials", ctx, uint(10)).Return([]*models.MachineIdentityCredential{}, nil)
 
 		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineRevoked, 9)
 		require.NoError(t, err)
@@ -174,5 +178,70 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot transition")
 		store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+	})
+
+	t.Run("suspend evicts auth cache", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := newMachineCore(ms)
+		ctx := context.Background()
+		ms.On("LockMachineIdentityForUpdate", ctx, uint(20)).Return(&models.MachineIdentity{ID: 20, ProjectID: 1, State: MachineActive}, nil)
+		ms.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+			return m.State == MachineSuspended
+		}), MachineActive).Return(true, nil)
+		ms.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+		ms.On("ListMachineIdentityCredentials", ctx, uint(20)).Return([]*models.MachineIdentityCredential{
+			{ID: 1, TokenHash: "hash-cred-abc"},
+		}, nil)
+
+		var evicted []string
+		c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
+		_, err := c.TransitionMachineIdentity(ctx, 1, 20, MachineSuspended, 9)
+		require.NoError(t, err)
+		assert.Contains(t, evicted, "hash-cred-abc", "suspend must evict the machine token from cache")
+		ms.AssertExpectations(t)
+	})
+
+	t.Run("revoke evicts auth cache", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := newMachineCore(ms)
+		ctx := context.Background()
+		ms.On("LockMachineIdentityForUpdate", ctx, uint(21)).Return(&models.MachineIdentity{ID: 21, ProjectID: 1, State: MachineActive}, nil)
+		ms.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+			return m.State == MachineRevoked && m.RevokedAt != nil
+		}), MachineActive).Return(true, nil)
+		ms.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+		ms.On("ListMachineIdentityCredentials", ctx, uint(21)).Return([]*models.MachineIdentityCredential{
+			{ID: 2, TokenHash: "hash-cred-def"},
+		}, nil)
+
+		var evicted []string
+		c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
+		_, err := c.TransitionMachineIdentity(ctx, 1, 21, MachineRevoked, 9)
+		require.NoError(t, err)
+		assert.Contains(t, evicted, "hash-cred-def", "revoke must evict the machine token from cache")
+		ms.AssertExpectations(t)
+	})
+
+	t.Run("activate does not evict auth cache", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := newMachineCore(ms)
+		ctx := context.Background()
+		ms.On("LockMachineIdentityForUpdate", ctx, uint(22)).Return(&models.MachineIdentity{ID: 22, ProjectID: 1, State: MachineSuspended}, nil)
+		ms.On("TransitionMachineIdentityState", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+			return m.State == MachineActive
+		}), MachineSuspended).Return(true, nil)
+		ms.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+		// ListMachineIdentityCredentials must NOT be called for activate.
+
+		var evicted []string
+		c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
+		_, err := c.TransitionMachineIdentity(ctx, 1, 22, MachineActive, 9)
+		require.NoError(t, err)
+		assert.Empty(t, evicted, "re-activating a machine must not evict any tokens")
+		ms.AssertNotCalled(t, "ListMachineIdentityCredentials", mock.Anything, mock.Anything)
+		ms.AssertExpectations(t)
 	})
 }

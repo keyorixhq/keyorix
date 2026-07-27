@@ -30,7 +30,7 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, *gorm.DB, uint, uint) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
 		&models.Project{}, &models.Environment{}, &models.SecretAccessLog{}, &models.AuditEvent{},
-		&models.ShareRecord{},
+		&models.ShareRecord{}, &models.SecretACL{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@test.com"}).Error)
 

@@ -152,10 +152,15 @@ func TestGetSecretCertificate_PermissionDenied_S13(t *testing.T) {
 		EncryptedValue: certPEM,
 	}).Error)
 
-	req := withUserCtx(withChiParam(
+	// Use a non-admin UserID (99) with no project roles, ownership, or shares.
+	// UserID=1 is the global admin seeded by freshCoreS12WithAdmin; the RBAC
+	// fallback added in #r124 now grants admins access to all secrets, so we
+	// must use an unprivileged actor to keep this "permission denied" branch
+	// exercised.
+	req := withUserCtxID2(withChiParam(
 		httptest.NewRequest(http.MethodGet, "/", nil),
 		"id", fmt.Sprintf("%d", sec.ID),
-	))
+	), 99, "noperm-user")
 	w := httptest.NewRecorder()
 	h.GetSecretCertificate(w, req)
 

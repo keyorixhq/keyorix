@@ -53,6 +53,26 @@ func TestLogin_RateLimited_S13(t *testing.T) {
 
 // ── auth.go: RefreshToken 401 ─────────────────────────────────────────────────
 
+// TestRefreshToken_RateLimited_S13 verifies the 429 branch when the IP has
+// exceeded the failed-login budget (#r124 -- refresh rate limiting).
+func TestRefreshToken_RateLimited_S13(t *testing.T) {
+	cs := freshCoreS12(t)
+	h := NewAuthHandler(cs, false)
+	ctx := context.Background()
+
+	// Flood the login rate limiter (> 10 attempts within the window).
+	for i := 0; i < 12; i++ {
+		cs.RecordFailedLogin(ctx, "10.1.2.3")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+	req.Header.Set("Authorization", "Bearer some-token")
+	req.RemoteAddr = "10.1.2.3:5678"
+	w := httptest.NewRecorder()
+	h.RefreshToken(w, req)
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+}
+
 // TestRefreshToken_InvalidToken_S13 verifies the 401 branch when the token has
 // no matching live session.
 func TestRefreshToken_InvalidToken_S13(t *testing.T) {

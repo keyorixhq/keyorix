@@ -972,9 +972,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})
 
-		// System endpoints
+		// System endpoints — server-to-server proxy API for RemoteStorage followers
+		// (ADR-049). All routes require system.write: only service credentials issued
+		// to downstream Keyorix nodes should reach these endpoints, never regular user
+		// sessions. Prior gate (system.read) was held by every user via system_viewer,
+		// exposing TOTP seed ciphertexts, WebAuthn credentials, machine token hashes,
+		// global admin roster, and setup-token data to all authenticated users (#r124).
 		r.Route("/system", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission(permSystemRead))
+			r.Use(customMiddleware.RequirePermission(permSystemWrite))
 			r.Get("/info", handlers.MakeSystemInfoHandler(cfg))
 			r.Get(pathMetrics, handlers.GetMetrics)
 			// Per-scheduler last-run/last-success timestamps (Prometheus exposition
