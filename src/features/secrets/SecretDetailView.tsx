@@ -121,6 +121,47 @@ const DEFAULT_PERMISSION_COLOR = 'bg-gray-100 text-gray-700 dark:bg-gray-700 dar
 const getPermissionColor = (permission: string): string =>
     PERMISSION_COLORS[permission] ?? DEFAULT_PERMISSION_COLOR;
 
+function buildSecretValueDisplay(
+    showValue: boolean,
+    isLoading: boolean,
+    secretValue: string | null,
+    secretType: string
+): React.ReactNode {
+    if (!showValue) {
+        return (
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4 text-center">
+                <div className="text-gray-400 dark:text-gray-500 mb-2">
+                    <EyeSlashIcon className="h-8 w-8 mx-auto" />
+                </div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Secret value is hidden for security. Click &ldquo;Reveal&rdquo; to view.
+                </p>
+            </div>
+        );
+    }
+    if (isLoading) {
+        return (
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
+                <Loading />
+            </div>
+        );
+    }
+    if (!secretValue) return null;
+    return (
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
+            {secretType === 'json' ? (
+                <pre className="text-sm font-mono text-gray-900 dark:text-white whitespace-pre-wrap overflow-x-auto">
+                    {formatSecretValue(secretValue, secretType)}
+                </pre>
+            ) : (
+                <div className="text-sm font-mono text-gray-900 dark:text-white break-all">
+                    {secretValue}
+                </div>
+            )}
+        </div>
+    );
+}
+
 interface SecretDetailViewProps {
     secret: Secret;
     onEdit?: (secret: Secret) => void;
@@ -259,36 +300,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
         </>
     );
 
-    const revealedValueContent = secretValue ? (
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
-            {secret.type === 'json' ? (
-                <pre className="text-sm font-mono text-gray-900 dark:text-white whitespace-pre-wrap overflow-x-auto">
-                    {formatSecretValue(secretValue, secret.type)}
-                </pre>
-            ) : (
-                <div className="text-sm font-mono text-gray-900 dark:text-white break-all">
-                    {secretValue}
-                </div>
-            )}
-        </div>
-    ) : null;
-
-    const loadingOrValue = isLoading ? (
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
-            <Loading />
-        </div>
-    ) : revealedValueContent;
-
-    const secretValueDisplay = !showValue ? (
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4 text-center">
-            <div className="text-gray-400 dark:text-gray-500 mb-2">
-                <EyeSlashIcon className="h-8 w-8 mx-auto" />
-            </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-                Secret value is hidden for security. Click "Reveal" to view.
-            </p>
-        </div>
-    ) : loadingOrValue;
+    const secretValueDisplay = buildSecretValueDisplay(showValue, isLoading, secretValue, secret.type);
 
     const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key !== 'Enter') return;

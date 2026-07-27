@@ -145,6 +145,18 @@ function resolveValidEnvId(envs: { id: number }[], currentEnvId: number): number
     return envs[0]?.id ?? 0;
 }
 
+function resolveNameHint(policy: SecretPolicy['name'] | undefined): string {
+    if (!policy?.enabled) return '';
+    return [
+        policy.pattern ? `must match ${policy.pattern}` : '',
+        policy.max_length ? `max ${policy.max_length} chars` : '',
+    ].filter(Boolean).join('; ');
+}
+
+function checkNamePatternUnsafe(policy: SecretPolicy['name'] | undefined): boolean {
+    return !!policy?.enabled && !!policy.pattern && !isPatternSafe(policy.pattern);
+}
+
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
     const bulkClassify = useBulkClassifySecrets();
@@ -176,20 +188,13 @@ export const SecretsListPage: React.FC = () => {
     // Active secret-name policy, for a create-time hint + client-side pre-validation.
     const { data: secretPolicy } = useSecretPolicy();
     const namePolicy = secretPolicy?.name;
-    const nameHint = !namePolicy?.enabled
-        ? ''
-        : [
-              namePolicy.pattern ? `must match ${namePolicy.pattern}` : '',
-              namePolicy.max_length ? `max ${namePolicy.max_length} chars` : '',
-          ]
-              .filter(Boolean)
-              .join('; ');
+    const nameHint = resolveNameHint(namePolicy);
     // The naming-policy pattern is admin-configured but untrusted from the
     // browser's perspective -- a catastrophic-backtracking shape (e.g.
     // `(a+)+$`) would hang this tab. When the pattern looks unsafe, skip the
     // live client-side check (the server still enforces it on submit) and
     // say so.
-    const namePatternUnsafe = !!namePolicy?.enabled && !!namePolicy.pattern && !isPatternSafe(namePolicy.pattern);
+    const namePatternUnsafe = checkNamePatternUnsafe(namePolicy);
     const { data: createEnvironments } = useProjectEnvironments(createProjectId);
     // Default the project to the first available once projects load.
     React.useEffect(() => {

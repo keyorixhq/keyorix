@@ -35,6 +35,39 @@ function parseUptime(raw: string): string {
     return raw.split('.')[0] ?? '';
 }
 
+interface SecurityCardData {
+    label: string;
+    value: string | number;
+    sub: string;
+    accent: string;
+}
+function buildSecurityCardData(
+    alertCount: number,
+    anomalyCount: number,
+    expiredCount: number,
+    expiringCount: number
+): SecurityCardData {
+    const plural = anomalyCount === 1 ? 'y' : 'ies';
+    return {
+        label: alertCount > 0 ? `Alerts (${alertCount})` : 'Security',
+        value: alertCount > 0 ? alertCount : '✓',
+        sub: alertCount > 0
+            ? `${anomalyCount} anomal${plural} · ${expiredCount} expired · ${expiringCount} expiring`
+            : 'No active alerts',
+        accent: alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500',
+    };
+}
+
+function buildAuditSub(logins: number | null | undefined, reads: number | null | undefined): string {
+    if (logins != null && reads != null) return `${logins} logins · ${reads} reads`;
+    return 'all events logged';
+}
+
+function buildActiveUsersSub(sharedCount: number): string {
+    const plural = sharedCount === 1 ? '' : 's';
+    return sharedCount > 0 ? `${sharedCount} shared secret${plural}` : 'registered accounts';
+}
+
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
 interface StatCardProps {
@@ -253,24 +286,10 @@ export const DashboardPage: React.FC = () => {
 
     const greeting = getGreeting(new Date().getHours());
 
-    // Pre-computed values to avoid nested ternaries in JSX
     const sharedCount = stats?.sharedSecrets ?? 0;
-    const sharedPlural = sharedCount === 1 ? '' : 's';
-    const activeUsersSub = sharedCount > 0
-        ? `${sharedCount} shared secret${sharedPlural}`
-        : 'registered accounts';
-
-    const auditEventsSub = stats?.auditLogins30d != null && stats?.auditSecretReads30d != null
-        ? `${stats.auditLogins30d} logins · ${stats.auditSecretReads30d} reads`
-        : 'all events logged';
-
-    const anomalyPlural = anomalies.length === 1 ? 'y' : 'ies';
-    const securityCardLabel = alertCount > 0 ? `Alerts (${alertCount})` : 'Security';
-    const securityCardValue: string | number = alertCount > 0 ? alertCount : '✓';
-    const securityCardSub = alertCount > 0
-        ? `${anomalies.length} anomal${anomalyPlural} · ${expiredSecrets.length} expired · ${expiringSecrets.length} expiring`
-        : 'No active alerts';
-    const securityCardAccent = alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500';
+    const activeUsersSub = buildActiveUsersSub(sharedCount);
+    const auditEventsSub = buildAuditSub(stats?.auditLogins30d, stats?.auditSecretReads30d);
+    const securityCard = buildSecurityCardData(alertCount, anomalies.length, expiredSecrets.length, expiringSecrets.length);
 
     const expiringHint = expiredSecrets.length > 0
         ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d`
@@ -323,10 +342,10 @@ export const DashboardPage: React.FC = () => {
                         onClick={() => navigate(ROUTES.AUDIT)}
                     />
                     <StatCard
-                        label={securityCardLabel}
-                        value={securityCardValue}
-                        sub={securityCardSub}
-                        accent={securityCardAccent}
+                        label={securityCard.label}
+                        value={securityCard.value}
+                        sub={securityCard.sub}
+                        accent={securityCard.accent}
                         {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT + '?tab=anomalies') } : {})}
                     />
                 </div>

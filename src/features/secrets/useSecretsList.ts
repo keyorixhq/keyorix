@@ -16,8 +16,21 @@ type Secret = {
     [key: string]: any;
 };
 
+// Nulls sort last regardless of direction.
+function compareExpiry(a: Secret, b: Secret): number {
+    if (!a.Expiration && !b.Expiration) return 0;
+    if (!a.Expiration) return 1;
+    if (!b.Expiration) return -1;
+    return new Date(a.Expiration).getTime() - new Date(b.Expiration).getTime();
+}
+
 function compareSecrets(a: Secret, b: Secret, sortField: string, sortDirection: string | undefined): number {
-    let aVal: any, bVal: any;
+    if (sortField === 'expiry') {
+        const cmp = compareExpiry(a, b);
+        return sortDirection === 'asc' ? cmp : -cmp;
+    }
+    let aVal: any;
+    let bVal: any;
     if (sortField === 'name') {
         aVal = a.name.toLowerCase();
         bVal = b.name.toLowerCase();
@@ -27,13 +40,6 @@ function compareSecrets(a: Secret, b: Secret, sortField: string, sortDirection: 
     } else if (sortField === 'type') {
         aVal = a.type;
         bVal = b.type;
-    } else if (sortField === 'expiry') {
-        // nulls last regardless of direction
-        if (!a.Expiration && !b.Expiration) return 0;
-        if (!a.Expiration) return 1;
-        if (!b.Expiration) return -1;
-        aVal = new Date(a.Expiration);
-        bVal = new Date(b.Expiration);
     } else {
         return 0;
     }

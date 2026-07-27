@@ -207,6 +207,14 @@ const buildAnomalyValue = (unacknowledged: number, highSeverityOpen: number): st
     return `${unacknowledged}${suffix}`;
 };
 
+function countTone(n: number, aboveTone: 'warn' | 'bad'): 'good' | 'warn' | 'bad' {
+    return n > 0 ? aboveTone : 'good';
+}
+function maybeCountTone(n: number, aboveTone: 'warn' | 'bad'): 'good' | 'warn' | 'bad' | undefined {
+    return n > 0 ? aboveTone : undefined;
+}
+function boolTone(ok: boolean): 'good' | 'bad' { return ok ? 'good' : 'bad'; }
+
 // PosturePanel surfaces the live controls-posture report (GET /compliance/posture).
 // It needs system.read; non-admins get 403 and the panel shows a quiet note rather
 // than failing the page.
@@ -264,12 +272,12 @@ const PosturePanel: React.FC = () => {
                 <Tile
                     label="Audit chain verified (A.5.28)"
                     value={p.auditIntegrity.chainVerified ? 'Yes' : 'No'}
-                    tone={p.auditIntegrity.chainVerified ? 'good' : 'bad'}
+                    tone={boolTone(p.auditIntegrity.chainVerified)}
                 />
                 <Tile
                     label="On-box checkpointed"
                     value={p.auditIntegrity.checkpointed ? 'Yes' : 'No'}
-                    tone={p.auditIntegrity.checkpointed ? 'good' : undefined}
+                    tone={maybeCountTone(p.auditIntegrity.checkpointed ? 0 : 1, 'warn')}
                 />
                 <Tile
                     label="Second-factor coverage"
@@ -280,43 +288,43 @@ const PosturePanel: React.FC = () => {
                 <Tile
                     label="Projects reviewed (A.5.18)"
                     value={`${reviewed}/${ag.projects}`}
-                    tone={ag.projectsNeverReviewed > 0 ? 'warn' : 'good'}
+                    tone={countTone(ag.projectsNeverReviewed, 'warn')}
                 />
                 <Tile label="Open campaigns / pending" value={`${ag.openCampaigns} / ${ag.pendingItems}`} />
                 <Tile
                     label="Dormant role grants"
                     value={ag.dormantRoleGrants}
-                    tone={ag.dormantRoleGrants > 0 ? 'warn' : 'good'}
+                    tone={countTone(ag.dormantRoleGrants, 'warn')}
                 />
                 <Tile
                     label="SoD violations (A.5.3)"
                     value={ag.sodViolations}
-                    tone={ag.sodViolations > 0 ? 'bad' : 'good'}
+                    tone={countTone(ag.sodViolations, 'bad')}
                 />
                 <Tile
                     label="Projects overdue for recert (A.5.18)"
                     value={ag.projectsOverdue}
-                    tone={ag.projectsOverdue > 0 ? 'warn' : 'good'}
+                    tone={countTone(ag.projectsOverdue, 'warn')}
                 />
                 <Tile
                     label="Rotation overdue / due-soon (A.5.15)"
                     value={`${p.rotation.overdue} / ${p.rotation.dueSoon}`}
-                    tone={p.rotation.overdue > 0 ? 'warn' : 'good'}
+                    tone={countTone(p.rotation.overdue, 'warn')}
                 />
                 <Tile
                     label="Break-glass active / total"
                     value={`${p.emergencyAccess.activeActivations} / ${p.emergencyAccess.totalActivations}`}
-                    tone={p.emergencyAccess.activeActivations > 0 ? 'warn' : undefined}
+                    tone={maybeCountTone(p.emergencyAccess.activeActivations, 'warn')}
                 />
                 <Tile
                     label="Restricted secrets (A.5.12)"
                     value={p.classification.restricted}
-                    tone={p.classification.restricted > 0 ? 'warn' : undefined}
+                    tone={maybeCountTone(p.classification.restricted, 'warn')}
                 />
                 <Tile
                     label="Unclassified secrets"
                     value={`${p.classification.unclassified} / ${p.classification.totalSecrets}`}
-                    tone={p.classification.unclassified > 0 ? 'warn' : 'good'}
+                    tone={countTone(p.classification.unclassified, 'warn')}
                 />
                 <Tile
                     label="Open anomalies (NIS2)"

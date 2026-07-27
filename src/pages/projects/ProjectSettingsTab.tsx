@@ -19,6 +19,32 @@ interface ProjectSettingsTabProps {
     projectId: number;
 }
 
+async function downloadInventory(
+    projectId: number,
+    setMsg: (m: string) => void,
+    setBusy: (b: boolean) => void
+): Promise<void> {
+    setMsg('');
+    setBusy(true);
+    try {
+        const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/inventory.csv`, {
+            responseType: 'blob',
+        });
+        const url = URL.createObjectURL(res.data as Blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `secret-inventory-project-${projectId}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (err: any) {
+        setMsg(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to export inventory.');
+    } finally {
+        setBusy(false);
+    }
+}
+
 interface Env {
     id: number;
     name: string;
@@ -283,29 +309,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     // never values — ISO 27001 A.5.9). Authed blob fetch → object URL → download (server #367).
     const [inventoryMsg, setInventoryMsg] = useState('');
     const [inventoryBusy, setInventoryBusy] = useState(false);
-    const handleExportInventory = async () => {
-        setInventoryMsg('');
-        setInventoryBusy(true);
-        try {
-            const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/inventory.csv`, {
-                responseType: 'blob',
-            });
-            const url = URL.createObjectURL(res.data as Blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `secret-inventory-project-${projectId}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
-        } catch (err: any) {
-            setInventoryMsg(
-                err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to export inventory.'
-            );
-        } finally {
-            setInventoryBusy(false);
-        }
-    };
+    const handleExportInventory = () => downloadInventory(projectId, setInventoryMsg, setInventoryBusy);
 
     // ── Project deletion ──────────────────────────────────────────────────
     const [showDeleteModal, setShowDeleteModal] = useState(false);
