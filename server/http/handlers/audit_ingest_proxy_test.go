@@ -63,6 +63,20 @@ func TestIngestAuditEventProxy_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestIngestAuditEventProxy_StorageError verifies that a storage failure (e.g.
+// missing table) is surfaced as a 500 response, not a silent no-op.
+func TestIngestAuditEventProxy_StorageError(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	// Open a DB with NO tables — LogAuditEvent will fail with "no such table".
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	h := NewAuditHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	body, _ := json.Marshal(map[string]any{"event_type": "secret.read"})
+	w := postAuditIngest(h.IngestAuditEventProxy, body)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
 // TestIngestAuditEventProxy_IDZeroedOnArrival pins r123: a caller-supplied ID
 // must not be forwarded to the hub DB — the hub assigns its own auto-increment
 // ID so that chain positions cannot be forged and VerifyAuditChain stays intact.

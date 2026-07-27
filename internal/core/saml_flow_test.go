@@ -198,6 +198,29 @@ func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 
+// TestCompleteSAML_PasswordExpiredGateError covers the r123 expiry gate path:
+// when an active user's password is expired and SetAccountState fails (storage
+// error), CompleteSAML must return an error and mint no session.
+func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|99", Email: "exp@x.io", Name: "Expired"}}
+	c, store := samlTestCore(stub)
+	c.passwordPolicy = PasswordPolicy{MaxAgeDays: 1}
+	expiredUser := &models.User{ID: 99, AccountState: "active", CreatedAt: time.Now().Add(-48 * time.Hour)}
+
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-exp").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|99").Return(expiredUser, nil)
+	store.On("SetAccountState", mock.Anything, uint(99), AccountPasswordResetRequired, mock.Anything).
+		Return(errors.New("db unavailable"))
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil)
+	session, _, _, err := c.CompleteSAML(context.Background(), "corp", req, "relay-exp", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "password expiry")
+	assert.Nil(t, session)
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
 // TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount is the positive
 // control: an operator who has decided to trust a specific SAML provider's
 // asserted email can still opt in, and the existing (never-federated) account

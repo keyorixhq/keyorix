@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -619,6 +622,47 @@ func TestCompleteSSO_RejectsSAMLTypedProvider(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "nil pointer", "must be a clean error, not a recovered panic")
 	store.AssertNotCalled(t, "ConsumeSSOLoginState", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSSO_PasswordExpiredGateError covers the r123 expiry gate path in
+// CompleteSSO: when an active user's password has expired and SetAccountState
+// fails (storage error), the login must be refused before minting a session.
+// The test uses an in-process httptest server as the OAuth2 token endpoint to
+// avoid any real network dependency.
+func TestCompleteSSO_PasswordExpiredGateError(t *testing.T) {
+	c, store, key, p := ssoTestCore(t)
+	c.passwordPolicy = PasswordPolicy{MaxAgeDays: 1}
+
+	const testNonce = "nonce-expiry-err"
+	expiredUser := &models.User{ID: 55, AccountState: "active", CreatedAt: time.Now().Add(-48 * time.Hour)}
+
+	idToken := signToken(t, key, "kid-1", jwt.MapClaims{
+		"iss":            "https://idp.test",
+		"aud":            "client-1",
+		"sub":            "okta|55",
+		"email":          "expired@x.io",
+		"email_verified": true,
+		"nonce":          testNonce,
+		"exp":            time.Now().Add(time.Hour).Unix(),
+	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
+	}))
+	defer ts.Close()
+	p.OAuth.Endpoint.TokenURL = ts.URL
+
+	store.On("ConsumeSSOLoginState", mock.Anything, "state-exp").Return(
+		&models.SSOLoginState{Provider: "okta", Nonce: testNonce, ReturnTo: "/dash", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|55").Return(expiredUser, nil)
+	store.On("SetAccountState", mock.Anything, uint(55), AccountPasswordResetRequired, mock.Anything).
+		Return(errors.New("db unavailable"))
+
+	session, _, _, err := c.CompleteSSO(context.Background(), "okta", "auth-code", "state-exp", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "password expiry")
+	assert.Nil(t, session)
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 
 func TestSanitizeReturnTo(t *testing.T) {
