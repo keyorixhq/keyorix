@@ -16,6 +16,9 @@ import { copyToClipboard } from '../../utils';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
+import { OIDCFederationSection } from './OIDCFederationSection';
+
+type PageTab = 'accounts' | 'oidc';
 
 const SCOPES = [
     { value: 'secrets:read', description: 'Read secrets' },
@@ -55,6 +58,7 @@ export const ServiceAccountsPage: React.FC = () => {
     const isDark =
         theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
+    const [activeTab, setActiveTab] = useState<PageTab>('accounts');
     const [activeModal, setActiveModal] = useState<ActiveModal>(null);
     const [pageError, setPageError] = useState('');
 
@@ -297,13 +301,37 @@ export const ServiceAccountsPage: React.FC = () => {
                             Machine identities for CI/CD pipelines and automated workflows
                         </p>
                     </div>
-                    <Button variant="default" onClick={openCreate}>
-                        <PlusIcon className="h-4 w-4 mr-1.5" />
-                        New Service Account
-                    </Button>
+                    {activeTab === 'accounts' && (
+                        <Button variant="default" onClick={openCreate}>
+                            <PlusIcon className="h-4 w-4 mr-1.5" />
+                            New Service Account
+                        </Button>
+                    )}
                 </div>
 
-                {pageError && (
+                {/* Tab bar */}
+                <div className="flex gap-1 mb-6 border-b border-base">
+                    {(['accounts', 'oidc'] as const).map((tab) => (
+                        <button
+                            key={tab}
+                            type="button"
+                            onClick={() => setActiveTab(tab)}
+                            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                                activeTab === tab
+                                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                                    : 'border-transparent text-base-muted hover:text-base-primary'
+                            }`}
+                        >
+                            {tab === 'accounts' ? 'Service Accounts' : 'OIDC Federation'}
+                        </button>
+                    ))}
+                </div>
+
+                {activeTab === 'oidc' && (
+                    <OIDCFederationSection serviceAccounts={serviceAccounts} />
+                )}
+
+                {activeTab === 'accounts' && pageError && (
                     <Alert
                         type="error"
                         title={pageError}
@@ -313,7 +341,7 @@ export const ServiceAccountsPage: React.FC = () => {
                     />
                 )}
 
-                {isLoading ? (
+                {activeTab === 'accounts' && (isLoading ? (
                     <Loading className="py-20" />
                 ) : isError ? (
                     <Alert
@@ -454,7 +482,7 @@ export const ServiceAccountsPage: React.FC = () => {
                             </table>
                         </div>
                     </div>
-                )}
+                ))}
             </div>
 
             {/* ── Create modal ─────────────────────────────────────────────────── */}
