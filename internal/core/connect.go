@@ -206,24 +206,48 @@ func refMatches(pattern, ref string) bool {
 // identities resolve from machine_identity_roles; users resolve their direct roles
 // PLUS group-derived roles (scopedRoleIDs). Resolving only direct roles would deny a
 // user whose granted role comes via a group even though connect.read itself honors it.
-// Connect is a global surface, so roles are resolved at global scope.
+//
+// CONN-005: roles are resolved at global scope AND at every project scope the actor
+// holds a grant in, so a user with only project-scoped role grants can match a
+// ConnectRefGrant that references one of those roles. Connect ref grants reference a
+// role by ID — if a user has that role at any scope, they should be permitted.
 func (c *KeyorixCore) actorRoleIDs(ctx context.Context, actorType string, principalID uint) (map[uint]bool, error) {
-	var ids []uint
-	var err error
+	set := map[uint]bool{}
 	if actorType == ActorTypeMachine {
-		ids, err = c.storage.GetMachineRoleIDsAt(ctx, principalID, Scope{})
+		ids, err := c.storage.GetMachineRoleIDsAt(ctx, principalID, Scope{})
 		if err != nil {
 			return nil, fmt.Errorf("connect ref-grant: load machine roles: %w", err)
 		}
-	} else {
-		ids, err = c.scopedRoleIDs(ctx, principalID, Scope{})
-		if err != nil {
-			return nil, fmt.Errorf("connect ref-grant: load actor roles: %w", err)
+		for _, id := range ids {
+			set[id] = true
 		}
+		return set, nil
 	}
-	set := make(map[uint]bool, len(ids))
+	// Global scope first.
+	ids, err := c.scopedRoleIDs(ctx, principalID, Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("connect ref-grant: load actor roles: %w", err)
+	}
 	for _, id := range ids {
 		set[id] = true
+	}
+	// Also include roles assigned at any project scope — a project-scoped role
+	// assignment for a role that appears in a ConnectRefGrant should be honoured.
+	scopes, err := c.storage.GetUserRoleScopes(ctx, principalID)
+	if err != nil {
+		return nil, fmt.Errorf("connect ref-grant: enumerate role scopes: %w", err)
+	}
+	for _, sc := range scopes {
+		if sc.ProjectID == 0 {
+			continue // already covered by global query above
+		}
+		projectIDs, err := c.scopedRoleIDs(ctx, principalID, sc)
+		if err != nil {
+			return nil, fmt.Errorf("connect ref-grant: load actor roles at scope %v: %w", sc, err)
+		}
+		for _, id := range projectIDs {
+			set[id] = true
+		}
 	}
 	return set, nil
 }
