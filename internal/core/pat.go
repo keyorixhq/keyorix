@@ -197,9 +197,17 @@ func encodePATScopes(scopes []string) (string, error) {
 }
 
 // DecodePATScopes parses a stored scopes column back into a permission list.
-// An empty/invalid column yields nil (unrestricted) — fail-open here is correct
-// because an empty allowlist already means "inherit the owner", and the owner's
-// own RBAC still gates every action.
+// An empty column yields nil (unrestricted) — a PAT created without an explicit
+// scope allowlist inherits its owner's full permission set, so nil is the
+// correct "no restriction" signal.
+//
+// A non-empty column that fails JSON parsing is treated as corrupted rather than
+// unrestricted: the token was created WITH a scope restriction that is now
+// unreadable, so we return a sentinel that patRestrictionFrom interprets as
+// "deny everything" rather than accidentally widening a previously-restricted
+// token to full owner access (#r124 PAT scope fail-open).
+var patScopeCorrupted = []string{"__corrupted__"}
+
 func DecodePATScopes(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -207,7 +215,10 @@ func DecodePATScopes(raw string) []string {
 	}
 	var out []string
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil
+		// Non-empty but unparseable: fail CLOSED — return a sentinel that no
+		// real permission string will ever match, so the PAT is denied everywhere
+		// rather than silently granted full owner access on a corrupted row.
+		return patScopeCorrupted
 	}
 	return out
 }

@@ -81,7 +81,7 @@ func runListRemote(rc *common.RemoteClient) error {
 		if a.Acknowledged {
 			ack = " [ACK]"
 		}
-		fmt.Printf("[%d] %s | %s | %s%s\n", a.ID, a.Severity, a.AlertType, a.DetectedAt[:16], ack)
+		fmt.Printf("[%d] %s | %s | %s%s\n", a.ID, a.Severity, a.AlertType, a.DetectedAt[:min(16, len(a.DetectedAt))], ack)
 		fmt.Printf("    Secret: %s | User: %s | IP: %s\n", a.SecretName, a.AccessedBy, a.IPAddress)
 		fmt.Printf("    %s\n\n", a.Description)
 	}

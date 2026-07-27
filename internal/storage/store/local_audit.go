@@ -364,16 +364,20 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		if filter.ActorUsername != nil {
 			// Resolve username → user_id via a subquery so we stay on the
 			// audit_events table (no JOIN needed for the count query too).
+			// escapeLIKE sanitises % and _ in the caller-supplied username so
+			// a value like "admin%" doesn't turn into a wildcard prefix scan
+			// covering all usernames (#r124 LIKE injection).
 			query = query.Where(
-				"user_id IN (SELECT id FROM users WHERE username LIKE ? AND deleted_at IS NULL)",
-				"%"+*filter.ActorUsername+"%",
+				`user_id IN (SELECT id FROM users WHERE username LIKE ? ESCAPE '\' AND deleted_at IS NULL)`,
+				"%"+escapeLIKE(*filter.ActorUsername)+"%",
 			)
 		}
 		if filter.ResourceType != nil {
 			// event_type is "resource_type.action" — match rows whose event_type
 			// starts with "<resource_type>." so "secret" catches "secret.read",
-			// "secret.created", etc.
-			query = query.Where("event_type LIKE ?", *filter.ResourceType+".%")
+			// "secret.created", etc. escapeLIKE prevents a caller-supplied
+			// resource_type containing % or _ from matching unintended event types.
+			query = query.Where(`event_type LIKE ? ESCAPE '\'`, escapeLIKE(*filter.ResourceType)+".%")
 		}
 		if filter.Page > 1 {
 			page = filter.Page
@@ -383,6 +387,7 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		}
 	}
 	pageSize = clampPageSize(pageSize)
+	page = clampPage(page)
 
 	var total int64
 	query.Count(&total)
