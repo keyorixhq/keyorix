@@ -22,7 +22,7 @@ const leaseStatusStyle = (status: string): React.CSSProperties => {
 
 // fieldLabel humanizes a cloud-credential field key, e.g. access_key_id → "Access key id".
 const fieldLabel = (key: string): string => {
-    const s = key.split('_').join(' ');
+    const s = key.replaceAll('_', ' ');
     return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
@@ -97,7 +97,7 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                         className="px-2 py-0.5 rounded-full font-medium capitalize shrink-0"
                         style={leaseStatusStyle(l.status)}
                     >
-                        {l.status.replace(/_/g, ' ')}
+                        {l.status.replaceAll('_', ' ')}
                     </span>
                     <span className="font-mono truncate" style={{ color: 'var(--text-primary)' }}>
                         {l.roleName || l.leaseId}

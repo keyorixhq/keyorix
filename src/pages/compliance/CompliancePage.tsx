@@ -54,34 +54,40 @@ const LegalHoldBanner: React.FC = () => {
                             : 'Background purge/retention jobs run normally.'}
                     </p>
                 </div>
-                {active ? (
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setError('');
-                            lift.mutate(undefined, { onError });
-                        }}
-                        disabled={lift.isPending}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
-                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                    >
-                        Lift hold
-                    </button>
-                ) : (
-                    !placing ? (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setError('');
-                                setPlacing(true);
-                            }}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
-                            style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
-                        >
-                            Place hold
-                        </button>
-                    ) : null
-                )}
+                {(() => {
+                    if (active) {
+                        return (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setError('');
+                                    lift.mutate(undefined, { onError });
+                                }}
+                                disabled={lift.isPending}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
+                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                            >
+                                Lift hold
+                            </button>
+                        );
+                    }
+                    if (!placing) {
+                        return (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setError('');
+                                    setPlacing(true);
+                                }}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                                style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                            >
+                                Place hold
+                            </button>
+                        );
+                    }
+                    return null;
+                })()}
             </div>
             {placing && !active && (
                 <div className="mt-3 flex items-center gap-2">
@@ -190,6 +196,17 @@ const postureErrorMessage = (status: number | undefined): string => {
     return 'Controls posture is currently unavailable.';
 };
 
+const buildAnomalyTone = (highSeverityOpen: number, unacknowledged: number): 'bad' | 'warn' | 'good' => {
+    if (highSeverityOpen > 0) return 'bad';
+    if (unacknowledged > 0) return 'warn';
+    return 'good';
+};
+
+const buildAnomalyValue = (unacknowledged: number, highSeverityOpen: number): string => {
+    const suffix = highSeverityOpen > 0 ? ` (${highSeverityOpen} high)` : '';
+    return `${unacknowledged}${suffix}`;
+};
+
 // PosturePanel surfaces the live controls-posture report (GET /compliance/posture).
 // It needs system.read; non-admins get 403 and the panel shows a quiet note rather
 // than failing the page.
@@ -225,11 +242,8 @@ const PosturePanel: React.FC = () => {
 
     const ag = p.accessGovernance;
     const reviewed = ag.projects - ag.projectsNeverReviewed;
-    const highSeveritySuffix = p.anomalies.highSeverityOpen > 0 ? ` (${p.anomalies.highSeverityOpen} high)` : '';
-    const anomalyValue = `${p.anomalies.unacknowledged}${highSeveritySuffix}`;
-    let anomalyTone: 'bad' | 'warn' | 'good' = 'good';
-    if (p.anomalies.highSeverityOpen > 0) anomalyTone = 'bad';
-    else if (p.anomalies.unacknowledged > 0) anomalyTone = 'warn';
+    const anomalyValue = buildAnomalyValue(p.anomalies.unacknowledged, p.anomalies.highSeverityOpen);
+    const anomalyTone = buildAnomalyTone(p.anomalies.highSeverityOpen, p.anomalies.unacknowledged);
     return (
         <div
             className="rounded-xl border mb-8 overflow-hidden"
@@ -557,7 +571,9 @@ const ControlMatrixPanel: React.FC = () => {
     const scoreDenom = passCount + gapCount;
     const scorePercent = scoreDenom > 0 ? Math.round((passCount / scoreDenom) * 100) : 100;
     const activeFw = FRAMEWORKS.find((f) => f.key === activeFramework)!;
-    const scoreColor = scorePercent >= 90 ? 'var(--success)' : scorePercent >= 70 ? 'var(--warning)' : 'var(--error)';
+    let scoreColor = 'var(--error)';
+    if (scorePercent >= 90) scoreColor = 'var(--success)';
+    else if (scorePercent >= 70) scoreColor = 'var(--warning)';
 
     return (
         <div

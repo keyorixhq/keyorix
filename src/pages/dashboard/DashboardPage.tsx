@@ -25,12 +25,11 @@ const fmtDate = (d: string | Date) =>
 function parseUptime(raw: string): string {
     if (!raw) return '—';
     // Go duration format: "2h34m12.456s", "45m3s", "1m3.139s", "30s", or bare integer seconds
-    const h = /(\d+)h/.exec(raw)?.[1];
-    const m = /(\d+)m/.exec(raw)?.[1];
-    const s = /(\d+)[s.]/.exec(raw)?.[1];
-    if (h) return `${h}h ${m ?? '0'}m`;
-    if (m) return `${m}m ${s ?? '0'}s`;
-    if (s) return `${s}s`;
+    const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)(?:\.\d+)?s)?$/.exec(raw);
+    const [, h, m, s] = match ?? [];
+    if (h !== undefined) return `${h}h ${m ?? '0'}m`;
+    if (m !== undefined) return `${m}m ${s ?? '0'}s`;
+    if (s !== undefined) return `${s}s`;
     const num = Number.parseInt(raw, 10);
     if (!Number.isNaN(num)) return `${num}s`;
     return raw.split('.')[0] ?? '';
@@ -48,17 +47,25 @@ interface StatCardProps {
     onClick?: () => void;
 }
 
+function buildStatCardKeyDown(onClick: (() => void) | undefined): React.KeyboardEventHandler<HTMLDivElement> | undefined {
+    if (!onClick) return undefined;
+    return (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); };
+}
+
+function buildStatCardClassName(onClick: (() => void) | undefined): string {
+    const clickable = onClick ? 'cursor-pointer hover:shadow-md hover:border-base transition-all duration-150' : '';
+    return `relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs ${clickable}`;
+}
+
 const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue, accent, onClick }) => {
     const numericValue = typeof value === 'number' ? value : 0;
     const delta = trend && prevValue != null ? Math.round(numericValue - prevValue) : null;
     return (
         <div
-            role={onClick ? 'button' : undefined}
             tabIndex={onClick ? 0 : undefined}
             onClick={onClick}
-            onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); } : undefined}
-            className={`relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs
-            ${onClick ? 'cursor-pointer hover:shadow-md hover:border-base transition-all duration-150' : ''}`}
+            onKeyDown={buildStatCardKeyDown(onClick)}
+            className={buildStatCardClassName(onClick)}
         >
             <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
             <span className="text-xs font-semibold text-base-muted uppercase tracking-widest pl-3">{label}</span>
@@ -147,15 +154,17 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
     );
 };
 
+type SignalSeverity = 'neutral' | 'warn' | 'alert';
+
 interface SignalCardProps {
     label: string;
     value: number;
     hint: string;
-    severity: 'neutral' | 'warn' | 'alert';
+    severity: SignalSeverity;
     onClick?: () => void;
 }
 
-function getSignalCardStyles(severity: SignalCardProps['severity'], isDark: boolean): React.CSSProperties {
+function getSignalCardStyles(severity: SignalSeverity, isDark: boolean): React.CSSProperties {
     if (severity === 'neutral') {
         return {
             backgroundColor: 'var(--bg-subtle)',
@@ -187,7 +196,6 @@ const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, o
 
     return (
         <div
-            role={onClick ? 'button' : undefined}
             tabIndex={onClick ? 0 : undefined}
             onClick={onClick}
             onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); } : undefined}
@@ -207,6 +215,28 @@ const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, o
 };
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
+
+function getGreeting(hour: number): string {
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+}
+
+function getExpiringSeverity(
+    expiringTotal: number,
+    expiredCount: number,
+    urgentCount: number
+): SignalSeverity {
+    if (expiringTotal === 0) return 'neutral';
+    if (expiredCount > 0 || urgentCount > 0) return 'alert';
+    return 'warn';
+}
+
+function getFailedAuthSeverity(failedAuth: number): SignalSeverity {
+    if (failedAuth === 0) return 'neutral';
+    if (failedAuth >= 5) return 'alert';
+    return 'warn';
+}
 
 export const DashboardPage: React.FC = () => {
     const navigate = useNavigate();
@@ -228,15 +258,7 @@ export const DashboardPage: React.FC = () => {
     const features = sysInfo?.features ?? {};
     const dbMetrics = metrics?.database ?? {};
 
-    const hour = new Date().getHours();
-    let greeting: string;
-    if (hour < 12) {
-        greeting = 'Good morning';
-    } else if (hour < 18) {
-        greeting = 'Good afternoon';
-    } else {
-        greeting = 'Good evening';
-    }
+    const greeting = getGreeting(new Date().getHours());
 
     // Pre-computed values to avoid nested ternaries in JSX
     const sharedCount = stats?.sharedSecrets ?? 0;
@@ -261,25 +283,11 @@ export const DashboardPage: React.FC = () => {
         ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d`
         : 'within 30 days';
 
-    const hasUrgentExpiring = expiredSecrets.length > 0 || expiringSecrets.some((s: any) => s.daysLeft <= 7);
-    let expiringSeverity: 'neutral' | 'warn' | 'alert';
-    if (expiring.length === 0) {
-        expiringSeverity = 'neutral';
-    } else if (hasUrgentExpiring) {
-        expiringSeverity = 'alert';
-    } else {
-        expiringSeverity = 'warn';
-    }
+    const urgentExpiringCount = expiringSecrets.filter((s: any) => s.daysLeft <= 7).length;
+    const expiringSeverity = getExpiringSeverity(expiring.length, expiredSecrets.length, urgentExpiringCount);
 
     const failedAuth = stats?.failedAuthAttempts24h ?? 0;
-    let failedAuthSeverity: 'neutral' | 'warn' | 'alert';
-    if (failedAuth === 0) {
-        failedAuthSeverity = 'neutral';
-    } else if (failedAuth >= 5) {
-        failedAuthSeverity = 'alert';
-    } else {
-        failedAuthSeverity = 'warn';
-    }
+    const failedAuthSeverity = getFailedAuthSeverity(failedAuth);
 
     const totalSecretsSub = stats?.totalSecretsTrend ? 'vs last snapshot' : 'across all environments';
 
@@ -484,9 +492,8 @@ export const DashboardPage: React.FC = () => {
                                         </div>
                                     ))}
                                     {expiring.map((s: any) => {
-                                        const expiryBadgeColor = s.expired
-                                            ? 'bg-red-500/20 text-red-400'
-                                            : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600';
+                                        const urgentBadgeColor = s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600';
+                                        const expiryBadgeColor = s.expired ? 'bg-red-500/20 text-red-400' : urgentBadgeColor;
                                         return (
                                             <div
                                                 key={s.id}

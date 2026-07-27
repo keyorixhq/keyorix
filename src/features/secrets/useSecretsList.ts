@@ -42,6 +42,47 @@ function compareSecrets(a: Secret, b: Secret, sortField: string, sortDirection: 
     return 0;
 }
 
+function toggleSetItem(prev: Set<number>, id: number): Set<number> {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+}
+
+function buildSecretQueryParams(
+    filters: SecretFilters,
+    page: number,
+    pageSize: number,
+    environmentIdMap: Record<string, number>
+): Record<string, any> {
+    const envId = filters.environment ? environmentIdMap[filters.environment] : undefined;
+    return {
+        page,
+        pageSize,
+        ...(filters.search ? { search: filters.search } : {}),
+        ...(filters.type !== 'all' ? { type: filters.type } : {}),
+        ...(filters.classification ? { classification: filters.classification } : {}),
+        ...(envId ? { environment_id: envId } : {}),
+        ...(filters.tags.length > 0 ? { tags: filters.tags } : {}),
+    };
+}
+
+function buildEditUpdateData(name: string, type: SecretType, value: string): Partial<SecretFormData> {
+    const updateData: Partial<SecretFormData> = { name, type };
+    if (value.trim()) updateData.value = value;
+    return updateData;
+}
+
+function computeHasActiveFilters(filters: SecretFilters): boolean {
+    return !!(
+        filters.search ||
+        filters.type !== 'all' ||
+        filters.classification ||
+        filters.environment ||
+        filters.tags.length > 0
+    );
+}
+
 export const useSecretsList = () => {
     const { openModal, closeModal, activeModal, modalData } = useUIStore();
     const queryClient = useQueryClient();
@@ -67,13 +108,7 @@ export const useSecretsList = () => {
     // Bulk selection
     const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
     const [bulkActionMode, setBulkActionMode] = useState(false);
-    const toggleSelectedItem = (id: number) =>
-        setSelectedItems((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
+    const toggleSelectedItem = (id: number) => setSelectedItems((prev) => toggleSetItem(prev, id));
     const clearSelectedItems = () => setSelectedItems(new Set());
 
     const { data: environments = [] } = useQuery({
@@ -97,18 +132,7 @@ export const useSecretsList = () => {
             pageSize: pagination.pageSize,
             sortBy,
         }),
-        queryFn: () => {
-            const envId = filters.environment ? environmentIdMap[filters.environment] : undefined;
-            return secretsApi.list({
-                page: pagination.page,
-                pageSize: pagination.pageSize,
-                ...(filters.search ? { search: filters.search } : {}),
-                ...(filters.type !== 'all' ? { type: filters.type } : {}),
-                ...(filters.classification ? { classification: filters.classification } : {}),
-                ...(envId ? { environment_id: envId } : {}),
-                ...(filters.tags.length > 0 ? { tags: filters.tags } : {}),
-            });
-        },
+        queryFn: () => secretsApi.list(buildSecretQueryParams(filters, pagination.page, pagination.pageSize, environmentIdMap)),
         placeholderData: keepPreviousData,
     });
 
@@ -176,17 +200,7 @@ export const useSecretsList = () => {
         setPagination((prev) => ({ ...prev, page: 1 }));
     }, []);
 
-    const hasActiveFilters = useMemo(
-        () =>
-            !!(
-                filters.search ||
-                filters.type !== 'all' ||
-                filters.classification ||
-                filters.environment ||
-                filters.tags.length > 0
-            ),
-        [filters]
-    );
+    const hasActiveFilters = useMemo(() => computeHasActiveFilters(filters), [filters]);
 
     // Mutations
     const createMutation = useMutation({
@@ -198,11 +212,8 @@ export const useSecretsList = () => {
     });
 
     const editMutation = useMutation({
-        mutationFn: ({ id, name, type, value }: { id: number; name: string; type: SecretType; value: string }) => {
-            const updateData: Partial<SecretFormData> = { name, type };
-            if (value.trim()) updateData.value = value;
-            return secretsApi.update(id, updateData);
-        },
+        mutationFn: ({ id, name, type, value }: { id: number; name: string; type: SecretType; value: string }) =>
+            secretsApi.update(id, buildEditUpdateData(name, type, value)),
         onSuccess: () => {
             closeModal();
             queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all });

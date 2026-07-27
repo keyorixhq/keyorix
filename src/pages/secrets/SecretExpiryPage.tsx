@@ -306,7 +306,8 @@ export function SecretExpiryPage() {
     const tabSecrets = useMemo(() => {
         const allSorted = [...withExpiry].sort((a, b) => daysRemaining(a.Expiration!) - daysRemaining(b.Expiration!));
         const nonExpiredBase = tab === 'future' ? future : allSorted;
-        const base = tab === 'expired' ? expired : tab === 'soon' ? soon : nonExpiredBase;
+        const soonOrNonExpired = tab === 'soon' ? soon : nonExpiredBase;
+        const base = tab === 'expired' ? expired : soonOrNonExpired;
 
         if (!search.trim()) return base;
         const q = search.toLowerCase();

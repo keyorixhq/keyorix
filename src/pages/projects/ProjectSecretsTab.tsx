@@ -158,11 +158,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
         );
     }
 
-    const tableContent = list.isLoading ? (
-        <div className="p-8">
-            <Loading />
-        </div>
-    ) : list.secrets.length === 0 ? (
+    const emptyOrTable = list.secrets.length === 0 ? (
         <div className="p-10 text-center">
             <FunnelIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
             <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
@@ -275,6 +271,12 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
             )}
         </div>
     );
+
+    const tableContent = list.isLoading ? (
+        <div className="p-8">
+            <Loading />
+        </div>
+    ) : emptyOrTable;
 
     return (
         <div>

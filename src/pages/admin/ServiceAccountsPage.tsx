@@ -430,14 +430,15 @@ export const ServiceAccountsPage: React.FC = () => {
 
     const scopeFormBlock = (
         <div>
-            <label className="block text-sm font-medium text-base-secondary mb-2">
+            <p className="block text-sm font-medium text-base-secondary mb-2">
                 Scopes <span className="text-red-500">*</span>
-            </label>
+            </p>
             <div className="space-y-2">
                 {SCOPES.map(({ value, description }) => (
                     <label
                         key={value}
                         htmlFor={`scope-${value}`}
+                        aria-label={`${value} — ${description}`}
                         className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors"
                     >
                         <input
@@ -460,9 +461,7 @@ export const ServiceAccountsPage: React.FC = () => {
 
     const tokensModalTitle = activeModal?.type === 'tokens' ? `Tokens — ${activeModal.sa.name}` : 'Tokens';
 
-    const tokensListContent = tokensLoading ? (
-        <Loading />
-    ) : tokens.length === 0 ? (
+    const tokensListInner = tokens.length === 0 ? (
         <p className="text-sm text-base-muted text-center py-6">No tokens yet. Create one above.</p>
     ) : (
         <div className="border border-base rounded-lg overflow-hidden">
@@ -488,7 +487,8 @@ export const ServiceAccountsPage: React.FC = () => {
                         const status = getTokenStatus(token);
                         const inactive = status === 'revoked' || status === 'expired';
                         const isPending = pendingRevokeTokenId === token.id;
-                        const revokeColor = inactive ? 'var(--text-muted)' : isDark ? '#f87171' : '#dc2626';
+                        const activeRevokeColor = isDark ? '#f87171' : '#dc2626';
+                        const revokeColor = inactive ? 'var(--text-muted)' : activeRevokeColor;
                         return (
                             <tr key={token.id} className="hover:bg-subtle transition-colors">
                                 <td className="px-4 py-3 text-sm text-base-secondary">
@@ -556,6 +556,7 @@ export const ServiceAccountsPage: React.FC = () => {
             </table>
         </div>
     );
+    const tokensListContent = tokensLoading ? <Loading /> : tokensListInner;
 
     return (
         <>

@@ -347,6 +347,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                             </div>
                         );
                     }
+                    const toggleMember = (userId: number) => setExpandedMemberId((prev) => (prev === userId ? null : userId));
                     return (
                     <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                         {members.map((m) => {
@@ -354,11 +355,10 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                             return (
                                 <React.Fragment key={m.userId}>
                                     <li
-                                        role="button"
                                         tabIndex={0}
                                         className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-subtle transition-colors duration-75"
-                                        onClick={() => setExpandedMemberId((prev) => (prev === m.userId ? null : m.userId))}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setExpandedMemberId((prev) => (prev === m.userId ? null : m.userId)); }}
+                                        onClick={() => toggleMember(m.userId)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleMember(m.userId); }}
                                         style={{ borderColor: 'var(--border)' }}
                                     >
                                         {/* Expand chevron */}

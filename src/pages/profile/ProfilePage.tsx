@@ -60,7 +60,7 @@ const BasicInfoTab: React.FC = () => {
     const [saved, setSaved] = useState(false);
     const updateProfile = useUpdateProfile();
 
-    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    const handleSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setSaved(false);
         updateProfile.mutate(
@@ -142,7 +142,7 @@ const SecurityTab: React.FC = () => {
     const [done, setDone] = useState(false);
     const changePassword = useChangePassword();
 
-    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    const handleSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setLocalError('');
         setDone(false);
@@ -306,7 +306,8 @@ const SessionsTab: React.FC = () => {
 // ScopeChip renders a token's least-privilege restriction (ADR-042): a project or
 // environment confinement, or an allowed permission.
 const ScopeChip: React.FC<{ label: string; kind: 'project' | 'env' | 'perm' }> = ({ label, kind }) => {
-    const chipLabel = kind === 'project' ? `▣ ${label}` : kind === 'env' ? `⬢ ${label}` : label;
+    const innerChipLabel = kind === 'env' ? `⬢ ${label}` : label;
+    const chipLabel = kind === 'project' ? `▣ ${label}` : innerChipLabel;
     return (
         <span
             className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium"
@@ -365,7 +366,7 @@ const TokensTab: React.FC = () => {
         setShowCreate(true);
     };
 
-    const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
+    const handleCreate = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         const body = buildCreateTokenBody({
             name,

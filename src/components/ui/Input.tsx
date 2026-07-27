@@ -14,7 +14,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         const generatedId = React.useId();
         const inputId = id ?? generatedId;
         const hasError = Boolean(error);
-        const ariaDescribedBy = error ? `${inputId}-error` : helperText ? `${inputId}-hint` : undefined;
+        const ariaDescribedByInner = helperText ? `${inputId}-hint` : undefined;
+        const ariaDescribedBy = error ? `${inputId}-error` : ariaDescribedByInner;
 
         return (
             <div className="relative w-full">

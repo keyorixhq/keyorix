@@ -38,6 +38,131 @@ function parsePromoteTarget(raw: string | null, sourceId: number): { targetId: n
     return { targetId };
 }
 
+interface RenderEnvListProps {
+    envsLoading: boolean;
+    environments: Env[];
+    restoreEnvMutation: { isPending: boolean; mutate: (id: number) => void };
+    promoteEnvMutation: { isPending: boolean };
+    handlePromote: (env: Env) => void;
+    setDeleteEnvError: (err: string) => void;
+    setEnvToDelete: (env: Env) => void;
+}
+
+function renderEnvList({
+    envsLoading,
+    environments,
+    restoreEnvMutation,
+    promoteEnvMutation,
+    handlePromote,
+    setDeleteEnvError,
+    setEnvToDelete,
+}: RenderEnvListProps): React.ReactNode {
+    if (envsLoading) {
+        return (
+            <div className="p-4 animate-pulse space-y-2">
+                {[1, 2, 3].map((i) => (
+                    <div
+                        key={i}
+                        className="h-8 rounded-sm"
+                        style={{ backgroundColor: 'var(--bg-muted)' }}
+                    />
+                ))}
+            </div>
+        );
+    }
+    if (environments.length === 0) {
+        return (
+            <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                No environments yet. Add one below.
+            </div>
+        );
+    }
+    return (
+        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {(environments as Env[]).map((env) => {
+                const isDefault = ['development', 'staging', 'production'].includes(
+                    env.name.toLowerCase()
+                );
+                return (
+                    <li
+                        key={env.id}
+                        className="flex items-center justify-between px-4 py-3 group"
+                        style={{ opacity: env.deleted ? 0.7 : 1 }}
+                    >
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                                {env.name.charAt(0).toUpperCase() + env.name.slice(1)}
+                            </span>
+                            {env.deleted ? (
+                                <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
+                                    style={{
+                                        backgroundColor: 'var(--error-subtle)',
+                                        color: 'var(--error)',
+                                    }}
+                                >
+                                    deleted
+                                </span>
+                            ) : (
+                                isDefault && (
+                                    <span
+                                        className="text-xs px-1.5 py-0.5 rounded-sm"
+                                        style={{
+                                            backgroundColor: 'var(--bg-subtle)',
+                                            color: 'var(--text-muted)',
+                                        }}
+                                    >
+                                        default
+                                    </span>
+                                )
+                            )}
+                        </div>
+                        {env.deleted ? (
+                            <button
+                                type="button"
+                                onClick={() => restoreEnvMutation.mutate(env.id)}
+                                disabled={restoreEnvMutation.isPending}
+                                className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
+                                style={{ color: 'var(--accent)' }}
+                                title="Restore environment"
+                            >
+                                <ArrowPathIcon className="h-4 w-4" />
+                                Restore
+                            </button>
+                        ) : (
+                            <div className="flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => handlePromote(env)}
+                                    disabled={promoteEnvMutation.isPending}
+                                    className="flex items-center gap-1 px-1.5 py-1 rounded-sm text-xs opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                    style={{ color: 'var(--accent)' }}
+                                    title="Promote — copy every secret in this environment into another"
+                                >
+                                    <ArrowUpOnSquareIcon className="h-4 w-4" />
+                                    Promote
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setDeleteEnvError('');
+                                        setEnvToDelete(env);
+                                    }}
+                                    className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                    style={{ color: 'var(--error)' }}
+                                    title="Delete environment"
+                                >
+                                    <TrashIcon className="h-4 w-4" />
+                                </button>
+                            </div>
+                        )}
+                    </li>
+                );
+            })}
+        </ul>
+    );
+}
+
 export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectId }) => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -499,112 +624,15 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                     style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
                 >
                     {/* Environment list */}
-                    {(() => {
-                        if (envsLoading) {
-                            return (
-                                <div className="p-4 animate-pulse space-y-2">
-                                    {[1, 2, 3].map((i) => (
-                                        <div
-                                            key={i}
-                                            className="h-8 rounded-sm"
-                                            style={{ backgroundColor: 'var(--bg-muted)' }}
-                                        />
-                                    ))}
-                                </div>
-                            );
-                        }
-                        if (environments.length === 0) {
-                            return (
-                                <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                                    No environments yet. Add one below.
-                                </div>
-                            );
-                        }
-                        return (
-                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                            {(environments as Env[]).map((env) => {
-                                const isDefault = ['development', 'staging', 'production'].includes(
-                                    env.name.toLowerCase()
-                                );
-                                return (
-                                    <li
-                                        key={env.id}
-                                        className="flex items-center justify-between px-4 py-3 group"
-                                        style={{ opacity: env.deleted ? 0.7 : 1 }}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                                                {env.name.charAt(0).toUpperCase() + env.name.slice(1)}
-                                            </span>
-                                            {env.deleted ? (
-                                                <span
-                                                    className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
-                                                    style={{
-                                                        backgroundColor: 'var(--error-subtle)',
-                                                        color: 'var(--error)',
-                                                    }}
-                                                >
-                                                    deleted
-                                                </span>
-                                            ) : (
-                                                isDefault && (
-                                                    <span
-                                                        className="text-xs px-1.5 py-0.5 rounded-sm"
-                                                        style={{
-                                                            backgroundColor: 'var(--bg-subtle)',
-                                                            color: 'var(--text-muted)',
-                                                        }}
-                                                    >
-                                                        default
-                                                    </span>
-                                                )
-                                            )}
-                                        </div>
-                                        {env.deleted ? (
-                                            <button
-                                                type="button"
-                                                onClick={() => restoreEnvMutation.mutate(env.id)}
-                                                disabled={restoreEnvMutation.isPending}
-                                                className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
-                                                style={{ color: 'var(--accent)' }}
-                                                title="Restore environment"
-                                            >
-                                                <ArrowPathIcon className="h-4 w-4" />
-                                                Restore
-                                            </button>
-                                        ) : (
-                                            <div className="flex items-center gap-1">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handlePromote(env)}
-                                                    disabled={promoteEnvMutation.isPending}
-                                                    className="flex items-center gap-1 px-1.5 py-1 rounded-sm text-xs opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                                                    style={{ color: 'var(--accent)' }}
-                                                    title="Promote — copy every secret in this environment into another"
-                                                >
-                                                    <ArrowUpOnSquareIcon className="h-4 w-4" />
-                                                    Promote
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setDeleteEnvError('');
-                                                        setEnvToDelete(env);
-                                                    }}
-                                                    className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                                                    style={{ color: 'var(--error)' }}
-                                                    title="Delete environment"
-                                                >
-                                                    <TrashIcon className="h-4 w-4" />
-                                                </button>
-                                            </div>
-                                        )}
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                        );
-                    })()}
+                    {renderEnvList({
+                        envsLoading,
+                        environments,
+                        restoreEnvMutation,
+                        promoteEnvMutation,
+                        handlePromote,
+                        setDeleteEnvError,
+                        setEnvToDelete,
+                    })}
 
                     {/* Add environment */}
                     <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>

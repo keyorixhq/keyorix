@@ -166,13 +166,9 @@ export const ProjectActivityTab: React.FC<ProjectActivityTabProps> = ({ projectI
         </>
     );
 
-    const bodyContent = isLoading
-        ? loadingContent
-        : isError
-            ? errorContent
-            : events.length === 0
-                ? emptyContent
-                : tableContent;
+    const eventsContent = events.length === 0 ? emptyContent : tableContent;
+    const nonLoadingContent = isError ? errorContent : eventsContent;
+    const bodyContent = isLoading ? loadingContent : nonLoadingContent;
 
     return (
         <div>

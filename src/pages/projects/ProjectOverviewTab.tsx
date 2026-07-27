@@ -60,24 +60,7 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
     const drifted = drift?.driftedKeys ?? [];
     const envCount = drift?.environments?.length ?? 0;
 
-    const syncStatusContent = driftLoading ? (
-        <div
-            className="rounded-lg border p-4 animate-pulse"
-            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-        >
-            <div className="h-4 w-56 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
-        </div>
-    ) : !drift || envCount < 2 ? (
-        <div
-            className="rounded-lg border px-4 py-3 flex items-center gap-3"
-            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-        >
-            <ArrowsRightLeftIcon className="h-4 w-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                Add at least two environments to enable drift detection.
-            </p>
-        </div>
-    ) : drifted.length === 0 ? (
+    const syncedOrDriftedContent = drifted.length === 0 ? (
         <div
             className="rounded-lg border px-4 py-3 flex items-center gap-3"
             style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
@@ -126,6 +109,27 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
             </ul>
         </div>
     );
+
+    const driftReadyContent = !drift || envCount < 2 ? (
+        <div
+            className="rounded-lg border px-4 py-3 flex items-center gap-3"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <ArrowsRightLeftIcon className="h-4 w-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                Add at least two environments to enable drift detection.
+            </p>
+        </div>
+    ) : syncedOrDriftedContent;
+
+    const syncStatusContent = driftLoading ? (
+        <div
+            className="rounded-lg border p-4 animate-pulse"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <div className="h-4 w-56 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
+        </div>
+    ) : driftReadyContent;
 
     return (
         <div>

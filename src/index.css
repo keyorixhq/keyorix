@@ -223,10 +223,8 @@
 
 @utility divide-base {
     /* divide-base: use for table/list row dividers */
-    & {
-        & > :not([hidden]) ~ :not([hidden]) {
-            border-color: var(--border);
-        }
+    & > :not([hidden]) ~ :not([hidden]) {
+        border-color: var(--border);
     }
 }
 
@@ -237,10 +235,8 @@
 
 @utility placeholder-base-muted {
     /* placeholder */
-    & {
-        &::placeholder {
-            color: var(--text-muted);
-        }
+    &::placeholder {
+        color: var(--text-muted);
     }
 }
 

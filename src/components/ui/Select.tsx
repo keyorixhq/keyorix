@@ -22,7 +22,8 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         const generatedId = React.useId();
         const selectId = id ?? generatedId;
         const hasError = Boolean(error);
-        const ariaDescribedBy = error ? `${selectId}-error` : helperText ? `${selectId}-hint` : undefined;
+        const innerDescribedBy = helperText ? `${selectId}-hint` : undefined;
+        const ariaDescribedBy = error ? `${selectId}-error` : innerDescribedBy;
 
         return (
             <div className={cn(fullWidth ? 'w-full' : 'w-auto')}>

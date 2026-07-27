@@ -118,6 +118,41 @@ function buildModalDefaults(activeModal: string | null, secret: any): Partial<Mo
     return {};
 }
 
+type ModalDefaultSetters = {
+    setEditName: (v: string) => void;
+    setEditType: (v: SecretType) => void;
+    setRotateValue: (v: string) => void;
+    setArEnabled: (v: boolean) => void;
+    setArLength: (v: string) => void;
+    setArCharset: (v: string) => void;
+    setArBackend: (v: string) => void;
+    setArRef: (v: string) => void;
+    setEditValue: (v: string) => void;
+};
+
+function applyModalDefaults(
+    activeModal: string | null,
+    secret: any,
+    setters: ModalDefaultSetters
+): void {
+    const defaults = buildModalDefaults(activeModal, secret ?? null);
+    if (defaults.editName !== undefined) setters.setEditName(defaults.editName);
+    if (defaults.editType !== undefined) setters.setEditType(defaults.editType);
+    if (defaults.rotateValue !== undefined) setters.setRotateValue(defaults.rotateValue);
+    if (defaults.arEnabled !== undefined) setters.setArEnabled(defaults.arEnabled);
+    if (defaults.arLength !== undefined) setters.setArLength(defaults.arLength);
+    if (defaults.arCharset !== undefined) setters.setArCharset(defaults.arCharset);
+    if (defaults.arBackend !== undefined) setters.setArBackend(defaults.arBackend);
+    if (defaults.arRef !== undefined) setters.setArRef(defaults.arRef);
+    if (activeModal === 'edit-secret' && secret) setters.setEditValue('');
+}
+
+function resolveValidEnvId(envs: { id: number }[], currentEnvId: number): number | null {
+    const stillValid = envs.some((e) => e.id === currentEnvId);
+    if (stillValid) return null;
+    return envs[0]?.id ?? 0;
+}
+
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
     const bulkClassify = useBulkClassifySecrets();
@@ -175,10 +210,8 @@ export const SecretsListPage: React.FC = () => {
     // environment valid — default to the first env of the chosen project.
     React.useEffect(() => {
         if (!createEnvironments) return;
-        const stillValid = createEnvironments.some((e) => e.id === createEnvId);
-        if (!stillValid) {
-            setCreateEnvId(createEnvironments[0]?.id ?? 0);
-        }
+        const nextEnvId = resolveValidEnvId(createEnvironments, createEnvId);
+        if (nextEnvId !== null) setCreateEnvId(nextEnvId);
     }, [createEnvironments, createEnvId]);
     const [editName, setEditName] = React.useState('');
     const [editType, setEditType] = React.useState<SecretType>('text');
@@ -194,16 +227,17 @@ export const SecretsListPage: React.FC = () => {
     const autoRotate = useSetAutoRotate(list.modalData?.secret?.id ?? 0);
 
     React.useEffect(() => {
-        const defaults = buildModalDefaults(list.activeModal, list.modalData?.secret ?? null);
-        if (defaults.editName !== undefined) setEditName(defaults.editName);
-        if (defaults.editType !== undefined) setEditType(defaults.editType);
-        if (defaults.rotateValue !== undefined) setRotateValue(defaults.rotateValue);
-        if (defaults.arEnabled !== undefined) setArEnabled(defaults.arEnabled);
-        if (defaults.arLength !== undefined) setArLength(defaults.arLength);
-        if (defaults.arCharset !== undefined) setArCharset(defaults.arCharset);
-        if (defaults.arBackend !== undefined) setArBackend(defaults.arBackend);
-        if (defaults.arRef !== undefined) setArRef(defaults.arRef);
-        if (list.activeModal === 'edit-secret' && list.modalData?.secret) setEditValue('');
+        applyModalDefaults(list.activeModal, list.modalData?.secret ?? null, {
+            setEditName,
+            setEditType,
+            setRotateValue,
+            setArEnabled,
+            setArLength,
+            setArCharset,
+            setArBackend,
+            setArRef,
+            setEditValue,
+        });
     }, [list.activeModal, list.modalData]);
 
     const handleRotate = (secret: any) => {

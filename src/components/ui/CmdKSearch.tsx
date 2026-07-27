@@ -112,8 +112,6 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
 
     return (
         <div
-            role="button"
-            tabIndex={0}
             className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
             style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
             onClick={(e) => {

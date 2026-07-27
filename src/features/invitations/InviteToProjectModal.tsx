@@ -44,7 +44,7 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
         onClose();
     };
 
-    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    const handleSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         if (!EMAIL_RE.test(email.trim())) {

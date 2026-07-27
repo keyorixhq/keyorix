@@ -154,11 +154,8 @@ export const APITokensPage: React.FC = () => {
                                 const status = getTokenStatus(token);
                                 const inactive = status === 'revoked' || status === 'expired';
                                 const isPending = pendingRevokeTokenId === token.id;
-                                const revokeButtonColor = inactive
-                                    ? 'var(--text-muted)'
-                                    : isDark
-                                      ? '#f87171'
-                                      : '#dc2626';
+                                const activeRevokeColor = isDark ? '#f87171' : '#dc2626';
+                                const revokeButtonColor = inactive ? 'var(--text-muted)' : activeRevokeColor;
                                 return (
                                     <tr key={token.id} className="hover:bg-subtle transition-colors">
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-base-secondary">

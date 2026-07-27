@@ -95,7 +95,7 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
         onClose();
     };
 
-    const submit = (e: React.FormEvent<HTMLFormElement>) => {
+    const submit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         activate.mutate(code, {
@@ -202,7 +202,7 @@ const ReauthModal: React.FC<{
         onClose();
     };
 
-    const submit = async (e: React.FormEvent<HTMLFormElement>) => {
+    const submit = async (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         // The same field accepts a 6-digit TOTP code or the account password.

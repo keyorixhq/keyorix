@@ -65,22 +65,21 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
         </button>
     );
 
-    const nextTheme = theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark';
-    const themeTitle =
-        theme === 'dark'
-            ? 'Dark mode (click for light)'
-            : theme === 'light'
-              ? 'Light mode (click for system)'
-              : 'System mode (click for dark)';
-    const themeAriaLabel = theme === 'dark' ? 'Dark mode' : theme === 'light' ? 'Light mode' : 'System mode';
-    const themeIcon =
-        theme === 'dark' ? (
-            <MoonIcon className="h-5 w-5" aria-hidden="true" />
-        ) : theme === 'light' ? (
-            <SunIcon className="h-5 w-5" aria-hidden="true" />
-        ) : (
-            <ComputerDesktopIcon className="h-5 w-5" aria-hidden="true" />
-        );
+    let nextTheme: 'light' | 'system' | 'dark' = 'dark';
+    if (theme === 'dark') nextTheme = 'light';
+    else if (theme === 'light') nextTheme = 'system';
+
+    let themeTitle = 'System mode (click for dark)';
+    if (theme === 'dark') themeTitle = 'Dark mode (click for light)';
+    else if (theme === 'light') themeTitle = 'Light mode (click for system)';
+
+    let themeAriaLabel = 'System mode';
+    if (theme === 'dark') themeAriaLabel = 'Dark mode';
+    else if (theme === 'light') themeAriaLabel = 'Light mode';
+
+    let themeIcon = <ComputerDesktopIcon className="h-5 w-5" aria-hidden="true" />;
+    if (theme === 'dark') themeIcon = <MoonIcon className="h-5 w-5" aria-hidden="true" />;
+    else if (theme === 'light') themeIcon = <SunIcon className="h-5 w-5" aria-hidden="true" />;
 
     return (
         <header

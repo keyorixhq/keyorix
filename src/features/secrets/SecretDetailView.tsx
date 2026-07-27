@@ -78,7 +78,7 @@ const auditEventLabel = (eventType: string): string => {
         'secret.classified': 'Reclassified',
         'secret.deleted': 'Deleted',
     };
-    return KNOWN[eventType] ?? eventType.replace(/^secret\./, '').replace(/_/g, ' ');
+    return KNOWN[eventType] ?? eventType.replace(/^secret\./, '').replaceAll('_', ' ');
 };
 
 const RISK_BAND_STYLE: Record<RiskBand, { label: string; color: string }> = {
@@ -289,6 +289,16 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
             </p>
         </div>
     ) : loadingOrValue;
+
+    const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key !== 'Enter') return;
+        const t = tagDraft.trim().toLowerCase();
+        if (!t || secretTags.includes(t)) {
+            setTagDraft('');
+            return;
+        }
+        setTags.mutate([...secretTags, t], { onSuccess: () => setTagDraft('') });
+    };
 
     return (
         <div className="space-y-6">
@@ -643,15 +653,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                 <input
                     value={tagDraft}
                     onChange={(e) => setTagDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key !== 'Enter') return;
-                        const t = tagDraft.trim().toLowerCase();
-                        if (!t || secretTags.includes(t)) {
-                            setTagDraft('');
-                            return;
-                        }
-                        setTags.mutate([...secretTags, t], { onSuccess: () => setTagDraft('') });
-                    }}
+                    onKeyDown={handleTagKeyDown}
                     disabled={setTags.isPending}
                     placeholder="Add a tag and press Enter…"
                     className="mt-3 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-900 dark:text-white disabled:opacity-50"

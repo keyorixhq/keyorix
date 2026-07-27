@@ -92,6 +92,8 @@ function generatePassword(): string {
         .join('');
 }
 
+type CreateMode = 'password' | 'setup_link' | 'one_time_password';
+
 interface CreateModalProps {
     setupResult: SetupLinkResult | null;
     otpResult: string | null;
@@ -99,7 +101,7 @@ interface CreateModalProps {
     formError: string;
     createUsername: string;
     createDisplayName: string;
-    createMode: 'password' | 'setup_link' | 'one_time_password';
+    createMode: CreateMode;
     createPassword: string;
     showPassword: boolean;
     createSystemRole: string;
@@ -111,7 +113,7 @@ interface CreateModalProps {
     setCreateUsername: (v: string) => void;
     setCreateEmail: (v: string) => void;
     setCreateDisplayName: (v: string) => void;
-    setCreateMode: (v: 'password' | 'setup_link' | 'one_time_password') => void;
+    setCreateMode: (v: CreateMode) => void;
     setCreatePassword: (v: string) => void;
     setShowPassword: React.Dispatch<React.SetStateAction<boolean>>;
     setCreateSystemRole: (v: string) => void;
@@ -429,10 +431,12 @@ function buildUserListContent(props: UserListProps): React.ReactNode {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-base">
-                    {users.map((user) => (
+                    {users.map((user) => {
+                        const rowClass = `hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`;
+                        return (
                         <tr
                             key={user.id}
-                            className={`hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`}
+                            className={rowClass}
                         >
                             <td className="px-4 py-4 w-10">
                                 <input
@@ -542,7 +546,8 @@ function buildUserListContent(props: UserListProps): React.ReactNode {
                                 </div>
                             </td>
                         </tr>
-                    ))}
+                        );
+                    })}
                 </tbody>
             </table>
 
@@ -554,6 +559,7 @@ function buildUserListContent(props: UserListProps): React.ReactNode {
                     <div className="flex gap-2">
                         <button
                             type="button"
+                            aria-label="Previous page"
                             onClick={() => setPage((p) => Math.max(1, p - 1))}
                             disabled={page === 1}
                             className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -562,6 +568,7 @@ function buildUserListContent(props: UserListProps): React.ReactNode {
                         </button>
                         <button
                             type="button"
+                            aria-label="Next page"
                             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                             disabled={page === totalPages}
                             className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -602,7 +609,7 @@ export const AdminPage: React.FC = () => {
     //                        user sets their own password (account starts pending).
     //   one_time_password  — server generates a strong password, shown once for
     //                        out-of-band relay (account starts in reset-required).
-    const [createMode, setCreateMode] = useState<'password' | 'setup_link' | 'one_time_password'>('password');
+    const [createMode, setCreateMode] = useState<CreateMode>('password');
     // ADR-028 atomic provisioning (admin-set-password path only): an optional
     // system-role override ('' = backend default of system_viewer) and a set of
     // project-scoped role grants applied with the create in one transaction.

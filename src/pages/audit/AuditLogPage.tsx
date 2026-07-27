@@ -139,10 +139,12 @@ function eventBadge(eventType: string, isDark: boolean) {
     const e = EVENT_STYLES[eventType];
     const label = e?.label ?? eventType;
     const defaultBg = isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9';
-    const eBg = e ? (isDark ? e.darkBg : e.lightBg) : null;
+    const eBgInner = isDark ? e?.darkBg : e?.lightBg;
+    const eBg = e ? eBgInner : null;
     const bg = eBg ?? defaultBg;
     const defaultColor = isDark ? '#94a3b8' : '#475569';
-    const eColor = e ? (isDark ? e.darkColor : e.lightColor) : null;
+    const eColorInner = isDark ? e?.darkColor : e?.lightColor;
+    const eColor = e ? eColorInner : null;
     const color = eColor ?? defaultColor;
     return (
         <span
@@ -174,7 +176,7 @@ function exportCSV(entries: AuditLogEntry[], filename: string) {
         new Date(e.timestamp).toISOString(),
         e.event_type,
         e.actor,
-        `"${(e.description ?? '').replace(/"/g, '""')}"`,
+        `"${(e.description ?? '').replaceAll('"', '""')}"`,
     ]);
     const csv = [header, ...rows].map((r) => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

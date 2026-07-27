@@ -1,4 +1,4 @@
-import React, { useState, FormEvent } from 'react';
+import React, { useState } from 'react';
 import { ClipboardDocumentIcon, CheckIcon, EyeIcon, EyeSlashIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -70,7 +70,7 @@ const FederatedReadPanel: React.FC = () => {
 
     const effectiveConnector = connector || connectors[0] || '';
 
-    const submit = (e: FormEvent<HTMLFormElement>) => {
+    const submit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         setValue(null);
@@ -190,7 +190,7 @@ const RefGrantsPanel: React.FC = () => {
 
     const effectiveConnector = connector || connectors?.[0] || '';
 
-    const submit = (e: FormEvent<HTMLFormElement>) => {
+    const submit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setFormError('');
         const id = Number(roleId);
