@@ -9,16 +9,27 @@ export interface AuditLogEntry {
     timestamp: string;
 }
 
-export const useAuditLog = (params?: { page?: number; pageSize?: number; action?: string; projectId?: number }) => {
+export const useAuditLog = (params?: {
+    page?: number;
+    pageSize?: number;
+    action?: string;
+    projectId?: number;
+    actor?: string;
+    dateFrom?: string;
+    dateTo?: string;
+}) => {
     return useQuery({
         queryKey: ['audit-log', params],
         queryFn: async () => {
             const response = await apiClient.get('/api/v1/audit/logs', {
                 params: {
                     page: params?.page ?? 1,
-                    page_size: params?.pageSize ?? 50,
+                    page_size: params?.pageSize ?? 100,
                     ...(params?.action ? { action: params.action } : {}),
                     ...(params?.projectId ? { project_id: params.projectId } : {}),
+                    ...(params?.actor ? { actor: params.actor } : {}),
+                    ...(params?.dateFrom ? { date_from: params.dateFrom } : {}),
+                    ...(params?.dateTo ? { date_to: params.dateTo } : {}),
                 },
             });
             const data = response.data.data;
@@ -26,7 +37,7 @@ export const useAuditLog = (params?: { page?: number; pageSize?: number; action?
                 data: (data.logs ?? []) as AuditLogEntry[],
                 total: data.total ?? 0,
                 page: data.page ?? 1,
-                pageSize: data.page_size ?? 50,
+                pageSize: data.page_size ?? 100,
                 totalPages: data.total_pages ?? 1,
             };
         },
