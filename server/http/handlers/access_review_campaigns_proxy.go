@@ -64,6 +64,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -213,6 +214,10 @@ func parseRequiredProjectIDQuery(w http.ResponseWriter, r *http.Request) (projec
 // project's live access-review report and generates the campaign's items; the
 // calling server's own core.OpenAccessReviewCampaign already did that and
 // calls CreateAccessReviewItemsProxy separately to persist them.
+//
+// ARC-003: lifecycle fields (state/closed_by/closed_at/forced_incomplete) are
+// unconditionally normalised to the freshly-opened state before persisting.
+// A caller cannot inject a pre-closed or force-completed campaign via this route.
 func (h *CatalogHandler) CreateAccessReviewCampaignProxy(w http.ResponseWriter, r *http.Request) {
 	var body accessReviewCampaignProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -223,12 +228,22 @@ func (h *CatalogHandler) CreateAccessReviewCampaignProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id and name are required")
 		return
 	}
+	// ARC-003: strip any caller-supplied lifecycle state — a new campaign is
+	// always open with no closer and no forced-incomplete flag.
+	body.State = core.CampaignStateOpen
+	body.ClosedBy = 0
+	body.ClosedAt = nil
+	body.ForcedIncomplete = false
 	created, err := h.coreService.Storage().CreateAccessReviewCampaign(r.Context(), body.toModel())
 	if err != nil {
 		log.Printf("access-review-campaigns proxy: create campaign failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
+	// Emit the same audit event that OpenAccessReviewCampaign emits so the upstream
+	// audit trail records the campaign creation even when items are persisted separately.
+	actorID := actorID(r)
+	h.coreService.AuditCampaignCreated(r.Context(), actorID, created.ProjectID, created.ID, created.Name, 0)
 	writeRemoteAPISuccess(w, newAccessReviewCampaignProxyWire(created))
 }
 
@@ -364,9 +379,14 @@ func (h *CatalogHandler) CreateAccessReviewItemsProxy(w http.ResponseWriter, r *
 		return
 	}
 	items := make([]*models.AccessReviewItem, 0, len(body.Items))
-	for _, w := range body.Items {
-		w.CampaignID = uint(campaignID)
-		items = append(items, w.toModel())
+	for _, item := range body.Items {
+		item.CampaignID = uint(campaignID)
+		// ARC-004: strip any pre-supplied decision state — every newly created
+		// item must start pending regardless of what the caller sent.
+		item.Decision = core.ReviewItemPending
+		item.DecidedBy = 0
+		item.DecidedAt = nil
+		items = append(items, item.toModel())
 	}
 	if err := h.coreService.Storage().CreateAccessReviewItems(r.Context(), items); err != nil {
 		log.Printf("access-review-campaigns proxy: create items failed: %v", err)
@@ -465,6 +485,16 @@ func (h *CatalogHandler) UpdateAccessReviewItemProxy(w http.ResponseWriter, r *h
 		return
 	}
 	body.ID = uint(id)
+	// ARC-005: a reviewer must be identified (decided_by != 0) and must not
+	// self-certify their own user-scoped access item.
+	if body.DecidedBy == 0 {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "decided_by must identify an attributable reviewer; zero is not allowed")
+		return
+	}
+	if body.PrincipalType == "user" && body.DecidedBy == body.PrincipalID {
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", "self-certification is not allowed; an independent reviewer is required")
+		return
+	}
 	updated, err := h.coreService.Storage().UpdateAccessReviewItem(r.Context(), body.toModel())
 	if err != nil {
 		log.Printf("access-review-campaigns proxy: update item failed: %v", err)
