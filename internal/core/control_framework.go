@@ -150,8 +150,11 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 		},
 		{
 			ID: "secret-rotation", Name: "Secret-rotation hygiene", Area: "Cryptography",
-			Status:     controlStatus(p.DegradedArea("rotation", "evidence:rotation_overdue"), p.Rotation.Overdue > 0),
-			Detail:     fmt.Sprintf("%d overdue, %d due soon of %d covered", p.Rotation.Overdue, p.Rotation.DueSoon, p.Rotation.CoveredSecrets),
+			// CP-007: also fail when fewer secrets are covered than exist in the deployment
+			// (vacuous-truth pass when CoveredSecrets == 0 and Overdue == 0 but TotalSecrets > 0).
+			Status: controlStatus(p.DegradedArea("rotation", "evidence:rotation_overdue"),
+				p.Rotation.Overdue > 0 || (p.Rotation.TotalSecrets > 0 && p.Rotation.CoveredSecrets < p.Rotation.TotalSecrets)),
+			Detail:     fmt.Sprintf("%d overdue, %d due soon; %d of %d secrets covered", p.Rotation.Overdue, p.Rotation.DueSoon, p.Rotation.CoveredSecrets, p.Rotation.TotalSecrets),
 			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515, "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
