@@ -66,6 +66,19 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 			})
 			continue
 		}
+		// Enforce project-scope roles.assign for each request individually. The HTTP
+		// route uses the global RequirePermission gate (any global roles.assign holder
+		// can reach this endpoint), but a global grant must not authorise action on
+		// projects the caller has no per-project roles.assign at — that would be
+		// cross-project approval. Mirror the RequireScopedPermission gate that the
+		// single-request path (PUT /projects/{id}/access-requests/{requestId}) uses.
+		if allowed, authErr := k.Authorize(ctx, approverID, permRolesAssign, Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
+			result.Failed = append(result.Failed, BulkAccessError{
+				RequestID: id,
+				Error:     "permission denied",
+			})
+			continue
+		}
 		// Delegate to existing single-request logic (carries all validation).
 		// grantedRole="" → falls back to the request's SuggestedRole.
 		_, approveErr := k.ApproveAccessRequest(ctx, req.ProjectID, id, approverID, "")
@@ -114,6 +127,13 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,
 				Error:     "access request not found",
+			})
+			continue
+		}
+		if allowed, authErr := k.Authorize(ctx, approverID, permRolesAssign, Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
+			result.Failed = append(result.Failed, BulkAccessError{
+				RequestID: id,
+				Error:     "permission denied",
 			})
 			continue
 		}

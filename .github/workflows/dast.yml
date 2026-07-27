@@ -79,6 +79,7 @@ jobs:
         run: |
           printf '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nuclei","version":"3.3.9","rules":[]}},"results":[]}]}\n' > /tmp/nuclei-results.sarif
 
+
       - name: Run Nuclei (unauthenticated surface)
         run: |
           nuclei -target http://localhost:8080 \

@@ -10,7 +10,11 @@ storage:
     port: "5432"
     name: keyorix
     user: keyorix
-    ssl_mode: disable
+    # prefer: uses TLS when the postgres server supports it (default for docker-compose
+    # where the server runs on an internal Docker network without server certs). For
+    # production deployments with a managed or externally-reachable postgres, set this
+    # to verify-full and supply sslrootcert/sslcert/sslkey. Never use disable in prod.
+    ssl_mode: prefer
     # Password comes from KEYORIX_DB_PASSWORD (set in .env), never committed here.
   encryption:
     enabled: true

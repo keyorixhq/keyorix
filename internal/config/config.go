@@ -256,6 +256,11 @@ type ServerInstanceConfig struct {
 	WebAssetsPath  string   `yaml:"web_assets_path,omitempty"`
 	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
 	Domain         string   `yaml:"domain,omitempty"`
+	// MetricsToken, when non-empty, requires callers to present a matching
+	// "Authorization: Bearer <token>" header to reach GET /metrics. When empty
+	// (the default) /metrics is unauthenticated — restrict network access at the
+	// perimeter. Set this to a long random token for any internet-facing deployment.
+	MetricsToken string `yaml:"metrics_token,omitempty"`
 	// Keepalive tunes server-side connection keepalive/idle-reclaim (#222/#435). GRPC
 	// only — an authenticated credential holder can otherwise open many long-lived,
 	// mostly-idle connections that the server has no way to detect and reclaim, a
