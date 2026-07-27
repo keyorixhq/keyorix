@@ -171,23 +171,31 @@ func connectGrantActive(g *models.ConnectRefGrant, now time.Time) bool {
 }
 
 // refMatches reports whether ref is covered by a grant's pattern (ADR-045). A pattern
-// with no glob metacharacters (*, ?, [) is matched as a PREFIX — backward compatible,
-// and "" matches everything. A pattern containing a metacharacter is matched as a
-// shell-style glob via path.Match, where * does not cross '/'. So "metrics/" still
-// grants everything under metrics/, "metrics/*" grants exactly one further path
-// segment, and "prod/*/db" matches prod/<env>/db. A malformed glob matches nothing.
+// with no glob metacharacters (*, ?, [) is matched on a path-segment boundary:
+// ref must equal pattern exactly, or extend it starting with '/'. An empty pattern
+// ("") matches everything (the grant is connector-wide). This prevents a grant with
+// RefPrefix="db/prod" from authorizing the sibling namespace "db/production-other"
+// — a bypass that a bare strings.HasPrefix check would allow.
+//
+// A pattern containing a metacharacter is matched as a shell-style glob via
+// path.Match, where * does not cross '/'. So "metrics/" still grants everything
+// under metrics/, "metrics/*" grants exactly one further path segment, and
+// "prod/*/db" matches prod/<env>/db. A malformed glob matches nothing.
 //
 // A ref containing a "." or ".." path segment (e.g. "myapp/../otherapp") is rejected
 // outright before either comparison: connect.RefHasDotSegment — see its doc comment —
-// covers the same HasPrefix-vs-RFC-3986-resolution gap this per-reference RBAC grant
-// would otherwise be vulnerable to, mirroring the guard on prefixAllowed for the
-// coarser allowed_refs check.
+// covers the same prefix-boundary gap this per-reference RBAC grant would otherwise
+// be vulnerable to, mirroring the guard on prefixAllowed for the coarser allowed_refs
+// check.
 func refMatches(pattern, ref string) bool {
 	if connect.RefHasDotSegment(ref) {
 		return false
 	}
 	if !strings.ContainsAny(pattern, "*?[") {
-		return strings.HasPrefix(ref, pattern)
+		if pattern == "" {
+			return true // empty pattern = connector-wide grant
+		}
+		return connect.RefWithinPrefix(pattern, ref)
 	}
 	ok, err := path.Match(pattern, ref)
 	return err == nil && ok
