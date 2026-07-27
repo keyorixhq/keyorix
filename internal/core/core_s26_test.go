@@ -284,6 +284,9 @@ func TestCheckSecretPermission_Denied(t *testing.T) {
 	ms.On("ListSharesBySecret", mock.Anything, uint(5)).Return([]*models.ShareRecord{}, nil)
 	// CheckGroupPermissions calls GetUserGroups
 	ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+	// RBAC fallback (r124): no roles → deny.
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.Anything).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.Anything).Return([]uint{}, nil)
 	c := NewKeyorixCore(ms)
 	_, err := c.CheckSecretPermission(context.Background(), 5, 1, PermissionRead)
 	require.Error(t, err)

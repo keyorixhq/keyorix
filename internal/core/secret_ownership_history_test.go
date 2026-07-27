@@ -127,6 +127,9 @@ func TestGetSecretOwnershipHistory_PermissionDenied(t *testing.T) {
 		Return([]*models.ShareRecord{}, nil)
 	// CheckGroupPermissions → GetUserGroups needed.
 	store.On("GetUserGroups", ctx, uint(42)).Return([]*models.Group{}, nil)
+	// RBAC fallback (r124): no roles → deny.
+	store.On("GetUserRoleIDsAt", mock.Anything, uint(42), mock.Anything).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", mock.Anything, uint(42), mock.Anything).Return([]uint{}, nil)
 
 	_, err := c.GetSecretOwnershipHistory(ctx, 100, 42)
 	require.Error(t, err)

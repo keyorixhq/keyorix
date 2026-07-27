@@ -433,6 +433,9 @@ func TestGetSecretByNameWithPermissionCheck_PermissionDenied(t *testing.T) {
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(secret, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(5)).Return([]*models.ShareRecord{}, nil)
 	ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+	// RBAC fallback (r124): no roles → deny.
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	c := NewKeyorixCore(ms)
 	_, err := c.GetSecretByNameWithPermissionCheck(context.Background(), "mysecret", 1, 1, 2)
 	require.Error(t, err)
@@ -453,6 +456,9 @@ func TestUpdateSecretWithPermissionCheck_PermissionDenied(t *testing.T) {
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 	ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+	// RBAC fallback (r124): no roles → deny.
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	c := NewKeyorixCore(ms)
 	_, err := c.UpdateSecretWithPermissionCheck(context.Background(), &UpdateSecretRequest{ID: 1, UserID: 2, UpdatedBy: "me"})
 	require.Error(t, err)
@@ -473,6 +479,9 @@ func TestDeleteSecretWithPermissionCheck_PermissionDenied(t *testing.T) {
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 	ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+	// RBAC fallback (r124): no roles → deny.
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	c := NewKeyorixCore(ms)
 	err := c.DeleteSecretWithPermissionCheck(context.Background(), 1, 2)
 	require.Error(t, err)
