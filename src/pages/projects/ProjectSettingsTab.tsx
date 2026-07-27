@@ -62,6 +62,30 @@ function parsePromoteTarget(raw: string | null, sourceId: number): { targetId: n
     return { targetId };
 }
 
+function envStatusBadge(deleted: boolean | undefined, isDefault: boolean): React.ReactNode {
+    if (deleted) {
+        return (
+            <span
+                className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
+                style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+            >
+                deleted
+            </span>
+        );
+    }
+    if (isDefault) {
+        return (
+            <span
+                className="text-xs px-1.5 py-0.5 rounded-sm"
+                style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}
+            >
+                default
+            </span>
+        );
+    }
+    return null;
+}
+
 interface RenderEnvListProps {
     envsLoading: boolean;
     environments: Env[];
@@ -117,29 +141,7 @@ function renderEnvList({
                             <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
                                 {env.name.charAt(0).toUpperCase() + env.name.slice(1)}
                             </span>
-                            {env.deleted ? (
-                                <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
-                                    style={{
-                                        backgroundColor: 'var(--error-subtle)',
-                                        color: 'var(--error)',
-                                    }}
-                                >
-                                    deleted
-                                </span>
-                            ) : (
-                                isDefault && (
-                                    <span
-                                        className="text-xs px-1.5 py-0.5 rounded-sm"
-                                        style={{
-                                            backgroundColor: 'var(--bg-subtle)',
-                                            color: 'var(--text-muted)',
-                                        }}
-                                    >
-                                        default
-                                    </span>
-                                )
-                            )}
+                            {envStatusBadge(env.deleted, isDefault)}
                         </div>
                         {env.deleted ? (
                             <button
