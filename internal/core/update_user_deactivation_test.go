@@ -104,7 +104,7 @@ func TestUpdateUser_Deactivation_RevokesSessionsAndPATs(t *testing.T) {
 func TestUpdateUser_NoRevocation_WhenAlreadyInactive(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL&_busy_timeout=5000&mode=2"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)

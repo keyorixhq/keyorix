@@ -29,6 +29,12 @@ func newACLCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	// Seed project + environment.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
+	// Seed project membership for common test grantee IDs; GrantSecretACL checks
+	// IsProjectMember before storing the ACL row. RoleID 999 is a placeholder —
+	// IsProjectMember only filters on user_id + project_id, not role_id.
+	for _, uid := range []uint{1, 5, 7, 42, 55, 100} {
+		require.NoError(t, db.Create(&models.UserRole{UserID: uid, RoleID: 999, ProjectID: 1}).Error)
+	}
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db

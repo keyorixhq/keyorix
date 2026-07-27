@@ -135,7 +135,8 @@ func TestMFA_FullFlow(t *testing.T) {
 	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "pre-mfa"}).Error)
 
 	// ── Activate ──
-	code, err := totp.GenerateCode(secret, fixed)
+	// Use the previous time-step for activation so step T (fixed) remains fresh for login.
+	code, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
 	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword)
 	require.NoError(t, err)
@@ -267,7 +268,9 @@ func activateMFAForTest(t *testing.T, c *KeyorixCore, fixed time.Time) (secret s
 	ctx := context.Background()
 	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
 	require.NoError(t, err)
-	code, err := totp.GenerateCode(secret, fixed)
+	// Use the previous time-step so the current step (fixed) remains available for
+	// subsequent TOTP calls in the test; ActivateMFA marks the step it validates.
+	code, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
 	codes, err = c.ActivateMFA(ctx, 1, code, mfaTestPassword)
 	require.NoError(t, err)
@@ -353,7 +356,8 @@ func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
 
 	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
 	require.NoError(t, err)
-	actCode, err := totp.GenerateCode(secret, fixed)
+	// Activate with the previous step so the current step (fixed) is fresh for replay testing.
+	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
 	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
 	require.NoError(t, err)
@@ -585,7 +589,8 @@ func TestVerifyMFALogin_RecordsMFAStepupWhenGateEnabled(t *testing.T) {
 
 	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
 	require.NoError(t, err)
-	actCode, err := totp.GenerateCode(secret, fixed)
+	// Activate with the previous step so the current step (fixed) is fresh for the verify call.
+	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
 	require.NoError(t, err)
 	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
 	require.NoError(t, err)
