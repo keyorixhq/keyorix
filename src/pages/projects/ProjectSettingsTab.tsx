@@ -210,7 +210,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     }, [project]);
 
     const updateMutation = useMutation({
-        mutationFn: (body: { name: string; description?: string }) =>
+        mutationFn: (body: { name: string; description: string | undefined }) =>
             apiClient.put(`/api/v1/projects/${projectId}`, body),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
@@ -225,7 +225,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         setNameError('');
         updateMutation.mutate({
             name: name.trim(),
-            ...(description.trim() ? { description: description.trim() } : {}),
+            description: description.trim() || undefined,
         });
     };
 
