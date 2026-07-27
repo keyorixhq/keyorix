@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -83,6 +84,9 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	}
 	if !IsValidClassification(req.Classification) {
 		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+	}
+	if err := validateCreationTemplate(req.BackendType, req.CreationTemplate); err != nil {
+		return nil, err
 	}
 	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
 	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
@@ -651,4 +655,30 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	c.writeAuditEventFull(ctx, "dynamic_lease.renewed", uidPtr, nil, &pid, "",
 		fmt.Sprintf("renewed dynamic lease %s (new expiry %s)", lease.LeaseID, newExpiry.UTC().Format(time.RFC3339)))
 	return newExpiry, nil
+}
+
+// validateCreationTemplate scans a SQL creation_statements template for
+// dangerous privilege constructs (DYN-005). We cannot connect to the target
+// DB at config-create time, so we scan the template text instead. This catches
+// the majority of dangerous configs (SUPER, GRANT OPTION) without requiring a
+// live connection, and fails on the side of caution.
+func validateCreationTemplate(backendType, tmpl string) error {
+	if tmpl == "" {
+		return nil
+	}
+	// Only SQL backends use creation_statements as SQL; AWS STS uses it as a
+	// session policy JSON, Kubernetes ignores it.
+	switch backendType {
+	case "mysql", "postgresql", "postgres":
+	default:
+		return nil
+	}
+	upper := strings.ToUpper(tmpl)
+	dangerous := []string{"GRANT OPTION", "WITH GRANT", " SUPER"}
+	for _, kw := range dangerous {
+		if strings.Contains(upper, kw) {
+			return fmt.Errorf("dynamic secret creation_statements must not contain %q (would grant excessive privileges)", kw)
+		}
+	}
+	return nil
 }
