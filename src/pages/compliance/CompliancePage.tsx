@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { complianceApi } from '../../services/compliance';
 import { apiClient } from '../../services/client';
+import { triggerBlobDownload } from '../../utils';
 
 // LegalHoldBanner surfaces the deployment legal-hold state (A.5.34) and lets an
 // admin place or lift it. Reads status from the shared posture query; mutations
@@ -542,14 +543,7 @@ const ControlMatrixPanel: React.FC = () => {
         setCsvBusy(true);
         try {
             const res = await apiClient.get('/api/v1/compliance/controls.csv', { responseType: 'blob' });
-            const url = URL.createObjectURL(res.data as Blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'compliance-controls.csv';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
+            triggerBlobDownload(res.data as Blob, 'compliance-controls.csv');
         } finally {
             setCsvBusy(false);
         }

@@ -105,6 +105,20 @@ export function formatDateShort(iso: string | null | undefined): string {
 }
 
 /**
+ * Triggers a browser download for a Blob (e.g. a CSV fetched with responseType:'blob').
+ */
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+/**
  * Generates a cryptographically random 32-character URL-safe string.
  */
 export function generateSecret(): string {

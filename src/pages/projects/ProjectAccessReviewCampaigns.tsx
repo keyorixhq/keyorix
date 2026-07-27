@@ -15,6 +15,7 @@ import {
 } from '../../features/projects/api';
 import { CampaignProgress, AccessReviewItem } from '../../services/projects';
 import { apiClient } from '../../services/client';
+import { triggerBlobDownload } from '../../utils';
 
 interface Props {
     projectId: number;
@@ -229,14 +230,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                 `/api/v1/projects/${projectId}/access-review/campaigns/${campaignId}/export.csv`,
                 { responseType: 'blob' }
             );
-            const url = URL.createObjectURL(res.data as Blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `access-review-campaign-${campaignId}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
+            triggerBlobDownload(res.data as Blob, `access-review-campaign-${campaignId}.csv`);
         } catch (err: any) {
             onError(err);
         } finally {

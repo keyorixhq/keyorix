@@ -10,6 +10,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useProject, useProjectEnvironments, useRestoreEnvironment, PROJECT_KEYS } from '../../features/projects/api';
 import { apiClient } from '../../services/client';
+import { triggerBlobDownload } from '../../utils';
 import { Button } from '../../components/ui/Button';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
@@ -30,19 +31,16 @@ async function downloadInventory(
         const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/inventory.csv`, {
             responseType: 'blob',
         });
-        const url = URL.createObjectURL(res.data as Blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `secret-inventory-project-${projectId}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        triggerBlobDownload(res.data as Blob, `secret-inventory-project-${projectId}.csv`);
     } catch (err: any) {
         setMsg(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to export inventory.');
     } finally {
         setBusy(false);
     }
+}
+
+function apiErrMsg(err: any, fallback: string): string {
+    return err?.response?.data?.error ?? err?.response?.data?.message ?? fallback;
 }
 
 interface Env {
@@ -243,11 +241,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             setAddEnvError('');
             queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
         },
-        onError: (err: any) => {
-            setAddEnvError(
-                err?.response?.data?.error ?? err?.response?.data?.message ?? 'Failed to create environment.'
-            );
-        },
+        onError: (err: any) => setAddEnvError(apiErrMsg(err, 'Failed to create environment.')),
     });
 
     const deleteEnvMutation = useMutation({
@@ -258,11 +252,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
             queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
         },
-        onError: (err: any) => {
-            setDeleteEnvError(
-                err?.response?.data?.error ?? err?.response?.data?.message ?? 'Failed to delete environment.'
-            );
-        },
+        onError: (err: any) => setDeleteEnvError(apiErrMsg(err, 'Failed to delete environment.')),
     });
 
     const closeDeleteEnvModal = () => {
@@ -284,11 +274,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             setPromoteMsg(`Promoted: ${d.copied ?? 0} copied, ${d.skipped ?? 0} skipped (name clashes).`);
             queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
         },
-        onError: (err: any) => {
-            setPromoteMsg(
-                err?.response?.data?.error ?? err?.response?.data?.message ?? 'Failed to promote environment.'
-            );
-        },
+        onError: (err: any) => setPromoteMsg(apiErrMsg(err, 'Failed to promote environment.')),
     });
 
     const handlePromote = (source: Env) => {
@@ -433,9 +419,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             queryClient.invalidateQueries({ queryKey: ['project-name-conformance', projectId] });
             queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
         },
-        onError: (err: any) => {
-            setBulkRenameMsg(`Error: ${err?.response?.data?.error ?? err?.message ?? 'Failed to rename.'}`);
-        },
+        onError: (err: any) => setBulkRenameMsg(`Error: ${apiErrMsg(err, 'Failed to rename.')}`),
     });
     // The rows whose name input has actually been changed to a non-empty new value.
     const pendingRenames = nameViolations

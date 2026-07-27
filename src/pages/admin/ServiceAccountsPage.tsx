@@ -13,6 +13,7 @@ import { ServiceAccount } from '../../types/serviceAccounts';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { copyToClipboard, formatDateShort } from '../../utils';
+import { RevokeTokenCell } from '../../components/ui/RevokeTokenCell';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
 import { TokenStatusBadge, getTokenStatus } from '../../components/ui/TokenStatusBadge';
@@ -468,10 +469,7 @@ export const ServiceAccountsPage: React.FC = () => {
                 <tbody className="divide-y divide-base">
                     {tokens.map((token) => {
                         const status = getTokenStatus(token);
-                        const inactive = status === 'revoked' || status === 'expired';
                         const isPending = pendingRevokeTokenId === token.id;
-                        const activeRevokeColor = isDark ? '#f87171' : '#dc2626';
-                        const revokeColor = inactive ? 'var(--text-muted)' : activeRevokeColor;
                         return (
                             <tr key={token.id} className="hover:bg-subtle transition-colors">
                                 <td className="px-4 py-3 text-sm text-base-secondary">
@@ -484,53 +482,15 @@ export const ServiceAccountsPage: React.FC = () => {
                                     <TokenStatusBadge status={status} isDark={isDark} />
                                 </td>
                                 <td className="px-4 py-3 text-right">
-                                    {isPending ? (
-                                        <div className="flex items-center justify-end gap-2">
-                                            <span className="text-xs text-base-muted">
-                                                Revoke this token?
-                                            </span>
-                                            <Button
-                                                variant="destructive"
-                                                size="sm"
-                                                onClick={() => handleRevokeToken(token.id)}
-                                                disabled={revokeTokenMutation.isPending}
-                                            >
-                                                {revokeTokenMutation.isPending ? '…' : 'Revoke'}
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => setPendingRevokeTokenId(null)}
-                                            >
-                                                Cancel
-                                            </Button>
-                                        </div>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={() => setPendingRevokeTokenId(token.id)}
-                                            disabled={inactive}
-                                            className="text-xs font-medium px-2.5 py-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                            style={{
-                                                color: revokeColor,
-                                                backgroundColor: 'transparent',
-                                            }}
-                                            onMouseEnter={(e) => {
-                                                if (!inactive)
-                                                    (
-                                                        e.currentTarget as HTMLElement
-                                                    ).style.backgroundColor = isDark
-                                                        ? 'rgba(239,68,68,0.12)'
-                                                        : '#fee2e2';
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                (e.currentTarget as HTMLElement).style.backgroundColor =
-                                                    'transparent';
-                                            }}
-                                        >
-                                            Revoke
-                                        </button>
-                                    )}
+                                    <RevokeTokenCell
+                                        isPending={isPending}
+                                        isMutating={revokeTokenMutation.isPending}
+                                        inactive={status === 'revoked' || status === 'expired'}
+                                        isDark={isDark}
+                                        onRevoke={() => handleRevokeToken(token.id)}
+                                        onCancel={() => setPendingRevokeTokenId(null)}
+                                        onSetPending={() => setPendingRevokeTokenId(token.id)}
+                                    />
                                 </td>
                             </tr>
                         );

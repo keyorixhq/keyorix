@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '../../services/client';
+import { triggerBlobDownload } from '../../utils';
 
 /**
  * Org-wide secret asset-inventory export (#369), the deployment-wide counterpart to the
@@ -18,14 +19,7 @@ export const OrgInventoryExport: React.FC = () => {
         setBusy(true);
         try {
             const res = await apiClient.get('/api/v1/secrets/inventory.csv', { responseType: 'blob' });
-            const url = URL.createObjectURL(res.data as Blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'secret-inventory-all-projects.csv';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
+            triggerBlobDownload(res.data as Blob, 'secret-inventory-all-projects.csv');
         } catch (err: any) {
             setMsg(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to export inventory.');
         } finally {
