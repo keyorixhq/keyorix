@@ -97,18 +97,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
 
-	// CORS configuration - updated for web dashboard. AllowCredentials is
-	// deliberately NOT set: this API is bearer-token-only (Authorization header),
-	// never cookie-based, so there is no credentialed cross-origin request to allow.
-	// Leaving it unset (defaults false) means a future cookie-based auth addition
-	// must explicitly opt back in here — and get re-reviewed — rather than silently
-	// inheriting a permissive flag that predates it.
+	// CORS configuration. AllowCredentials is set because MFA, WebAuthn, and SSO
+	// login paths now issue session cookies (r121); cross-origin requests from the
+	// dashboard must be allowed to send them. Credentials are only sent to origins
+	// in AllowedOrigins (never "*"), so this does not broaden the attack surface.
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: getAllowedOrigins(cfg),
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders: []string{"Accept", "Authorization", hdrContentType, "X-CSRF-Token", "X-Requested-With"},
-		ExposedHeaders: []string{"Link", "X-Total-Count", "X-Page-Count"},
-		MaxAge:         300,
+		AllowedOrigins:   getAllowedOrigins(cfg),
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders:   []string{"Accept", "Authorization", hdrContentType, "X-CSRF-Token", "X-Requested-With"},
+		ExposedHeaders:   []string{"Link", "X-Total-Count", "X-Page-Count"},
+		MaxAge:           300,
+		AllowCredentials: true,
 	}))
 
 	// Initialize handlers

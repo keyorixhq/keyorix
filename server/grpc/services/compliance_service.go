@@ -5,6 +5,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -36,7 +38,7 @@ func (s *ComplianceGRPCService) GetCompliancePosture(ctx context.Context, _ *emp
 	}
 	p, err := s.core.GetCompliancePosture(ctx)
 	if err != nil {
-		return nil, err
+		return nil, complianceError(err)
 	}
 	return compliancePostureToProto(p), nil
 }
@@ -52,9 +54,15 @@ func (s *ComplianceGRPCService) GetComplianceControls(ctx context.Context, _ *em
 	}
 	c, err := s.core.GetComplianceControls(ctx)
 	if err != nil {
-		return nil, err
+		return nil, complianceError(err)
 	}
 	return complianceControlsToProto(c), nil
+}
+
+// complianceError maps a core compliance error to a safe gRPC status — raw DB/
+// internal error strings are never forwarded to the caller.
+func complianceError(_ error) error {
+	return status.Error(codes.Internal, "compliance query failed")
 }
 
 // compliancePostureToProto maps the core posture roll-up to its protobuf form.

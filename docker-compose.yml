@@ -23,7 +23,7 @@ services:
       retries: 10
 
   backend:
-    image: ghcr.io/keyorixhq/keyorix-server:latest
+    image: ghcr.io/keyorixhq/keyorix-server:v0.88.0 # pin; bump to match release tag on upgrades
     # To build from source instead of pulling the published image, comment out
     # `image:` above and uncomment:
     # build:
@@ -53,7 +53,7 @@ services:
       - keyorix_keys:/app/keys
 
   web:
-    image: ghcr.io/keyorixhq/keyorix-web:latest
+    image: ghcr.io/keyorixhq/keyorix-web:v0.88.0 # pin; bump to match release tag on upgrades
     restart: unless-stopped
     ports:
       - "8088:80"

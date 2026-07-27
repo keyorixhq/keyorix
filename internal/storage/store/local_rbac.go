@@ -424,6 +424,7 @@ func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, sc
 	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Where("user_id = ? AND project_id = ? AND environment_id = ?",
 			userID, scope.ProjectID, scope.EnvironmentID).
+		Where(sqlWhereURNotExpired, time.Now()).
 		Distinct().Pluck("role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
