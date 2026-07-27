@@ -837,9 +837,9 @@ func TestAuthEncryption_SessionToken_RoundTrip(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, ae.Initialize("test-pass"))
 
-	enc, meta, err := ae.EncryptSessionToken("my-session-tok")
+	enc, meta, err := ae.EncryptSessionToken("my-session-tok", uint(1))
 	require.NoError(t, err)
-	got, err := ae.DecryptSessionToken(enc, meta)
+	got, err := ae.DecryptSessionToken(enc, meta, uint(1))
 	require.NoError(t, err)
 	assert.Equal(t, "my-session-tok", got)
 }
@@ -853,9 +853,9 @@ func TestAuthEncryption_APIToken_RoundTrip(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, ae.Initialize("test-pass"))
 
-	enc, meta, err := ae.EncryptAPIToken("my-api-tok")
+	enc, meta, err := ae.EncryptAPIToken("my-api-tok", uint(1))
 	require.NoError(t, err)
-	got, err := ae.DecryptAPIToken(enc, meta)
+	got, err := ae.DecryptAPIToken(enc, meta, uint(1))
 	require.NoError(t, err)
 	assert.Equal(t, "my-api-tok", got)
 }
@@ -869,9 +869,9 @@ func TestAuthEncryption_PasswordResetToken_RoundTrip(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, ae.Initialize("test-pass"))
 
-	enc, meta, err := ae.EncryptPasswordResetToken("reset-tok")
+	enc, meta, err := ae.EncryptPasswordResetToken("reset-tok", uint(1))
 	require.NoError(t, err)
-	got, err := ae.DecryptPasswordResetToken(enc, meta)
+	got, err := ae.DecryptPasswordResetToken(enc, meta, uint(1))
 	require.NoError(t, err)
 	assert.Equal(t, "reset-tok", got)
 }
@@ -884,12 +884,12 @@ func TestAuthEncryption_Disabled_SessionToken_Passthrough(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, s24DB(t))
 	require.NoError(t, ae.Initialize(""))
 
-	enc, meta, err := ae.EncryptSessionToken("tok")
+	enc, meta, err := ae.EncryptSessionToken("tok", uint(0))
 	require.NoError(t, err)
 	assert.Equal(t, "tok", string(enc))
 	assert.Nil(t, meta)
 
-	got, err := ae.DecryptSessionToken(enc, meta)
+	got, err := ae.DecryptSessionToken(enc, meta, uint(0))
 	require.NoError(t, err)
 	assert.Equal(t, "tok", got)
 }
@@ -902,7 +902,7 @@ func TestAuthEncryption_Disabled_APIToken_Passthrough(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, s24DB(t))
 	require.NoError(t, ae.Initialize(""))
 
-	enc, meta, err := ae.EncryptAPIToken("api-tok")
+	enc, meta, err := ae.EncryptAPIToken("api-tok", uint(0))
 	require.NoError(t, err)
 	assert.Equal(t, "api-tok", string(enc))
 	assert.Nil(t, meta)
@@ -916,7 +916,7 @@ func TestAuthEncryption_Disabled_PasswordResetToken_Passthrough(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, s24DB(t))
 	require.NoError(t, ae.Initialize(""))
 
-	enc, meta, err := ae.EncryptPasswordResetToken("r-tok")
+	enc, meta, err := ae.EncryptPasswordResetToken("r-tok", uint(0))
 	require.NoError(t, err)
 	assert.Equal(t, "r-tok", string(enc))
 	assert.Nil(t, meta)
@@ -931,10 +931,10 @@ func TestAuthEncryption_ValidateEncryptedToken_Match(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, ae.Initialize("test-pass"))
 
-	enc, meta, err := ae.EncryptSessionToken("tok-abc")
+	enc, meta, err := ae.EncryptSessionToken("tok-abc", uint(1))
 	require.NoError(t, err)
 
-	match, err := ae.ValidateEncryptedToken(enc, meta, "tok-abc")
+	match, err := ae.ValidateEncryptedToken(enc, meta, "tok-abc", uint(1))
 	require.NoError(t, err)
 	assert.True(t, match)
 }
@@ -948,10 +948,10 @@ func TestAuthEncryption_ValidateEncryptedToken_Mismatch(t *testing.T) {
 	ae := NewAuthEncryption(cfg, dir, db)
 	require.NoError(t, ae.Initialize("test-pass"))
 
-	enc, meta, err := ae.EncryptSessionToken("tok-abc")
+	enc, meta, err := ae.EncryptSessionToken("tok-abc", uint(1))
 	require.NoError(t, err)
 
-	match, err := ae.ValidateEncryptedToken(enc, meta, "different-token")
+	match, err := ae.ValidateEncryptedToken(enc, meta, "different-token", uint(1))
 	require.NoError(t, err)
 	assert.False(t, match)
 }

@@ -4,18 +4,11 @@
 // For DB store/retrieve operations see auth_encryption_store.go.
 // For rotation see auth_encryption_rotate.go.
 //
-// SECURITY NOTE (tracked hardening): unlike secret VALUES (which bind their ciphertext to
-// the owning row via SecretAAD), these auth-token blobs are encrypted without AAD, so a
-// database-WRITE attacker could transplant an encrypted token blob between rows. The
-// plaintext stays confidential under the DEK (an integrity/confused-deputy gap, not a
-// decryption or auth bypass), which is why it is not closed inline: binding AAD requires
-// threading each token's owning identity (userID/tokenID) through every encrypt/decrypt
-// call site AND a versioned-AAD migration for existing blobs (mirroring the secret-value
-// AADVersion fallback). Track as a dedicated change.
-//
-// Recommended fix: pass each token's owning identity as AAD via service.EncryptSecretWithAAD —
-// userID for session and password-reset tokens, tokenID for API tokens — matching the
-// MFASecretAAD pattern already used for MFA secrets. This is a tracked deferred gap.
+// Each encrypt/decrypt method now accepts the owning user/token ID as AAD so a
+// database-WRITE attacker cannot transplant an encrypted token blob between rows
+// (AUTH-CRYPTO-001/002). Legacy rows encrypted without AAD (pre-fix) are decrypted
+// via the fallback path in DecryptSecretWithAAD — the warning log on that path drives
+// re-encryption in the next M2 sweep. New tokens are always sealed with AAD.
 package encryption
 
 import (
@@ -62,8 +55,8 @@ func (ae *AuthEncryption) GetAuthEncryptionStatus() map[string]interface{} {
 }
 
 // ValidateEncryptedToken decrypts storedToken and compares to plainToken using constant-time compare.
-func (ae *AuthEncryption) ValidateEncryptedToken(encryptedToken, metadata []byte, plainToken string) (bool, error) {
-	storedToken, err := ae.DecryptSessionToken(encryptedToken, metadata)
+func (ae *AuthEncryption) ValidateEncryptedToken(encryptedToken, metadata []byte, plainToken string, userID uint) (bool, error) {
+	storedToken, err := ae.DecryptSessionToken(encryptedToken, metadata, userID)
 	if err != nil {
 		return false, fmt.Errorf("failed to decrypt stored token: %w", err)
 	}
@@ -94,72 +87,73 @@ func (ae *AuthEncryption) DecryptClientSecret(encryptedData, metadata []byte) (s
 	return string(plain), nil
 }
 
-// EncryptSessionToken encrypts a session token.
-func (ae *AuthEncryption) EncryptSessionToken(plainToken string) ([]byte, []byte, error) {
+// EncryptSessionToken encrypts a session token bound to the owning user (AUTH-CRYPTO-001).
+func (ae *AuthEncryption) EncryptSessionToken(plainToken string, userID uint) ([]byte, []byte, error) {
 	if !ae.service.IsEnabled() {
 		return []byte(plainToken), nil, nil
 	}
-	enc, meta, err := ae.service.EncryptSecret([]byte(plainToken))
+	enc, meta, err := ae.service.EncryptSecretWithAAD([]byte(plainToken), SessionTokenAAD(userID))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to encrypt session token: %w", err)
 	}
 	return enc, meta, nil
 }
 
-// DecryptSessionToken decrypts a session token.
-func (ae *AuthEncryption) DecryptSessionToken(encryptedData, metadata []byte) (string, error) {
+// DecryptSessionToken decrypts a session token. Legacy rows (no AAD) fall back to
+// the non-AAD path automatically via DecryptSecretWithAAD's AADVersion check.
+func (ae *AuthEncryption) DecryptSessionToken(encryptedData, metadata []byte, userID uint) (string, error) {
 	if !ae.service.IsEnabled() {
 		return string(encryptedData), nil
 	}
-	plain, err := ae.service.DecryptSecret(encryptedData)
+	plain, err := ae.service.DecryptSecretWithAAD(encryptedData, SessionTokenAAD(userID))
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt session token: %w", err)
 	}
 	return string(plain), nil
 }
 
-// EncryptAPIToken encrypts an API token.
-func (ae *AuthEncryption) EncryptAPIToken(plainToken string) ([]byte, []byte, error) {
+// EncryptAPIToken encrypts an API token bound to the issuing user (AUTH-CRYPTO-002).
+func (ae *AuthEncryption) EncryptAPIToken(plainToken string, userID uint) ([]byte, []byte, error) {
 	if !ae.service.IsEnabled() {
 		return []byte(plainToken), nil, nil
 	}
-	enc, meta, err := ae.service.EncryptSecret([]byte(plainToken))
+	enc, meta, err := ae.service.EncryptSecretWithAAD([]byte(plainToken), APITokenAAD(userID))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to encrypt API token: %w", err)
 	}
 	return enc, meta, nil
 }
 
-// DecryptAPIToken decrypts an API token.
-func (ae *AuthEncryption) DecryptAPIToken(encryptedData, metadata []byte) (string, error) {
+// DecryptAPIToken decrypts an API token. Legacy rows fall back via DecryptSecretWithAAD.
+func (ae *AuthEncryption) DecryptAPIToken(encryptedData, metadata []byte, userID uint) (string, error) {
 	if !ae.service.IsEnabled() {
 		return string(encryptedData), nil
 	}
-	plain, err := ae.service.DecryptSecret(encryptedData)
+	plain, err := ae.service.DecryptSecretWithAAD(encryptedData, APITokenAAD(userID))
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt API token: %w", err)
 	}
 	return string(plain), nil
 }
 
-// EncryptPasswordResetToken encrypts a password reset token.
-func (ae *AuthEncryption) EncryptPasswordResetToken(plainToken string) ([]byte, []byte, error) {
+// EncryptPasswordResetToken encrypts a password reset token bound to the owning user.
+func (ae *AuthEncryption) EncryptPasswordResetToken(plainToken string, userID uint) ([]byte, []byte, error) {
 	if !ae.service.IsEnabled() {
 		return []byte(plainToken), nil, nil
 	}
-	enc, meta, err := ae.service.EncryptSecret([]byte(plainToken))
+	enc, meta, err := ae.service.EncryptSecretWithAAD([]byte(plainToken), PasswordResetTokenAAD(userID))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to encrypt password reset token: %w", err)
 	}
 	return enc, meta, nil
 }
 
-// DecryptPasswordResetToken decrypts a password reset token.
-func (ae *AuthEncryption) DecryptPasswordResetToken(encryptedData, metadata []byte) (string, error) {
+// DecryptPasswordResetToken decrypts a password reset token. Legacy rows fall back.
+func (ae *AuthEncryption) DecryptPasswordResetToken(encryptedData, metadata []byte, userID uint) (string, error) {
 	if !ae.service.IsEnabled() {
 		return string(encryptedData), nil
 	}
-	plain, err := ae.service.DecryptSecret(encryptedData)
+	plain, err := ae.service.DecryptSecretWithAAD(encryptedData, PasswordResetTokenAAD(userID))
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt password reset token: %w", err)
 	}

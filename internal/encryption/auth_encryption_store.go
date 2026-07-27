@@ -42,7 +42,7 @@ func (ae *AuthEncryption) RetrieveAPIClientSecret(clientID string) (string, erro
 
 // StoreEncryptedSession encrypts the session token and persists the session to the DB.
 func (ae *AuthEncryption) StoreEncryptedSession(session *models.Session, plainToken string) error {
-	encryptedToken, metadata, err := ae.EncryptSessionToken(plainToken)
+	encryptedToken, metadata, err := ae.EncryptSessionToken(plainToken, session.UserID)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt session token: %w", err)
 	}
@@ -62,7 +62,7 @@ func (ae *AuthEncryption) RetrieveSessionToken(sessionID uint) (string, error) {
 	if err := ae.db.First(&session, sessionID).Error; err != nil {
 		return "", fmt.Errorf("failed to retrieve session: %w", err)
 	}
-	plainToken, err := ae.DecryptSessionToken(session.EncryptedSessionToken, []byte(session.SessionTokenMetadata))
+	plainToken, err := ae.DecryptSessionToken(session.EncryptedSessionToken, []byte(session.SessionTokenMetadata), session.UserID)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt session token: %w", err)
 	}
@@ -71,7 +71,11 @@ func (ae *AuthEncryption) RetrieveSessionToken(sessionID uint) (string, error) {
 
 // StoreEncryptedAPIToken encrypts the API token and persists it to the DB.
 func (ae *AuthEncryption) StoreEncryptedAPIToken(token *models.APIToken, plainToken string) error {
-	encryptedToken, metadata, err := ae.EncryptAPIToken(plainToken)
+	var tokenUserID uint
+	if token.UserID != nil {
+		tokenUserID = *token.UserID
+	}
+	encryptedToken, metadata, err := ae.EncryptAPIToken(plainToken, tokenUserID)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt API token: %w", err)
 	}
@@ -91,7 +95,11 @@ func (ae *AuthEncryption) RetrieveAPIToken(tokenID uint) (string, error) {
 	if err := ae.db.First(&token, tokenID).Error; err != nil {
 		return "", fmt.Errorf("failed to retrieve API token: %w", err)
 	}
-	plainToken, err := ae.DecryptAPIToken(token.EncryptedToken, []byte(token.TokenMetadata))
+	var retrieveUserID uint
+	if token.UserID != nil {
+		retrieveUserID = *token.UserID
+	}
+	plainToken, err := ae.DecryptAPIToken(token.EncryptedToken, []byte(token.TokenMetadata), retrieveUserID)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt API token: %w", err)
 	}

@@ -221,7 +221,7 @@ func TestValidateSessions_S24_VerboseWithUnmigrated(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
 	// Insert one properly encrypted session.
-	encTok, encMeta, err := ae.EncryptSessionToken("s24-session-token")
+	encTok, encMeta, err := ae.EncryptSessionToken("s24-session-token", uint(50))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.Session{
 		UserID:                50,
@@ -247,7 +247,7 @@ func TestValidateSessions_S24_VerboseWithUnmigrated(t *testing.T) {
 func TestValidateAPITokens_S24_VerboseWithUnmigrated(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	encTok, encMeta, err := ae.EncryptAPIToken("s24-api-token")
+	encTok, encMeta, err := ae.EncryptAPIToken("s24-api-token", uint(0))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.APIToken{
 		ClientID:       10,
@@ -272,7 +272,7 @@ func TestValidateAPITokens_S24_VerboseWithUnmigrated(t *testing.T) {
 func TestValidatePasswordResetTokens_S24_VerboseWithUnmigrated(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	encTok, encMeta, err := ae.EncryptPasswordResetToken("s24-reset-token")
+	encTok, encMeta, err := ae.EncryptPasswordResetToken("s24-reset-token", uint(60))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.PasswordReset{
 		UserID:         60,
@@ -380,7 +380,7 @@ func TestShowAuthEncryptionStats_S24_AllFourTablesEncrypted(t *testing.T) {
 		ClientSecretMetadata:  models.JSON(encSecMeta),
 	}).Error)
 
-	encSess, encSessMeta, err := ae.EncryptSessionToken("s24-stats-session")
+	encSess, encSessMeta, err := ae.EncryptSessionToken("s24-stats-session", uint(70))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.Session{
 		UserID:                70,
@@ -388,7 +388,7 @@ func TestShowAuthEncryptionStats_S24_AllFourTablesEncrypted(t *testing.T) {
 		SessionTokenMetadata:  encSessMeta,
 	}).Error)
 
-	encTok, encTokMeta, err := ae.EncryptAPIToken("s24-stats-token")
+	encTok, encTokMeta, err := ae.EncryptAPIToken("s24-stats-token", uint(0))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.APIToken{
 		ClientID:       20,
@@ -396,7 +396,7 @@ func TestShowAuthEncryptionStats_S24_AllFourTablesEncrypted(t *testing.T) {
 		TokenMetadata:  encTokMeta,
 	}).Error)
 
-	encRst, encRstMeta, err := ae.EncryptPasswordResetToken("s24-stats-reset")
+	encRst, encRstMeta, err := ae.EncryptPasswordResetToken("s24-stats-reset", uint(70))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.PasswordReset{
 		UserID:         70,
