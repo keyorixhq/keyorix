@@ -131,3 +131,48 @@ func rateLimitKey(r *http.Request) string {
 	}
 	return "ip:" + hostOnly(r.RemoteAddr)
 }
+
+// tokenAuthFailureLimiter enforces a per-IP rate limit on failed token
+// authentication attempts — PAT, machine, and session tokens alike. Prevents an
+// attacker from flooding auth with invalid tokens without bound. Each IP is
+// allowed a burst of tokenAuthFailureBurst failures, refilling at 1/s. The limiter
+// is in-process and not cluster-coordinated (same trade-off as PrincipalRateLimit).
+const tokenAuthFailureBurst = 10
+
+type ipFailureLimiter struct {
+	mu       sync.Mutex
+	limiters map[string]*principalBucket
+}
+
+var globalTokenAuthFailureLimiter = &ipFailureLimiter{
+	limiters: make(map[string]*principalBucket),
+}
+
+// recordTokenAuthFailure records a failed auth attempt for the given source IP,
+// returning false when the IP has exceeded its failure budget. Caller should
+// respond with 429 in that case.
+func recordTokenAuthFailure(ip string) bool {
+	return globalTokenAuthFailureLimiter.allow(ip)
+}
+
+func (l *ipFailureLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.limiters[ip]
+	if !ok {
+		b = &principalBucket{limiter: rate.NewLimiter(rate.Limit(1), tokenAuthFailureBurst)}
+		l.limiters[ip] = b
+	}
+	b.lastSeen = time.Now()
+	l.sweepLocked()
+	return b.limiter.Allow()
+}
+
+func (l *ipFailureLimiter) sweepLocked() {
+	cutoff := time.Now().Add(-principalLimiterIdleTTL)
+	for k, b := range l.limiters {
+		if b.lastSeen.Before(cutoff) {
+			delete(l.limiters, k)
+		}
+	}
+}

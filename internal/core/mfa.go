@@ -455,6 +455,9 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 		return fmt.Errorf("invalid code or password")
 	}
 	c.clearLoginFailures(ctx, user)
+	uid := user.ID
+	c.writeAuditEventFull(ctx, "mfa.reauth_verified", &uid, nil, nil, "",
+		fmt.Sprintf("user %s completed MFA re-authentication (phase: %s)", user.Username, phase))
 	return nil
 }
 

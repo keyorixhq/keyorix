@@ -256,6 +256,12 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	if err != nil {
 		// Cache the negative result so subsequent retries skip the DB.
 		cacheSet(key, tokenCacheEntry{userCtx: nil, expiresAt: time.Now().Add(invalidTokenTTL)})
+		// Rate-limit by source IP: after tokenAuthFailureBurst failures the IP is
+		// throttled at 1 failure/s to mitigate token brute-forcing (PAT-003).
+		if !recordTokenAuthFailure(hostOnly(r.RemoteAddr)) {
+			tooManyRequestsResponse(w, "too many invalid token attempts")
+			return
+		}
 		unauthorizedResponse(w, "Invalid or expired token")
 		return
 	}
@@ -881,6 +887,15 @@ func unauthorizedResponse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "Unauthorized", "message": message, "code": http.StatusUnauthorized,
+	})
+}
+
+func tooManyRequestsResponse(w http.ResponseWriter, message string) {
+	w.Header().Set(hdrContentType, mimeJSON)
+	w.Header().Set("Retry-After", "60")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "RateLimited", "message": message, "code": http.StatusTooManyRequests,
 	})
 }
 
