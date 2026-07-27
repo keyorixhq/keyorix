@@ -60,3 +60,37 @@ func TestPATRestrictionFrom_IncludesCIDRs(t *testing.T) {
 	// A fully-unrestricted token yields nil.
 	assert.Nil(t, patRestrictionFrom(&models.PersonalAccessToken{}))
 }
+
+// TestDecodePATCIDRs_CorruptionFailsClosed verifies that a non-empty but
+// unparseable allowed_cidrs column returns the sentinel (not nil), ensuring
+// the PAT is denied from all networks rather than silently widened to global
+// network access (#r125-H1 — the scope-corruption fix DecodePATScopes received
+// in r124 missed its CIDR sibling).
+func TestDecodePATCIDRs_CorruptionFailsClosed(t *testing.T) {
+	// A parseable empty column yields nil (no restriction — expected).
+	assert.Nil(t, DecodePATCIDRs(""))
+	assert.Nil(t, DecodePATCIDRs("   "))
+
+	// A valid JSON array parses normally.
+	got := DecodePATCIDRs(`["10.0.0.0/8"]`)
+	assert.Equal(t, []string{"10.0.0.0/8"}, got)
+
+	// A non-empty but corrupted column must fail CLOSED (sentinel, not nil).
+	corrupted := DecodePATCIDRs(`{not valid json}`)
+	assert.Equal(t, patCIDRCorrupted, corrupted,
+		"corrupted CIDR column must return the sentinel, not nil (fail-open)")
+
+	// The sentinel must deny ALL source IPs — IPInCIDRs must return false
+	// for any real address when the sentinel is in the allowlist.
+	assert.False(t, IPInCIDRs("10.1.2.3", corrupted),
+		"sentinel must deny a private-range source IP")
+	assert.False(t, IPInCIDRs("0.0.0.0", corrupted),
+		"sentinel must deny the wildcard address")
+
+	// patRestrictionFrom must produce a non-nil restriction for a corrupted column
+	// (so the CIDR check fires and denies), not nil (which would skip the check).
+	r := patRestrictionFrom(&models.PersonalAccessToken{AllowedCIDRs: `{bad}`})
+	if assert.NotNil(t, r, "corrupted CIDR column must yield a non-nil restriction") {
+		assert.Equal(t, patCIDRCorrupted, r.AllowedCIDRs)
+	}
+}

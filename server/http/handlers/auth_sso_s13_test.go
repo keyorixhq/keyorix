@@ -7,7 +7,8 @@
 //     DeleteSessionByID no-user-ctx + bad-ID + not-found,
 //     package-level stubs when defaultUserHandler is nil
 //   - sso.go: BeginSSO unknown-provider, CompleteSSO unknown-provider + IdP-error-param
-//     + missing-code-or-state + core-error
+//     + missing-code-or-state + core-error; fragment does NOT contain session token
+//     (#r125-H3)
 package handlers
 
 import (
@@ -17,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -462,9 +464,9 @@ func TestCompleteSSO_CoreError_S13(t *testing.T) {
 	h := NewAuthHandler(cs, false)
 
 	// Provide code and state but no matching login-state row exists in the DB.
-	url := fmt.Sprintf("/auth/sso/%s/callback?code=badcode&state=badstate", providerName)
+	reqURL := fmt.Sprintf("/auth/sso/%s/callback?code=badcode&state=badstate", providerName)
 	req := withChiParam(
-		httptest.NewRequest(http.MethodGet, url, nil),
+		httptest.NewRequest(http.MethodGet, reqURL, nil),
 		"provider", providerName,
 	)
 	w := httptest.NewRecorder()
@@ -473,4 +475,32 @@ func TestCompleteSSO_CoreError_S13(t *testing.T) {
 	assert.Equal(t, http.StatusFound, w.Code)
 	loc := w.Header().Get("Location")
 	assert.Contains(t, loc, "error")
+}
+
+// TestRedirectFragment_NoTokenInFragment_S13 verifies that redirectFragment never
+// includes the raw session token in the URL fragment (#r125-H3). The session is
+// delivered exclusively via the HttpOnly/Secure cookie set by setSessionCookies;
+// including the token in the fragment exposes it to JS, browser history, and
+// extensions. This test exercises redirectFragment directly (same package).
+func TestRedirectFragment_NoTokenInFragment_S13(t *testing.T) {
+	cs := freshCoreS12(t)
+	h := NewAuthHandler(cs, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+
+	// Simulate the url.Values CompleteSSO and CompleteSAML now build (no token key).
+	frag := url.Values{
+		"expires_at":          {"2026-07-27T12:00:00Z"},
+		"absolute_expires_at": {"2026-08-27T12:00:00Z"},
+		"return_to":           {"/dashboard"},
+	}
+	h.redirectFragment(w, req, "https://app.example.com/sso/complete", frag)
+
+	assert.Equal(t, http.StatusFound, w.Code)
+	loc := w.Header().Get("Location")
+	assert.Contains(t, loc, "#", "redirect must use fragment delivery")
+	assert.NotContains(t, loc, "token=",
+		"raw session token must NOT appear in the fragment — cookie-only delivery")
+	assert.Contains(t, loc, "expires_at=", "non-sensitive metadata fields survive")
 }

@@ -15,13 +15,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// newPurgeTestCore opens a fresh in-memory SQLite DB, migrates AuditEvent,
+// newPurgeTestCore opens a fresh in-memory SQLite DB, migrates AuditEvent and
+// LegalHold (needed by the legalHoldGuard that PurgeAuditLogs now calls),
 // and returns a KeyorixCore with a fixed clock so retention cutoffs are stable.
 func newPurgeTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file::memory:?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.LegalHold{}))
 	fixed := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	c.now = func() time.Time { return fixed }
@@ -101,6 +102,8 @@ func TestPurgeAuditLogs_RetentionDaysExactlyMin(t *testing.T) {
 func TestPurgeAuditLogs_StorageErrorPropagated(t *testing.T) {
 	ms := new(MockStorage)
 	storageErr := errors.New("db offline")
+	// legalHoldGuard → IsLegalHoldActive → storage.GetActiveLegalHold: no active hold.
+	ms.On("GetActiveLegalHold", mock.Anything).Return((*models.LegalHold)(nil), nil)
 	ms.On("DeleteAuditLogsBefore", mock.Anything, mock.Anything).Return(int64(0), storageErr)
 	// LogAuditEvent is called for the system purge event — but only on success.
 	// On error the function returns early, so LogAuditEvent is never called.
@@ -109,5 +112,22 @@ func TestPurgeAuditLogs_StorageErrorPropagated(t *testing.T) {
 	_, err := c.PurgeAuditLogs(context.Background(), AuditLogRetentionConfig{RetentionDays: 30})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db offline")
+	ms.AssertExpectations(t)
+}
+
+// TestPurgeAuditLogs_LegalHoldBlocked verifies that PurgeAuditLogs refuses to delete
+// audit records when a legal hold is active (#r125-H4 — PurgeAuditLogs previously
+// skipped the legalHoldGuard that PurgeExpiredSoftDeletes and
+// PurgeExpiredComplianceRecords call, allowing audit evidence to be destroyed under hold).
+func TestPurgeAuditLogs_LegalHoldBlocked(t *testing.T) {
+	ms := new(MockStorage)
+	// GetActiveLegalHold returns a non-nil hold → legalHoldGuard refuses the purge.
+	ms.On("GetActiveLegalHold", mock.Anything).Return(&models.LegalHold{ID: 1}, nil)
+
+	c := NewKeyorixCore(ms)
+	_, err := c.PurgeAuditLogs(context.Background(), AuditLogRetentionConfig{RetentionDays: 30})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legal hold")
+	ms.AssertNotCalled(t, "DeleteAuditLogsBefore", mock.Anything, mock.Anything)
 	ms.AssertExpectations(t)
 }

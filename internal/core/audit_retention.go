@@ -32,6 +32,13 @@ func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionC
 		return nil, fmt.Errorf("%w: retention_days must be at least %d (got %d)",
 			ErrInvalidAuditRetentionDays, minRetentionDays, cfg.RetentionDays)
 	}
+	// Re-check the legal hold immediately before the delete — same pattern as
+	// PurgeExpiredSoftDeletes / PurgeExpiredComplianceRecords. A hold placed after
+	// the scheduler's pre-lock check would otherwise not stop an in-flight purge
+	// from destroying audit evidence that is now under hold (irreversible spoliation).
+	if err := c.legalHoldGuard(ctx); err != nil {
+		return nil, err
+	}
 
 	cutoff := c.now().UTC().AddDate(0, 0, -cfg.RetentionDays)
 	n, err := c.storage.DeleteAuditLogsBefore(ctx, cutoff)

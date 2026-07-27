@@ -131,12 +131,13 @@ func (h *AuthHandler) CompleteSSO(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cookies survive a redirect fine — the browser stores them from this 302
-	// response before following Location. Fragment still carries `token` this
-	// phase for backward compatibility with a not-yet-updated frontend; the
-	// cookie is what actually matters going forward.
+	// response before following Location. The session is delivered exclusively
+	// via the HttpOnly/Secure cookie; the token is NOT included in the fragment
+	// (#r125-H3: a fragment token is exposed to JS, browser history, and
+	// extensions — the cookie is the correct and sufficient delivery mechanism).
 	h.setSessionCookies(w, session)
 
-	frag := url.Values{"token": {session.SessionToken}}
+	frag := url.Values{}
 	if session.ExpiresAt != nil {
 		frag.Set("expires_at", session.ExpiresAt.Format(time.RFC3339))
 	}

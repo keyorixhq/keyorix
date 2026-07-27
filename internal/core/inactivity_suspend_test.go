@@ -27,6 +27,8 @@ func stubSuspendCall(store *MockStorage, ctx context.Context, userID uint) {
 	store.On("GetUser", ctx, userID).Return(&models.User{ID: userID, AccountState: AccountActive}, nil)
 	store.On("SetAccountState", ctx, userID, AccountSuspended, mock.Anything).Return(nil)
 	store.On("ListSessionTokenHashesForUser", ctx, userID).Return([]string{}, nil)
+	// H-2: ALL state transitions collect PAT hashes for cache eviction.
+	store.On("ListPersonalAccessTokensByUser", ctx, userID).Return([]*models.PersonalAccessToken{}, nil)
 	store.On("DeleteSessionsForUserExcept", ctx, userID, uint(0)).Return(nil)
 	store.On("RevokeAllPersonalAccessTokensForUser", ctx, userID).Return([]string{}, nil)
 	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {

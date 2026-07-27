@@ -261,11 +261,14 @@ func TestCompleteSAML_SuccessNoExpiry_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CompleteSAML(w, req)
 
-	// Success -> 302 redirect with token in the fragment.
+	// Success -> 302 redirect; session token is delivered via HttpOnly cookie only
+	// (not in the fragment — #r125-H3).
 	assert.Equal(t, http.StatusFound, w.Code)
 	loc := w.Header().Get("Location")
 	assert.Contains(t, loc, "app.example")
-	assert.Contains(t, loc, "token=")
+	assert.NotContains(t, loc, "token=", "token must not appear in fragment (#r125-H3)")
+	// The session cookie must be set.
+	assert.NotEmpty(t, w.Header().Get("Set-Cookie"), "session cookie must be set")
 }
 
 // TestCompleteSAML_SuccessWithReturnTo_S13 exercises the `if returnTo != ""`

@@ -190,6 +190,18 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 		// a window where a blocked user keeps full access. The stored session_token IS the
 		// SHA-256 hash, which is exactly the cache key.
 		sessionHashes, _ = tx.ListSessionTokenHashesForUser(ctx, userID)
+		// Also collect PAT hashes for cache eviction for ANY state transition, including
+		// restricted states like password_reset_required. Without this, a cached PAT
+		// bypasses the restriction for up to validTokenTTL (30 s) — ValidatePATToken
+		// sees the old identity from the cache and never re-checks the new account state
+		// (#r125-H2). We evict here without revoking; revoking follows for blocked states.
+		if pats, _ := tx.ListPersonalAccessTokensByUser(ctx, userID); len(pats) > 0 {
+			for _, p := range pats {
+				if !p.Revoked && p.TokenHash != "" {
+					sessionHashes = append(sessionHashes, p.TokenHash)
+				}
+			}
+		}
 
 		if err := tx.SetAccountState(ctx, userID, state, c.now()); err != nil {
 			return err
