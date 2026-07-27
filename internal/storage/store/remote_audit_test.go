@@ -19,7 +19,7 @@ import (
 func TestRemoteStorage_LogAuditEvent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/v1/audit/events", r.URL.Path)
+		assert.Equal(t, "/api/v1/system/audit/event", r.URL.Path)
 		_, _ = w.Write(apiOK(nil))
 	}))
 	defer srv.Close()
@@ -61,7 +61,7 @@ func TestRemoteStorage_CountImpersonatedActions(t *testing.T) {
 func TestRemoteStorage_GetAuditLogs_NilFilter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/audit/events", r.URL.Path)
+		assert.Equal(t, "/api/v1/audit/logs", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
 			"events": []map[string]interface{}{
 				{"EventType": "secret.read", "ActorType": "user"},
@@ -83,7 +83,7 @@ func TestRemoteStorage_GetAuditLogs_NilFilter(t *testing.T) {
 func TestRemoteStorage_GetAuditLogs_WithFilter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/audit/events", r.URL.Path)
+		assert.Equal(t, "/api/v1/audit/logs", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
 			"events": []map[string]interface{}{},
 			"total":  int64(0),
@@ -111,7 +111,7 @@ func TestRemoteStorage_GetAuditLogs_WithFilter(t *testing.T) {
 func TestRemoteStorage_GetRBACAuditLogs_NilFilter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/audit/rbac", r.URL.Path)
+		assert.Equal(t, "/api/v1/audit/rbac-logs", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
 			"logs": []map[string]interface{}{
 				{
@@ -138,7 +138,7 @@ func TestRemoteStorage_GetRBACAuditLogs_NilFilter(t *testing.T) {
 func TestRemoteStorage_GetRBACAuditLogs_WithFilter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/v1/audit/rbac", r.URL.Path)
+		assert.Equal(t, "/api/v1/audit/rbac-logs", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
 			"logs":  []map[string]interface{}{},
 			"total": int64(0),
