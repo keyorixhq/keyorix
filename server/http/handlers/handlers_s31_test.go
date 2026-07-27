@@ -142,7 +142,9 @@ func TestGetAccessReviewItemProxy_DBError_S31(t *testing.T) {
 func TestUpdateAccessReviewItemProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreBrokenS31(t))
-	body := bytes.NewBufferString(`{"user_id":1,"role":"viewer","decision":"approved","reviewed_by":2}`)
+	// decided_by (2) != principal_id (1) so ARC-005 passes; broken storage then
+	// returns 500.
+	body := bytes.NewBufferString(`{"principal_id":1,"principal_type":"user","decision":"attest","decided_by":2}`)
 	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-review-campaigns/items/1", body), "itemID", "1")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewItemProxy(w, r)
