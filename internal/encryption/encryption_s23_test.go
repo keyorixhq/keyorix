@@ -397,7 +397,7 @@ func TestSweepSessions_DryRun_DoesNotPersist(t *testing.T) {
 	row := &models.Session{UserID: 10, SessionToken: "hash10", EncryptedSessionToken: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepSessions(db, es, es, "v2", true)
+	swept, _, err := sweepSessions(db, es, es, "v2", true)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 
@@ -421,7 +421,7 @@ func TestSweepPasswordResets_DryRun_DoesNotPersist(t *testing.T) {
 	row := &models.PasswordReset{UserID: 20, Token: "hash20", EncryptedToken: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepPasswordResets(db, es, es, "v2", true)
+	swept, _, err := sweepPasswordResets(db, es, es, "v2", true)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 
@@ -483,7 +483,7 @@ func TestSweepAPITokens_DryRun_DoesNotPersist(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepAPITokens(db, es, es, "v2", true)
+	swept, _, err := sweepAPITokens(db, es, es, "v2", true)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 
@@ -750,7 +750,7 @@ func TestSweepSessions_CorruptJSON_FailsDeserialize(t *testing.T) {
 	row := &models.Session{UserID: 99, SessionToken: "hsh99", EncryptedSessionToken: []byte("not-json")}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err := sweepSessions(db, es, es, "v1", false)
+	_, _, err := sweepSessions(db, es, es, "v1", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deserialize")
 }
@@ -763,7 +763,7 @@ func TestSweepAPITokens_CorruptJSON_FailsDeserialize(t *testing.T) {
 	row := &models.APIToken{Token: "tok99", EncryptedToken: []byte("bad-json")}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err := sweepAPITokens(db, es, es, "v1", false)
+	_, _, err := sweepAPITokens(db, es, es, "v1", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deserialize")
 }
@@ -794,7 +794,7 @@ func TestSweepPasswordResets_CorruptJSON_FailsDeserialize(t *testing.T) {
 	row := &models.PasswordReset{UserID: 88, Token: "hsh88", EncryptedToken: []byte("bad-json")}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err := sweepPasswordResets(db, es, es, "v1", false)
+	_, _, err := sweepPasswordResets(db, es, es, "v1", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deserialize")
 }
@@ -903,7 +903,7 @@ func TestSweepAPITokens_DecryptError(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err = sweepAPITokens(db, es, es, "v1", false)
+	_, _, err = sweepAPITokens(db, es, es, "v1", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decrypt api_token")
 }
@@ -931,7 +931,7 @@ func TestSweepSessions_HappyPath_Persists(t *testing.T) {
 	// Use a different key version to see the update take effect
 	newES, err := NewEncryptionService(make([]byte, 32))
 	require.NoError(t, err)
-	swept, err := sweepSessions(db, es, newES, "v2", false)
+	swept, _, err := sweepSessions(db, es, newES, "v2", false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 }
@@ -956,7 +956,7 @@ func TestSweepPasswordResets_HappyPath_Persists(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepPasswordResets(db, es, es, "v2", false)
+	swept, _, err := sweepPasswordResets(db, es, es, "v2", false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 }

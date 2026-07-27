@@ -184,7 +184,7 @@ func TestSweepSessions_DeserializeError(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err := sweepSessions(db, es, es, "v2", false)
+	_, _, err := sweepSessions(db, es, es, "v2", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize session")
 }
@@ -201,7 +201,7 @@ func TestSweepAPITokens_DeserializeError(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err := sweepAPITokens(db, es, es, "v2", false)
+	_, _, err := sweepAPITokens(db, es, es, "v2", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize api_token")
 }
@@ -238,7 +238,7 @@ func TestSweepPasswordResets_DeserializeError(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err := sweepPasswordResets(db, es, es, "v2", false)
+	_, _, err := sweepPasswordResets(db, es, es, "v2", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize password_reset")
 }
@@ -818,7 +818,7 @@ func TestSweepSessions_HappyPath_Persists_S25(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepSessions(db, es, es, "v2", false)
+	swept, _, err := sweepSessions(db, es, es, "v2", false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 }
@@ -1110,7 +1110,7 @@ func TestSweepSessions_UpdatesError(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
 
-	_, err = sweepSessions(db, es, es, "v2", false)
+	_, _, err = sweepSessions(db, es, es, "v2", false)
 	// After close, the error may come from Find (early) or Updates (late).
 	// Either way, an error must be returned.
 	require.Error(t, err)
@@ -1143,7 +1143,7 @@ func TestSweepAPITokens_UpdatesError(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
 
-	_, err = sweepAPITokens(db, es, es, "v2", false)
+	_, _, err = sweepAPITokens(db, es, es, "v2", false)
 	require.Error(t, err)
 }
 
@@ -1208,7 +1208,7 @@ func TestSweepPasswordResets_UpdatesError(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
 
-	_, err = sweepPasswordResets(db, es, es, "v2", false)
+	_, _, err = sweepPasswordResets(db, es, es, "v2", false)
 	require.Error(t, err)
 }
 
@@ -1344,7 +1344,7 @@ func TestSweepSessions_UpdatesError_ReadOnly(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = sweepSessions(roDB, es, es, "v2", false)
+	_, _, err = sweepSessions(roDB, es, es, "v2", false)
 	// On read-only SQLite, the UPDATE should fail.
 	require.Error(t, err)
 }
@@ -1413,7 +1413,7 @@ func TestSweepAPITokens_UpdatesError_ReadOnly(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = sweepAPITokens(roDB, es, es, "v2", false)
+	_, _, err = sweepAPITokens(roDB, es, es, "v2", false)
 	require.Error(t, err)
 }
 
@@ -1447,7 +1447,7 @@ func TestSweepPasswordResets_UpdatesError_ReadOnly(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = sweepPasswordResets(roDB, es, es, "v2", false)
+	_, _, err = sweepPasswordResets(roDB, es, es, "v2", false)
 	require.Error(t, err)
 }
 
@@ -1577,7 +1577,7 @@ func TestSweepPasswordResets_HappyPath_Persists_S25(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepPasswordResets(db, es, es, "v2", false)
+	swept, _, err := sweepPasswordResets(db, es, es, "v2", false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 }

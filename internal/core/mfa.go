@@ -147,6 +147,11 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	if err := c.storage.DeleteMFAForUser(ctx, userID); err != nil {
 		return err
 	}
+	// Purge all sessions now that MFA is disabled — the security downgrade must not
+	// leave sessions that were minted under MFA enforcement still valid (symmetric
+	// with ActivateMFA's session purge on upgrade). Best-effort: disable must not
+	// fail on a cleanup error.
+	_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", fmt.Sprintf("user %s disabled MFA", user.Username))
 	return nil
