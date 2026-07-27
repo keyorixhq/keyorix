@@ -11,13 +11,13 @@ _Last updated: 2026-07-27._
 The full phased migration is done (Phases 0–10, PRs #107–#116 on main,
 2026-07-27). See `docs/SHADCN-REWRITE-PLAN.md` for the plan and decisions.
 
-Remaining follow-ons (no longer blocked):
+Follow-ons — also complete:
 
-- **Restore `App` test coverage.** `App.tsx` is now stable post-rewrite;
-  `App.test.tsx` was a tombstone stub and was removed. Re-add against the new
-  structure.
-- **Accessibility test coverage.** The old `accessibility.test.ts` referenced
-  deleted components. Write fresh a11y tests; re-add `jest-axe` at that point.
+- **App route coverage** — 20 integration tests in `src/__tests__/App.test.tsx`
+  (PR #117, 2026-07-27). Verifies every guard is wired to the right route.
+- **Accessibility coverage** — 27 axe tests across Button, Input, Alert,
+  LoginForm, PasswordResetForm, SetupForm (PR #118, 2026-07-27). `jest-axe`
+  re-added and wired into the global Vitest setup.
 
 ## End-to-end tests (Playwright) — rebuilt 2026-07-27
 
@@ -36,8 +36,9 @@ standalone commit (Phase 9, PR #115), and `pnpm format:check` runs in CI.
 
 The upgrade campaign is **complete** — `pnpm outdated` is empty.
 
-- Removed as dead (declared but imported nowhere): **`date-fns`**, **`jest-axe`**.
-  Re-add at latest only when actually used (jest-axe with the a11y tests above).
+- Removed as dead (declared but imported nowhere): **`date-fns`**. Re-add only
+  when actually used.
+- **`jest-axe`** was re-added in PR #118 for the a11y test suite.
 - TypeScript is on 6.x; `tsconfig` was modernized (`moduleResolution: bundler`,
   no `baseUrl`) so it is clean for the eventual TS 7.
 
