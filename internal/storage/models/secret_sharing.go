@@ -10,23 +10,16 @@ func (s *SecretNode) IsOwner(userID uint) bool {
 	return s.OwnerID == userID
 }
 
-// CanAccess checks if a user has access to this secret
-// This is a placeholder - the actual implementation will depend on the storage layer
-// which will need to check if there's a share record for this user
+// CanAccess reports whether userID is the owner of this secret.
+// Non-owner access via share records must be checked through the storage interface
+// (e.g. storage.Storage.GetSharesForSecret), not this method.
 func (s *SecretNode) CanAccess(userID uint) bool {
-	// Owner always has access
-	if s.IsOwner(userID) {
-		return true
-	}
-
-	// For non-owners, we'll need to check share records
-	// This will be implemented in the storage layer
-	return false
+	return s.IsOwner(userID)
 }
 
-// CanWrite checks if a user has write permission for this secret.
-// Placeholder: write access requires at least the same access as read; the storage
-// layer will differentiate once share-record write flags are wired.
+// CanWrite reports whether userID may write to this secret.
+// At the model layer this is equivalent to ownership; write vs. read permission
+// for shared access is determined by the ShareRecord.Permission field.
 func (s *SecretNode) CanWrite(userID uint) bool {
 	return s.CanAccess(userID)
 }
