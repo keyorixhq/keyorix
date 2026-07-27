@@ -22,13 +22,17 @@ import (
 
 // Audit-stream tail tuning: a SAFETY-NET fallback interval (the common path is the
 // push signal from core.SubscribeAuditStream, not this) and the max events drained per
-// wake. The interval is a var so tests can shorten it. The SAME interval re-validates
-// the stream's authorization (#108): StreamAuthInterceptor authenticates a stream once
-// at open and is never re-run by the normal per-request path, so a session/PAT
-// revoked, a role removed, or an account suspended/deprovisioned mid-stream would
-// otherwise keep receiving the live audit feed until the client disconnects on its
-// own — potentially indefinitely.
+// wake. Both vars so tests can shorten them.
+//
+// auditStreamReauthInterval controls the DEDICATED re-authorization ticker (#108):
+// StreamAuthInterceptor authenticates a stream once at open and is never re-run by
+// the normal per-request path, so a session/PAT revoked, a role removed, or an
+// account suspended/deprovisioned mid-stream would otherwise keep receiving the live
+// audit feed until the client disconnects on its own. A dedicated ticker fires on its
+// own schedule, independently of wake — so high-frequency audit events (which keep
+// the wake case selected) can no longer starve the re-auth check indefinitely.
 var auditStreamFallbackInterval = 30 * time.Second
+var auditStreamReauthInterval = 30 * time.Second
 
 const auditStreamBatch = 100
 
@@ -351,6 +355,8 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 
 	fallback := time.NewTicker(auditStreamFallbackInterval)
 	defer fallback.Stop()
+	reauth := time.NewTicker(auditStreamReauthInterval)
+	defer reauth.Stop()
 
 	// Replay any backlog after the resume cursor immediately, then block for live ticks.
 	drain := func() error {
@@ -394,18 +400,18 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-reauth.C:
+			// Dedicated re-auth ticker fires on its own schedule regardless of event
+			// volume — high-frequency wakes can no longer starve this check (#108).
+			if err := s.reauthorizeAuditStream(ctx, actor); err != nil {
+				return err
+			}
 		case <-wake:
 			if err := drain(); err != nil {
 				return err
 			}
 		case <-fallback.C:
-			// Re-validate authorization on every fallback tick (#108): a permission
-			// revoked, or the account/machine identity itself deactivated, since the
-			// stream opened must end the feed within one interval, not only when the
-			// client eventually disconnects on its own.
-			if err := s.reauthorizeAuditStream(ctx, actor); err != nil {
-				return err
-			}
+			// Safety-net drain for writes that did not signal the broker.
 			if err := drain(); err != nil {
 				return err
 			}

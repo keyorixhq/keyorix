@@ -1653,8 +1653,15 @@ func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig) error {
 // top instead of being silently discarded (#172), honoring tls.allowed_ciphers the
 // same way createTLSConfig does (#333).
 func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig) (*tls.Config, error) {
+	cacheDir := tlsCfg.CertCacheDir
+	if cacheDir == "" {
+		cacheDir = "certs"
+	}
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		return nil, fmt.Errorf("autocert: cannot create cert cache dir %q: %w", cacheDir, err)
+	}
 	m := &autocert.Manager{
-		Cache:      autocert.DirCache("certs"),
+		Cache:      autocert.DirCache(cacheDir),
 		Prompt:     autocert.AcceptTOS,
 		HostPolicy: autocert.HostWhitelist(domains...),
 	}

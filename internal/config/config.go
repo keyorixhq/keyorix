@@ -333,6 +333,11 @@ type TLSConfig struct {
 	Enabled  bool     `yaml:"enabled"`
 	AutoCert bool     `yaml:"auto_cert,omitempty"`
 	Domains  []string `yaml:"domains,omitempty"`
+	// CertCacheDir is the directory autocert uses to persist ACME certificates
+	// between restarts. Defaults to "certs" (relative to the working directory).
+	// Use an absolute path in production to avoid ambiguity. The directory is
+	// created with mode 0700 (owner-only) on startup if it does not exist.
+	CertCacheDir string   `yaml:"cert_cache_dir,omitempty"`
 	CertFile string   `yaml:"cert_file"`
 	KeyFile  string   `yaml:"key_file"`
 	// AllowedCiphers optionally restricts the TLS 1.2 cipher suites offered to
