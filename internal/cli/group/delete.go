@@ -51,7 +51,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := service.DeleteGroup(ctx, 0, deleteGroupID); err != nil { // actorID 0: local/unauthenticated CLI
+	if err := service.DeleteGroup(ctx, common.ResolveActorID(), deleteGroupID); err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 	fmt.Printf("Group %d deleted.\n", deleteGroupID)

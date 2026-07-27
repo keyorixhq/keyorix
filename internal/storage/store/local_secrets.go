@@ -641,7 +641,9 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 		query = query.Where("secret_nodes.is_secret = ?", false)
 	}
 	if filter.Search != nil && *filter.Search != "" {
-		query = query.Where("LOWER(secret_nodes.name) LIKE LOWER(?)", "%"+*filter.Search+"%")
+		// escapeLIKE sanitises % and _ so a caller-supplied search term cannot
+		// widen the match beyond the intended prefix/suffix anchors (#r124 LIKE injection).
+		query = query.Where(`LOWER(secret_nodes.name) LIKE LOWER(?) ESCAPE '\'`, "%"+escapeLIKE(*filter.Search)+"%")
 	}
 
 	var total int64
