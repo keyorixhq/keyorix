@@ -21,7 +21,7 @@ const (
 
 // EncryptionService handles all encryption/decryption operations
 type EncryptionService struct {
-	kek []byte // Key Encryption Key
+	dek []byte // Data Encryption Key
 	gcm cipher.AEAD
 }
 
@@ -49,10 +49,10 @@ type EncryptedData struct {
 	Metadata EncryptionMetadata `json:"metadata"`
 }
 
-// NewEncryptionService creates a new encryption service with KEK
+// NewEncryptionService creates a new encryption service with the given DEK.
 func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 	if len(kek) != 32 {
-		return nil, fmt.Errorf("KEK must be 32 bytes, got %d", len(kek))
+		return nil, fmt.Errorf("DEK must be 32 bytes, got %d", len(kek))
 	}
 
 	block, err := aes.NewCipher(kek)
@@ -66,7 +66,7 @@ func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 	}
 
 	return &EncryptionService{
-		kek: kek,
+		dek: kek,
 		gcm: gcm,
 	}, nil
 }
