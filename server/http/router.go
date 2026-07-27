@@ -965,7 +965,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Writing a checkpoint is a privileged integrity-control action — gate it
 			// above the group's audit.read with system.write (admin-level).
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/checkpoint", auditHandler.WriteAuditCheckpoint)
-			r.Get("/anomalies", handlers.ListAnomalyAlerts)
+			// ANOMALY-04: anomaly alerts expose SecretName/AccessedBy/IPAddress — raise
+			// the gate above the group's audit.read so the base viewer/system_viewer role
+			// cannot enumerate them and check whether their own access patterns were flagged.
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/anomalies", handlers.ListAnomalyAlerts)
 			// Acknowledging (dismissing) an alert mutates a security-detection record, so
 			// gate it above the group's audit.read with system.write — like /checkpoint —
 			// rather than letting any read-only auditor silently bury alerts.

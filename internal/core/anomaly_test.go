@@ -125,10 +125,18 @@ func TestRunDetection_LogsAndContinuesOnAccessLogReadError(t *testing.T) {
 func TestBuildBaseline(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour) // the live detection window — excluded from the baseline
+	// Each trusted IP/user appears baselineMinSeen (3) times so the count-based
+	// promotion threshold is met. Mallory's single in-window read must remain excluded.
 	logs := []models.SecretAccessLog{
 		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: now.Add(-30 * time.Minute)}, // inside window → excluded
-		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},      // in 7d, before window
-		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)},   // older than 7d
+		// bob: 3 appearances in the 7-day window, all before windowStart
+		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},
+		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-3 * 24 * time.Hour)},
+		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-4 * 24 * time.Hour)},
+		// alice: 3 appearances, all older than 7 days (outside dailyAvg window)
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)},
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-21 * 24 * time.Hour)},
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-22 * 24 * time.Hour)},
 	}
 	// quarantine=0: isolates this test to the live-window exclusion behavior; the
 	// quarantine-specific promotion delay is covered separately by
@@ -144,8 +152,9 @@ func TestBuildBaseline(t *testing.T) {
 	if !b.knownUsers["alice"] || !b.knownUsers["bob"] {
 		t.Fatalf("expected historical users learned, got %v", b.knownUsers)
 	}
-	// Of the pre-window reads, only bob's (-2d) is within the last 7 days → dailyAvg = 1/7.
-	if want := 1.0 / 7.0; b.dailyAvg != want {
+	// Of the pre-window reads, only bob's three entries (-2d, -3d, -4d) are within the
+	// last 7 days → recentCount = 3; dailyAvg = 3/7.
+	if want := 3.0 / 7.0; b.dailyAvg != want {
 		t.Fatalf("dailyAvg = %v, want %v", b.dailyAvg, want)
 	}
 }
@@ -154,15 +163,22 @@ func TestBuildBaseline(t *testing.T) {
 // window, not merely before it, to be trusted as baseline — otherwise a single access
 // one lookback interval ago (e.g. 1h) is enough to poison the baseline and silence
 // new_ip/new_user for that identity on the very next pass.
+//
+// ANOMALY-02: additionally requires baselineMinSeen distinct observations before
+// promotion — a single pre-quarantine access is no longer sufficient.
 func TestBuildBaseline_QuarantineWithholdsRecentlySeenIdentities(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour)
 	quarantine := 24 * time.Hour
 	logs := []models.SecretAccessLog{
-		// First seen 2h before the live window — well short of the 24h quarantine.
+		// Mallory: 3 accesses that are all within quarantine (2h before window) — must stay quarantined.
 		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: windowStart.Add(-2 * time.Hour)},
-		// First seen 48h before the live window — clears the 24h quarantine.
+		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: windowStart.Add(-3 * time.Hour)},
+		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: windowStart.Add(-4 * time.Hour)},
+		// Alice: 3 accesses, all 48h before the live window — clears the 24h quarantine.
 		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: windowStart.Add(-48 * time.Hour)},
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: windowStart.Add(-49 * time.Hour)},
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: windowStart.Add(-50 * time.Hour)},
 	}
 	b := buildBaseline(logs, now, windowStart, quarantine)
 	if b.knownIPs["203.0.113.9"] || b.knownUsers["mallory"] {
@@ -312,27 +328,27 @@ func TestVolumeSpike(t *testing.T) {
 
 	// Busy secret: dailyAvg 240 → hourlyAvg 10. Threshold = 3×10 = 30, floor 10.
 	busy := accessBaseline{dailyAvg: 240}
-	if isVolumeSpike(25, busy) {
+	if isVolumeSpike(25, busy, volumeSpikeMinCount) {
 		t.Error("25 reads vs a 10/hour baseline should NOT be a spike (≤ 3×)")
 	}
-	if !isVolumeSpike(40, busy) {
+	if !isVolumeSpike(40, busy, volumeSpikeMinCount) {
 		t.Error("40 reads vs a 10/hour baseline should be a spike (> 3×)")
 	}
 
 	// Quiet secret: tiny baseline, but the absolute floor prevents flagging a few reads.
 	quiet := accessBaseline{dailyAvg: 1}
-	if isVolumeSpike(9, quiet) {
+	if isVolumeSpike(9, quiet, volumeSpikeMinCount) {
 		t.Error("9 reads is below the absolute floor and must not flag")
 	}
-	if !isVolumeSpike(12, quiet) {
+	if !isVolumeSpike(12, quiet, volumeSpikeMinCount) {
 		t.Error("12 reads on a near-zero baseline should flag (floor met, far above 3×)")
 	}
 
 	// volumeSpikeAlert wraps the decision and carries no single accessor/IP.
-	if a := volumeSpikeAlert(secret, 25, busy, now); a != nil {
+	if a := volumeSpikeAlert(secret, 25, busy, volumeSpikeMinCount, now); a != nil {
 		t.Errorf("expected nil alert below threshold, got %+v", a)
 	}
-	a := volumeSpikeAlert(secret, 40, busy, now)
+	a := volumeSpikeAlert(secret, 40, busy, volumeSpikeMinCount, now)
 	if a == nil || a.AlertType != "frequency_spike" || a.SecretNodeID != 1 {
 		t.Fatalf("expected a frequency_spike alert for secret 1, got %+v", a)
 	}
@@ -375,4 +391,101 @@ func kindsOf(alerts []models.AnomalyAlert) map[string]bool {
 		m[a.AlertType] = true
 	}
 	return m
+}
+
+// ANOMALY-02: a single pre-quarantine access must NOT promote an IP/user to "known."
+// The attacker must appear at least baselineMinSeen times before the trust promotion fires.
+func TestBuildBaseline_SingleAccessDoesNotTrust(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	windowStart := now.Add(-1 * time.Hour)
+	// One access, well outside the quarantine window. Under the old (boolean) logic this
+	// would immediately promote "attacker" to "known" — the very attack being mitigated.
+	logs := []models.SecretAccessLog{
+		{IPAddress: "1.2.3.4", AccessedBy: "attacker", AccessTime: windowStart.Add(-48 * time.Hour)},
+	}
+	b := buildBaseline(logs, now, windowStart, 24*time.Hour)
+	if b.knownIPs["1.2.3.4"] {
+		t.Fatalf("a single pre-quarantine access must NOT promote the IP to 'known' (needs %d occurrences, got 1)", baselineMinSeen)
+	}
+	if b.knownUsers["attacker"] {
+		t.Fatalf("a single pre-quarantine access must NOT promote the user to 'known' (needs %d occurrences, got 1)", baselineMinSeen)
+	}
+
+	// Two accesses: still below the threshold.
+	logs = append(logs, models.SecretAccessLog{
+		IPAddress: "1.2.3.4", AccessedBy: "attacker", AccessTime: windowStart.Add(-50 * time.Hour),
+	})
+	b = buildBaseline(logs, now, windowStart, 24*time.Hour)
+	if b.knownIPs["1.2.3.4"] || b.knownUsers["attacker"] {
+		t.Fatalf("two accesses must still be below the baselineMinSeen=%d threshold", baselineMinSeen)
+	}
+
+	// Exactly baselineMinSeen accesses: must promote now.
+	logs = append(logs, models.SecretAccessLog{
+		IPAddress: "1.2.3.4", AccessedBy: "attacker", AccessTime: windowStart.Add(-52 * time.Hour),
+	})
+	b = buildBaseline(logs, now, windowStart, 24*time.Hour)
+	if !b.knownIPs["1.2.3.4"] {
+		t.Fatalf("at baselineMinSeen=%d occurrences the IP must be trusted, got knownIPs=%v", baselineMinSeen, b.knownIPs)
+	}
+	if !b.knownUsers["attacker"] {
+		t.Fatalf("at baselineMinSeen=%d occurrences the user must be trusted, got knownUsers=%v", baselineMinSeen, b.knownUsers)
+	}
+}
+
+// ANOMALY-06: the 24h cumulative rate rule must fire when a low-traffic secret
+// receives more than the configured threshold of accesses in a rolling 24h window,
+// even when each individual hour stays below the per-hour spike floor.
+func TestCumulativeRateAnomaly(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	secret := models.SecretNode{ID: 42, Name: "quiet-secret"}
+
+	// Zero dailyAvg: this secret is normally never accessed.
+	zeroAvg := accessBaseline{dailyAvg: 0}
+
+	// At or below the max: no alert.
+	if isCumulativeRateAnomaly(defaultCumulativeRateMax, zeroAvg.dailyAvg, defaultCumulativeRateFloor, defaultCumulativeRateMax) {
+		t.Errorf("exactly at the max (%d) must not fire", defaultCumulativeRateMax)
+	}
+	// One over the max: must fire.
+	if !isCumulativeRateAnomaly(defaultCumulativeRateMax+1, zeroAvg.dailyAvg, defaultCumulativeRateFloor, defaultCumulativeRateMax) {
+		t.Errorf("count=%d (max+1) on a zero-avg secret must fire the cumulative rule", defaultCumulativeRateMax+1)
+	}
+
+	// A secret with dailyAvg >= floor must NOT be flagged by the cumulative rule —
+	// the per-hour spike rule covers it.
+	highAvg := accessBaseline{dailyAvg: defaultCumulativeRateFloor} // exactly at the floor
+	if isCumulativeRateAnomaly(100, highAvg.dailyAvg, defaultCumulativeRateFloor, defaultCumulativeRateMax) {
+		t.Errorf("a secret at or above the floor (dailyAvg=%.1f) must not be subject to the cumulative rule", highAvg.dailyAvg)
+	}
+
+	// cumulativeRateAlert wrapper: must return a cumulative_rate alert.
+	a := cumulativeRateAlert(secret, defaultCumulativeRateMax+1, zeroAvg, defaultCumulativeRateFloor, defaultCumulativeRateMax, now)
+	if a == nil {
+		t.Fatal("cumulativeRateAlert must return an alert when the threshold is exceeded")
+	}
+	if a.AlertType != "cumulative_rate" {
+		t.Errorf("AlertType = %q, want cumulative_rate", a.AlertType)
+	}
+	if a.SecretNodeID != 42 {
+		t.Errorf("alert not attributed to the secret: %+v", a)
+	}
+	// Below threshold: must return nil.
+	if cumulativeRateAlert(secret, 5, zeroAvg, defaultCumulativeRateFloor, defaultCumulativeRateMax, now) != nil {
+		t.Error("below threshold must not produce an alert")
+	}
+}
+
+// ANOMALY-02 + ANOMALY-06 (configurable volume floor): verify that SetVolumeMinCount
+// overrides the default floor, allowing detection of bursts below volumeSpikeMinCount.
+func TestVolumeSpike_ConfigurableFloor(t *testing.T) {
+	baseline := accessBaseline{dailyAvg: 0}
+	// Default floor: 9 reads must not flag.
+	if isVolumeSpike(9, baseline, volumeSpikeMinCount) {
+		t.Error("9 reads below default floor must not flag")
+	}
+	// With a lower configurable floor of 5, 7 reads must flag (>> 3× near-zero avg).
+	if !isVolumeSpike(7, baseline, 5) {
+		t.Error("7 reads above a custom floor of 5 must flag on a near-zero baseline")
+	}
 }
