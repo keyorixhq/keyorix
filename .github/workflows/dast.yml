@@ -25,12 +25,41 @@ jobs:
       - name: Build server
         run: go build -o /tmp/keyorix-server ./server
 
+      - name: Write DAST config
+        run: |
+          cat > /tmp/keyorix-dast.yaml << 'EOF'
+          environment: "development"
+          locale:
+            language: "en"
+            fallback_language: "en"
+          server:
+            http:
+              enabled: true
+              port: "8080"
+              domain: "localhost"
+              tls:
+                enabled: false
+              ratelimit:
+                enabled: false
+            grpc:
+              enabled: false
+          storage:
+            type: "local"
+            database:
+              path: "/tmp/keyorix-dast.db"
+            encryption:
+              enabled: false
+          security:
+            enable_file_permission_check: false
+          soft_delete:
+            enabled: true
+            retention_days: 30
+          EOF
+
       - name: Start server
         run: |
-          KEYORIX_DB_DSN="file::memory:?cache=shared" /tmp/keyorix-server &
+          KEYORIX_CONFIG_PATH=/tmp/keyorix-dast.yaml /tmp/keyorix-server &
           echo "SERVER_PID=$!" >> $GITHUB_ENV
-        env:
-          KEYORIX_LOG_LEVEL: error
 
       - name: Wait for health
         run: |
@@ -38,12 +67,17 @@ jobs:
             curl -sf http://localhost:8080/health && break
             sleep 2
           done
+          curl -sf http://localhost:8080/health || { echo "Server did not become healthy"; exit 1; }
 
       - name: Install Nuclei
         run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.9 # NOSONAR githubactions:S6437 -- pinned to v3.3.9; go.sum not applicable for standalone DAST tool binaries outside the module graph
 
       - name: Update Nuclei templates
         run: nuclei -update-templates -silent
+
+      - name: Create empty SARIF fallback
+        run: |
+          printf '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nuclei","version":"3.3.9","rules":[]}},"results":[]}]}\n' > /tmp/nuclei-results.sarif
 
       - name: Run Nuclei (unauthenticated surface)
         run: |
