@@ -45,7 +45,8 @@ type AccessGovernancePosture struct {
 
 // RotationPosture summarises secret-rotation hygiene (ISO A.5.15 / NIS2).
 type RotationPosture struct {
-	CoveredSecrets int `json:"covered_secrets"`
+	TotalSecrets   int `json:"total_secrets"`   // all static secrets in scope
+	CoveredSecrets int `json:"covered_secrets"` // those with a rotation schedule
 	Overdue        int `json:"overdue"`
 	DueSoon        int `json:"due_soon"`
 }
@@ -300,6 +301,9 @@ type complianceSnapshot struct {
 	rotationStatuses []*RotationStatusEntry
 	rotationErr      error
 
+	totalSecrets    int
+	totalSecretsErr error
+
 	sodReport *SoDViolationsReport
 	sodErr    error
 
@@ -342,6 +346,11 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 
 	snap.auditChain, snap.auditChainErr = c.VerifyAuditChain(ctx)
 	snap.rotationStatuses, snap.rotationErr = c.GetRotationStatus(ctx, nil, nil)
+	if _, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{Page: 1, PageSize: 1}); err == nil {
+		snap.totalSecrets = int(total)
+	} else {
+		snap.totalSecretsErr = err
+	}
 	snap.sodReport, snap.sodErr = c.DetectSoDViolations(ctx)
 	if views, err := c.listRiskExceptionRows(ctx, true); err == nil {
 		for _, v := range views {
@@ -595,6 +604,11 @@ func applyRotationPosture(p *CompliancePosture, snap *complianceSnapshot) {
 		p.degrade("rotation", err)
 		return
 	}
+	if snap.totalSecretsErr != nil {
+		p.degrade("rotation:total_secrets", snap.totalSecretsErr)
+	} else {
+		p.Rotation.TotalSecrets = snap.totalSecrets
+	}
 	p.Rotation.CoveredSecrets = len(statuses)
 	for _, s := range statuses {
 		switch s.Status {
@@ -749,10 +763,14 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 	p.AccessGovernance.Projects = len(snap.projects)
 	p.AccessRequests.RequiredApprovals = c.requiredApprovals()
 	recertCutoff := c.now().AddDate(0, 0, -c.recertCadence())
+	// CP-005: hoist the role-permissions cache across all per-project iterations so
+	// GetRolePermissions is called at most once per role, not once per project per role.
+	sharedPermsByRole := map[uint][]*models.Permission{}
+	sharedDegradedRoles := map[uint]bool{}
 	for _, proj := range snap.projects {
 		pid := proj.ID
 		accumulateCampaignPosture(p, pid, recertCutoff, snap)
-		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid, p)
+		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid, p, sharedPermsByRole, sharedDegradedRoles)
 		accumulateBreakGlassPosture(p, pid, snap)
 		accumulateAccessRequestPosture(p, pid, snap)
 	}
@@ -772,6 +790,11 @@ func accumulateCampaignPosture(p *CompliancePosture, pid uint, recertCutoff time
 		p.AccessGovernance.ProjectsWithOpenCampaign++
 		p.AccessGovernance.OpenCampaigns++
 		p.AccessGovernance.PendingItems += open.Progress.Pending
+		// CP-002: a campaign that has been open past the recertification cadence cutoff
+		// is itself overdue — count it regardless of whether it's still in progress.
+		if open.Campaign.CreatedAt.Before(recertCutoff) {
+			p.AccessGovernance.ProjectsOverdue++
+		}
 		return
 	}
 	overdue := lastClosed == nil
@@ -885,7 +908,7 @@ func accumulateAccessRequestPosture(p *CompliancePosture, pid uint, snap *compli
 // grants are credited (neither shown falsely dormant) — the same "no worse than
 // before" behaviour as pre-#487 for this narrower, structurally irreducible case.
 // See roleIsAdminTier's doc for the exact tier boundary.
-func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture) int { // NOSONAR -- cognitive complexity 25, suppress go:S3776
+func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture, permsByRole map[uint][]*models.Permission, degradedRoles map[uint]bool) int { // NOSONAR -- cognitive complexity 25, suppress go:S3776
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
 		cp.degrade(fmt.Sprintf("dormant_role_grants:assignments:project=%d", projectID), err)
@@ -913,8 +936,6 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 	}
 	cutoff := c.now().Add(-dormantThreshold)
 
-	permsByRole := map[uint][]*models.Permission{}
-	degradedRoles := map[uint]bool{}
 	rolePerms := func(roleID uint) []*models.Permission {
 		if v, ok := permsByRole[roleID]; ok {
 			return v
