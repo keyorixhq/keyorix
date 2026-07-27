@@ -291,7 +291,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	coreService.SetTokenCacheInvalidator(middleware.InvalidateTokenCacheByHash)
 	if needs, berr := coreService.SystemNeedsBootstrap(context.Background()); berr == nil && needs && bootstrapToken != "" {
 		if bootstrapTokenGenerated {
-			log.Printf("system not initialised — run `keyorix system init` with this one-time bootstrap token (set KEYORIX_BOOTSTRAP_TOKEN to pin your own):\n    BOOTSTRAP TOKEN: %s", bootstrapToken)
+			masked := bootstrapToken[:8] + "***" + bootstrapToken[len(bootstrapToken)-4:]
+			log.Printf("system not initialised — run `keyorix system init` with this one-time bootstrap token (set KEYORIX_BOOTSTRAP_TOKEN to pin your own):\n    BOOTSTRAP TOKEN: %s\n    (first 8 + last 4 chars shown; retrieve the full token from KEYORIX_BOOTSTRAP_TOKEN or reboot with it pre-set)", masked)
 		} else {
 			log.Printf("system not initialised — run `keyorix system init` with the configured KEYORIX_BOOTSTRAP_TOKEN")
 		}

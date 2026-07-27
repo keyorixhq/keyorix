@@ -202,7 +202,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 
@@ -323,7 +323,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 			return nil, nil, "", err
 		}
 	}
-	if AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 

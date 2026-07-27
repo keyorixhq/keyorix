@@ -82,8 +82,11 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 
 	var cidrJSON string
 	if len(params.AllowedCIDRs) > 0 {
-		b, _ := json.Marshal(params.AllowedCIDRs)
-		cidrJSON = string(b)
+		validated, err := encodePATCIDRs(params.AllowedCIDRs)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", "invalid CIDR allowlist", err)
+		}
+		cidrJSON = validated
 	}
 	cred := &models.MachineIdentityCredential{
 		MachineIdentityID: machineID,
@@ -220,6 +223,12 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 	return m, roleNames, machineRestrictionFrom(cred), nil
 }
 
+// machineTokenCIDRCorrupted is returned by machineRestrictionFrom when the stored
+// column is non-empty but fails JSON parsing. Returning nil would silently widen
+// the token to global network access; the sentinel contains no valid CIDR so
+// IPInCIDRs blocks all source IPs until the token is re-issued.
+var machineTokenCIDRCorrupted = []string{"<corrupted>"}
+
 // machineRestrictionFrom decodes the JSON AllowedCIDRs on a credential into a
 // MachineTokenRestriction. Returns nil when no CIDRs are set.
 func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineTokenRestriction {
@@ -227,7 +236,10 @@ func machineRestrictionFrom(cred *models.MachineIdentityCredential) *MachineToke
 		return nil
 	}
 	var cidrs []string
-	if err := json.Unmarshal([]byte(cred.AllowedCIDRs), &cidrs); err != nil || len(cidrs) == 0 {
+	if err := json.Unmarshal([]byte(cred.AllowedCIDRs), &cidrs); err != nil {
+		return &MachineTokenRestriction{AllowedCIDRs: machineTokenCIDRCorrupted}
+	}
+	if len(cidrs) == 0 {
 		return nil
 	}
 	return &MachineTokenRestriction{AllowedCIDRs: cidrs}
