@@ -647,7 +647,8 @@ func TestCompleteSSO_PasswordExpiredGateError(t *testing.T) {
 	})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
+		body := fmt.Sprintf(`{"access_token":"at","token_type":"Bearer","id_token":%q}`, idToken)
+		_, _ = w.Write([]byte(body))
 	}))
 	defer ts.Close()
 	p.OAuth.Endpoint.TokenURL = ts.URL
