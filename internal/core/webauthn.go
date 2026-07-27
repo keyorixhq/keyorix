@@ -344,6 +344,9 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	}
 	c.persistUpdatedCredential(ctx, ch.UserID, cred)
 
+	if err := c.enforcePasswordExpiryGate(ctx, wu.user); err != nil {
+		return nil, nil, err
+	}
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err
@@ -436,6 +439,9 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	}
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
 
+	if err := c.enforcePasswordExpiryGate(ctx, resolved); err != nil {
+		return nil, nil, err
+	}
 	session, err := c.mintSession(ctx, resolved.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err
