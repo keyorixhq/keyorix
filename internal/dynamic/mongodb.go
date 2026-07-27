@@ -113,11 +113,28 @@ func (e *MongoEngine) Renew(_ context.Context, _, _ string, _ time.Time) error {
 	return nil
 }
 
+// mongoBlockedRoles are built-in MongoDB roles that grant cluster-wide or
+// superuser privilege. Dynamic-secret credentials must never receive these:
+// a leaked short-lived token with root or clusterAdmin access would be
+// equivalent to a permanent admin credential.
+var mongoBlockedRoles = map[string]bool{
+	"root":                 true,
+	"clusterAdmin":         true,
+	"clusterManager":       true,
+	"dbAdminAnyDatabase":   true,
+	"userAdminAnyDatabase": true,
+	"readWriteAnyDatabase": true,
+	"backup":               true,
+	"restore":              true,
+	"__system":             true,
+}
+
 // parseMongoRoles extracts the roles array from the operator's JSON creation
 // template. An empty template yields an empty roles array (a user that can
 // authenticate but has no privileges — almost always you want roles). A non-empty
 // template must be a JSON object carrying a "roles" array; each entry is either a
 // built-in role name (string) or a {role, db} object, passed straight to createUser.
+// Cluster-wide superuser roles (root, clusterAdmin, etc.) are always rejected.
 func parseMongoRoles(template string) ([]interface{}, error) {
 	t := strings.TrimSpace(template)
 	if t == "" {
@@ -131,6 +148,20 @@ func parseMongoRoles(template string) ([]interface{}, error) {
 	}
 	if doc.Roles == nil {
 		return nil, fmt.Errorf("mongodb creation template must contain a \"roles\" array")
+	}
+	for _, entry := range doc.Roles {
+		var roleName string
+		switch v := entry.(type) {
+		case string:
+			roleName = v
+		case map[string]interface{}:
+			if r, ok := v["role"].(string); ok {
+				roleName = r
+			}
+		}
+		if mongoBlockedRoles[roleName] {
+			return nil, fmt.Errorf("mongodb creation template must not grant the %q role: it confers cluster-wide or superuser privilege", roleName)
+		}
 	}
 	return doc.Roles, nil
 }

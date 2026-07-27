@@ -18,8 +18,9 @@ import (
 
 // SoD audit event types.
 const (
-	EventSoDPolicyCreated = "sod.policy_created" // #nosec G101 -- audit event type, not a credential
-	EventSoDPolicyDeleted = "sod.policy_deleted" // #nosec G101 -- audit event type, not a credential
+	EventSoDPolicyCreated            = "sod.policy_created"             // #nosec G101 -- audit event type, not a credential
+	EventSoDPolicyDeleted            = "sod.policy_deleted"             // #nosec G101 -- audit event type, not a credential
+	EventSoDPreExistingViolations    = "sod.pre_existing_violations"    // #nosec G101 -- audit event type, not a credential
 )
 
 // SoDViolation is one principal (human user or machine identity) that effectively
@@ -101,6 +102,15 @@ func (c *KeyorixCore) CreateSoDPolicy(ctx context.Context, actorID uint, name, d
 	}
 	c.writeAuditEvent(ctx, EventSoDPolicyCreated, actorPtr(actorID), nil,
 		fmt.Sprintf("created SoD policy %d (%q): %s + %s", policy.ID, name, permA, permB))
+
+	// SOD-001: scan for principals that already hold both sides of the new policy.
+	// Violations are recorded via audit events so operators are immediately alerted;
+	// they do not prevent creation (the policy is already persisted above).
+	if report, scanErr := c.scanPolicyViolations(ctx, policy); scanErr == nil && len(report.Violations) > 0 {
+		c.writeAuditEvent(ctx, EventSoDPreExistingViolations, actorPtr(actorID), nil,
+			fmt.Sprintf("new SoD policy %d (%q) has %d pre-existing violation(s); run DetectSoDViolations to enumerate them", policy.ID, name, len(report.Violations)))
+	}
+
 	return policy, nil
 }
 
@@ -152,6 +162,27 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) (*SoDViolationsRe
 		}
 	}
 
+	c.machineSoDViolations(ctx, report, policies)
+	return report, nil
+}
+
+// scanPolicyViolations runs DetectSoDViolations scoped to a single policy.
+// Used by CreateSoDPolicy to detect pre-existing violators without re-scanning
+// every existing policy on every creation.
+func (c *KeyorixCore) scanPolicyViolations(ctx context.Context, policy *models.SoDPolicy) (*SoDViolationsReport, error) {
+	policies := []*models.SoDPolicy{policy}
+	report := &SoDViolationsReport{Violations: []SoDViolation{}}
+	const pageSize = 500
+	for page := 1; ; page++ {
+		users, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: page, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		c.appendUserSoDViolations(ctx, report, users, policies)
+		if len(users) < pageSize || int64(page*pageSize) >= total {
+			break
+		}
+	}
 	c.machineSoDViolations(ctx, report, policies)
 	return report, nil
 }
