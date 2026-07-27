@@ -25,6 +25,10 @@ func init() {
 }
 
 func runRevoke(cmd *cobra.Command, args []string) error {
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runRevokeRemote(rc, revokeShareID)
+	}
+
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
 	st, err := common.InitializeStorage()
 	if err != nil {

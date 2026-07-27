@@ -19,37 +19,33 @@ func ValidateGroupShare(share *ShareRecord) error {
 	return nil
 }
 
-// IsGroupMember checks if a user is a member of a group
-// This is a placeholder - the actual implementation will depend on the storage layer
+// IsGroupMember is a model-layer convenience stub; it always returns false.
+// Production group membership checks must go through the storage interface
+// (storage.Storage.IsGroupMember), which queries the database.
 func IsGroupMember(userID, groupID uint) bool {
-	// This will be implemented in the storage layer
 	return false
 }
 
-// GetGroupMembers returns all members of a group
-// This is a placeholder - the actual implementation will depend on the storage layer
+// GetGroupMembers is a model-layer convenience stub that validates the zero-ID
+// guard and returns an empty slice. Production callers must use the storage interface.
 func GetGroupMembers(groupID uint) ([]uint, error) {
 	if groupID == 0 {
 		return nil, errors.New("group ID cannot be zero")
 	}
-
-	// This will be implemented in the storage layer
 	return []uint{}, nil
 }
 
-// ValidateGroupExists validates that a group exists
-// This is a placeholder - the actual implementation will depend on the storage layer
+// ValidateGroupExists is a model-layer convenience stub that validates the
+// zero-ID guard only. Production callers must use the storage interface.
 func ValidateGroupExists(groupID uint) error {
 	if groupID == 0 {
 		return errors.New("group ID cannot be zero")
 	}
-
-	// This will be implemented in the storage layer
 	return nil
 }
 
-// CanAccessViaGroup checks if a user has access to a secret via group membership
-// This is a placeholder - the actual implementation will depend on the storage layer
+// CanAccessViaGroup is a model-layer convenience stub that validates zero-ID
+// guards and always returns false. Production callers must use the storage interface.
 func CanAccessViaGroup(secretID, userID uint) (bool, string, error) {
 	if secretID == 0 {
 		return false, "", errors.New("secret ID cannot be zero")
@@ -57,30 +53,23 @@ func CanAccessViaGroup(secretID, userID uint) (bool, string, error) {
 	if userID == 0 {
 		return false, "", errors.New("user ID cannot be zero")
 	}
-
-	// This will be implemented in the storage layer
-	// Returns: hasAccess, permissionLevel, error
 	return false, "", nil
 }
 
-// GetUserGroups returns all groups a user is a member of
-// This is a placeholder - the actual implementation will depend on the storage layer
+// GetUserGroups is a model-layer convenience stub that validates the zero-ID
+// guard and returns an empty slice. Production callers must use the storage interface.
 func GetUserGroups(userID uint) ([]uint, error) {
 	if userID == 0 {
 		return nil, errors.New("user ID cannot be zero")
 	}
-
-	// This will be implemented in the storage layer
 	return []uint{}, nil
 }
 
-// GetGroupShares returns all shares for a group
-// This is a placeholder - the actual implementation will depend on the storage layer
+// GetGroupShares is a model-layer convenience stub that validates the zero-ID
+// guard and returns an empty slice. Production callers must use the storage interface.
 func GetGroupShares(groupID uint) ([]*ShareRecord, error) {
 	if groupID == 0 {
 		return nil, errors.New("group ID cannot be zero")
 	}
-
-	// This will be implemented in the storage layer
 	return []*ShareRecord{}, nil
 }

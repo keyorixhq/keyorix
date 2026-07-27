@@ -221,30 +221,14 @@ func GetMetrics(w http.ResponseWriter, r *http.Request) {
 			LastGC:        memStats.LastGC,
 			GCCPUFraction: memStats.GCCPUFraction,
 		},
-		HTTP: HTTPMetrics{
-			RequestsTotal:     12543,
-			RequestsPerSec:    15.2,
-			AvgResponseTime:   45.3,
-			ErrorRate:         0.02,
-			ActiveConnections: 8,
-		},
-		Database: DatabaseMetrics{
-			QueriesTotal:      8932,
-			QueriesPerSec:     12.1,
-			AvgQueryTime:      8.7,
-			SlowQueries:       3,
-			ConnectionsActive: 2,
-			ConnectionsIdle:   8,
-		},
-		Secrets: SecretsMetrics{
-			TotalSecrets:       1247,
-			ActiveSecrets:      1198,
-			ExpiredSecrets:     49,
-			SecretsCreated24h:  23,
-			SecretsAccessed24h: 456,
-			EncryptionOps24h:   789,
-			DecryptionOps24h:   456,
-		},
+		// HTTP, Database, and Secrets counters are not instrumented in the HTTP
+		// handler path. Use the Prometheus /metrics endpoint for real HTTP counters
+		// and the gRPC GetMetrics call for domain-level counts. Returning zeros
+		// here rather than fabricated values; previously these were hardcoded
+		// constants that misled capacity-planning and incident-response consumers.
+		HTTP:     HTTPMetrics{},
+		Database: DatabaseMetrics{},
+		Secrets:  SecretsMetrics{},
 		Uptime:    time.Since(startTime).String(),
 		Timestamp: time.Now().UTC(),
 	}
