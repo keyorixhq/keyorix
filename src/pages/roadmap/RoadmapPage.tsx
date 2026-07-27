@@ -89,15 +89,15 @@ export const RoadmapPage: React.FC = () => (
 
         <QuarterCard
             quarter="Q3 2026"
-            badge="in-progress"
+            badge="shipped"
             items={[
                 'Project-scoped role assignments',
-                'RBAC audit log UI',
+                'RBAC audit log UI with actor / date filters and CSV export',
                 'Role creation and management UI',
-                'Compliance mapping reports (NIS2, DORA, ISO 27001)',
-                'OIDC service account authentication for CI/CD',
+                'Compliance mapping reports (NIS2, DORA, ISO 27001, SOC 2, DORA, ENS) with per-framework scores',
+                'OIDC service account authentication UI for CI/CD (backend in Q4)',
                 'Project switcher in sidebar header',
-                'demo.keyorix.com hosted demo environment',
+                'Effective permissions panel and role legend in project Members tab',
             ]}
         />
 
@@ -110,6 +110,8 @@ export const RoadmapPage: React.FC = () => (
                 'Webhook notifications for rotation events',
                 'Kubernetes operator (alpha)',
                 'Self-hosted install health monitoring',
+                'OIDC federation backend (token exchange endpoint)',
+                'demo.keyorix.com hosted demo environment',
             ]}
         />
 

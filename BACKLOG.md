@@ -6,6 +6,26 @@ internal engineering work only.
 
 _Last updated: 2026-07-27._
 
+## Q3 2026 roadmap features — COMPLETE
+
+All frontend items from the Q3 roadmap shipped across PRs #121–#124:
+
+- **RBAC audit log tab** (PR #121) — new "RBAC Events" tab on `/audit`, actor /
+  date filters, pagination, CSV export. Existing `useAuditLog` hook extended with
+  `actor`, `dateFrom`, `dateTo` params.
+- **Per-framework compliance reports** (PR #122) — framework tab bar (All / ISO
+  27001 / SOC 2 / NIS2 / DORA / ENS) above the control matrix, per-framework
+  compliance score with colour-coded progress bar.
+- **Effective permissions in Members tab** (PR #123) — static capability matrix
+  per project role, expandable member rows, collapsible role legend.
+- **OIDC Workload Identity Federation UI** (PR #124) — "OIDC Federation" tab on
+  `/admin/service-accounts`; trust-config CRUD, issuer presets (GitHub Actions,
+  GitLab, GCP, Azure), bound-SA picker, GitHub Actions usage guide. Graceful
+  404/501 banner while backend is pending (deferred to Q4).
+
+Project-scoped role assignments and project switcher were already implemented
+before the campaign started (confirmed by codebase survey).
+
 ## The shadcn/ui rewrite (umbrella) — COMPLETE
 
 The full phased migration is done (Phases 0–10, PRs #107–#116 on main,
