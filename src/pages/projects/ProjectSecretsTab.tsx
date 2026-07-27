@@ -19,15 +19,7 @@ import { ShareSecretModal } from '../../features/sharing';
 import { EnvironmentPills } from '../../features/projects/EnvironmentPills';
 import { useProjectEnvironments } from '../../features/projects/api';
 import { generateSecret } from '../../utils';
-
-const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
-    { value: 'all', label: 'All Types' },
-    { value: 'text', label: 'Text' },
-    { value: 'password', label: 'Password' },
-    { value: 'api_key', label: 'API Key' },
-    { value: 'certificate', label: 'Certificate' },
-    { value: 'json', label: 'JSON' },
-];
+import { SECRET_TYPES } from '../../features/secrets/listConstants';
 
 const PAGE_SIZE_OPTIONS = [
     { value: '10', label: '10 / page' },

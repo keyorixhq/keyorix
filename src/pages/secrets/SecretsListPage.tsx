@@ -30,15 +30,7 @@ import { ShareSecretModal } from '../../features/sharing';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
 import { isPatternSafe, testPatternSafely } from '../../utils/safeRegex';
 import { generateSecret } from '../../utils';
-
-const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
-    { value: 'all', label: 'All Types' },
-    { value: 'text', label: 'Text' },
-    { value: 'password', label: 'Password' },
-    { value: 'api_key', label: 'API Key' },
-    { value: 'certificate', label: 'Certificate' },
-    { value: 'json', label: 'JSON' },
-];
+import { SECRET_TYPES } from '../../features/secrets/listConstants';
 const SORT_OPTIONS = [
     { value: 'name_asc', label: 'Name (A-Z)' },
     { value: 'name_desc', label: 'Name (Z-A)' },

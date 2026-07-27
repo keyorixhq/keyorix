@@ -20,7 +20,8 @@ export const RevokeTokenCell: React.FC<RevokeTokenCellProps> = ({
     onCancel,
     onSetPending,
 }) => {
-    const revokeColor = inactive ? 'var(--text-muted)' : isDark ? '#f87171' : '#dc2626';
+    const activeRed = isDark ? '#f87171' : '#dc2626';
+    const revokeColor = inactive ? 'var(--text-muted)' : activeRed;
 
     if (isPending) {
         return (

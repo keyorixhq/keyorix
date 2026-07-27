@@ -393,7 +393,7 @@ export const ServiceAccountsPage: React.FC = () => {
         );
     }
 
-    function handleRevokeToken(tokenId: number) {
+    const handleRevokeToken = (tokenId: number) => {
         revokeTokenMutation.mutate(
             { tokenId },
             {
@@ -404,7 +404,7 @@ export const ServiceAccountsPage: React.FC = () => {
                 },
             }
         );
-    }
+    };
 
     async function handleCopy(text: string, field: string) {
         await copyToClipboard(text);
