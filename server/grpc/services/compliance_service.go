@@ -11,7 +11,7 @@ import (
 
 // ComplianceGRPCService implements pb.ComplianceServiceServer — the read-only
 // compliance posture + control-matrix surface over gRPC (mirrors the HTTP/CLI
-// reports). Both RPCs require an authenticated user with global system.read.
+// reports). Both RPCs require an authenticated user with global audit.read.
 type ComplianceGRPCService struct {
 	pb.UnimplementedComplianceServiceServer
 	core *core.KeyorixCore
@@ -31,7 +31,7 @@ func (s *ComplianceGRPCService) GetCompliancePosture(ctx context.Context, _ *emp
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "system.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	p, err := s.core.GetCompliancePosture(ctx)
@@ -47,7 +47,7 @@ func (s *ComplianceGRPCService) GetComplianceControls(ctx context.Context, _ *em
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, "system.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	c, err := s.core.GetComplianceControls(ctx)

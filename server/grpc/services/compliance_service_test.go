@@ -23,7 +23,7 @@ func newComplianceService(t *testing.T) *ComplianceGRPCService {
 }
 
 func compCtx() context.Context {
-	return authCtx(1, "admin", "system.read")
+	return authCtx(1, "admin", permAuditRead)
 }
 
 func TestComplianceService_GetCompliancePosture(t *testing.T) {
@@ -81,4 +81,26 @@ func TestComplianceService_PermissionDenied(t *testing.T) {
 	_, err = svc.GetComplianceControls(ctx, &emptypb.Empty{})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestComplianceService_SystemViewerDenied is a regression test for CP-001 /
+// CP-008: a system_viewer (holding only "system.read") must NOT be able to
+// read deployment-wide compliance posture or the control matrix via gRPC.
+// Before the fix both RPCs were gated on "system.read", which is assigned to
+// every created user and breaks segregation-of-duties with the HTTP layer that
+// has always required "audit.read".
+func TestComplianceService_SystemViewerDenied(t *testing.T) {
+	svc := newComplianceService(t)
+	// Simulate a system_viewer: authenticated but only holds system.read, not audit.read.
+	ctx := authCtx(2, "system_viewer", "system.read")
+
+	_, err := svc.GetCompliancePosture(ctx, &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err),
+		"system_viewer with only system.read must not access GetCompliancePosture")
+
+	_, err = svc.GetComplianceControls(ctx, &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err),
+		"system_viewer with only system.read must not access GetComplianceControls")
 }
