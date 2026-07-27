@@ -35,6 +35,16 @@ func (c *KeyorixCore) ApplyAnomalyConfig(ctx context.Context, detector *AnomalyD
 		NumTrees:   cfg.MLNumTrees,
 		SampleSize: cfg.MLSampleSize,
 	})
+	// Volume spike floor and cumulative rate rule (ANOMALY-06).
+	if cfg.VolumeMinCount > 0 {
+		detector.SetVolumeMinCount(cfg.VolumeMinCount)
+	}
+	if cfg.CumulativeRateFloor > 0 {
+		detector.SetCumulativeRateFloor(cfg.CumulativeRateFloor)
+	}
+	if cfg.CumulativeRateMax > 0 {
+		detector.SetCumulativeRateMax(cfg.CumulativeRateMax)
+	}
 	return nil
 }
 

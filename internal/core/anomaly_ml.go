@@ -125,15 +125,42 @@ func accessFeatures(lg models.SecretAccessLog, ipFreq, userFreq map[string]int) 
 // returns an ml_outlier alert for each recent access whose anomaly score exceeds the
 // configured threshold. Returns nil when there is too little baseline to train on or
 // the forest could not be grown — the caller then relies on the statistical rules.
+//
+// mlQuarantineDuration mirrors the statistical baseline's quarantine period (#101).
+// Without this filter, warm-up accesses (e.g. from an attacker's IP, 25+ hours old)
+// age into the ML training feature maps and inflate ipFreq/userFreq for that
+// attacker-controlled IP — lowering its novelty signal in the forest and potentially
+// letting malicious accesses score below the detection threshold.
+const mlQuarantineDuration = 24 * time.Hour
+
 func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models.SecretAccessLog, cfg MLConfig, now time.Time) []models.AnomalyAlert {
 	cfg = cfg.withDefaults()
 	if len(baselineLogs) < mlMinTrainSamples || len(recentLogs) == 0 {
 		return nil
 	}
 
+	// ANOMALY-03: compute the same trustCutoff used by buildBaseline so that accesses
+	// inside the quarantine window are excluded from the ML feature-frequency maps.
+	// "windowStart" here is the start of the live detection window, which is the
+	// earliest time in recentLogs; we derive it as the minimum AccessTime across
+	// recentLogs. Falls back to now minus mlQuarantineDuration when recentLogs is empty
+	// (guarded above, so this is belt-and-suspenders).
+	windowStart := now
+	for _, lg := range recentLogs {
+		if lg.AccessTime.Before(windowStart) {
+			windowStart = lg.AccessTime
+		}
+	}
+	mlTrustCutoff := windowStart.Add(-mlQuarantineDuration)
+
 	ipFreq := make(map[string]int, len(baselineLogs))
 	userFreq := make(map[string]int, len(baselineLogs))
 	for _, lg := range baselineLogs {
+		// Skip logs inside the quarantine window so an attacker's recently-seen IP/user
+		// does not inflate its frequency score in the training data.
+		if !lg.AccessTime.Before(mlTrustCutoff) {
+			continue
+		}
 		if lg.IPAddress != "" {
 			ipFreq[lg.IPAddress]++
 		}
