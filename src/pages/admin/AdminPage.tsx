@@ -41,7 +41,7 @@ import { useUIStore } from '../../store/uiStore';
 import type { SetupLinkResult, ProjectAssignment } from '../../services/users';
 import { SYSTEM_ROLES } from '../../services/users';
 import { GlobalInviteUserModal } from '../../features/invitations/GlobalInviteUserModal';
-import { copyToClipboard } from '../../utils';
+import { copyToClipboard, formatDateShort } from '../../utils';
 
 // "system_auditor" → "Auditor"; the leading "system_" is stripped since the
 // whole control is already labelled "System role".
@@ -70,18 +70,6 @@ type ActiveModal =
     | { type: 'restore'; user: APIUser }
     | { type: 'roles'; user: APIUser };
 
-function formatDate(iso: string): string {
-    if (!iso) return '—';
-    try {
-        return new Date(iso).toLocaleDateString(undefined, {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-        });
-    } catch {
-        return iso;
-    }
-}
 
 function generatePassword(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*';
@@ -486,14 +474,14 @@ function buildUserListContent(props: UserListProps): React.ReactNode {
                             <td className="px-6 py-4 whitespace-nowrap text-sm">
                                 {user.last_login_at ? (
                                     <span className="text-base-secondary">
-                                        {formatDate(user.last_login_at)}
+                                        {formatDateShort(user.last_login_at)}
                                     </span>
                                 ) : (
                                     <span className="text-base-muted italic">Never</span>
                                 )}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                {formatDate(user.created_at)}
+                                {formatDateShort(user.created_at)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-right">
                                 <div className="flex items-center justify-end gap-2">

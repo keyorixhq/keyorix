@@ -29,6 +29,7 @@ import {
 import { ShareSecretModal } from '../../features/sharing';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
 import { isPatternSafe, testPatternSafely } from '../../utils/safeRegex';
+import { generateSecret } from '../../utils';
 
 const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
     { value: 'all', label: 'All Types' },
@@ -77,15 +78,6 @@ function secretNameError(namePolicy: SecretPolicy['name'] | undefined, name: str
     return '';
 }
 
-// Generates a cryptographically random secret value (32 chars, URL-safe)
-function generateSecret(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-    const arr = new Uint8Array(32);
-    window.crypto.getRandomValues(arr);
-    return Array.from(arr)
-        .map((b) => chars[b % chars.length])
-        .join('');
-}
 
 function filterSecretsForDisplay(secrets: any[], urlFilter: string | null): any[] {
     if (urlFilter === 'expiring') {

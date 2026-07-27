@@ -89,6 +89,32 @@ export function isValidEmail(email: string): boolean {
 }
 
 /**
+ * Formats a date string as a short date (no time) with a dash fallback for empty/invalid values.
+ */
+export function formatDateShort(iso: string | null | undefined): string {
+    if (!iso) return '—';
+    try {
+        return new Date(iso).toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+        });
+    } catch {
+        return iso;
+    }
+}
+
+/**
+ * Generates a cryptographically random 32-character URL-safe string.
+ */
+export function generateSecret(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const arr = new Uint8Array(32);
+    window.crypto.getRandomValues(arr);
+    return Array.from(arr).map((b) => chars[b % chars.length]).join('');
+}
+
+/**
  * Generates a random ID
  */
 export function generateId(): string {

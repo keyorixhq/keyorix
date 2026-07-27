@@ -9,12 +9,13 @@ import {
     useCreateToken,
     useRevokeToken,
 } from '../../features/admin';
-import { ServiceAccount, APIToken } from '../../types/serviceAccounts';
+import { ServiceAccount } from '../../types/serviceAccounts';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import { copyToClipboard } from '../../utils';
+import { copyToClipboard, formatDateShort } from '../../utils';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
+import { TokenStatusBadge, getTokenStatus } from '../../components/ui/TokenStatusBadge';
 import { useUIStore } from '../../store/uiStore';
 import { OIDCFederationSection } from './OIDCFederationSection';
 
@@ -27,24 +28,6 @@ const SCOPES = [
     { value: 'audit:read', description: 'Read audit logs' },
 ] as const;
 
-function formatDate(iso: string): string {
-    if (!iso) return '—';
-    try {
-        return new Date(iso).toLocaleDateString(undefined, {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-        });
-    } catch {
-        return iso;
-    }
-}
-
-function getTokenStatus(token: APIToken): 'active' | 'revoked' | 'expired' {
-    if (token.revoked) return 'revoked';
-    if (token.expires_at && new Date(token.expires_at) <= new Date()) return 'expired';
-    return 'active';
-}
 
 type ActiveModal =
     | null
@@ -177,7 +160,7 @@ function renderAccountsContent(
                                     </span>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                    {formatDate(sa.created_at)}
+                                    {formatDateShort(sa.created_at)}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right">
                                     <div className="flex items-center justify-end gap-2">
@@ -492,10 +475,10 @@ export const ServiceAccountsPage: React.FC = () => {
                         return (
                             <tr key={token.id} className="hover:bg-subtle transition-colors">
                                 <td className="px-4 py-3 text-sm text-base-secondary">
-                                    {formatDate(token.created_at)}
+                                    {formatDateShort(token.created_at)}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-base-secondary">
-                                    {token.expires_at ? formatDate(token.expires_at) : '—'}
+                                    {token.expires_at ? formatDateShort(token.expires_at) : '—'}
                                 </td>
                                 <td className="px-4 py-3">
                                     <TokenStatusBadge status={status} isDark={isDark} />
@@ -979,28 +962,3 @@ export const ServiceAccountsPage: React.FC = () => {
     );
 };
 
-function TokenStatusBadge({ status, isDark }: Readonly<{ status: 'active' | 'revoked' | 'expired'; isDark: boolean }>) {
-    const styles: Record<string, React.CSSProperties> = {
-        active: {
-            backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7',
-            color: isDark ? '#34d399' : '#166534',
-        },
-        revoked: {
-            backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2',
-            color: isDark ? '#f87171' : '#991b1b',
-        },
-        expired: {
-            backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fef3c7',
-            color: isDark ? '#fbbf24' : '#92400e',
-        },
-    };
-    const labels = { active: 'Active', revoked: 'Revoked', expired: 'Expired' };
-    return (
-        <span
-            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-            style={styles[status]}
-        >
-            {labels[status]}
-        </span>
-    );
-}

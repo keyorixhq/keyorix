@@ -18,6 +18,7 @@ import { useProjectSecrets } from '../../features/secrets/useProjectSecrets';
 import { ShareSecretModal } from '../../features/sharing';
 import { EnvironmentPills } from '../../features/projects/EnvironmentPills';
 import { useProjectEnvironments } from '../../features/projects/api';
+import { generateSecret } from '../../utils';
 
 const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
     { value: 'all', label: 'All Types' },
@@ -33,15 +34,6 @@ const PAGE_SIZE_OPTIONS = [
     { value: '20', label: '20 / page' },
     { value: '50', label: '50 / page' },
 ];
-
-function generateSecret(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-    const arr = new Uint8Array(32);
-    window.crypto.getRandomValues(arr);
-    return Array.from(arr)
-        .map((b) => chars[b % chars.length])
-        .join('');
-}
 
 interface ProjectSecretsTabProps {
     projectId: number;

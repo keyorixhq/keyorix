@@ -7,56 +7,14 @@ import { APIToken } from '../../types/serviceAccounts';
 import { Button } from '../../components/ui/Button';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
+import { TokenStatusBadge, getTokenStatus } from '../../components/ui/TokenStatusBadge';
 import { useUIStore } from '../../store/uiStore';
+import { formatDateShort } from '../../utils';
 
 interface FlatToken extends APIToken {
     serviceAccountName: string;
 }
 
-function formatDate(iso: string): string {
-    if (!iso) return '—';
-    try {
-        return new Date(iso).toLocaleDateString(undefined, {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-        });
-    } catch {
-        return iso;
-    }
-}
-
-function getTokenStatus(token: APIToken): 'active' | 'revoked' | 'expired' {
-    if (token.revoked) return 'revoked';
-    if (token.expires_at && new Date(token.expires_at) <= new Date()) return 'expired';
-    return 'active';
-}
-
-function TokenStatusBadge({ status, isDark }: Readonly<{ status: 'active' | 'revoked' | 'expired'; isDark: boolean }>) {
-    const styles: Record<string, React.CSSProperties> = {
-        active: {
-            backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7',
-            color: isDark ? '#34d399' : '#166534',
-        },
-        revoked: {
-            backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2',
-            color: isDark ? '#f87171' : '#991b1b',
-        },
-        expired: {
-            backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fef3c7',
-            color: isDark ? '#fbbf24' : '#92400e',
-        },
-    };
-    const labels = { active: 'Active', revoked: 'Revoked', expired: 'Expired' };
-    return (
-        <span
-            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-            style={styles[status]}
-        >
-            {labels[status]}
-        </span>
-    );
-}
 
 export const APITokensPage: React.FC = () => {
     const { theme } = useUIStore();
@@ -182,10 +140,10 @@ export const APITokensPage: React.FC = () => {
                                             )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                            {formatDate(token.created_at)}
+                                            {formatDateShort(token.created_at)}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                            {token.expires_at ? formatDate(token.expires_at) : '—'}
+                                            {token.expires_at ? formatDateShort(token.expires_at) : '—'}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <TokenStatusBadge status={status} isDark={isDark} />
