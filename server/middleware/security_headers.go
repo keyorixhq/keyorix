@@ -47,7 +47,7 @@ func SecurityHeaders(tlsEnabled bool) func(http.Handler) http.Handler {
 			h.Set("Content-Security-Policy", contentSecurityPolicy)
 			h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
 			if tlsEnabled {
-				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 			}
 			next.ServeHTTP(w, r)
 		})

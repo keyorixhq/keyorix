@@ -197,20 +197,22 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 	}
 }
 
-// groupError maps a core error to a gRPC status, mirroring the HTTP status codes.
+// groupError maps a core error to a gRPC status. Raw core/DB error strings are
+// never forwarded — only safe static messages reach the caller to prevent
+// internal detail leakage.
 func groupError(err error) error {
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "not found"):
-		return status.Error(codes.NotFound, err.Error())
+		return status.Error(codes.NotFound, "group not found")
 	case strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate") || strings.Contains(msg, "in use"):
-		return status.Error(codes.AlreadyExists, err.Error())
+		return status.Error(codes.AlreadyExists, "group name already in use")
 	case strings.Contains(msg, "required") || strings.Contains(msg, "invalid") || strings.Contains(msg, "exceeds"):
-		return status.Error(codes.InvalidArgument, err.Error())
+		return status.Error(codes.InvalidArgument, "invalid group request")
 	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied") || strings.Contains(msg, "administrator can grant"):
 		return status.Error(codes.PermissionDenied, "access denied")
 	case strings.Contains(msg, "refusing to remove the last"):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, "cannot remove the last administrator")
 	default:
 		return status.Error(codes.Internal, "group operation failed")
 	}

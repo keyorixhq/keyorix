@@ -49,8 +49,15 @@ if [ -n "$KEYORIX_ADMIN_PASSWORD" ]; then
         BOOTSTRAP_PAYLOAD_FILE="$BOOTSTRAP_TMPDIR/bootstrap.json"
         : > "$BOOTSTRAP_PAYLOAD_FILE"
         chmod 600 "$BOOTSTRAP_PAYLOAD_FILE"
+        # Escape JSON special characters (backslash then double-quote) before
+        # interpolating values into the payload — prevents malformed JSON or
+        # JSON-injection if the password contains \ or " characters.
+        json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+        ADMIN_USER_J=$(json_escape "$ADMIN_USER")
+        ADMIN_EMAIL_J=$(json_escape "$ADMIN_EMAIL")
+        ADMIN_PASS_J=$(json_escape "$KEYORIX_ADMIN_PASSWORD")
         printf '{"username":"%s","email":"%s","password":"%s","display_name":"Administrator"}' \
-            "$ADMIN_USER" "$ADMIN_EMAIL" "$KEYORIX_ADMIN_PASSWORD" > "$BOOTSTRAP_PAYLOAD_FILE"
+            "$ADMIN_USER_J" "$ADMIN_EMAIL_J" "$ADMIN_PASS_J" > "$BOOTSTRAP_PAYLOAD_FILE"
         wget --quiet -O- \
             --header='Content-Type: application/json' \
             --header="X-Keyorix-Bootstrap-Token: $KEYORIX_BOOTSTRAP_TOKEN" \
