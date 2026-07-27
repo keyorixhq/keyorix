@@ -56,6 +56,7 @@ const LegalHoldBanner: React.FC = () => {
                 </div>
                 {active ? (
                     <button
+                        type="button"
                         onClick={() => {
                             setError('');
                             lift.mutate(undefined, { onError });
@@ -66,18 +67,21 @@ const LegalHoldBanner: React.FC = () => {
                     >
                         Lift hold
                     </button>
-                ) : !placing ? (
-                    <button
-                        onClick={() => {
-                            setError('');
-                            setPlacing(true);
-                        }}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
-                        style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
-                    >
-                        Place hold
-                    </button>
-                ) : null}
+                ) : (
+                    !placing ? (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setError('');
+                                setPlacing(true);
+                            }}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                            style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                        >
+                            Place hold
+                        </button>
+                    ) : null
+                )}
             </div>
             {placing && !active && (
                 <div className="mt-3 flex items-center gap-2">
@@ -94,6 +98,7 @@ const LegalHoldBanner: React.FC = () => {
                         }}
                     />
                     <button
+                        type="button"
                         onClick={() => {
                             if (!reason.trim()) return;
                             setError('');
@@ -113,6 +118,7 @@ const LegalHoldBanner: React.FC = () => {
                         Confirm hold
                     </button>
                     <button
+                        type="button"
                         onClick={() => {
                             setPlacing(false);
                             setReason('');
@@ -143,14 +149,10 @@ const Tile: React.FC<{ label: string; value: React.ReactNode; tone?: 'good' | 'w
     value,
     tone,
 }) => {
-    const color =
-        tone === 'good'
-            ? 'var(--success)'
-            : tone === 'warn'
-              ? 'var(--warning)'
-              : tone === 'bad'
-                ? 'var(--error)'
-                : 'var(--text-primary)';
+    let color = 'var(--text-primary)';
+    if (tone === 'good') color = 'var(--success)';
+    else if (tone === 'warn') color = 'var(--warning)';
+    else if (tone === 'bad') color = 'var(--error)';
     return (
         <div
             className="rounded-lg border px-3 py-2.5"
@@ -164,6 +166,28 @@ const Tile: React.FC<{ label: string; value: React.ReactNode; tone?: 'good' | 'w
             </div>
         </div>
     );
+};
+
+const posturePlaceholder = (): React.ReactElement => (
+    <div
+        className="rounded-xl border mb-6 p-6"
+        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+    >
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[1, 2, 3, 4].map((i) => (
+                <div
+                    key={i}
+                    className="h-16 rounded-lg animate-pulse"
+                    style={{ backgroundColor: 'var(--bg-muted)' }}
+                />
+            ))}
+        </div>
+    </div>
+);
+
+const postureErrorMessage = (status: number | undefined): string => {
+    if (status === 403) return 'The live controls-posture report is available to administrators (system.read).';
+    return 'Controls posture is currently unavailable.';
 };
 
 // PosturePanel surfaces the live controls-posture report (GET /compliance/posture).
@@ -182,26 +206,9 @@ const PosturePanel: React.FC = () => {
         retry: false,
     });
 
-    if (isLoading) {
-        return (
-            <div
-                className="rounded-xl border mb-6 p-6"
-                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-            >
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {[1, 2, 3, 4].map((i) => (
-                        <div
-                            key={i}
-                            className="h-16 rounded-lg animate-pulse"
-                            style={{ backgroundColor: 'var(--bg-muted)' }}
-                        />
-                    ))}
-                </div>
-            </div>
-        );
-    }
+    if (isLoading) return posturePlaceholder();
     if (isError || !p) {
-        const status = (error as any)?.response?.status;
+        const status = (error as any)?.response?.status as number | undefined;
         return (
             <div
                 className="rounded-xl border mb-6 px-6 py-4 text-sm"
@@ -211,15 +218,18 @@ const PosturePanel: React.FC = () => {
                     color: 'var(--text-muted)',
                 }}
             >
-                {status === 403
-                    ? 'The live controls-posture report is available to administrators (system.read).'
-                    : 'Controls posture is currently unavailable.'}
+                {postureErrorMessage(status)}
             </div>
         );
     }
 
     const ag = p.accessGovernance;
     const reviewed = ag.projects - ag.projectsNeverReviewed;
+    const highSeveritySuffix = p.anomalies.highSeverityOpen > 0 ? ` (${p.anomalies.highSeverityOpen} high)` : '';
+    const anomalyValue = `${p.anomalies.unacknowledged}${highSeveritySuffix}`;
+    let anomalyTone: 'bad' | 'warn' | 'good' = 'good';
+    if (p.anomalies.highSeverityOpen > 0) anomalyTone = 'bad';
+    else if (p.anomalies.unacknowledged > 0) anomalyTone = 'warn';
     return (
         <div
             className="rounded-xl border mb-8 overflow-hidden"
@@ -296,8 +306,8 @@ const PosturePanel: React.FC = () => {
                 />
                 <Tile
                     label="Open anomalies (NIS2)"
-                    value={`${p.anomalies.unacknowledged}${p.anomalies.highSeverityOpen > 0 ? ` (${p.anomalies.highSeverityOpen} high)` : ''}`}
-                    tone={p.anomalies.highSeverityOpen > 0 ? 'bad' : p.anomalies.unacknowledged > 0 ? 'warn' : 'good'}
+                    value={anomalyValue}
+                    tone={anomalyTone}
                 />
             </div>
             <div className="px-6 pb-5 pt-1">
@@ -337,7 +347,7 @@ const DigestPanel: React.FC = () => {
     });
     const [copied, setCopied] = useState(false);
 
-    if (isError || !data || !data.body) return null; // 403/unavailable — posture panel already notes admin-only
+    if (isError || !data?.body) return null; // 403/unavailable — posture panel already notes admin-only
 
     const onCopy = () => {
         const text = `${data.title}\n\n${data.body}`;
@@ -400,8 +410,8 @@ const SoDViolationsSection: React.FC = () => {
                 </h2>
             </div>
             <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                {violations.map((v, i) => (
-                    <li key={i} className="px-6 py-3 flex items-center gap-3">
+                {violations.map((v) => (
+                    <li key={`${v.username}:${v.policyName}`} className="px-6 py-3 flex items-center gap-3">
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                                 {v.email ? `${v.username} (${v.email})` : v.username}
@@ -547,6 +557,7 @@ const ControlMatrixPanel: React.FC = () => {
     const scoreDenom = passCount + gapCount;
     const scorePercent = scoreDenom > 0 ? Math.round((passCount / scoreDenom) * 100) : 100;
     const activeFw = FRAMEWORKS.find((f) => f.key === activeFramework)!;
+    const scoreColor = scorePercent >= 90 ? 'var(--success)' : scorePercent >= 70 ? 'var(--warning)' : 'var(--error)';
 
     return (
         <div
@@ -585,6 +596,7 @@ const ControlMatrixPanel: React.FC = () => {
             >
                 {FRAMEWORKS.map((fw) => (
                     <button
+                        type="button"
                         key={fw.key}
                         onClick={() => setActiveFramework(fw.key)}
                         className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-all duration-100 ${
@@ -618,14 +630,7 @@ const ControlMatrixPanel: React.FC = () => {
                         <div className="shrink-0 text-right">
                             <div
                                 className="text-2xl font-bold tabular-nums"
-                                style={{
-                                    color:
-                                        scorePercent >= 90
-                                            ? 'var(--success)'
-                                            : scorePercent >= 70
-                                              ? 'var(--warning)'
-                                              : 'var(--error)',
-                                }}
+                                style={{ color: scoreColor }}
                             >
                                 {scorePercent}%
                             </div>
@@ -641,15 +646,7 @@ const ControlMatrixPanel: React.FC = () => {
                     >
                         <div
                             className="h-full rounded-full transition-all duration-500"
-                            style={{
-                                width: `${scorePercent}%`,
-                                backgroundColor:
-                                    scorePercent >= 90
-                                        ? 'var(--success)'
-                                        : scorePercent >= 70
-                                          ? 'var(--warning)'
-                                          : 'var(--error)',
-                            }}
+                            style={{ width: `${scorePercent}%`, backgroundColor: scoreColor }}
                         />
                     </div>
                     {gapCount > 0 && (
@@ -771,6 +768,7 @@ const RiskRegisterPanel: React.FC = () => {
                 </h2>
                 {!adding && (
                     <button
+                        type="button"
                         onClick={() => {
                             setError('');
                             setAdding(true);
@@ -851,6 +849,7 @@ const RiskRegisterPanel: React.FC = () => {
                     />
                     <div className="sm:col-span-2 flex items-center gap-2">
                         <button
+                            type="button"
                             onClick={submit}
                             disabled={
                                 create.isPending || !form.title.trim() || !form.justification.trim() || !form.expires
@@ -861,6 +860,7 @@ const RiskRegisterPanel: React.FC = () => {
                             Record exception
                         </button>
                         <button
+                            type="button"
                             onClick={() => {
                                 setAdding(false);
                                 setError('');
@@ -907,6 +907,7 @@ const RiskRegisterPanel: React.FC = () => {
                                 </div>
                             </div>
                             <button
+                                type="button"
                                 onClick={() => revoke.mutate(e.id)}
                                 disabled={revoke.isPending}
                                 className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50"

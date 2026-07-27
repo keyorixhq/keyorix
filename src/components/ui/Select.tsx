@@ -22,6 +22,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         const generatedId = React.useId();
         const selectId = id ?? generatedId;
         const hasError = Boolean(error);
+        const ariaDescribedBy = error ? `${selectId}-error` : helperText ? `${selectId}-hint` : undefined;
 
         return (
             <div className={cn(fullWidth ? 'w-full' : 'w-auto')}>
@@ -43,7 +44,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                         id={selectId}
                         aria-invalid={hasError || undefined}
                         {...rest}
-                        aria-describedby={error ? `${selectId}-error` : helperText ? `${selectId}-hint` : undefined}
+                        aria-describedby={ariaDescribedBy}
                         className={cn(
                             'block px-3 py-2 pr-10 rounded-md shadow-xs',
                             'border border-strong',

@@ -53,6 +53,171 @@ type ActiveModal =
     | { type: 'deactivate'; sa: ServiceAccount }
     | { type: 'tokens'; sa: ServiceAccount };
 
+// ── Helpers extracted to reduce cognitive complexity ──────────────────────────
+
+function renderAccountsContent(
+    isLoading: boolean,
+    isError: boolean,
+    serviceAccounts: ServiceAccount[],
+    isDark: boolean,
+    openTokens: (sa: ServiceAccount) => void,
+    openEdit: (sa: ServiceAccount) => void,
+    setActiveModal: (m: ActiveModal) => void
+) {
+    if (isLoading) {
+        return <Loading className="py-20" />;
+    }
+    if (isError) {
+        return (
+            <Alert
+                type="error"
+                title="Failed to load service accounts"
+                message="Check that the server is running and you have admin access."
+            />
+        );
+    }
+    if (serviceAccounts.length === 0) {
+        return (
+            <div className="text-center py-20 text-base-muted">
+                <KeyIcon className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                <p className="text-sm">
+                    No service accounts yet. Create one to enable CI/CD pipeline access to secrets.
+                </p>
+            </div>
+        );
+    }
+    return (
+        <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-base">
+                    <thead>
+                        <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Name
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Client ID
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Scopes
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Status
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Created
+                            </th>
+                            <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Actions
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-base">
+                        {serviceAccounts.map((sa) => (
+                            <tr key={sa.id} className="hover:bg-subtle transition-colors">
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    <div>
+                                        <p className="text-sm font-medium text-base-primary">{sa.name}</p>
+                                        {sa.description && (
+                                            <p className="text-xs text-base-muted mt-0.5">
+                                                {sa.description}
+                                            </p>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className="font-mono text-sm text-base-secondary">
+                                        {sa.client_id.length > 12
+                                            ? sa.client_id.slice(0, 12) + '…'
+                                            : sa.client_id}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <div className="flex flex-wrap gap-1">
+                                        {sa.scopes
+                                            .split(',')
+                                            .map((s) => s.trim())
+                                            .filter(Boolean)
+                                            .map((scope) => (
+                                                <span
+                                                    key={scope}
+                                                    className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
+                                                    style={{
+                                                        backgroundColor: isDark
+                                                            ? 'rgba(59,130,246,0.15)'
+                                                            : '#eff6ff',
+                                                        color: isDark ? '#93c5fd' : '#1d4ed8',
+                                                    }}
+                                                >
+                                                    {scope}
+                                                </span>
+                                            ))}
+                                    </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    <span
+                                        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                        style={
+                                            sa.is_active
+                                                ? {
+                                                      backgroundColor: isDark
+                                                          ? 'rgba(16,185,129,0.15)'
+                                                          : '#dcfce7',
+                                                      color: isDark ? '#34d399' : '#166534',
+                                                  }
+                                                : {
+                                                      backgroundColor: isDark
+                                                          ? 'rgba(148,163,184,0.15)'
+                                                          : '#f1f5f9',
+                                                      color: isDark ? '#94a3b8' : '#475569',
+                                                  }
+                                        }
+                                    >
+                                        {sa.is_active ? 'Active' : 'Inactive'}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
+                                    {formatDate(sa.created_at)}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => openTokens(sa)}
+                                            className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
+                                            title="Manage tokens"
+                                        >
+                                            <KeyIcon className="h-4 w-4" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => openEdit(sa)}
+                                            className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
+                                            title="Edit"
+                                        >
+                                            <PencilIcon className="h-4 w-4" />
+                                        </button>
+                                        {sa.is_active && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setActiveModal({ type: 'deactivate', sa })}
+                                                className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
+                                                title="Deactivate"
+                                            >
+                                                <TrashIcon className="h-4 w-4" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
 export const ServiceAccountsPage: React.FC = () => {
     const { theme } = useUIStore();
     const isDark =
@@ -272,9 +437,11 @@ export const ServiceAccountsPage: React.FC = () => {
                 {SCOPES.map(({ value, description }) => (
                     <label
                         key={value}
+                        htmlFor={`scope-${value}`}
                         className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors"
                     >
                         <input
+                            id={`scope-${value}`}
                             type="checkbox"
                             checked={formScopes.has(value)}
                             onChange={() => toggleScope(value)}
@@ -288,6 +455,105 @@ export const ServiceAccountsPage: React.FC = () => {
                     </label>
                 ))}
             </div>
+        </div>
+    );
+
+    const tokensModalTitle = activeModal?.type === 'tokens' ? `Tokens — ${activeModal.sa.name}` : 'Tokens';
+
+    const tokensListContent = tokensLoading ? (
+        <Loading />
+    ) : tokens.length === 0 ? (
+        <p className="text-sm text-base-muted text-center py-6">No tokens yet. Create one above.</p>
+    ) : (
+        <div className="border border-base rounded-lg overflow-hidden">
+            <table className="min-w-full divide-y divide-base">
+                <thead>
+                    <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                            Created
+                        </th>
+                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                            Expires
+                        </th>
+                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                            Status
+                        </th>
+                        <th className="px-4 py-2.5 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-base">
+                    {tokens.map((token) => {
+                        const status = getTokenStatus(token);
+                        const inactive = status === 'revoked' || status === 'expired';
+                        const isPending = pendingRevokeTokenId === token.id;
+                        const revokeColor = inactive ? 'var(--text-muted)' : isDark ? '#f87171' : '#dc2626';
+                        return (
+                            <tr key={token.id} className="hover:bg-subtle transition-colors">
+                                <td className="px-4 py-3 text-sm text-base-secondary">
+                                    {formatDate(token.created_at)}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-base-secondary">
+                                    {token.expires_at ? formatDate(token.expires_at) : '—'}
+                                </td>
+                                <td className="px-4 py-3">
+                                    <TokenStatusBadge status={status} isDark={isDark} />
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                    {isPending ? (
+                                        <div className="flex items-center justify-end gap-2">
+                                            <span className="text-xs text-base-muted">
+                                                Revoke this token?
+                                            </span>
+                                            <Button
+                                                variant="destructive"
+                                                size="sm"
+                                                onClick={() => handleRevokeToken(token.id)}
+                                                disabled={revokeTokenMutation.isPending}
+                                            >
+                                                {revokeTokenMutation.isPending ? '…' : 'Revoke'}
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => setPendingRevokeTokenId(null)}
+                                            >
+                                                Cancel
+                                            </Button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => setPendingRevokeTokenId(token.id)}
+                                            disabled={inactive}
+                                            className="text-xs font-medium px-2.5 py-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                            style={{
+                                                color: revokeColor,
+                                                backgroundColor: 'transparent',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!inactive)
+                                                    (
+                                                        e.currentTarget as HTMLElement
+                                                    ).style.backgroundColor = isDark
+                                                        ? 'rgba(239,68,68,0.12)'
+                                                        : '#fee2e2';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                (e.currentTarget as HTMLElement).style.backgroundColor =
+                                                    'transparent';
+                                            }}
+                                        >
+                                            Revoke
+                                        </button>
+                                    )}
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
         </div>
     );
 
@@ -341,148 +607,15 @@ export const ServiceAccountsPage: React.FC = () => {
                     />
                 )}
 
-                {activeTab === 'accounts' && (isLoading ? (
-                    <Loading className="py-20" />
-                ) : isError ? (
-                    <Alert
-                        type="error"
-                        title="Failed to load service accounts"
-                        message="Check that the server is running and you have admin access."
-                    />
-                ) : serviceAccounts.length === 0 ? (
-                    <div className="text-center py-20 text-base-muted">
-                        <KeyIcon className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                        <p className="text-sm">
-                            No service accounts yet. Create one to enable CI/CD pipeline access to secrets.
-                        </p>
-                    </div>
-                ) : (
-                    <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-xs">
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-base">
-                                <thead>
-                                    <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Name
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Client ID
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Scopes
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Status
-                                        </th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Created
-                                        </th>
-                                        <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Actions
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-base">
-                                    {serviceAccounts.map((sa) => (
-                                        <tr key={sa.id} className="hover:bg-subtle transition-colors">
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div>
-                                                    <p className="text-sm font-medium text-base-primary">{sa.name}</p>
-                                                    {sa.description && (
-                                                        <p className="text-xs text-base-muted mt-0.5">
-                                                            {sa.description}
-                                                        </p>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className="font-mono text-sm text-base-secondary">
-                                                    {sa.client_id.length > 12
-                                                        ? sa.client_id.slice(0, 12) + '…'
-                                                        : sa.client_id}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <div className="flex flex-wrap gap-1">
-                                                    {sa.scopes
-                                                        .split(',')
-                                                        .map((s) => s.trim())
-                                                        .filter(Boolean)
-                                                        .map((scope) => (
-                                                            <span
-                                                                key={scope}
-                                                                className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
-                                                                style={{
-                                                                    backgroundColor: isDark
-                                                                        ? 'rgba(59,130,246,0.15)'
-                                                                        : '#eff6ff',
-                                                                    color: isDark ? '#93c5fd' : '#1d4ed8',
-                                                                }}
-                                                            >
-                                                                {scope}
-                                                            </span>
-                                                        ))}
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <span
-                                                    className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                                                    style={
-                                                        sa.is_active
-                                                            ? {
-                                                                  backgroundColor: isDark
-                                                                      ? 'rgba(16,185,129,0.15)'
-                                                                      : '#dcfce7',
-                                                                  color: isDark ? '#34d399' : '#166534',
-                                                              }
-                                                            : {
-                                                                  backgroundColor: isDark
-                                                                      ? 'rgba(148,163,184,0.15)'
-                                                                      : '#f1f5f9',
-                                                                  color: isDark ? '#94a3b8' : '#475569',
-                                                              }
-                                                    }
-                                                >
-                                                    {sa.is_active ? 'Active' : 'Inactive'}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                                {formatDate(sa.created_at)}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <button
-                                                        onClick={() => openTokens(sa)}
-                                                        className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
-                                                        title="Manage tokens"
-                                                    >
-                                                        <KeyIcon className="h-4 w-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => openEdit(sa)}
-                                                        className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
-                                                        title="Edit"
-                                                    >
-                                                        <PencilIcon className="h-4 w-4" />
-                                                    </button>
-                                                    {sa.is_active && (
-                                                        <button
-                                                            onClick={() => setActiveModal({ type: 'deactivate', sa })}
-                                                            className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
-                                                            title="Deactivate"
-                                                        >
-                                                            <TrashIcon className="h-4 w-4" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                ))}
+                {activeTab === 'accounts' && renderAccountsContent(
+                    isLoading,
+                    isError,
+                    serviceAccounts,
+                    isDark,
+                    openTokens,
+                    openEdit,
+                    setActiveModal
+                )}
             </div>
 
             {/* ── Create modal ─────────────────────────────────────────────────── */}
@@ -490,10 +623,11 @@ export const ServiceAccountsPage: React.FC = () => {
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">
+                        <label htmlFor="create-sa-name" className="block text-sm font-medium text-base-secondary mb-1">
                             Name <span className="text-red-500">*</span>
                         </label>
                         <input
+                            id="create-sa-name"
                             type="text"
                             value={formName}
                             onChange={(e) => setFormName(e.target.value)}
@@ -507,8 +641,9 @@ export const ServiceAccountsPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Description</label>
+                        <label htmlFor="create-sa-description" className="block text-sm font-medium text-base-secondary mb-1">Description</label>
                         <input
+                            id="create-sa-description"
                             type="text"
                             value={formDescription}
                             onChange={(e) => setFormDescription(e.target.value)}
@@ -538,10 +673,11 @@ export const ServiceAccountsPage: React.FC = () => {
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">
+                        <label htmlFor="edit-sa-name" className="block text-sm font-medium text-base-secondary mb-1">
                             Name <span className="text-red-500">*</span>
                         </label>
                         <input
+                            id="edit-sa-name"
                             type="text"
                             value={formName}
                             onChange={(e) => setFormName(e.target.value)}
@@ -554,8 +690,9 @@ export const ServiceAccountsPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Description</label>
+                        <label htmlFor="edit-sa-description" className="block text-sm font-medium text-base-secondary mb-1">Description</label>
                         <input
+                            id="edit-sa-description"
                             type="text"
                             value={formDescription}
                             onChange={(e) => setFormDescription(e.target.value)}
@@ -620,22 +757,24 @@ export const ServiceAccountsPage: React.FC = () => {
                             }}
                         >
                             <p className="text-sm font-semibold" style={{ color: isDark ? '#fbbf24' : '#92400e' }}>
-                                ⚠️ Save these credentials — they won't be shown again
+                                Save these credentials — they won't be shown again
                             </p>
                         </div>
 
                         <div>
-                            <label className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
+                            <label htmlFor="creds-client-id" className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
                                 Client ID
                             </label>
                             <div className="flex items-center gap-2">
                                 <code
+                                    id="creds-client-id"
                                     className="flex-1 px-3 py-2 rounded-lg text-sm font-mono border border-base break-all"
                                     style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
                                 >
                                     {createdCreds.clientId}
                                 </code>
                                 <button
+                                    type="button"
                                     onClick={() => handleCopy(createdCreds.clientId, 'clientId')}
                                     className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors shrink-0"
                                     style={{ color: 'var(--text-muted)' }}
@@ -648,17 +787,19 @@ export const ServiceAccountsPage: React.FC = () => {
                         </div>
 
                         <div>
-                            <label className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
+                            <label htmlFor="creds-client-secret" className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
                                 Client Secret
                             </label>
                             <div className="flex items-center gap-2">
                                 <code
+                                    id="creds-client-secret"
                                     className="flex-1 px-3 py-2 rounded-lg text-sm font-mono border border-base break-all"
                                     style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
                                 >
                                     {createdCreds.clientSecret}
                                 </code>
                                 <button
+                                    type="button"
                                     onClick={() => handleCopy(createdCreds.clientSecret, 'clientSecret')}
                                     className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors shrink-0"
                                     style={{ color: 'var(--text-muted)' }}
@@ -689,7 +830,7 @@ export const ServiceAccountsPage: React.FC = () => {
             <Modal
                 isOpen={activeModal?.type === 'tokens'}
                 onClose={closeModal}
-                title={activeModal?.type === 'tokens' ? `Tokens — ${activeModal.sa.name}` : 'Tokens'}
+                title={tokensModalTitle}
                 size="lg"
             >
                 <div className="space-y-4">
@@ -703,14 +844,15 @@ export const ServiceAccountsPage: React.FC = () => {
                             }}
                         >
                             <p className="text-sm font-semibold" style={{ color: isDark ? '#fbbf24' : '#92400e' }}>
-                                ⚠️ Save this token — it won't be shown again
+                                Save this token — it won't be shown again
                             </p>
                             <div>
-                                <label className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
+                                <label htmlFor="new-access-token" className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
                                     Token
                                 </label>
                                 <div className="flex items-center gap-2">
                                     <code
+                                        id="new-access-token"
                                         className="flex-1 px-3 py-2 rounded-lg text-sm font-mono border border-base break-all"
                                         style={{
                                             backgroundColor: 'var(--bg-app)',
@@ -720,6 +862,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                         {createdAccessToken}
                                     </code>
                                     <button
+                                        type="button"
                                         onClick={() => handleCopy(createdAccessToken, 'accessToken')}
                                         className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors shrink-0"
                                         style={{ color: 'var(--text-muted)' }}
@@ -767,10 +910,11 @@ export const ServiceAccountsPage: React.FC = () => {
                                 >
                                     {tokenFormError && <Alert type="error" message={tokenFormError} />}
                                     <div>
-                                        <label className="block text-sm font-medium text-base-secondary mb-1">
+                                        <label htmlFor="token-description" className="block text-sm font-medium text-base-secondary mb-1">
                                             Description
                                         </label>
                                         <input
+                                            id="token-description"
                                             type="text"
                                             value={tokenDescription}
                                             onChange={(e) => setTokenDescription(e.target.value)}
@@ -784,10 +928,11 @@ export const ServiceAccountsPage: React.FC = () => {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-base-secondary mb-1">
+                                        <label htmlFor="token-expires-at" className="block text-sm font-medium text-base-secondary mb-1">
                                             Expires At <span className="text-base-muted font-normal">(optional)</span>
                                         </label>
                                         <input
+                                            id="token-expires-at"
                                             type="date"
                                             value={tokenExpiresAt}
                                             onChange={(e) => setTokenExpiresAt(e.target.value)}
@@ -826,111 +971,14 @@ export const ServiceAccountsPage: React.FC = () => {
                     )}
 
                     {/* Token list */}
-                    {tokensLoading ? (
-                        <Loading />
-                    ) : tokens.length === 0 ? (
-                        <p className="text-sm text-base-muted text-center py-6">No tokens yet. Create one above.</p>
-                    ) : (
-                        <div className="border border-base rounded-lg overflow-hidden">
-                            <table className="min-w-full divide-y divide-base">
-                                <thead>
-                                    <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Created
-                                        </th>
-                                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Expires
-                                        </th>
-                                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Status
-                                        </th>
-                                        <th className="px-4 py-2.5 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
-                                            Actions
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-base">
-                                    {tokens.map((token) => {
-                                        const status = getTokenStatus(token);
-                                        const inactive = status === 'revoked' || status === 'expired';
-                                        const isPending = pendingRevokeTokenId === token.id;
-                                        return (
-                                            <tr key={token.id} className="hover:bg-subtle transition-colors">
-                                                <td className="px-4 py-3 text-sm text-base-secondary">
-                                                    {formatDate(token.created_at)}
-                                                </td>
-                                                <td className="px-4 py-3 text-sm text-base-secondary">
-                                                    {token.expires_at ? formatDate(token.expires_at) : '—'}
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <TokenStatusBadge status={status} isDark={isDark} />
-                                                </td>
-                                                <td className="px-4 py-3 text-right">
-                                                    {isPending ? (
-                                                        <div className="flex items-center justify-end gap-2">
-                                                            <span className="text-xs text-base-muted">
-                                                                Revoke this token?
-                                                            </span>
-                                                            <Button
-                                                                variant="destructive"
-                                                                size="sm"
-                                                                onClick={() => handleRevokeToken(token.id)}
-                                                                disabled={revokeTokenMutation.isPending}
-                                                            >
-                                                                {revokeTokenMutation.isPending ? '…' : 'Revoke'}
-                                                            </Button>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                onClick={() => setPendingRevokeTokenId(null)}
-                                                            >
-                                                                Cancel
-                                                            </Button>
-                                                        </div>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => setPendingRevokeTokenId(token.id)}
-                                                            disabled={inactive}
-                                                            className="text-xs font-medium px-2.5 py-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                                            style={{
-                                                                color: inactive
-                                                                    ? 'var(--text-muted)'
-                                                                    : isDark
-                                                                      ? '#f87171'
-                                                                      : '#dc2626',
-                                                                backgroundColor: 'transparent',
-                                                            }}
-                                                            onMouseEnter={(e) => {
-                                                                if (!inactive)
-                                                                    (
-                                                                        e.currentTarget as HTMLElement
-                                                                    ).style.backgroundColor = isDark
-                                                                        ? 'rgba(239,68,68,0.12)'
-                                                                        : '#fee2e2';
-                                                            }}
-                                                            onMouseLeave={(e) => {
-                                                                (e.currentTarget as HTMLElement).style.backgroundColor =
-                                                                    'transparent';
-                                                            }}
-                                                        >
-                                                            Revoke
-                                                        </button>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
+                    {tokensListContent}
                 </div>
             </Modal>
         </>
     );
 };
 
-function TokenStatusBadge({ status, isDark }: { status: 'active' | 'revoked' | 'expired'; isDark: boolean }) {
+function TokenStatusBadge({ status, isDark }: Readonly<{ status: 'active' | 'revoked' | 'expired'; isDark: boolean }>) {
     const styles: Record<string, React.CSSProperties> = {
         active: {
             backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7',

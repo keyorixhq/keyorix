@@ -39,6 +39,8 @@ export const ImpersonationBanner: React.FC = () => {
         }
     };
 
+    const buttonLabel = endError ? 'Retry' : 'End Impersonation';
+
     return (
         <div
             role="alert"
@@ -56,11 +58,12 @@ export const ImpersonationBanner: React.FC = () => {
                 ) : null}
             </span>
             <button
+                type="button"
                 onClick={handleEnd}
                 disabled={ending}
                 className="rounded-sm bg-white/20 px-3 py-1 font-semibold hover:bg-white/30 disabled:opacity-60"
             >
-                {ending ? 'Ending…' : endError ? 'Retry' : 'End Impersonation'}
+                {ending ? 'Ending…' : buttonLabel}
             </button>
         </div>
     );

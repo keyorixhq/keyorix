@@ -9,7 +9,7 @@ import {
     ShareIcon,
     TrashIcon,
 } from '@heroicons/react/24/outline';
-import { SecretType } from '../../types';
+import { SecretPolicy, SecretType } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
@@ -56,6 +56,26 @@ const PAGE_SIZE_OPTIONS = [
     { value: '50', label: '50 per page' },
     { value: '100', label: '100 per page' },
 ];
+
+// secretNameError returns a client-side validation message, or '' when ok.
+// The server re-validates regardless — this just gives faster feedback.
+function secretNameError(namePolicy: SecretPolicy['name'] | undefined, name: string): string {
+    if (!namePolicy?.enabled) return '';
+    if (namePolicy.max_length && name.length > namePolicy.max_length) {
+        return `Name exceeds the ${namePolicy.max_length}-character maximum.`;
+    }
+    if (namePolicy.pattern) {
+        // testPatternSafely refuses to run patterns that look like
+        // catastrophic-backtracking shapes (or oversized input) -- see
+        // src/utils/safeRegex.ts for why a same-thread timeout can't
+        // substitute for that check.
+        const result = testPatternSafely(namePolicy.pattern, name);
+        if (!result.skipped && !result.matches) {
+            return `Name must match the pattern ${namePolicy.pattern}.`;
+        }
+    }
+    return '';
+}
 
 // Generates a cryptographically random secret value (32 chars, URL-safe)
 function generateSecret(): string {
@@ -113,25 +133,6 @@ export const SecretsListPage: React.FC = () => {
     // live client-side check (the server still enforces it on submit) and
     // say so.
     const namePatternUnsafe = !!namePolicy?.enabled && !!namePolicy.pattern && !isPatternSafe(namePolicy.pattern);
-    // secretNameError returns a client-side validation message, or '' when ok. The
-    // server re-validates regardless — this just gives faster feedback.
-    const secretNameError = (name: string): string => {
-        if (!namePolicy?.enabled) return '';
-        if (namePolicy.max_length && name.length > namePolicy.max_length) {
-            return `Name exceeds the ${namePolicy.max_length}-character maximum.`;
-        }
-        if (namePolicy.pattern) {
-            // testPatternSafely refuses to run patterns that look like
-            // catastrophic-backtracking shapes (or oversized input) -- see
-            // src/utils/safeRegex.ts for why a same-thread timeout can't
-            // substitute for that check.
-            const result = testPatternSafely(namePolicy.pattern, name);
-            if (!result.skipped && !result.matches) {
-                return `Name must match the pattern ${namePolicy.pattern}.`;
-            }
-        }
-        return '';
-    };
     const { data: createEnvironments } = useProjectEnvironments(createProjectId);
     // Default the project to the first available once projects load.
     React.useEffect(() => {
@@ -188,7 +189,7 @@ export const SecretsListPage: React.FC = () => {
         list.openModal('auto-rotate', { secret });
     };
 
-    const submitAutoRotate = (e: React.FormEvent) => {
+    const submitAutoRotate = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         if ((arBackend === '') !== (arRef === '')) return; // both-or-neither (UI guard)
         autoRotate.mutate(
@@ -218,6 +219,121 @@ export const SecretsListPage: React.FC = () => {
             </div>
         );
     }
+
+    const tableBodyContent = displayedSecrets.length === 0 ? (
+        <div className="p-8 text-center">
+            <FunnelIcon className="h-12 w-12 mx-auto text-base-muted  mb-4" />
+            <h3 className="text-lg font-medium text-base-primary  mb-2">No secrets found</h3>
+            <p className="text-base-muted  mb-4">
+                {list.hasActiveFilters
+                    ? 'Try adjusting your filters or search terms.'
+                    : 'Get started by creating your first secret.'}
+            </p>
+            {!list.hasActiveFilters && (
+                <Button onClick={() => list.openModal('create-secret')}>
+                    <PlusIcon className="h-4 w-4 mr-2" />
+                    Create Secret
+                </Button>
+            )}
+        </div>
+    ) : (
+        <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-base dark:divide-gray-700">
+                <thead className="bg-subtle dark:bg-gray-900">
+                    <tr>
+                        <th className="px-4 py-3 text-left w-10">
+                            <input
+                                type="checkbox"
+                                className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
+                                checked={
+                                    displayedSecrets.length > 0 &&
+                                    displayedSecrets.every((s) => list.selectedItems.has(s.id))
+                                }
+                                onChange={(e) => {
+                                    if (e.target.checked)
+                                        displayedSecrets.forEach((s) => list.toggleSelectedItem(s.id));
+                                    else list.clearSelectedItems();
+                                }}
+                            />
+                        </th>
+                        {['Name', 'Type', 'Classification', 'Environment', 'Sharing', 'Modified'].map(
+                            (h) => (
+                                <th
+                                    key={h}
+                                    className="px-6 py-3 text-left text-xs font-medium text-base-muted  uppercase tracking-wider"
+                                >
+                                    {h}
+                                </th>
+                            )
+                        )}
+                        <th className="px-6 py-3 text-right text-xs font-medium text-base-muted  uppercase tracking-wider min-w-[180px]">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody className="bg-surface divide-y divide-base dark:divide-gray-700">
+                    {displayedSecrets.map((secret) => (
+                        <SecretTableRow
+                            key={secret.id}
+                            secret={secret}
+                            isSelected={list.selectedItems.has(secret.id)}
+                            onToggleSelect={list.toggleSelectedItem}
+                            onView={setViewingSecret}
+                            onEdit={(s) => list.openModal('edit-secret', { secret: s })}
+                            onDelete={(s) => list.openModal('delete-secret', { secret: s })}
+                            onShare={(s) => list.openModal('share-secret', { secret: s })}
+                            onRotate={handleRotate}
+                            onAutoRotate={handleAutoRotate}
+                            onCopy={reveal.handleCopySecretValue}
+                            copyingId={reveal.copyingSecretId}
+                            copiedId={reveal.copiedSecretId}
+                            copyErrorId={reveal.copyErrorId}
+                        />
+                    ))}
+                </tbody>
+            </table>
+
+            {list.pagination.totalPages > 1 && (
+                <div className="px-4 py-3 border-t border-base  flex items-center justify-between">
+                    <p className="text-sm text-base-secondary dark:text-base-muted">
+                        Showing{' '}
+                        <span className="font-medium">
+                            {(list.pagination.page - 1) * list.pagination.pageSize + 1}
+                        </span>{' '}
+                        to{' '}
+                        <span className="font-medium">
+                            {Math.min(
+                                list.pagination.page * list.pagination.pageSize,
+                                list.pagination.total
+                            )}
+                        </span>{' '}
+                        of <span className="font-medium">{list.pagination.total}</span> results
+                    </p>
+                    <div className="flex items-center space-x-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => list.handlePageChange(list.pagination.page - 1)}
+                            disabled={list.pagination.page === 1}
+                        >
+                            <ChevronLeftIcon className="h-4 w-4" />
+                        </Button>
+                        <span className="text-sm text-base-secondary dark:text-base-muted">
+                            Page {list.pagination.page} of {list.pagination.totalPages}
+                        </span>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => list.handlePageChange(list.pagination.page + 1)}
+                            disabled={list.pagination.page === list.pagination.totalPages}
+                        >
+                            <ChevronRightIcon className="h-4 w-4" />
+                        </Button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
 
     return (
         <div className="p-6 space-y-6">
@@ -406,120 +522,7 @@ export const SecretsListPage: React.FC = () => {
                     <div className="p-8">
                         <Loading />
                     </div>
-                ) : displayedSecrets.length === 0 ? (
-                    <div className="p-8 text-center">
-                        <FunnelIcon className="h-12 w-12 mx-auto text-base-muted  mb-4" />
-                        <h3 className="text-lg font-medium text-base-primary  mb-2">No secrets found</h3>
-                        <p className="text-base-muted  mb-4">
-                            {list.hasActiveFilters
-                                ? 'Try adjusting your filters or search terms.'
-                                : 'Get started by creating your first secret.'}
-                        </p>
-                        {!list.hasActiveFilters && (
-                            <Button onClick={() => list.openModal('create-secret')}>
-                                <PlusIcon className="h-4 w-4 mr-2" />
-                                Create Secret
-                            </Button>
-                        )}
-                    </div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-base dark:divide-gray-700">
-                            <thead className="bg-subtle dark:bg-gray-900">
-                                <tr>
-                                    <th className="px-4 py-3 text-left w-10">
-                                        <input
-                                            type="checkbox"
-                                            className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-                                            checked={
-                                                displayedSecrets.length > 0 &&
-                                                displayedSecrets.every((s) => list.selectedItems.has(s.id))
-                                            }
-                                            onChange={(e) => {
-                                                if (e.target.checked)
-                                                    displayedSecrets.forEach((s) => list.toggleSelectedItem(s.id));
-                                                else list.clearSelectedItems();
-                                            }}
-                                        />
-                                    </th>
-                                    {['Name', 'Type', 'Classification', 'Environment', 'Sharing', 'Modified'].map(
-                                        (h) => (
-                                            <th
-                                                key={h}
-                                                className="px-6 py-3 text-left text-xs font-medium text-base-muted  uppercase tracking-wider"
-                                            >
-                                                {h}
-                                            </th>
-                                        )
-                                    )}
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted  uppercase tracking-wider min-w-[180px]">
-                                        Actions
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-surface divide-y divide-base dark:divide-gray-700">
-                                {displayedSecrets.map((secret) => (
-                                    <SecretTableRow
-                                        key={secret.id}
-                                        secret={secret}
-                                        isSelected={list.selectedItems.has(secret.id)}
-                                        onToggleSelect={list.toggleSelectedItem}
-                                        onView={setViewingSecret}
-                                        onEdit={(s) => list.openModal('edit-secret', { secret: s })}
-                                        onDelete={(s) => list.openModal('delete-secret', { secret: s })}
-                                        onShare={(s) => list.openModal('share-secret', { secret: s })}
-                                        onRotate={handleRotate}
-                                        onAutoRotate={handleAutoRotate}
-                                        onCopy={reveal.handleCopySecretValue}
-                                        copyingId={reveal.copyingSecretId}
-                                        copiedId={reveal.copiedSecretId}
-                                        copyErrorId={reveal.copyErrorId}
-                                    />
-                                ))}
-                            </tbody>
-                        </table>
-
-                        {list.pagination.totalPages > 1 && (
-                            <div className="px-4 py-3 border-t border-base  flex items-center justify-between">
-                                <p className="text-sm text-base-secondary dark:text-base-muted">
-                                    Showing{' '}
-                                    <span className="font-medium">
-                                        {(list.pagination.page - 1) * list.pagination.pageSize + 1}
-                                    </span>{' '}
-                                    to{' '}
-                                    <span className="font-medium">
-                                        {Math.min(
-                                            list.pagination.page * list.pagination.pageSize,
-                                            list.pagination.total
-                                        )}
-                                    </span>{' '}
-                                    of <span className="font-medium">{list.pagination.total}</span> results
-                                </p>
-                                <div className="flex items-center space-x-2">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => list.handlePageChange(list.pagination.page - 1)}
-                                        disabled={list.pagination.page === 1}
-                                    >
-                                        <ChevronLeftIcon className="h-4 w-4" />
-                                    </Button>
-                                    <span className="text-sm text-base-secondary dark:text-base-muted">
-                                        Page {list.pagination.page} of {list.pagination.totalPages}
-                                    </span>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => list.handlePageChange(list.pagination.page + 1)}
-                                        disabled={list.pagination.page === list.pagination.totalPages}
-                                    >
-                                        <ChevronRightIcon className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                ) : tableBodyContent}
             </div>
 
             {/* Modals */}
@@ -575,10 +578,11 @@ export const SecretsListPage: React.FC = () => {
                         />
                     )}
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
+                        <label htmlFor="edit-secret-name" className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
                             Name
                         </label>
                         <input
+                            id="edit-secret-name"
                             type="text"
                             required
                             value={editName}
@@ -587,10 +591,11 @@ export const SecretsListPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
+                        <label htmlFor="edit-secret-type" className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
                             Type
                         </label>
                         <Select
+                            id="edit-secret-type"
                             value={editType}
                             onChange={(e) => setEditType(e.target.value as SecretType)}
                             options={
@@ -600,7 +605,7 @@ export const SecretsListPage: React.FC = () => {
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label className="block text-sm font-medium text-base-secondary">New Value</label>
+                            <label htmlFor="edit-secret-value" className="block text-sm font-medium text-base-secondary">New Value</label>
                             <button
                                 type="button"
                                 onClick={() => setEditValue(generateSecret())}
@@ -611,6 +616,7 @@ export const SecretsListPage: React.FC = () => {
                             </button>
                         </div>
                         <input
+                            id="edit-secret-value"
                             type="text"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
@@ -700,7 +706,7 @@ export const SecretsListPage: React.FC = () => {
                             setCreateError('Select a project and environment for the new secret.');
                             return;
                         }
-                        const nameErr = secretNameError(createName);
+                        const nameErr = secretNameError(namePolicy, createName);
                         if (nameErr) {
                             setCreateError(nameErr);
                             return;
@@ -728,10 +734,11 @@ export const SecretsListPage: React.FC = () => {
                 >
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
+                        <label htmlFor="create-secret-name" className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
                             Name <span className="text-red-500">*</span>
                         </label>
                         <input
+                            id="create-secret-name"
                             type="text"
                             required
                             value={createName}
@@ -748,7 +755,7 @@ export const SecretsListPage: React.FC = () => {
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label className="block text-sm font-medium text-base-secondary">
+                            <label htmlFor="create-secret-value" className="block text-sm font-medium text-base-secondary">
                                 Value <span className="text-red-500">*</span>
                             </label>
                             <button
@@ -761,6 +768,7 @@ export const SecretsListPage: React.FC = () => {
                             </button>
                         </div>
                         <textarea
+                            id="create-secret-value"
                             required
                             rows={3}
                             value={createValue}
@@ -774,10 +782,11 @@ export const SecretsListPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
+                        <label htmlFor="create-secret-type" className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
                             Type
                         </label>
                         <Select
+                            id="create-secret-type"
                             value={createType}
                             onChange={(e) => setCreateType(e.target.value as SecretType)}
                             options={[
@@ -791,20 +800,22 @@ export const SecretsListPage: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
+                            <label htmlFor="create-secret-project" className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
                                 Project <span className="text-red-500">*</span>
                             </label>
                             <Select
+                                id="create-secret-project"
                                 value={String(createProjectId)}
                                 onChange={(e) => setCreateProjectId(Number(e.target.value))}
                                 options={(createProjects ?? []).map((p) => ({ value: String(p.id), label: p.name }))}
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
+                            <label htmlFor="create-secret-environment" className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">
                                 Environment <span className="text-red-500">*</span>
                             </label>
                             <Select
+                                id="create-secret-environment"
                                 value={String(createEnvId)}
                                 onChange={(e) => setCreateEnvId(Number(e.target.value))}
                                 options={(createEnvironments ?? []).map((env) => ({
@@ -875,7 +886,7 @@ export const SecretsListPage: React.FC = () => {
                     </p>
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label className="block text-sm font-medium text-base-secondary">New Value</label>
+                            <label htmlFor="rotate-secret-value" className="block text-sm font-medium text-base-secondary">New Value</label>
                             <button
                                 type="button"
                                 onClick={() => setRotateValue(generateSecret())}
@@ -886,6 +897,7 @@ export const SecretsListPage: React.FC = () => {
                             </button>
                         </div>
                         <input
+                            id="rotate-secret-value"
                             type="text"
                             value={rotateValue}
                             onChange={(e) => setRotateValue(e.target.value)}
@@ -941,7 +953,7 @@ export const SecretsListPage: React.FC = () => {
                             checked={arEnabled}
                             onChange={(e) => setArEnabled(e.target.checked)}
                             aria-label="Enable auto-rotation"
-                        />
+                        />{' '}
                         Enable automated rotation
                     </label>
                     <div className="grid grid-cols-2 gap-3">
@@ -953,8 +965,9 @@ export const SecretsListPage: React.FC = () => {
                             onChange={(e) => setArLength(e.target.value)}
                         />
                         <div>
-                            <label className="block text-sm font-medium text-base-secondary mb-1">Charset</label>
+                            <label htmlFor="auto-rotate-charset" className="block text-sm font-medium text-base-secondary mb-1">Charset</label>
                             <Select
+                                id="auto-rotate-charset"
                                 value={arCharset}
                                 onChange={(e) => setArCharset(e.target.value)}
                                 options={[

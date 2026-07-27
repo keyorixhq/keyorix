@@ -132,18 +132,18 @@ export function throttle<T extends (...args: unknown[]) => unknown>(
 export function getEnvConfig() {
     return {
         API_BASE_URL: import.meta.env.VITE_API_BASE_URL || '',
-        API_TIMEOUT: parseInt(import.meta.env.VITE_API_TIMEOUT || '30000'),
+        API_TIMEOUT: Number.parseInt(import.meta.env.VITE_API_TIMEOUT || '30000'),
         APP_NAME: import.meta.env.VITE_APP_NAME || 'Keyorix',
         APP_VERSION: import.meta.env.VITE_APP_VERSION || '1.0.0',
         APP_DESCRIPTION: import.meta.env.VITE_APP_DESCRIPTION || 'Secure Secret Management System',
         ENVIRONMENT: import.meta.env.VITE_ENVIRONMENT || 'development',
         ENABLE_DEBUG: import.meta.env.VITE_ENABLE_DEBUG === 'true',
         ENABLE_DEVTOOLS: import.meta.env.VITE_ENABLE_DEVTOOLS === 'true',
-        SESSION_TIMEOUT: parseInt(import.meta.env.VITE_SESSION_TIMEOUT || '3600000'),
-        CLIPBOARD_CLEAR_TIMEOUT: parseInt(import.meta.env.VITE_CLIPBOARD_CLEAR_TIMEOUT || '30000'),
+        SESSION_TIMEOUT: Number.parseInt(import.meta.env.VITE_SESSION_TIMEOUT || '3600000'),
+        CLIPBOARD_CLEAR_TIMEOUT: Number.parseInt(import.meta.env.VITE_CLIPBOARD_CLEAR_TIMEOUT || '30000'),
         DEFAULT_LANGUAGE: import.meta.env.VITE_DEFAULT_LANGUAGE || 'en',
         DEFAULT_THEME: import.meta.env.VITE_DEFAULT_THEME || 'system',
-        ITEMS_PER_PAGE: parseInt(import.meta.env.VITE_ITEMS_PER_PAGE || '20'),
+        ITEMS_PER_PAGE: Number.parseInt(import.meta.env.VITE_ITEMS_PER_PAGE || '20'),
     };
 }
 
@@ -154,10 +154,10 @@ export const storage = {
     get: <T>(key: string, defaultValue?: T): T | null => {
         try {
             const item = localStorage.getItem(key);
-            return item ? JSON.parse(item) : defaultValue || null;
+            return item ? JSON.parse(item) : defaultValue ?? null;
         } catch (error) {
             console.error(`Error reading from localStorage key "${key}":`, error);
-            return defaultValue || null;
+            return defaultValue ?? null;
         }
     },
 

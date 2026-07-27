@@ -188,7 +188,7 @@ export function RotationPoliciesPage() {
         resetForm();
     }
 
-    function handleSubmit(e: React.FormEvent) {
+    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         setFError('');
 
@@ -362,15 +362,8 @@ export function RotationPoliciesPage() {
             </div>
 
             {/* ── Policies table ───────────────────────────────────────────── */}
-            <div
-                className="rounded-xl border"
-                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-            >
-                {isLoading ? (
-                    <div className="p-8">
-                        <Loading />
-                    </div>
-                ) : policies.length === 0 ? (
+            {(() => {
+                const policiesTableContent = policies.length === 0 ? (
                     <div className="p-12 text-center">
                         <ArrowPathIcon className="h-12 w-12 mx-auto mb-4" style={{ color: 'var(--text-muted)' }} />
                         <h3 className="text-lg font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
@@ -422,8 +415,20 @@ export function RotationPoliciesPage() {
                             </tbody>
                         </table>
                     </div>
-                )}
-            </div>
+                );
+                return (
+                    <div
+                        className="rounded-xl border"
+                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                    >
+                        {isLoading ? (
+                            <div className="p-8">
+                                <Loading />
+                            </div>
+                        ) : policiesTableContent}
+                    </div>
+                );
+            })()}
 
             {/* ── Create / Edit modal ──────────────────────────────────────── */}
             <Modal
@@ -436,10 +441,11 @@ export function RotationPoliciesPage() {
                     {fError && <Alert type="error" title="Validation error" message={fError} />}
 
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="policy-name-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Name <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <input
+                            id="policy-name-input"
                             type="text"
                             required
                             value={fName}
@@ -455,10 +461,11 @@ export function RotationPoliciesPage() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="policy-description-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <textarea
+                            id="policy-description-input"
                             rows={2}
                             value={fDesc}
                             onChange={(e) => setFDesc(e.target.value)}
@@ -473,10 +480,11 @@ export function RotationPoliciesPage() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="policy-scope-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Scope <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <Select
+                            id="policy-scope-select"
                             value={fScope}
                             onChange={(e) => {
                                 setFScope(e.target.value as 'project' | 'environment');
@@ -490,12 +498,14 @@ export function RotationPoliciesPage() {
                     {fScope === 'environment' && (
                         <div>
                             <label
+                                htmlFor="policy-environment-select"
                                 className="block text-sm font-medium mb-1"
                                 style={{ color: 'var(--text-secondary)' }}
                             >
                                 Environment <span style={{ color: '#ef4444' }}>*</span>
                             </label>
                             <Select
+                                id="policy-environment-select"
                                 value={fEnvId}
                                 onChange={(e) => setFEnvId(e.target.value)}
                                 placeholder="Select environment…"
@@ -510,12 +520,14 @@ export function RotationPoliciesPage() {
                     {fScope === 'project' && (
                         <div>
                             <label
+                                htmlFor="policy-project-select"
                                 className="block text-sm font-medium mb-1"
                                 style={{ color: 'var(--text-secondary)' }}
                             >
                                 Project <span style={{ color: '#ef4444' }}>*</span>
                             </label>
                             <Select
+                                id="policy-project-select"
                                 value={fProjId}
                                 onChange={(e) => setFProjId(e.target.value)}
                                 placeholder="Select project…"
@@ -528,10 +540,11 @@ export function RotationPoliciesPage() {
                     )}
 
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="policy-interval-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Rotation interval
                         </label>
                         <Select
+                            id="policy-interval-select"
                             value={fInterval}
                             onChange={(e) => setFInterval(e.target.value)}
                             options={INTERVAL_OPTIONS}
@@ -539,10 +552,11 @@ export function RotationPoliciesPage() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="policy-alert-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Alert before breach
                         </label>
                         <Select
+                            id="policy-alert-select"
                             value={fAlert}
                             onChange={(e) => setFAlert(e.target.value)}
                             options={ALERT_DAYS_OPTIONS}
@@ -575,13 +589,11 @@ export function RotationPoliciesPage() {
                             Cancel
                         </Button>
                         <Button type="submit" disabled={isSubmitting}>
-                            {isSubmitting
-                                ? editing
-                                    ? 'Saving…'
-                                    : 'Creating…'
-                                : editing
-                                  ? 'Save Changes'
-                                  : 'Create Policy'}
+                            {(() => {
+                                const idleLabel = editing ? 'Save Changes' : 'Create Policy';
+                                const busyLabel = editing ? 'Saving…' : 'Creating…';
+                                return isSubmitting ? busyLabel : idleLabel;
+                            })()}
                         </Button>
                     </div>
                 </form>
@@ -679,10 +691,16 @@ interface PolicyRowProps {
 }
 
 const PolicyRow: React.FC<PolicyRowProps> = ({ policy, envMap, projMap, onEdit, onDelete }) => {
+    const envName = policy.environment_id
+        ? (envMap[policy.environment_id] ?? `#${policy.environment_id}`)
+        : '—';
+    const projName = policy.project_id
+        ? (projMap[policy.project_id] ?? `#${policy.project_id}`)
+        : '—';
     const scopeLabel =
         policy.scope === 'environment'
-            ? `Environment: ${policy.environment_id ? (envMap[policy.environment_id] ?? `#${policy.environment_id}`) : '—'}`
-            : `Project: ${policy.project_id ? (projMap[policy.project_id] ?? `#${policy.project_id}`) : '—'}`;
+            ? `Environment: ${envName}`
+            : `Project: ${projName}`;
 
     return (
         <tr className="hover:bg-subtle transition-colors">

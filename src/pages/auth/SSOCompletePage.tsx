@@ -8,7 +8,7 @@ import { useAuthStore } from '../../store/authStore';
 // in-app relative path as defense-in-depth: a single leading '/' (not '//' or
 // '/\', both of which some browsers treat as protocol-relative).
 function isSafeReturnTo(path: string): boolean {
-    return /^\/(?!\/|\\)/.test(path);
+    return /^\/(?![/\\])/.test(path);
 }
 
 // SSOCompletePage is the landing page the OIDC callback redirects the browser to.

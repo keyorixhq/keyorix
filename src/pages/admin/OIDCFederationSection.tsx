@@ -265,6 +265,7 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                                     <>
                                         <span className="text-xs text-base-muted">Delete?</span>
                                         <button
+                                            type="button"
                                             className="text-xs text-red-500 hover:text-red-600 font-medium"
                                             onClick={() => doDelete(cfg.id)}
                                             disabled={deleteMutation.isPending}
@@ -272,6 +273,7 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                                             Confirm
                                         </button>
                                         <button
+                                            type="button"
                                             className="text-xs text-base-muted hover:text-base-primary"
                                             onClick={() => setConfirmDeleteId(null)}
                                         >
@@ -280,6 +282,7 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                                     </>
                                 ) : (
                                     <button
+                                        type="button"
                                         className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
                                         onClick={() => setConfirmDeleteId(cfg.id)}
                                         title="Delete trust config"
@@ -301,10 +304,11 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     {addError && <Alert type="error" message={addError} />}
 
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">
+                        <label htmlFor="oidc-name-input" className="block text-sm font-medium text-base-secondary mb-1">
                             Name <span className="text-red-500">*</span>
                         </label>
                         <input
+                            id="oidc-name-input"
                             type="text"
                             value={formName}
                             onChange={(e) => setFormName(e.target.value)}
@@ -315,8 +319,9 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Description</label>
+                        <label htmlFor="oidc-description-input" className="block text-sm font-medium text-base-secondary mb-1">Description</label>
                         <input
+                            id="oidc-description-input"
                             type="text"
                             value={formDescription}
                             onChange={(e) => setFormDescription(e.target.value)}
@@ -327,11 +332,12 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-2">Issuer preset</label>
+                        <label htmlFor="oidc-issuer-preset" className="block text-sm font-medium text-base-secondary mb-2">Issuer preset</label>
                         <div className="flex flex-wrap gap-2">
-                            {ISSUER_PRESETS.map((p) => (
+                            {ISSUER_PRESETS.map((p, i) => (
                                 <button
                                     key={p.key}
+                                    id={i === 0 ? 'oidc-issuer-preset' : undefined}
                                     type="button"
                                     onClick={() => selectPreset(p.key)}
                                     className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
@@ -347,10 +353,11 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">
+                        <label htmlFor="oidc-issuer-url-input" className="block text-sm font-medium text-base-secondary mb-1">
                             Issuer URL <span className="text-red-500">*</span>
                         </label>
                         <input
+                            id="oidc-issuer-url-input"
                             type="url"
                             value={formIssuerUrl}
                             onChange={(e) => setFormIssuerUrl(e.target.value)}
@@ -362,8 +369,9 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
 
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="block text-sm font-medium text-base-secondary mb-1">Audience</label>
+                            <label htmlFor="oidc-audience-input" className="block text-sm font-medium text-base-secondary mb-1">Audience</label>
                             <input
+                                id="oidc-audience-input"
                                 type="text"
                                 value={formAudience}
                                 onChange={(e) => setFormAudience(e.target.value)}
@@ -373,10 +381,11 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-base-secondary mb-1">
+                            <label htmlFor="oidc-subject-pattern-input" className="block text-sm font-medium text-base-secondary mb-1">
                                 Subject pattern <span className="text-red-500">*</span>
                             </label>
                             <input
+                                id="oidc-subject-pattern-input"
                                 type="text"
                                 value={formSubjectPattern}
                                 onChange={(e) => setFormSubjectPattern(e.target.value)}
@@ -389,10 +398,11 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">
+                        <label htmlFor="oidc-service-account-select" className="block text-sm font-medium text-base-secondary mb-1">
                             Bind to service account <span className="text-red-500">*</span>
                         </label>
                         <select
+                            id="oidc-service-account-select"
                             value={formSaId}
                             onChange={(e) => setFormSaId(e.target.value ? Number(e.target.value) : '')}
                             className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"

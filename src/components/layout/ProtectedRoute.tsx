@@ -14,6 +14,23 @@ interface ProtectedRouteProps {
     redirectOnFailure?: boolean;
 }
 
+const AccessDenied: React.FC<{ detail: React.ReactNode }> = ({ detail }) => (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h1>
+            <p className="text-gray-600 mb-4">You don't have permission to access this page.</p>
+            <p className="text-sm text-gray-500">{detail}</p>
+        </div>
+    </div>
+);
+
+const denyOrRedirect = (redirectOnFailure: boolean, detail: React.ReactNode): React.ReactElement => {
+    if (redirectOnFailure) {
+        return <Navigate to={ROUTES.DASHBOARD} replace />;
+    }
+    return <AccessDenied detail={detail} />;
+};
+
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     children,
     requiredPermissions = [],
@@ -47,59 +64,23 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
     // Admin-only gate: any install-admin role (admin / system_admin / super_admin).
     if (adminOnly && !userIsAdmin(user)) {
-        if (redirectOnFailure) {
-            return <Navigate to={ROUTES.DASHBOARD} replace />;
-        }
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <div className="text-center">
-                    <h1 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h1>
-                    <p className="text-gray-600 mb-4">You don't have permission to access this page.</p>
-                    <p className="text-sm text-gray-500">Administrator access required.</p>
-                </div>
-            </div>
-        );
+        return denyOrRedirect(redirectOnFailure, 'Administrator access required.');
     }
 
     // Check role requirement
     if (requiredRole && user?.role !== requiredRole) {
-        if (redirectOnFailure) {
-            return <Navigate to={ROUTES.DASHBOARD} replace />;
-        } else {
-            return (
-                <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                    <div className="text-center">
-                        <h1 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h1>
-                        <p className="text-gray-600 mb-4">You don't have permission to access this page.</p>
-                        <p className="text-sm text-gray-500">Required role: {requiredRole}</p>
-                    </div>
-                </div>
-            );
-        }
+        return denyOrRedirect(redirectOnFailure, `Required role: ${requiredRole}`);
     }
 
     // Check permission requirements
     if (requiredPermissions.length > 0) {
-        const hasAllPermissions = requiredPermissions.every((permission) => hasPermission(permission));
+        const missingPermissions = requiredPermissions.filter((permission) => !hasPermission(permission));
 
-        if (!hasAllPermissions) {
-            if (redirectOnFailure) {
-                return <Navigate to={ROUTES.DASHBOARD} replace />;
-            } else {
-                const missingPermissions = requiredPermissions.filter((permission) => !hasPermission(permission));
-
-                return (
-                    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                        <div className="text-center">
-                            <h1 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h1>
-                            <p className="text-gray-600 mb-4">You don't have permission to access this page.</p>
-                            <p className="text-sm text-gray-500">
-                                Missing permissions: {missingPermissions.join(', ')}
-                            </p>
-                        </div>
-                    </div>
-                );
-            }
+        if (missingPermissions.length > 0) {
+            return denyOrRedirect(
+                redirectOnFailure,
+                `Missing permissions: ${missingPermissions.join(', ')}`,
+            );
         }
     }
 

@@ -51,7 +51,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({ on
     if (!showWarning) return null;
 
     return (
-        <div className="fixed inset-0 z-50 overflow-y-auto" role="dialog" aria-modal="true">
+        <dialog className="fixed inset-0 z-50 overflow-y-auto m-0 max-w-none w-full h-full bg-transparent p-0" aria-modal="true" open>
             <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" />
             <div className="flex min-h-full items-center justify-center p-4">
                 <div
@@ -163,6 +163,6 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({ on
                     </div>
                 </div>
             </div>
-        </div>
+        </dialog>
     );
 };

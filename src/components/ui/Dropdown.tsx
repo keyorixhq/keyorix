@@ -107,6 +107,7 @@ const DropdownButton: React.FC<DropdownButtonProps> = ({
 }) => {
     const trigger = (
         <button
+            type="button"
             className={cn(
                 'inline-flex items-center justify-center font-medium rounded-md',
                 'focus:outline-hidden focus:ring-2 focus:ring-offset-2',

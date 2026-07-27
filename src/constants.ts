@@ -155,6 +155,6 @@ export const VALIDATION_RULES = {
         PATTERN: /^[a-zA-Z0-9_-]+$/,
     },
     EMAIL: {
-        PATTERN: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+        PATTERN: /^[^\s@]+@[^\s@.]+\.[^\s@.]+$/,
     },
 } as const;

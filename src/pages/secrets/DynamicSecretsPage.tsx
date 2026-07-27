@@ -59,6 +59,88 @@ const DynamicSecretsPage: React.FC = () => {
         classify.mutate({ id, classification });
     };
 
+    const listContent = configs.length === 0 ? (
+        <div
+            className="rounded-lg border p-8 text-center"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <BoltIcon className="h-9 w-9 mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                No dynamic-secret configs in this scope yet.
+            </p>
+        </div>
+    ) : (
+        <div
+            className="rounded-lg border divide-y"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            {configs.map((c) => (
+                <div key={c.id}>
+                    <div className="flex items-center gap-3 px-4 py-3">
+                        <button
+                            type="button"
+                            onClick={() => setExpanded(expanded === c.id ? null : c.id)}
+                            className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                            aria-label={`Toggle leases for ${c.name}`}
+                        >
+                            <ChevronRightIcon
+                                className="h-4 w-4 shrink-0 transition-transform"
+                                style={{
+                                    color: 'var(--text-muted)',
+                                    transform: expanded === c.id ? 'rotate(90deg)' : 'none',
+                                }}
+                            />
+                            <span className="min-w-0">
+                                <span
+                                    className="text-sm font-medium block truncate"
+                                    style={{ color: 'var(--text-primary)' }}
+                                >
+                                    {c.name}
+                                </span>
+                                <span className="text-xs block truncate" style={{ color: 'var(--text-muted)' }}>
+                                    {c.backendType} · default {c.defaultTtlSeconds}s
+                                    {c.maxTtlSeconds > 0 ? ` · max ${c.maxTtlSeconds}s` : ''}
+                                </span>
+                            </span>
+                        </button>
+                        {isAdmin ? (
+                            <select
+                                aria-label={`Classification for ${c.name}`}
+                                value={c.classification ?? ''}
+                                disabled={classify.isPending}
+                                onChange={(e) => reclassify(c.id, e.target.value, c.classification ?? '')}
+                                className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 disabled:opacity-50"
+                                style={{
+                                    backgroundColor: 'var(--bg-app)',
+                                    border: '1px solid var(--border)',
+                                    color: 'var(--text-primary)',
+                                }}
+                                title="Data classification (ISO 27001 A.5.12)"
+                            >
+                                {CLASSIFICATION_LEVELS.map((level) => (
+                                    <option key={level || 'unclassified'} value={level}>
+                                        {classificationMeta(level).label}
+                                    </option>
+                                ))}
+                            </select>
+                        ) : (
+                            <span
+                                data-testid="dsc-classification-badge"
+                                className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${classificationMeta(c.classification ?? '').color}`}
+                                title="Data classification (ISO 27001 A.5.12)"
+                            >
+                                {classificationMeta(c.classification ?? '').label}
+                            </span>
+                        )}
+                    </div>
+                    {expanded === c.id && <LeasesPanel configId={c.id} canManage={isAdmin} />}
+                </div>
+            ))}
+        </div>
+    );
+
+    const loadingOrContent = isLoading ? <Loading /> : listContent;
+
     return (
         <div className="p-6 max-w-5xl mx-auto">
             <div className="flex items-center justify-between mb-1">
@@ -105,86 +187,7 @@ const DynamicSecretsPage: React.FC = () => {
                     type="error"
                     message="Failed to load dynamic-secret configs (you may lack secrets.read on this scope)."
                 />
-            ) : isLoading ? (
-                <Loading />
-            ) : configs.length === 0 ? (
-                <div
-                    className="rounded-lg border p-8 text-center"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    <BoltIcon className="h-9 w-9 mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
-                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                        No dynamic-secret configs in this scope yet.
-                    </p>
-                </div>
-            ) : (
-                <div
-                    className="rounded-lg border divide-y"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    {configs.map((c) => (
-                        <div key={c.id}>
-                            <div className="flex items-center gap-3 px-4 py-3">
-                                <button
-                                    onClick={() => setExpanded(expanded === c.id ? null : c.id)}
-                                    className="flex items-center gap-2 flex-1 min-w-0 text-left"
-                                    aria-label={`Toggle leases for ${c.name}`}
-                                >
-                                    <ChevronRightIcon
-                                        className="h-4 w-4 shrink-0 transition-transform"
-                                        style={{
-                                            color: 'var(--text-muted)',
-                                            transform: expanded === c.id ? 'rotate(90deg)' : 'none',
-                                        }}
-                                    />
-                                    <span className="min-w-0">
-                                        <span
-                                            className="text-sm font-medium block truncate"
-                                            style={{ color: 'var(--text-primary)' }}
-                                        >
-                                            {c.name}
-                                        </span>
-                                        <span className="text-xs block truncate" style={{ color: 'var(--text-muted)' }}>
-                                            {c.backendType} · default {c.defaultTtlSeconds}s
-                                            {c.maxTtlSeconds > 0 ? ` · max ${c.maxTtlSeconds}s` : ''}
-                                        </span>
-                                    </span>
-                                </button>
-                                {isAdmin ? (
-                                    <select
-                                        aria-label={`Classification for ${c.name}`}
-                                        value={c.classification ?? ''}
-                                        disabled={classify.isPending}
-                                        onChange={(e) => reclassify(c.id, e.target.value, c.classification ?? '')}
-                                        className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 disabled:opacity-50"
-                                        style={{
-                                            backgroundColor: 'var(--bg-app)',
-                                            border: '1px solid var(--border)',
-                                            color: 'var(--text-primary)',
-                                        }}
-                                        title="Data classification (ISO 27001 A.5.12)"
-                                    >
-                                        {CLASSIFICATION_LEVELS.map((level) => (
-                                            <option key={level || 'unclassified'} value={level}>
-                                                {classificationMeta(level).label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                ) : (
-                                    <span
-                                        data-testid="dsc-classification-badge"
-                                        className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${classificationMeta(c.classification ?? '').color}`}
-                                        title="Data classification (ISO 27001 A.5.12)"
-                                    >
-                                        {classificationMeta(c.classification ?? '').label}
-                                    </span>
-                                )}
-                            </div>
-                            {expanded === c.id && <LeasesPanel configId={c.id} canManage={isAdmin} />}
-                        </div>
-                    ))}
-                </div>
-            )}
+            ) : loadingOrContent}
 
             {showCreate && (
                 <CreateConfigModal
@@ -220,7 +223,7 @@ const CreateConfigModal: React.FC<{
 
     const cloud = isCloudBackend(backendType);
 
-    const submit = (e: React.FormEvent) => {
+    const submit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         if (!name.trim() || !adminDsn.trim()) {
             setError(

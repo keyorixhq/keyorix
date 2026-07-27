@@ -104,6 +104,137 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
         color: 'var(--text-primary)',
     };
 
+    const identitiesContent = identities.length === 0 ? (
+        <div className="p-8 text-center">
+            <CpuChipIcon className="h-9 w-9 mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                No machine identities yet.
+            </p>
+        </div>
+    ) : (
+        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {identities.map((m) => (
+                <li key={m.id}>
+                    <div className="flex items-center gap-3 px-4 py-3">
+                        <button
+                            type="button"
+                            onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+                            className="shrink-0"
+                            aria-label={`Toggle tokens for ${m.name}`}
+                        >
+                            <ChevronRightIcon
+                                className="h-4 w-4 transition-transform"
+                                style={{
+                                    color: 'var(--text-muted)',
+                                    transform: expanded === m.id ? 'rotate(90deg)' : 'none',
+                                }}
+                            />
+                        </button>
+                        <div
+                            className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
+                        >
+                            <CpuChipIcon className="h-4 w-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p
+                                className="text-sm font-medium truncate"
+                                style={{ color: 'var(--text-primary)' }}
+                            >
+                                {m.name}
+                            </p>
+                            <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                {typeLabel[m.identityType] ?? m.identityType}
+                                {m.description ? ` · ${m.description}` : ''}
+                            </p>
+                        </div>
+                        {isAdmin ? (
+                            <select
+                                aria-label={`Classification for ${m.name}`}
+                                value={m.classification ?? ''}
+                                disabled={classify.isPending}
+                                onChange={(e) => reclassify(m, e.target.value)}
+                                className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 disabled:opacity-50"
+                                style={selectStyle}
+                                title="Data classification (ISO 27001 A.5.12)"
+                            >
+                                {CLASSIFICATION_LEVELS.map((level) => (
+                                    <option key={level || 'unclassified'} value={level}>
+                                        {classificationMeta(level).label}
+                                    </option>
+                                ))}
+                            </select>
+                        ) : (
+                            <span
+                                data-testid="mi-classification-badge"
+                                className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${classificationMeta(m.classification ?? '').color}`}
+                                title="Data classification (ISO 27001 A.5.12)"
+                            >
+                                {classificationMeta(m.classification ?? '').label}
+                            </span>
+                        )}
+                        <span
+                            className="px-2 py-0.5 rounded-full text-xs font-medium capitalize shrink-0"
+                            style={stateStyle(m.state)}
+                        >
+                            {m.state}
+                        </span>
+                        {isStaleMachineIdentity(m) && (
+                            <span
+                                data-testid="mi-stale-badge"
+                                className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                                title={`Not seen in ${STALE_MACHINE_IDENTITY_DAYS}+ days — consider revoking`}
+                            >
+                                Stale
+                            </span>
+                        )}
+                        {isAdmin && m.state !== 'revoked' && (
+                            <div className="flex items-center gap-1 shrink-0">
+                                {(m.state === 'pending' || m.state === 'suspended') && (
+                                    <button
+                                        type="button"
+                                        onClick={() => act(m, 'activate')}
+                                        disabled={transition.isPending}
+                                        className="p-1.5 rounded-sm transition-colors disabled:opacity-50"
+                                        style={{ color: 'var(--success, #15803d)' }}
+                                        title={m.state === 'suspended' ? 'Reactivate' : 'Activate'}
+                                    >
+                                        <PlayIcon className="h-4 w-4" />
+                                    </button>
+                                )}
+                                {m.state === 'active' && (
+                                    <button
+                                        type="button"
+                                        onClick={() => act(m, 'suspend')}
+                                        disabled={transition.isPending}
+                                        className="p-1.5 rounded-sm transition-colors disabled:opacity-50"
+                                        style={{ color: 'var(--warning, #a16207)' }}
+                                        title="Suspend"
+                                    >
+                                        <PauseIcon className="h-4 w-4" />
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => act(m, 'revoke')}
+                                    disabled={transition.isPending}
+                                    className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50"
+                                    style={{ color: 'var(--error)' }}
+                                    title="Revoke"
+                                >
+                                    <NoSymbolIcon className="h-4 w-4" />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    {expanded === m.id && (
+                        <MachineTokensPanel projectId={projectId} machineId={m.id} canManage={isAdmin} />
+                    )}
+                </li>
+            ))}
+        </ul>
+    );
+
     return (
         <div className="mt-6">
             <h3 className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>
@@ -149,6 +280,7 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
                         ))}
                     </select>
                     <button
+                        type="button"
                         onClick={handleCreate}
                         disabled={!name.trim() || create.isPending}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
@@ -182,132 +314,7 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
                             </div>
                         ))}
                     </div>
-                ) : identities.length === 0 ? (
-                    <div className="p-8 text-center">
-                        <CpuChipIcon className="h-9 w-9 mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                            No machine identities yet.
-                        </p>
-                    </div>
-                ) : (
-                    <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                        {identities.map((m) => (
-                            <li key={m.id}>
-                                <div className="flex items-center gap-3 px-4 py-3">
-                                    <button
-                                        onClick={() => setExpanded(expanded === m.id ? null : m.id)}
-                                        className="shrink-0"
-                                        aria-label={`Toggle tokens for ${m.name}`}
-                                    >
-                                        <ChevronRightIcon
-                                            className="h-4 w-4 transition-transform"
-                                            style={{
-                                                color: 'var(--text-muted)',
-                                                transform: expanded === m.id ? 'rotate(90deg)' : 'none',
-                                            }}
-                                        />
-                                    </button>
-                                    <div
-                                        className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
-                                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
-                                    >
-                                        <CpuChipIcon className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <p
-                                            className="text-sm font-medium truncate"
-                                            style={{ color: 'var(--text-primary)' }}
-                                        >
-                                            {m.name}
-                                        </p>
-                                        <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                            {typeLabel[m.identityType] ?? m.identityType}
-                                            {m.description ? ` · ${m.description}` : ''}
-                                        </p>
-                                    </div>
-                                    {isAdmin ? (
-                                        <select
-                                            aria-label={`Classification for ${m.name}`}
-                                            value={m.classification ?? ''}
-                                            disabled={classify.isPending}
-                                            onChange={(e) => reclassify(m, e.target.value)}
-                                            className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 disabled:opacity-50"
-                                            style={selectStyle}
-                                            title="Data classification (ISO 27001 A.5.12)"
-                                        >
-                                            {CLASSIFICATION_LEVELS.map((level) => (
-                                                <option key={level || 'unclassified'} value={level}>
-                                                    {classificationMeta(level).label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    ) : (
-                                        <span
-                                            data-testid="mi-classification-badge"
-                                            className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${classificationMeta(m.classification ?? '').color}`}
-                                            title="Data classification (ISO 27001 A.5.12)"
-                                        >
-                                            {classificationMeta(m.classification ?? '').label}
-                                        </span>
-                                    )}
-                                    <span
-                                        className="px-2 py-0.5 rounded-full text-xs font-medium capitalize shrink-0"
-                                        style={stateStyle(m.state)}
-                                    >
-                                        {m.state}
-                                    </span>
-                                    {isStaleMachineIdentity(m) && (
-                                        <span
-                                            data-testid="mi-stale-badge"
-                                            className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                                            title={`Not seen in ${STALE_MACHINE_IDENTITY_DAYS}+ days — consider revoking`}
-                                        >
-                                            Stale
-                                        </span>
-                                    )}
-                                    {isAdmin && m.state !== 'revoked' && (
-                                        <div className="flex items-center gap-1 shrink-0">
-                                            {(m.state === 'pending' || m.state === 'suspended') && (
-                                                <button
-                                                    onClick={() => act(m, 'activate')}
-                                                    disabled={transition.isPending}
-                                                    className="p-1.5 rounded-sm transition-colors disabled:opacity-50"
-                                                    style={{ color: 'var(--success, #15803d)' }}
-                                                    title={m.state === 'suspended' ? 'Reactivate' : 'Activate'}
-                                                >
-                                                    <PlayIcon className="h-4 w-4" />
-                                                </button>
-                                            )}
-                                            {m.state === 'active' && (
-                                                <button
-                                                    onClick={() => act(m, 'suspend')}
-                                                    disabled={transition.isPending}
-                                                    className="p-1.5 rounded-sm transition-colors disabled:opacity-50"
-                                                    style={{ color: 'var(--warning, #a16207)' }}
-                                                    title="Suspend"
-                                                >
-                                                    <PauseIcon className="h-4 w-4" />
-                                                </button>
-                                            )}
-                                            <button
-                                                onClick={() => act(m, 'revoke')}
-                                                disabled={transition.isPending}
-                                                className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50"
-                                                style={{ color: 'var(--error)' }}
-                                                title="Revoke"
-                                            >
-                                                <NoSymbolIcon className="h-4 w-4" />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                                {expanded === m.id && (
-                                    <MachineTokensPanel projectId={projectId} machineId={m.id} canManage={isAdmin} />
-                                )}
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                ) : identitiesContent}
             </div>
         </div>
     );

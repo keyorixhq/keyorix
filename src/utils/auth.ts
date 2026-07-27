@@ -29,7 +29,7 @@ export const CSRF_HEADER_NAME = 'X-CSRF-Token';
 export const CSRF_PROTECTED_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
 export function getCsrfToken(): string | undefined {
-    const match = document.cookie.match(new RegExp(`(?:^|; )${CSRF_COOKIE_NAME}=([^;]*)`));
+    const match = new RegExp(`(?:^|; )${CSRF_COOKIE_NAME}=([^;]*)`).exec(document.cookie);
     return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 

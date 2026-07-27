@@ -59,7 +59,10 @@ export const ProjectInvitationsSection: React.FC<{ projectId: number }> = ({ pro
     // Stale pending first (most urgent), then other pending, then the rest; the
     // query 403s for non-admins → empty.
     const ordered = useMemo(() => {
-        const rank = (inv: ProjectInvitation) => (isStale(inv) ? 0 : inv.state === 'pending' ? 1 : 2);
+        const rank = (inv: ProjectInvitation) => {
+            const nonStaleRank = inv.state === 'pending' ? 1 : 2;
+            return isStale(inv) ? 0 : nonStaleRank;
+        };
         return [...invitations].sort((a, b) => rank(a) - rank(b));
     }, [invitations]);
 
@@ -162,6 +165,7 @@ export const ProjectInvitationsSection: React.FC<{ projectId: number }> = ({ pro
                                 </span>
                                 {inv.state === 'pending' && (
                                     <button
+                                        type="button"
                                         onClick={() => handleRevoke(inv)}
                                         disabled={revoke.isPending}
                                         className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0"

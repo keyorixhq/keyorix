@@ -8,6 +8,40 @@ import { useUIStore } from '../../store/uiStore';
 
 const ITEMS_PER_PAGE = 20;
 
+type Secret = {
+    name: string;
+    lastModified: string;
+    type: string;
+    Expiration?: string | null;
+    [key: string]: any;
+};
+
+function compareSecrets(a: Secret, b: Secret, sortField: string, sortDirection: string | undefined): number {
+    let aVal: any, bVal: any;
+    if (sortField === 'name') {
+        aVal = a.name.toLowerCase();
+        bVal = b.name.toLowerCase();
+    } else if (sortField === 'modified') {
+        aVal = new Date(a.lastModified);
+        bVal = new Date(b.lastModified);
+    } else if (sortField === 'type') {
+        aVal = a.type;
+        bVal = b.type;
+    } else if (sortField === 'expiry') {
+        // nulls last regardless of direction
+        if (!a.Expiration && !b.Expiration) return 0;
+        if (!a.Expiration) return 1;
+        if (!b.Expiration) return -1;
+        aVal = new Date(a.Expiration);
+        bVal = new Date(b.Expiration);
+    } else {
+        return 0;
+    }
+    if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+}
+
 export const useSecretsList = () => {
     const { openModal, closeModal, activeModal, modalData } = useUIStore();
     const queryClient = useQueryClient();
@@ -85,30 +119,8 @@ export const useSecretsList = () => {
     const secrets = useMemo(() => {
         if (!data?.data) return [];
         const result = [...data.data];
-        const [sortField, sortDirection] = sortBy.split('_');
-        result.sort((a, b) => {
-            let aVal: any, bVal: any;
-            if (sortField === 'name') {
-                aVal = a.name.toLowerCase();
-                bVal = b.name.toLowerCase();
-            } else if (sortField === 'modified') {
-                aVal = new Date(a.lastModified);
-                bVal = new Date(b.lastModified);
-            } else if (sortField === 'type') {
-                aVal = a.type;
-                bVal = b.type;
-            } else if (sortField === 'expiry') {
-                // nulls last regardless of direction
-                if (!a.Expiration && !b.Expiration) return 0;
-                if (!a.Expiration) return 1;
-                if (!b.Expiration) return -1;
-                aVal = new Date(a.Expiration);
-                bVal = new Date(b.Expiration);
-            } else return 0;
-            if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
-            if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
-            return 0;
-        });
+        const [sortField = 'name', sortDirection] = sortBy.split('_');
+        result.sort((a, b) => compareSecrets(a, b, sortField, sortDirection));
         return result;
     }, [data?.data, sortBy]);
 

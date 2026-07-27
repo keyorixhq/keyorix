@@ -95,7 +95,7 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
         onClose();
     };
 
-    const submit = (e: React.FormEvent) => {
+    const submit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         activate.mutate(code, {
@@ -127,12 +127,12 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                     ) : (
                         <>
                             <div>
-                                <label
+                                <p
                                     className="block text-sm font-medium mb-1"
                                     style={{ color: 'var(--text-secondary)' }}
                                 >
                                     Setup key
-                                </label>
+                                </p>
                                 <code
                                     className="block break-all rounded-md p-3 text-sm"
                                     style={{
@@ -202,7 +202,7 @@ const ReauthModal: React.FC<{
         onClose();
     };
 
-    const submit = async (e: React.FormEvent) => {
+    const submit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         // The same field accepts a 6-digit TOTP code or the account password.
@@ -272,6 +272,16 @@ export const MfaSection: React.FC = () => {
     const total = status?.total ?? 0;
     const lowCodes = enabled && remaining <= LOW_CODES_THRESHOLD;
 
+    const enabledButton = enabled ? (
+        <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
+            Disable
+        </Button>
+    ) : (
+        <Button size="sm" onClick={() => setEnrolling(true)}>
+            Enable
+        </Button>
+    );
+
     return (
         <div className="pt-8 border-t" style={{ borderColor: 'var(--border)' }}>
             <h3 className="text-lg font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -312,17 +322,7 @@ export const MfaSection: React.FC = () => {
                         </div>
                     </div>
 
-                    {isLoading ? (
-                        <Spinner size="sm" />
-                    ) : enabled ? (
-                        <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
-                            Disable
-                        </Button>
-                    ) : (
-                        <Button size="sm" onClick={() => setEnrolling(true)}>
-                            Enable
-                        </Button>
-                    )}
+                    {isLoading ? <Spinner size="sm" /> : enabledButton}
                 </div>
 
                 {isError && (

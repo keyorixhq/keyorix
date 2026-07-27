@@ -69,6 +69,62 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
         });
     };
 
+    const campaignListContent = campaigns.length === 0 ? (
+        <div className="p-8 text-center">
+            <ClipboardDocumentCheckIcon
+                className="h-9 w-9 mx-auto mb-2"
+                style={{ color: 'var(--text-muted)' }}
+            />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                No campaigns yet. Open one to start a recertification cycle.
+            </p>
+        </div>
+    ) : (
+        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {campaigns.map(({ campaign, progress }) => (
+                <li key={campaign.id} className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                        <span
+                            className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
+                            style={
+                                campaign.state === 'open'
+                                    ? {
+                                          backgroundColor: 'var(--accent-subtle)',
+                                          color: 'var(--accent-text)',
+                                      }
+                                    : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
+                            }
+                        >
+                            {campaign.state}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                            <p
+                                className="text-sm font-medium truncate"
+                                style={{ color: 'var(--text-primary)' }}
+                            >
+                                {campaign.name}
+                            </p>
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                {progressLabel(progress)}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setSelectedId(selectedId === campaign.id ? null : campaign.id)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0"
+                            style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                        >
+                            {selectedId === campaign.id ? 'Hide' : 'Review'}
+                        </button>
+                    </div>
+                    {selectedId === campaign.id && (
+                        <CampaignDetail projectId={projectId} campaignId={campaign.id} onError={onError} />
+                    )}
+                </li>
+            ))}
+        </ul>
+    );
+
     return (
         <div className="mt-8">
             <div className="mb-3 flex items-start justify-between gap-3">
@@ -94,6 +150,7 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
                         }}
                     />
                     <button
+                        type="button"
                         onClick={handleOpen}
                         disabled={openCampaign.isPending}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
@@ -128,60 +185,7 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
                             />
                         ))}
                     </div>
-                ) : campaigns.length === 0 ? (
-                    <div className="p-8 text-center">
-                        <ClipboardDocumentCheckIcon
-                            className="h-9 w-9 mx-auto mb-2"
-                            style={{ color: 'var(--text-muted)' }}
-                        />
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                            No campaigns yet. Open one to start a recertification cycle.
-                        </p>
-                    </div>
-                ) : (
-                    <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                        {campaigns.map(({ campaign, progress }) => (
-                            <li key={campaign.id} className="px-4 py-3">
-                                <div className="flex items-center gap-3">
-                                    <span
-                                        className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
-                                        style={
-                                            campaign.state === 'open'
-                                                ? {
-                                                      backgroundColor: 'var(--accent-subtle)',
-                                                      color: 'var(--accent-text)',
-                                                  }
-                                                : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
-                                        }
-                                    >
-                                        {campaign.state}
-                                    </span>
-                                    <div className="flex-1 min-w-0">
-                                        <p
-                                            className="text-sm font-medium truncate"
-                                            style={{ color: 'var(--text-primary)' }}
-                                        >
-                                            {campaign.name}
-                                        </p>
-                                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                            {progressLabel(progress)}
-                                        </p>
-                                    </div>
-                                    <button
-                                        onClick={() => setSelectedId(selectedId === campaign.id ? null : campaign.id)}
-                                        className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0"
-                                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                                    >
-                                        {selectedId === campaign.id ? 'Hide' : 'Review'}
-                                    </button>
-                                </div>
-                                {selectedId === campaign.id && (
-                                    <CampaignDetail projectId={projectId} campaignId={campaign.id} onError={onError} />
-                                )}
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                ) : campaignListContent}
             </div>
         </div>
     );
@@ -193,8 +197,10 @@ interface DetailProps {
     onError: (err: any) => void;
 }
 
-const itemDetail = (it: AccessReviewItem) =>
-    it.source === 'role' ? `Role: ${it.roleName || '—'}` : it.secretName ? `Secret: ${it.secretName}` : '—';
+const itemDetail = (it: AccessReviewItem) => {
+    const secretLabel = it.secretName ? `Secret: ${it.secretName}` : '—';
+    return it.source === 'role' ? `Role: ${it.roleName || '—'}` : secretLabel;
+};
 
 const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError }) => {
     const { data, isLoading } = useAccessReviewCampaign(projectId, campaignId);
@@ -270,6 +276,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                                 {open && it.decision === 'pending' && (
                                     <div className="flex items-center gap-1.5 shrink-0">
                                         <button
+                                            type="button"
                                             onClick={() => onDecide(it.id, 'attest')}
                                             disabled={decide.isPending}
                                             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
@@ -285,6 +292,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                                             (confirmItem === it.id ? (
                                                 <>
                                                     <button
+                                                        type="button"
                                                         onClick={() => onDecide(it.id, 'revoke')}
                                                         disabled={decide.isPending}
                                                         className="px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
@@ -293,6 +301,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                                                         Confirm
                                                     </button>
                                                     <button
+                                                        type="button"
                                                         onClick={() => setConfirmItem(null)}
                                                         className="px-1.5 py-1 rounded-lg text-xs"
                                                         style={{ color: 'var(--text-muted)' }}
@@ -302,6 +311,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                                                 </>
                                             ) : (
                                                 <button
+                                                    type="button"
                                                     onClick={() => setConfirmItem(it.id)}
                                                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium"
                                                     style={{
@@ -322,6 +332,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
             )}
             <div className="flex items-center gap-2 px-3 py-2 border-t" style={{ borderColor: 'var(--border)' }}>
                 <button
+                    type="button"
                     onClick={onDownloadCsv}
                     disabled={csvBusy || data.items.length === 0}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
@@ -337,6 +348,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                         </span>
                         {pending > 0 ? (
                             <button
+                                type="button"
                                 onClick={() => onClose(true)}
                                 disabled={close.isPending}
                                 className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
@@ -346,6 +358,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                             </button>
                         ) : (
                             <button
+                                type="button"
                                 onClick={() => onClose(false)}
                                 disabled={close.isPending}
                                 className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"

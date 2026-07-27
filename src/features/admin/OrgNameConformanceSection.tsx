@@ -16,7 +16,7 @@ export const OrgNameConformanceSection: React.FC = () => {
     const [dismissed, setDismissed] = useState(false);
 
     const violations = data?.violations ?? [];
-    if (dismissed || !data || !data.policy_enabled || violations.length === 0) return null;
+    if (dismissed || !data?.policy_enabled || violations.length === 0) return null;
 
     return (
         <div

@@ -140,6 +140,7 @@ const RoleLegend: React.FC = () => {
             style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
         >
             <button
+                type="button"
                 onClick={() => setOpen((o) => !o)}
                 className="w-full px-4 py-3 flex items-center justify-between text-left"
             >
@@ -240,6 +241,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     </p>
                 </div>
                 <button
+                    type="button"
                     onClick={() => setInviteOpen(true)}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium shrink-0"
                     style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
@@ -290,6 +292,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     ))}
                 </select>
                 <button
+                    type="button"
                     onClick={handleAdd}
                     disabled={!newUserId || addMember.isPending}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
@@ -312,40 +315,50 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                 className="rounded-lg border overflow-hidden"
                 style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
             >
-                {isLoading ? (
-                    <div className="p-6 space-y-3">
-                        {[1, 2, 3].map((i) => (
-                            <div key={i} className="flex items-center gap-3 animate-pulse">
-                                <div className="h-8 w-8 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                                <div className="flex-1">
-                                    <div
-                                        className="h-3 w-32 rounded-sm mb-1.5"
-                                        style={{ backgroundColor: 'var(--bg-muted)' }}
-                                    />
-                                    <div
-                                        className="h-2.5 w-48 rounded-sm"
-                                        style={{ backgroundColor: 'var(--bg-muted)' }}
-                                    />
-                                </div>
+                {(() => {
+                    if (isLoading) {
+                        return (
+                            <div className="p-6 space-y-3">
+                                {[1, 2, 3].map((i) => (
+                                    <div key={i} className="flex items-center gap-3 animate-pulse">
+                                        <div className="h-8 w-8 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                        <div className="flex-1">
+                                            <div
+                                                className="h-3 w-32 rounded-sm mb-1.5"
+                                                style={{ backgroundColor: 'var(--bg-muted)' }}
+                                            />
+                                            <div
+                                                className="h-2.5 w-48 rounded-sm"
+                                                style={{ backgroundColor: 'var(--bg-muted)' }}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                ) : members.length === 0 ? (
-                    <div className="p-10 text-center">
-                        <UserCircleIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                            No members yet. Add a user above to grant project access.
-                        </p>
-                    </div>
-                ) : (
+                        );
+                    }
+                    if (members.length === 0) {
+                        return (
+                            <div className="p-10 text-center">
+                                <UserCircleIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                                    No members yet. Add a user above to grant project access.
+                                </p>
+                            </div>
+                        );
+                    }
+                    return (
                     <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                         {members.map((m) => {
                             const isExpanded = expandedMemberId === m.userId;
                             return (
                                 <React.Fragment key={m.userId}>
                                     <li
+                                        role="button"
+                                        tabIndex={0}
                                         className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-subtle transition-colors duration-75"
                                         onClick={() => setExpandedMemberId((prev) => (prev === m.userId ? null : m.userId))}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setExpandedMemberId((prev) => (prev === m.userId ? null : m.userId)); }}
                                         style={{ borderColor: 'var(--border)' }}
                                     >
                                         {/* Expand chevron */}
@@ -391,6 +404,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                                             ))}
                                         </select>
                                         <button
+                                            type="button"
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 removeMember.mutate(m.userId);
@@ -412,7 +426,8 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                             );
                         })}
                     </ul>
-                )}
+                    );
+                })()}
             </div>
 
             {/* ADR-023: machine identities — the non-human half of the Members

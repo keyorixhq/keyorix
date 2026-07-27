@@ -60,6 +60,73 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
     const drifted = drift?.driftedKeys ?? [];
     const envCount = drift?.environments?.length ?? 0;
 
+    const syncStatusContent = driftLoading ? (
+        <div
+            className="rounded-lg border p-4 animate-pulse"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <div className="h-4 w-56 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
+        </div>
+    ) : !drift || envCount < 2 ? (
+        <div
+            className="rounded-lg border px-4 py-3 flex items-center gap-3"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <ArrowsRightLeftIcon className="h-4 w-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                Add at least two environments to enable drift detection.
+            </p>
+        </div>
+    ) : drifted.length === 0 ? (
+        <div
+            className="rounded-lg border px-4 py-3 flex items-center gap-3"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+        >
+            <CheckCircleIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--success)' }} />
+            <p className="text-sm font-medium" style={{ color: 'var(--success)' }}>
+                All {envCount} environments in sync
+            </p>
+        </div>
+    ) : (
+        <div
+            className="rounded-lg border px-4 py-3"
+            style={{ borderColor: 'var(--warning)', backgroundColor: 'var(--warning-subtle)' }}
+        >
+            <div className="flex items-center gap-3">
+                <ExclamationTriangleIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--warning)' }} />
+                <p className="text-sm font-medium" style={{ color: 'var(--warning)' }}>
+                    {drifted.length} key{drifted.length !== 1 ? 's' : ''} out of sync
+                </p>
+                <Link
+                    to={`/projects/${projectId}/drift`}
+                    className="ml-auto text-xs underline shrink-0"
+                    style={{ color: 'var(--warning)' }}
+                >
+                    View Drift →
+                </Link>
+            </div>
+            <ul className="mt-2 space-y-1">
+                {drifted.slice(0, 5).map((key) => (
+                    <li
+                        key={key.name}
+                        className="text-xs font-mono"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
+                        {key.name} —{' '}
+                        {key.status === 'missing_in_some'
+                            ? 'missing in some environments'
+                            : 'settings differ'}
+                    </li>
+                ))}
+                {drifted.length > 5 && (
+                    <li className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        +{drifted.length - 5} more…
+                    </li>
+                )}
+            </ul>
+        </div>
+    );
+
     return (
         <div>
             {/* Description and created date */}
@@ -118,72 +185,7 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({ projectI
                     Environment sync
                 </h2>
 
-                {driftLoading ? (
-                    <div
-                        className="rounded-lg border p-4 animate-pulse"
-                        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                    >
-                        <div className="h-4 w-56 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                    </div>
-                ) : !drift || envCount < 2 ? (
-                    <div
-                        className="rounded-lg border px-4 py-3 flex items-center gap-3"
-                        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                    >
-                        <ArrowsRightLeftIcon className="h-4 w-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                            Add at least two environments to enable drift detection.
-                        </p>
-                    </div>
-                ) : drifted.length === 0 ? (
-                    <div
-                        className="rounded-lg border px-4 py-3 flex items-center gap-3"
-                        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                    >
-                        <CheckCircleIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--success)' }} />
-                        <p className="text-sm font-medium" style={{ color: 'var(--success)' }}>
-                            All {envCount} environments in sync
-                        </p>
-                    </div>
-                ) : (
-                    <div
-                        className="rounded-lg border px-4 py-3"
-                        style={{ borderColor: 'var(--warning)', backgroundColor: 'var(--warning-subtle)' }}
-                    >
-                        <div className="flex items-center gap-3">
-                            <ExclamationTriangleIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--warning)' }} />
-                            <p className="text-sm font-medium" style={{ color: 'var(--warning)' }}>
-                                {drifted.length} key{drifted.length !== 1 ? 's' : ''} out of sync
-                            </p>
-                            <Link
-                                to={`/projects/${projectId}/drift`}
-                                className="ml-auto text-xs underline shrink-0"
-                                style={{ color: 'var(--warning)' }}
-                            >
-                                View Drift →
-                            </Link>
-                        </div>
-                        <ul className="mt-2 space-y-1">
-                            {drifted.slice(0, 5).map((key) => (
-                                <li
-                                    key={key.name}
-                                    className="text-xs font-mono"
-                                    style={{ color: 'var(--text-secondary)' }}
-                                >
-                                    {key.name} —{' '}
-                                    {key.status === 'missing_in_some'
-                                        ? 'missing in some environments'
-                                        : 'settings differ'}
-                                </li>
-                            ))}
-                            {drifted.length > 5 && (
-                                <li className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                    +{drifted.length - 5} more…
-                                </li>
-                            )}
-                        </ul>
-                    </div>
-                )}
+                {syncStatusContent}
             </div>
         </div>
     );

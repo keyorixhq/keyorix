@@ -9,7 +9,7 @@ import { useProjectMruStore } from '../../store';
 function useCurrentProjectId(): number | null {
     const { pathname } = useLocation();
     const match = pathname.match(/^\/projects\/(\d+)/);
-    return match?.[1] ? parseInt(match[1], 10) : null;
+    return match?.[1] ? Number.parseInt(match[1], 10) : null;
 }
 
 // ── component ─────────────────────────────────────────────────────────────────
@@ -79,6 +79,8 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
         onNavigate?.();
     }, [navigate, onNavigate]);
 
+    const projectLabel = currentProject ? currentProject.name : 'Select project';
+
     return (
         <div ref={containerRef} className="relative px-3 pb-3">
             {/* Trigger button */}
@@ -108,7 +110,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                     className="flex-1 text-left truncate text-xs font-medium"
                     style={{ color: 'var(--text-primary)' }}
                 >
-                    {isLoading ? 'Loading…' : currentProject ? currentProject.name : 'Select project'}
+                    {isLoading ? 'Loading…' : projectLabel}
                 </span>
                 <ChevronUpDownIcon className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
             </button>

@@ -38,7 +38,7 @@ describe('KeyorixConnectPage', () => {
         render(<KeyorixConnectPage />);
         expect(screen.getByText('Keyorix Connect')).toBeInTheDocument();
         expect(screen.getByText('Read a federated secret')).toBeInTheDocument();
-        const select = screen.getByLabelText('Connector') as HTMLSelectElement;
+        const select = screen.getAllByLabelText('Connector')[0] as HTMLSelectElement;
         expect(select).toBeInTheDocument();
         // Both the read panel and the grants panel offer connector <option>s.
         expect(screen.getAllByRole('option', { name: 'prod-aws' }).length).toBeGreaterThan(0);

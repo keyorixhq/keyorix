@@ -25,6 +25,19 @@ interface Env {
     deleted?: boolean;
 }
 
+/** Returns the parsed target environment ID, or an error string, or null if the user cancelled. */
+function parsePromoteTarget(raw: string | null, sourceId: number): { targetId: number } | { error: string } | null {
+    if (raw == null) return null;
+    const targetId = Number.parseInt(raw.trim(), 10);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+        return { error: 'Enter a valid environment ID.' };
+    }
+    if (targetId === sourceId) {
+        return { error: 'Source and target environments must differ.' };
+    }
+    return { targetId };
+}
+
 export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectId }) => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -131,18 +144,14 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         const raw = window.prompt(
             `Promote all secrets from "${source.name}" into which environment?\nEnter the target environment ID (same project):`
         );
-        if (raw == null) return;
-        const targetId = parseInt(raw.trim(), 10);
-        if (!Number.isInteger(targetId) || targetId <= 0) {
-            setPromoteMsg('Enter a valid environment ID.');
-            return;
-        }
-        if (targetId === source.id) {
-            setPromoteMsg('Source and target environments must differ.');
+        const result = parsePromoteTarget(raw, source.id);
+        if (result === null) return;
+        if ('error' in result) {
+            setPromoteMsg(result.error);
             return;
         }
         setPromoteMsg('');
-        promoteEnvMutation.mutate({ sourceId: source.id, targetId });
+        promoteEnvMutation.mutate({ sourceId: source.id, targetId: result.targetId });
     };
 
     // Compliance: download the project's secret asset inventory as CSV (metadata only,
@@ -288,10 +297,9 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         onSuccess: (res: any) => {
             const d = res?.data?.data ?? {};
             const skips = (d.outcomes ?? []).filter((o: any) => o.status === 'skipped');
-            const detail = skips.length
-                ? ` Skipped: ${skips.map((o: any) => `${o.old_name || o.id} (${o.reason})`).join('; ')}.`
-                : '';
-            setBulkRenameMsg(`Renamed ${d.renamed ?? 0} secret(s), ${d.skipped ?? 0} skipped.${detail}`);
+            const skipList = skips.map((o: any) => (o.old_name || o.id) + ' (' + o.reason + ')').join('; ');
+            const detail = skips.length ? ' Skipped: ' + skipList + '.' : '';
+            setBulkRenameMsg(`Renamed ${d.renamed ?? 0} secret(s), ${d.skipped ?? 0} skipped.` + detail);
             setRenameInputs({});
             queryClient.invalidateQueries({ queryKey: ['project-name-conformance', projectId] });
             queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
@@ -430,10 +438,11 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         <Alert type="success" title="Saved" message="Project settings updated." />
                     )}
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="project-name-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Project name <span style={{ color: 'var(--error)' }}>*</span>
                         </label>
                         <input
+                            id="project-name-input"
                             type="text"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
@@ -451,10 +460,11 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         )}
                     </div>
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="project-description-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <input
+                            id="project-description-input"
                             type="text"
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
@@ -489,21 +499,28 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                     style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
                 >
                     {/* Environment list */}
-                    {envsLoading ? (
-                        <div className="p-4 animate-pulse space-y-2">
-                            {[1, 2, 3].map((i) => (
-                                <div
-                                    key={i}
-                                    className="h-8 rounded-sm"
-                                    style={{ backgroundColor: 'var(--bg-muted)' }}
-                                />
-                            ))}
-                        </div>
-                    ) : environments.length === 0 ? (
-                        <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                            No environments yet. Add one below.
-                        </div>
-                    ) : (
+                    {(() => {
+                        if (envsLoading) {
+                            return (
+                                <div className="p-4 animate-pulse space-y-2">
+                                    {[1, 2, 3].map((i) => (
+                                        <div
+                                            key={i}
+                                            className="h-8 rounded-sm"
+                                            style={{ backgroundColor: 'var(--bg-muted)' }}
+                                        />
+                                    ))}
+                                </div>
+                            );
+                        }
+                        if (environments.length === 0) {
+                            return (
+                                <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                                    No environments yet. Add one below.
+                                </div>
+                            );
+                        }
+                        return (
                         <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                             {(environments as Env[]).map((env) => {
                                 const isDefault = ['development', 'staging', 'production'].includes(
@@ -586,7 +603,8 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                 );
                             })}
                         </ul>
-                    )}
+                        );
+                    })()}
 
                     {/* Add environment */}
                     <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>

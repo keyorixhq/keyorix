@@ -103,6 +103,7 @@ const ToastComponent: React.FC<ToastProps> = ({
                     </div>
                     <div className="ml-4 shrink-0 flex">
                         <button
+                            type="button"
                             className="rounded-md inline-flex focus:outline-hidden focus:ring-2 focus:ring-offset-2 transition-opacity hover:opacity-70"
                             style={{ color: c.icon }}
                             onClick={handleClose}

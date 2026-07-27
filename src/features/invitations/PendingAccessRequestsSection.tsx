@@ -162,6 +162,7 @@ const AccessRequestRow: React.FC<AccessRequestRowProps> = ({ projectId, request,
                             ))}
                         </select>
                         <button
+                            type="button"
                             onClick={approve}
                             disabled={resolve.isPending}
                             className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
@@ -172,6 +173,7 @@ const AccessRequestRow: React.FC<AccessRequestRowProps> = ({ projectId, request,
                             Approve
                         </button>
                         <button
+                            type="button"
                             onClick={() => setRejecting(true)}
                             disabled={resolve.isPending}
                             className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
@@ -197,6 +199,7 @@ const AccessRequestRow: React.FC<AccessRequestRowProps> = ({ projectId, request,
                         style={controlStyle}
                     />
                     <button
+                        type="button"
                         onClick={confirmReject}
                         disabled={resolve.isPending}
                         className="px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
@@ -205,6 +208,7 @@ const AccessRequestRow: React.FC<AccessRequestRowProps> = ({ projectId, request,
                         Confirm reject
                     </button>
                     <button
+                        type="button"
                         onClick={() => {
                             setRejecting(false);
                             setReason('');

@@ -4,7 +4,7 @@ import { clsx } from 'clsx';
 import {
     Bars3Icon,
     UserCircleIcon,
-    ArrowRightOnRectangleIcon,
+    ArrowRightStartOnRectangleIcon,
     SunIcon,
     MoonIcon,
     ComputerDesktopIcon,
@@ -45,14 +45,14 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
         {
             label: 'Sign out',
             value: 'logout',
-            icon: ArrowRightOnRectangleIcon,
+            icon: ArrowRightStartOnRectangleIcon,
             onClick: handleLogout,
             danger: true,
         },
     ];
 
     const userMenuTrigger = (
-        <button className="flex items-center space-x-2 text-sm rounded-full focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1">
+        <button type="button" className="flex items-center space-x-2 text-sm rounded-full focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1">
             <div
                 className="h-8 w-8 rounded-full flex items-center justify-center"
                 style={{ backgroundColor: 'var(--bg-muted)' }}
@@ -64,6 +64,23 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
             </span>
         </button>
     );
+
+    const nextTheme = theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark';
+    const themeTitle =
+        theme === 'dark'
+            ? 'Dark mode (click for light)'
+            : theme === 'light'
+              ? 'Light mode (click for system)'
+              : 'System mode (click for dark)';
+    const themeAriaLabel = theme === 'dark' ? 'Dark mode' : theme === 'light' ? 'Light mode' : 'System mode';
+    const themeIcon =
+        theme === 'dark' ? (
+            <MoonIcon className="h-5 w-5" aria-hidden="true" />
+        ) : theme === 'light' ? (
+            <SunIcon className="h-5 w-5" aria-hidden="true" />
+        ) : (
+            <ComputerDesktopIcon className="h-5 w-5" aria-hidden="true" />
+        );
 
     return (
         <header
@@ -93,27 +110,13 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                         {/* Theme toggle — cycles dark → light → system */}
                         <button
                             type="button"
-                            onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark')}
+                            onClick={() => setTheme(nextTheme)}
                             className="p-2 rounded-md transition-colors focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-blue-500"
                             style={{ color: 'var(--text-muted)' }}
-                            title={
-                                theme === 'dark'
-                                    ? 'Dark mode (click for light)'
-                                    : theme === 'light'
-                                      ? 'Light mode (click for system)'
-                                      : 'System mode (click for dark)'
-                            }
-                            aria-label={
-                                theme === 'dark' ? 'Dark mode' : theme === 'light' ? 'Light mode' : 'System mode'
-                            }
+                            title={themeTitle}
+                            aria-label={themeAriaLabel}
                         >
-                            {theme === 'dark' ? (
-                                <MoonIcon className="h-5 w-5" aria-hidden="true" />
-                            ) : theme === 'light' ? (
-                                <SunIcon className="h-5 w-5" aria-hidden="true" />
-                            ) : (
-                                <ComputerDesktopIcon className="h-5 w-5" aria-hidden="true" />
-                            )}
+                            {themeIcon}
                         </button>
 
                         {/* User menu */}

@@ -28,7 +28,7 @@ function resolvedTheme(theme: Theme): 'dark' | 'light' {
 }
 
 export function applyTheme(theme: Theme) {
-    document.documentElement.setAttribute('data-theme', resolvedTheme(theme));
+    document.documentElement.dataset.theme = resolvedTheme(theme);
 }
 
 export const useUIStore = create<UIState>()(

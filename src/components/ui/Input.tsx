@@ -14,6 +14,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         const generatedId = React.useId();
         const inputId = id ?? generatedId;
         const hasError = Boolean(error);
+        const ariaDescribedBy = error ? `${inputId}-error` : helperText ? `${inputId}-hint` : undefined;
 
         return (
             <div className="relative w-full">
@@ -41,7 +42,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                         id={inputId}
                         type={type}
                         aria-invalid={hasError || undefined}
-                        aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-hint` : undefined}
+                        aria-describedby={ariaDescribedBy}
                         data-slot="input"
                         className={cn(
                             'h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1',

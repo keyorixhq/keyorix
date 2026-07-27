@@ -111,7 +111,7 @@ export const ProjectDetailPage: React.FC = () => {
                     style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
                 >
                     Failed to load project.{' '}
-                    <button onClick={() => navigate(ROUTES.PROJECTS)} className="underline">
+                    <button type="button" onClick={() => navigate(ROUTES.PROJECTS)} className="underline">
                         Back to Projects
                     </button>
                 </div>

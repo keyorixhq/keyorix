@@ -41,7 +41,7 @@ function Button({
     disabled,
     children,
     ...props
-}: ButtonProps) {
+}: Readonly<ButtonProps>) {
     const Comp = asChild ? Slot.Root : 'button';
 
     return (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { MagnifyingGlassIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
 import { Modal } from '../../components/ui/Modal';
@@ -122,7 +122,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
         setOpen(false);
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         if (!selected) return;
         const expiresAt = expiresAtFromPreset(expiry);
@@ -154,7 +154,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
 
                 {/* User search */}
                 <div>
-                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label htmlFor="recipient-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                         Recipient
                     </label>
                     <div className="relative">
@@ -165,6 +165,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
                                 style={{ color: 'var(--text-muted)' }}
                             />
                             <input
+                                id="recipient-input"
                                 ref={inputRef}
                                 type="text"
                                 placeholder="Search by name or username…"
@@ -204,44 +205,46 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
                                     <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
                                         Searching…
                                     </div>
-                                ) : results.length === 0 ? (
-                                    <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
-                                        No users found for "{query}"
-                                    </div>
                                 ) : (
-                                    results.map((user) => (
-                                        <button
-                                            key={user.id}
-                                            type="button"
-                                            onClick={() => handleSelect(user)}
-                                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
-                                            style={{ color: 'var(--text-primary)' }}
-                                            onMouseEnter={(e) =>
-                                                ((e.currentTarget as HTMLElement).style.backgroundColor =
-                                                    'var(--bg-subtle)')
-                                            }
-                                            onMouseLeave={(e) =>
-                                                ((e.currentTarget as HTMLElement).style.backgroundColor = '')
-                                            }
-                                        >
-                                            <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
-                                                <span
-                                                    className="text-xs font-semibold"
-                                                    style={{ color: 'var(--accent-text)' }}
-                                                >
-                                                    {(user.display_name || user.username).charAt(0).toUpperCase()}
-                                                </span>
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-medium truncate">
-                                                    {user.display_name || user.username}
-                                                </p>
-                                                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                                    @{user.username} · {user.email}
-                                                </p>
-                                            </div>
-                                        </button>
-                                    ))
+                                    results.length === 0 ? (
+                                        <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+                                            No users found for "{query}"
+                                        </div>
+                                    ) : (
+                                        results.map((user) => (
+                                            <button
+                                                key={user.id}
+                                                type="button"
+                                                onClick={() => handleSelect(user)}
+                                                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                                                style={{ color: 'var(--text-primary)' }}
+                                                onMouseEnter={(e) =>
+                                                    ((e.currentTarget as HTMLElement).style.backgroundColor =
+                                                        'var(--bg-subtle)')
+                                                }
+                                                onMouseLeave={(e) =>
+                                                    ((e.currentTarget as HTMLElement).style.backgroundColor = '')
+                                                }
+                                            >
+                                                <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
+                                                    <span
+                                                        className="text-xs font-semibold"
+                                                        style={{ color: 'var(--accent-text)' }}
+                                                    >
+                                                        {(user.display_name || user.username).charAt(0).toUpperCase()}
+                                                    </span>
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-medium truncate">
+                                                        {user.display_name || user.username}
+                                                    </p>
+                                                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                                        @{user.username} · {user.email}
+                                                    </p>
+                                                </div>
+                                            </button>
+                                        ))
+                                    )
                                 )}
                             </div>
                         )}
@@ -250,10 +253,11 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
 
                 {/* Permission */}
                 <div>
-                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label htmlFor="permission-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                         Permission
                     </label>
                     <Select
+                        id="permission-select"
                         value={permission}
                         onChange={(e) => setPermission(e.target.value as 'read' | 'write')}
                         options={PERMISSION_OPTIONS}
@@ -263,10 +267,11 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
 
                 {/* Access expiry (time-bound / JIT share) */}
                 <div>
-                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label htmlFor="access-expires-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                         Access expires
                     </label>
                     <Select
+                        id="access-expires-select"
                         value={expiry}
                         onChange={(e) => setExpiry(e.target.value)}
                         options={EXPIRY_OPTIONS}

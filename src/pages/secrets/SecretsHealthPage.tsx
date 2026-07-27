@@ -30,11 +30,8 @@ function scoreLabel(score: number): string {
     return 'At Risk';
 }
 
-function scoreLabelColor(score: number): string {
-    if (score >= 80) return '#10b981';
-    if (score >= 60) return '#f59e0b';
-    return '#ef4444';
-}
+// scoreLabelColor uses the same thresholds and palette as scoreColor
+const scoreLabelColor = scoreColor;
 
 // ── Health Score Ring ─────────────────────────────────────────────────────────
 
@@ -187,6 +184,284 @@ const StatRow: React.FC<StatRowProps> = ({ label, value, dot }) => (
     </div>
 );
 
+// ── Expiry card content ───────────────────────────────────────────────────────
+
+interface ExpiryCardContentProps {
+    expiry: ReturnType<typeof useSecretsHealth>['expiry'];
+    isDark: boolean;
+}
+
+const ExpiryCardContent: React.FC<ExpiryCardContentProps> = ({ expiry, isDark }) => (
+    <>
+        <StatRow label="Expired" value={expiry.expired} dot="red" />
+        <StatRow label="Expiring within 7 days" value={expiry.expiring7d} dot="red" />
+        <StatRow label="Expiring within 30 days" value={expiry.expiring30d} dot="amber" />
+        <StatRow label="Healthy (no expiry or >30d)" value={expiry.healthy} dot="green" />
+
+        {expiry.expired > 0 && (
+            <div
+                className="mt-4 flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium"
+                style={{
+                    backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fee2e2',
+                    borderColor: isDark ? 'rgba(239,68,68,0.25)' : '#fca5a5',
+                    color: isDark ? '#f87171' : '#991b1b',
+                }}
+            >
+                <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
+                {expiry.expired} secret{expiry.expired !== 1 ? 's have' : ' has'} already
+                expired and may be breaking dependent services.
+            </div>
+        )}
+    </>
+);
+
+// ── Rotation card content ─────────────────────────────────────────────────────
+
+interface RotationCardContentProps {
+    rotation: ReturnType<typeof useSecretsHealth>['rotation'];
+    isDark: boolean;
+}
+
+const RotationCardContent: React.FC<RotationCardContentProps> = ({ rotation, isDark }) => {
+    if (!rotation.available) {
+        return (
+            <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
+                <ArrowPathIcon className="h-8 w-8" style={{ color: 'var(--text-muted)' }} />
+                <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    No rotation policies yet
+                </p>
+                <p className="text-xs max-w-xs" style={{ color: 'var(--text-muted)' }}>
+                    Create a rotation policy to track how current your secrets are. Rotation is
+                    excluded from the health score until at least one policy applies.
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <>
+            <StatRow
+                label="Overdue"
+                value={rotation.overdue}
+                dot={rotation.overdue > 0 ? 'red' : 'green'}
+            />
+            <StatRow
+                label="Due soon"
+                value={rotation.dueSoon}
+                dot={rotation.dueSoon > 0 ? 'amber' : 'green'}
+            />
+            <StatRow label="Up to date" value={rotation.ok} dot="green" />
+            <StatRow label="Secrets under policy" value={rotation.covered} dot="neutral" />
+            <StatRow
+                label="Self-rotating"
+                value={rotation.items.filter((e) => e.auto_rotate).length}
+                dot="neutral"
+            />
+
+            {rotation.overdue > 0 && (
+                <div className="mt-4 space-y-2">
+                    {rotation.items
+                        .filter((e) => e.status === 'overdue')
+                        .sort((a, b) => b.days_overdue - a.days_overdue)
+                        .slice(0, 4)
+                        .map((e) => (
+                            <div
+                                key={`${e.policy_id}-${e.secret_id}`}
+                                className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border"
+                                style={{
+                                    backgroundColor: isDark
+                                        ? 'rgba(239,68,68,0.06)'
+                                        : '#fff5f5',
+                                    borderColor: isDark
+                                        ? 'rgba(239,68,68,0.20)'
+                                        : '#fca5a5',
+                                }}
+                            >
+                                <span
+                                    className="text-xs font-medium truncate flex items-center gap-1.5"
+                                    style={{ color: isDark ? '#f87171' : '#991b1b' }}
+                                >
+                                    {e.secret_name}
+                                    {e.auto_rotate && (
+                                        <span
+                                            title={
+                                                e.rotation_backend
+                                                    ? `Auto-rotates via ${e.rotation_backend}`
+                                                    : 'Auto-rotates (Keyorix-generated)'
+                                            }
+                                            className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                                            style={{
+                                                backgroundColor: isDark
+                                                    ? 'rgba(59,130,246,0.18)'
+                                                    : '#dbeafe',
+                                                color: isDark ? '#93c5fd' : '#1e40af',
+                                            }}
+                                        >
+                                            Auto
+                                            {e.rotation_backend
+                                                ? `: ${e.rotation_backend}`
+                                                : ''}
+                                        </span>
+                                    )}
+                                </span>
+                                <span
+                                    className="text-xs tabular-nums shrink-0"
+                                    style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}
+                                >
+                                    {e.days_overdue}d overdue · {e.interval_days}d policy
+                                </span>
+                            </div>
+                        ))}
+                    {rotation.overdue > 4 && (
+                        <p
+                            className="text-xs text-center pt-1"
+                            style={{ color: 'var(--text-muted)' }}
+                        >
+                            +{rotation.overdue - 4} more overdue
+                        </p>
+                    )}
+                </div>
+            )}
+        </>
+    );
+};
+
+// ── Access card content ───────────────────────────────────────────────────────
+
+interface AccessCardContentProps {
+    access: ReturnType<typeof useSecretsHealth>['access'];
+    isDark: boolean;
+    onFailedAuthClick: () => void;
+}
+
+const AccessCardContent: React.FC<AccessCardContentProps> = ({ access, isDark, onFailedAuthClick }) => {
+    const failedAuthDot: StatRowProps['dot'] =
+        access.failedAuth24h === 0 ? 'green' : access.failedAuth24h >= 5 ? 'red' : 'amber';
+
+    return (
+        <>
+            <StatRow label="Secret reads (last 30d)" value={access.reads30d} dot="neutral" />
+            <StatRow
+                label="Failed auth attempts (24h)"
+                value={access.failedAuth24h}
+                dot={failedAuthDot}
+            />
+            <StatRow
+                label="Inactive users (no login 30d)"
+                value={access.inactiveUsers}
+                dot={access.inactiveUsers === 0 ? 'green' : 'amber'}
+            />
+
+            {access.failedAuth24h >= 5 && (
+                <div
+                    role="button"
+                    tabIndex={0}
+                    className="mt-4 flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium cursor-pointer"
+                    style={{
+                        backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fee2e2',
+                        borderColor: isDark ? 'rgba(239,68,68,0.25)' : '#fca5a5',
+                        color: isDark ? '#f87171' : '#991b1b',
+                    }}
+                    onClick={onFailedAuthClick}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onFailedAuthClick(); }}
+                >
+                    <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
+                    High number of failed auth attempts. Review audit log for potential brute-force
+                    activity.
+                </div>
+            )}
+        </>
+    );
+};
+
+// ── Anomaly card content ──────────────────────────────────────────────────────
+
+interface AnomalyCardContentProps {
+    anomalies: ReturnType<typeof useSecretsHealth>['anomalies'];
+    isDark: boolean;
+}
+
+const AnomalyCardContent: React.FC<AnomalyCardContentProps> = ({ anomalies, isDark }) => {
+    if (anomalies.count === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
+                <CheckCircleIcon className="h-8 w-8" style={{ color: '#10b981' }} />
+                <p className="text-sm font-medium" style={{ color: '#10b981' }}>
+                    No active anomalies detected
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    All access patterns are within expected parameters.
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <>
+            {/* Severity summary */}
+            <div className="mb-4 flex items-center gap-2">
+                <div
+                    className="px-3 py-1.5 rounded-lg text-sm font-semibold"
+                    style={{
+                        backgroundColor: isDark ? 'rgba(239,68,68,0.10)' : '#fee2e2',
+                        color: isDark ? '#f87171' : '#991b1b',
+                    }}
+                >
+                    {anomalies.count} active anomal{anomalies.count === 1 ? 'y' : 'ies'}
+                </div>
+            </div>
+
+            {/* Alert list (top 4) */}
+            <div className="space-y-2">
+                {anomalies.items.slice(0, 4).map((a) => (
+                    <div
+                        key={a.ID}
+                        className="flex items-start gap-3 px-3 py-2.5 rounded-lg border"
+                        style={{
+                            backgroundColor: isDark ? 'rgba(239,68,68,0.06)' : '#fff5f5',
+                            borderColor: isDark ? 'rgba(239,68,68,0.20)' : '#fca5a5',
+                        }}
+                    >
+                        <div
+                            className="w-2 h-2 rounded-full shrink-0 mt-1.5"
+                            style={{ backgroundColor: '#ef4444' }}
+                        />
+                        <div className="flex-1 min-w-0">
+                            <p
+                                className="text-xs font-semibold"
+                                style={{ color: isDark ? '#f87171' : '#991b1b' }}
+                            >
+                                {humanizeAlertType(a.AlertType)}
+                            </p>
+                            <p
+                                className="text-xs truncate"
+                                style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}
+                            >
+                                {a.SecretName} · {a.AccessedBy}
+                            </p>
+                        </div>
+                    </div>
+                ))}
+                {anomalies.count > 4 && (
+                    <p
+                        className="text-xs text-center pt-1"
+                        style={{ color: 'var(--text-muted)' }}
+                    >
+                        +{anomalies.count - 4} more —{' '}
+                        <Link
+                            to="/audit?tab=anomalies"
+                            className="underline underline-offset-2"
+                            style={{ color: 'var(--accent-text)' }}
+                        >
+                            view all
+                        </Link>
+                    </p>
+                )}
+            </div>
+        </>
+    );
+};
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function SecretsHealthPage() {
@@ -206,6 +481,7 @@ export function SecretsHealthPage() {
                     message="Could not fetch secrets or dashboard stats. Please try again."
                 >
                     <button
+                        type="button"
                         onClick={() => window.location.reload()}
                         className="text-sm font-medium underline"
                         style={{ color: 'var(--accent-text)' }}
@@ -295,25 +571,7 @@ export function SecretsHealthPage() {
                                 linkLabel="View all expiring →"
                                 linkTo="/secrets/expiry"
                             >
-                                <StatRow label="Expired" value={expiry.expired} dot="red" />
-                                <StatRow label="Expiring within 7 days" value={expiry.expiring7d} dot="red" />
-                                <StatRow label="Expiring within 30 days" value={expiry.expiring30d} dot="amber" />
-                                <StatRow label="Healthy (no expiry or >30d)" value={expiry.healthy} dot="green" />
-
-                                {expiry.expired > 0 && (
-                                    <div
-                                        className="mt-4 flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium"
-                                        style={{
-                                            backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fee2e2',
-                                            borderColor: isDark ? 'rgba(239,68,68,0.25)' : '#fca5a5',
-                                            color: isDark ? '#f87171' : '#991b1b',
-                                        }}
-                                    >
-                                        <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
-                                        {expiry.expired} secret{expiry.expired !== 1 ? 's have' : ' has'} already
-                                        expired and may be breaking dependent services.
-                                    </div>
-                                )}
+                                <ExpiryCardContent expiry={expiry} isDark={isDark} />
                             </SectionCard>
 
                             {/* Card 2 — Rotation Health */}
@@ -323,103 +581,7 @@ export function SecretsHealthPage() {
                                 linkLabel="Manage policies →"
                                 linkTo="/secrets/rotation"
                             >
-                                {!rotation.available ? (
-                                    <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
-                                        <ArrowPathIcon className="h-8 w-8" style={{ color: 'var(--text-muted)' }} />
-                                        <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
-                                            No rotation policies yet
-                                        </p>
-                                        <p className="text-xs max-w-xs" style={{ color: 'var(--text-muted)' }}>
-                                            Create a rotation policy to track how current your secrets are. Rotation is
-                                            excluded from the health score until at least one policy applies.
-                                        </p>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <StatRow
-                                            label="Overdue"
-                                            value={rotation.overdue}
-                                            dot={rotation.overdue > 0 ? 'red' : 'green'}
-                                        />
-                                        <StatRow
-                                            label="Due soon"
-                                            value={rotation.dueSoon}
-                                            dot={rotation.dueSoon > 0 ? 'amber' : 'green'}
-                                        />
-                                        <StatRow label="Up to date" value={rotation.ok} dot="green" />
-                                        <StatRow label="Secrets under policy" value={rotation.covered} dot="neutral" />
-                                        <StatRow
-                                            label="Self-rotating"
-                                            value={rotation.items.filter((e) => e.auto_rotate).length}
-                                            dot="neutral"
-                                        />
-
-                                        {rotation.overdue > 0 && (
-                                            <div className="mt-4 space-y-2">
-                                                {rotation.items
-                                                    .filter((e) => e.status === 'overdue')
-                                                    .sort((a, b) => b.days_overdue - a.days_overdue)
-                                                    .slice(0, 4)
-                                                    .map((e) => (
-                                                        <div
-                                                            key={`${e.policy_id}-${e.secret_id}`}
-                                                            className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border"
-                                                            style={{
-                                                                backgroundColor: isDark
-                                                                    ? 'rgba(239,68,68,0.06)'
-                                                                    : '#fff5f5',
-                                                                borderColor: isDark
-                                                                    ? 'rgba(239,68,68,0.20)'
-                                                                    : '#fca5a5',
-                                                            }}
-                                                        >
-                                                            <span
-                                                                className="text-xs font-medium truncate flex items-center gap-1.5"
-                                                                style={{ color: isDark ? '#f87171' : '#991b1b' }}
-                                                            >
-                                                                {e.secret_name}
-                                                                {e.auto_rotate && (
-                                                                    <span
-                                                                        title={
-                                                                            e.rotation_backend
-                                                                                ? `Auto-rotates via ${e.rotation_backend}`
-                                                                                : 'Auto-rotates (Keyorix-generated)'
-                                                                        }
-                                                                        className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                                                                        style={{
-                                                                            backgroundColor: isDark
-                                                                                ? 'rgba(59,130,246,0.18)'
-                                                                                : '#dbeafe',
-                                                                            color: isDark ? '#93c5fd' : '#1e40af',
-                                                                        }}
-                                                                    >
-                                                                        Auto
-                                                                        {e.rotation_backend
-                                                                            ? `: ${e.rotation_backend}`
-                                                                            : ''}
-                                                                    </span>
-                                                                )}
-                                                            </span>
-                                                            <span
-                                                                className="text-xs tabular-nums shrink-0"
-                                                                style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}
-                                                            >
-                                                                {e.days_overdue}d overdue · {e.interval_days}d policy
-                                                            </span>
-                                                        </div>
-                                                    ))}
-                                                {rotation.overdue > 4 && (
-                                                    <p
-                                                        className="text-xs text-center pt-1"
-                                                        style={{ color: 'var(--text-muted)' }}
-                                                    >
-                                                        +{rotation.overdue - 4} more overdue
-                                                    </p>
-                                                )}
-                                            </div>
-                                        )}
-                                    </>
-                                )}
+                                <RotationCardContent rotation={rotation} isDark={isDark} />
                             </SectionCard>
 
                             {/* Card 3 — Access Health */}
@@ -429,39 +591,11 @@ export function SecretsHealthPage() {
                                 linkLabel="View audit log →"
                                 linkTo="/audit"
                             >
-                                <StatRow label="Secret reads (last 30d)" value={access.reads30d} dot="neutral" />
-                                <StatRow
-                                    label="Failed auth attempts (24h)"
-                                    value={access.failedAuth24h}
-                                    dot={
-                                        access.failedAuth24h === 0
-                                            ? 'green'
-                                            : access.failedAuth24h >= 5
-                                              ? 'red'
-                                              : 'amber'
-                                    }
+                                <AccessCardContent
+                                    access={access}
+                                    isDark={isDark}
+                                    onFailedAuthClick={() => navigate('/audit?tab=audit&filter=failed')}
                                 />
-                                <StatRow
-                                    label="Inactive users (no login 30d)"
-                                    value={access.inactiveUsers}
-                                    dot={access.inactiveUsers === 0 ? 'green' : 'amber'}
-                                />
-
-                                {access.failedAuth24h >= 5 && (
-                                    <div
-                                        className="mt-4 flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium cursor-pointer"
-                                        style={{
-                                            backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fee2e2',
-                                            borderColor: isDark ? 'rgba(239,68,68,0.25)' : '#fca5a5',
-                                            color: isDark ? '#f87171' : '#991b1b',
-                                        }}
-                                        onClick={() => navigate('/audit?tab=audit&filter=failed')}
-                                    >
-                                        <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
-                                        High number of failed auth attempts. Review audit log for potential brute-force
-                                        activity.
-                                    </div>
-                                )}
                             </SectionCard>
 
                             {/* Card 4 — Anomaly Alerts */}
@@ -471,80 +605,7 @@ export function SecretsHealthPage() {
                                 linkLabel={anomalies.count > 0 ? 'View anomalies →' : undefined}
                                 linkTo="/audit?tab=anomalies"
                             >
-                                {anomalies.count === 0 ? (
-                                    <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
-                                        <CheckCircleIcon className="h-8 w-8" style={{ color: '#10b981' }} />
-                                        <p className="text-sm font-medium" style={{ color: '#10b981' }}>
-                                            No active anomalies detected
-                                        </p>
-                                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                            All access patterns are within expected parameters.
-                                        </p>
-                                    </div>
-                                ) : (
-                                    <>
-                                        {/* Severity summary */}
-                                        <div className="mb-4 flex items-center gap-2">
-                                            <div
-                                                className="px-3 py-1.5 rounded-lg text-sm font-semibold"
-                                                style={{
-                                                    backgroundColor: isDark ? 'rgba(239,68,68,0.10)' : '#fee2e2',
-                                                    color: isDark ? '#f87171' : '#991b1b',
-                                                }}
-                                            >
-                                                {anomalies.count} active anomal{anomalies.count === 1 ? 'y' : 'ies'}
-                                            </div>
-                                        </div>
-
-                                        {/* Alert list (top 4) */}
-                                        <div className="space-y-2">
-                                            {anomalies.items.slice(0, 4).map((a) => (
-                                                <div
-                                                    key={a.ID}
-                                                    className="flex items-start gap-3 px-3 py-2.5 rounded-lg border"
-                                                    style={{
-                                                        backgroundColor: isDark ? 'rgba(239,68,68,0.06)' : '#fff5f5',
-                                                        borderColor: isDark ? 'rgba(239,68,68,0.20)' : '#fca5a5',
-                                                    }}
-                                                >
-                                                    <div
-                                                        className="w-2 h-2 rounded-full shrink-0 mt-1.5"
-                                                        style={{ backgroundColor: '#ef4444' }}
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <p
-                                                            className="text-xs font-semibold"
-                                                            style={{ color: isDark ? '#f87171' : '#991b1b' }}
-                                                        >
-                                                            {humanizeAlertType(a.AlertType)}
-                                                        </p>
-                                                        <p
-                                                            className="text-xs truncate"
-                                                            style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}
-                                                        >
-                                                            {a.SecretName} · {a.AccessedBy}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                            {anomalies.count > 4 && (
-                                                <p
-                                                    className="text-xs text-center pt-1"
-                                                    style={{ color: 'var(--text-muted)' }}
-                                                >
-                                                    +{anomalies.count - 4} more —{' '}
-                                                    <Link
-                                                        to="/audit?tab=anomalies"
-                                                        className="underline underline-offset-2"
-                                                        style={{ color: 'var(--accent-text)' }}
-                                                    >
-                                                        view all
-                                                    </Link>
-                                                </p>
-                                            )}
-                                        </div>
-                                    </>
-                                )}
+                                <AnomalyCardContent anomalies={anomalies} isDark={isDark} />
                             </SectionCard>
                         </div>
 

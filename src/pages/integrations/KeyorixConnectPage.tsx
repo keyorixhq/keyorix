@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, FormEvent } from 'react';
 import { ClipboardDocumentIcon, CheckIcon, EyeIcon, EyeSlashIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -70,7 +70,7 @@ const FederatedReadPanel: React.FC = () => {
 
     const effectiveConnector = connector || connectors[0] || '';
 
-    const submit = (e: React.FormEvent) => {
+    const submit = (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         setValue(null);
@@ -104,11 +104,11 @@ const FederatedReadPanel: React.FC = () => {
             </p>
             {error && <Alert type="error" message={error} />}
             <div>
-                <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                <label htmlFor="federated-connector" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                     Connector
                 </label>
                 <select
-                    aria-label="Connector"
+                    id="federated-connector"
                     className="text-sm px-3 py-2 rounded-md w-full"
                     style={{
                         backgroundColor: 'var(--bg-app)',
@@ -190,7 +190,7 @@ const RefGrantsPanel: React.FC = () => {
 
     const effectiveConnector = connector || connectors?.[0] || '';
 
-    const submit = (e: React.FormEvent) => {
+    const submit = (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setFormError('');
         const id = Number(roleId);
@@ -308,11 +308,11 @@ const RefGrantsPanel: React.FC = () => {
                         onChange={(e) => setRoleId(e.target.value)}
                     />
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="grant-connector" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Connector
                         </label>
                         <select
-                            aria-label="Grant connector"
+                            id="grant-connector"
                             className="text-sm px-3 py-2 rounded-md w-full"
                             style={{
                                 backgroundColor: 'var(--bg-app)',

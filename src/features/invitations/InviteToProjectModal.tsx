@@ -13,7 +13,7 @@ interface InviteToProjectModalProps {
 // "project_developer" → "Developer"
 const roleLabel = (role: string) => role.replace(/^project_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[^@\s]+@[^@\s.]+\.[^@\s]+$/;
 
 /**
  * ADR-024 project-admin invitation dialog. Invites an email address (which may
@@ -44,7 +44,7 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
         onClose();
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
         if (!EMAIL_RE.test(email.trim())) {
@@ -89,10 +89,11 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
                 )}
 
                 <div>
-                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label htmlFor="invite-email-input" className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                         Email address
                     </label>
                     <input
+                        id="invite-email-input"
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
@@ -104,10 +105,11 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
                 </div>
 
                 <div>
-                    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label htmlFor="invite-role-select" className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                         Project role
                     </label>
                     <select
+                        id="invite-role-select"
                         value={role}
                         onChange={(e) => setRole(e.target.value)}
                         className="w-full rounded-lg px-3 py-1.5 text-sm outline-hidden"

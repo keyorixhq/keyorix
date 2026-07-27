@@ -75,12 +75,14 @@ export const ProjectAssignmentsPicker: React.FC<ProjectAssignmentsPickerProps> =
                 />
                 {query.trim() && (
                     <div className="absolute z-10 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-base bg-surface shadow-lg">
-                        {isError ? (
-                            <p className="px-3 py-2 text-sm text-red-600">Couldn’t load projects.</p>
-                        ) : matches.length === 0 ? (
-                            <p className="px-3 py-2 text-sm text-base-muted">No matching projects.</p>
-                        ) : (
-                            matches.map((p) => (
+                        {(() => {
+                            if (isError) {
+                                return <p className="px-3 py-2 text-sm text-red-600">Couldn’t load projects.</p>;
+                            }
+                            if (matches.length === 0) {
+                                return <p className="px-3 py-2 text-sm text-base-muted">No matching projects.</p>;
+                            }
+                            return matches.map((p) => (
                                 <button
                                     key={p.id}
                                     type="button"
@@ -89,8 +91,8 @@ export const ProjectAssignmentsPicker: React.FC<ProjectAssignmentsPickerProps> =
                                 >
                                     {p.name}
                                 </button>
-                            ))
-                        )}
+                            ));
+                        })()}
                     </div>
                 )}
             </div>

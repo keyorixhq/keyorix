@@ -8,7 +8,7 @@ interface CertificatePanelProps {
 
 const fmtDate = (iso: string): string => {
     const d = new Date(iso);
-    return isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
+    return Number.isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
 };
 
 // expiryBadge classifies the certificate's validity for an at-a-glance status.

@@ -9,7 +9,7 @@ import { Alert } from '../../components/ui/Alert';
 import type { PasswordResetRequest } from '../../types';
 
 const schema = z.object({
-    email: z.string().min(1, 'Email is required').email('Please enter a valid email address'),
+    email: z.string().min(1, 'Email is required').check(z.email('Please enter a valid email address')),
 });
 
 interface PasswordResetFormProps {

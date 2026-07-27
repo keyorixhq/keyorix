@@ -114,8 +114,7 @@ export const SetupPage: React.FC = () => {
                                     password to finish setting up your account for{' '}
                                     <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
                                         {info.email}
-                                    </span>
-                                    .
+                                    </span>{'.'}
                                 </p>
                             </div>
                             <SetupForm onSubmit={handleSubmit} isLoading={submitting} error={submitError} />

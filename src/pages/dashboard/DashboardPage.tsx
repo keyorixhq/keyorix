@@ -25,14 +25,14 @@ const fmtDate = (d: string | Date) =>
 function parseUptime(raw: string): string {
     if (!raw) return '—';
     // Go duration format: "2h34m12.456s", "45m3s", "1m3.139s", "30s", or bare integer seconds
-    const h = raw.match(/(\d+)h/)?.[1];
-    const m = raw.match(/(\d+)m/)?.[1];
-    const s = raw.match(/(\d+)(?:\.\d+)?s/)?.[1];
+    const h = /(\d+)h/.exec(raw)?.[1];
+    const m = /(\d+)m/.exec(raw)?.[1];
+    const s = /(\d+)[s.]/.exec(raw)?.[1];
     if (h) return `${h}h ${m ?? '0'}m`;
     if (m) return `${m}m ${s ?? '0'}s`;
     if (s) return `${s}s`;
-    const num = parseInt(raw, 10);
-    if (!isNaN(num)) return `${num}s`;
+    const num = Number.parseInt(raw, 10);
+    if (!Number.isNaN(num)) return `${num}s`;
     return raw.split('.')[0] ?? '';
 }
 
@@ -49,10 +49,14 @@ interface StatCardProps {
 }
 
 const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue, accent, onClick }) => {
-    const delta = trend && prevValue != null ? Math.round((typeof value === 'number' ? value : 0) - prevValue) : null;
+    const numericValue = typeof value === 'number' ? value : 0;
+    const delta = trend && prevValue != null ? Math.round(numericValue - prevValue) : null;
     return (
         <div
+            role={onClick ? 'button' : undefined}
+            tabIndex={onClick ? 0 : undefined}
             onClick={onClick}
+            onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); } : undefined}
             className={`relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs
             ${onClick ? 'cursor-pointer hover:shadow-md hover:border-base transition-all duration-150' : ''}`}
         >
@@ -85,26 +89,26 @@ const FeaturePill: React.FC<{ label: string; active: boolean }> = ({ label, acti
     const { theme } = useUIStore();
     const isDark =
         theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const activeStyle: React.CSSProperties = {
+        backgroundColor: isDark ? 'rgba(16,185,129,0.10)' : '#dcfce7',
+        borderColor: isDark ? 'rgba(16,185,129,0.25)' : '#86efac',
+        color: isDark ? '#34d399' : '#166534',
+    };
+    const inactiveStyle: React.CSSProperties = {
+        backgroundColor: 'var(--bg-subtle)',
+        borderColor: 'var(--border)',
+        color: 'var(--text-muted)',
+    };
+    const activeDotColor = isDark ? '#34d399' : '#16a34a';
+    const dotColor = active ? activeDotColor : 'var(--text-muted)';
     return (
         <div
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border"
-            style={
-                active
-                    ? {
-                          backgroundColor: isDark ? 'rgba(16,185,129,0.10)' : '#dcfce7',
-                          borderColor: isDark ? 'rgba(16,185,129,0.25)' : '#86efac',
-                          color: isDark ? '#34d399' : '#166534',
-                      }
-                    : {
-                          backgroundColor: 'var(--bg-subtle)',
-                          borderColor: 'var(--border)',
-                          color: 'var(--text-muted)',
-                      }
-            }
+            style={active ? activeStyle : inactiveStyle}
         >
             <div
                 className="w-1.5 h-1.5 rounded-full"
-                style={{ backgroundColor: active ? (isDark ? '#34d399' : '#16a34a') : 'var(--text-muted)' }}
+                style={{ backgroundColor: dotColor }}
             />
             {label}
         </div>
@@ -151,35 +155,42 @@ interface SignalCardProps {
     onClick?: () => void;
 }
 
+function getSignalCardStyles(severity: SignalCardProps['severity'], isDark: boolean): React.CSSProperties {
+    if (severity === 'neutral') {
+        return {
+            backgroundColor: 'var(--bg-subtle)',
+            borderColor: 'var(--border)',
+            color: 'var(--text-secondary)',
+        };
+    }
+    if (severity === 'warn') {
+        return {
+            backgroundColor: isDark ? 'rgba(245,158,11,0.08)' : 'rgba(245,158,11,0.06)',
+            borderColor: isDark ? 'rgba(245,158,11,0.25)' : 'rgba(245,158,11,0.30)',
+            color: isDark ? '#fbbf24' : '#92400e',
+        };
+    }
+    return {
+        backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.06)',
+        borderColor: isDark ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.30)',
+        color: isDark ? '#f87171' : '#991b1b',
+    };
+}
+
 const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, onClick }) => {
     const { theme } = useUIStore();
     const isDark =
         theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-    const styles: React.CSSProperties =
-        severity === 'neutral'
-            ? {
-                  backgroundColor: 'var(--bg-subtle)',
-                  borderColor: 'var(--border)',
-                  color: 'var(--text-secondary)',
-              }
-            : severity === 'warn'
-              ? {
-                    backgroundColor: isDark ? 'rgba(245,158,11,0.08)' : 'rgba(245,158,11,0.06)',
-                    borderColor: isDark ? 'rgba(245,158,11,0.25)' : 'rgba(245,158,11,0.30)',
-                    color: isDark ? '#fbbf24' : '#92400e',
-                }
-              : {
-                    backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.06)',
-                    borderColor: isDark ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.30)',
-                    color: isDark ? '#f87171' : '#991b1b',
-                };
-
+    const styles = getSignalCardStyles(severity, isDark);
     const valueColor = severity === 'neutral' ? 'var(--text-primary)' : (styles.color as string);
 
     return (
         <div
+            role={onClick ? 'button' : undefined}
+            tabIndex={onClick ? 0 : undefined}
             onClick={onClick}
+            onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); } : undefined}
             className={`flex items-center justify-between px-4 py-3 rounded-lg border transition-all duration-100
                 ${onClick ? 'cursor-pointer hover:brightness-95' : ''}`}
             style={styles}
@@ -218,7 +229,59 @@ export const DashboardPage: React.FC = () => {
     const dbMetrics = metrics?.database ?? {};
 
     const hour = new Date().getHours();
-    const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    let greeting: string;
+    if (hour < 12) {
+        greeting = 'Good morning';
+    } else if (hour < 18) {
+        greeting = 'Good afternoon';
+    } else {
+        greeting = 'Good evening';
+    }
+
+    // Pre-computed values to avoid nested ternaries in JSX
+    const sharedCount = stats?.sharedSecrets ?? 0;
+    const sharedPlural = sharedCount === 1 ? '' : 's';
+    const activeUsersSub = sharedCount > 0
+        ? `${sharedCount} shared secret${sharedPlural}`
+        : 'registered accounts';
+
+    const auditEventsSub = stats?.auditLogins30d != null && stats?.auditSecretReads30d != null
+        ? `${stats.auditLogins30d} logins · ${stats.auditSecretReads30d} reads`
+        : 'all events logged';
+
+    const anomalyPlural = anomalies.length === 1 ? 'y' : 'ies';
+    const securityCardLabel = alertCount > 0 ? `Alerts (${alertCount})` : 'Security';
+    const securityCardValue: string | number = alertCount > 0 ? alertCount : '✓';
+    const securityCardSub = alertCount > 0
+        ? `${anomalies.length} anomal${anomalyPlural} · ${expiredSecrets.length} expired · ${expiringSecrets.length} expiring`
+        : 'No active alerts';
+    const securityCardAccent = alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500';
+
+    const expiringHint = expiredSecrets.length > 0
+        ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d`
+        : 'within 30 days';
+
+    const hasUrgentExpiring = expiredSecrets.length > 0 || expiringSecrets.some((s: any) => s.daysLeft <= 7);
+    let expiringSeverity: 'neutral' | 'warn' | 'alert';
+    if (expiring.length === 0) {
+        expiringSeverity = 'neutral';
+    } else if (hasUrgentExpiring) {
+        expiringSeverity = 'alert';
+    } else {
+        expiringSeverity = 'warn';
+    }
+
+    const failedAuth = stats?.failedAuthAttempts24h ?? 0;
+    let failedAuthSeverity: 'neutral' | 'warn' | 'alert';
+    if (failedAuth === 0) {
+        failedAuthSeverity = 'neutral';
+    } else if (failedAuth >= 5) {
+        failedAuthSeverity = 'alert';
+    } else {
+        failedAuthSeverity = 'warn';
+    }
+
+    const totalSecretsSub = stats?.totalSecretsTrend ? 'vs last snapshot' : 'across all environments';
 
     return (
         <div className="min-h-screen bg-app">
@@ -240,41 +303,29 @@ export const DashboardPage: React.FC = () => {
                         value={stats?.totalSecrets ?? 0}
                         {...(stats?.totalSecretsTrend ? { trend: stats.totalSecretsTrend } : {})}
                         {...(stats?.prevTotalSecrets != null ? { prevValue: stats.prevTotalSecrets } : {})}
-                        sub={stats?.totalSecretsTrend ? 'vs last snapshot' : 'across all environments'}
+                        sub={totalSecretsSub}
                         accent="bg-blue-500"
                         onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc')}
                     />
                     <StatCard
                         label="Active Users"
                         value={stats?.activeUsers ?? 0}
-                        sub={
-                            (stats?.sharedSecrets ?? 0) > 0
-                                ? `${stats!.sharedSecrets} shared secret${stats!.sharedSecrets === 1 ? '' : 's'}`
-                                : 'registered accounts'
-                        }
+                        sub={activeUsersSub}
                         accent="bg-purple-500"
                         onClick={() => navigate(ROUTES.ADMIN_USERS)}
                     />
                     <StatCard
                         label="Audit Events (30d)"
                         value={stats?.auditEvents30d ?? 0}
-                        sub={
-                            stats?.auditLogins30d != null && stats?.auditSecretReads30d != null
-                                ? `${stats.auditLogins30d} logins · ${stats.auditSecretReads30d} reads`
-                                : 'all events logged'
-                        }
+                        sub={auditEventsSub}
                         accent="bg-indigo-500"
                         onClick={() => navigate(ROUTES.AUDIT)}
                     />
                     <StatCard
-                        label={alertCount > 0 ? `Alerts (${alertCount})` : 'Security'}
-                        value={alertCount > 0 ? alertCount : '✓'}
-                        sub={
-                            alertCount > 0
-                                ? `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} · ${expiredSecrets.length} expired · ${expiringSecrets.length} expiring`
-                                : 'No active alerts'
-                        }
-                        accent={alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500'}
+                        label={securityCardLabel}
+                        value={securityCardValue}
+                        sub={securityCardSub}
+                        accent={securityCardAccent}
                         {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT + '?tab=anomalies') } : {})}
                     />
                 </div>
@@ -290,33 +341,15 @@ export const DashboardPage: React.FC = () => {
                         <SignalCard
                             label="Expiring Secrets"
                             value={expiring.length}
-                            hint={
-                                expiredSecrets.length > 0
-                                    ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d`
-                                    : 'within 30 days'
-                            }
-                            severity={
-                                expiring.length === 0
-                                    ? 'neutral'
-                                    : expiredSecrets.length > 0
-                                      ? 'alert'
-                                      : expiringSecrets.some((s: any) => s.daysLeft <= 7)
-                                        ? 'alert'
-                                        : 'warn'
-                            }
+                            hint={expiringHint}
+                            severity={expiringSeverity}
                             onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc&filter=expiring')}
                         />
                         <SignalCard
                             label="Failed Auth (24h)"
-                            value={stats?.failedAuthAttempts24h ?? 0}
+                            value={failedAuth}
                             hint="unsuccessful attempts"
-                            severity={
-                                (stats?.failedAuthAttempts24h ?? 0) === 0
-                                    ? 'neutral'
-                                    : (stats?.failedAuthAttempts24h ?? 0) >= 5
-                                      ? 'alert'
-                                      : 'warn'
-                            }
+                            severity={failedAuthSeverity}
                             onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=failed')}
                         />
                         <SignalCard
@@ -345,6 +378,7 @@ export const DashboardPage: React.FC = () => {
                                 Recent Activity
                             </h2>
                             <button
+                                type="button"
                                 onClick={() => navigate(ROUTES.AUDIT)}
                                 className="text-xs font-medium text-base-muted hover:text-base-secondary transition-colors"
                             >
@@ -440,6 +474,7 @@ export const DashboardPage: React.FC = () => {
                                                 </p>
                                             </div>
                                             <button
+                                                type="button"
                                                 onClick={() => acknowledgeAnomaly.mutate(a.ID)}
                                                 className="text-xs text-base-muted hover:text-base-secondary shrink-0 mt-0.5"
                                                 title="Dismiss"
@@ -448,30 +483,35 @@ export const DashboardPage: React.FC = () => {
                                             </button>
                                         </div>
                                     ))}
-                                    {expiring.map((s: any) => (
-                                        <div
-                                            key={s.id}
-                                            className={`flex items-center justify-between p-3 rounded-lg ${s.expired ? 'bg-red-950/30 border border-red-900/40' : 'bg-amber-50 dark:bg-amber-950/20'}`}
-                                        >
-                                            <div>
-                                                <p
-                                                    className={`text-xs font-semibold ${s.expired ? 'text-red-400' : 'text-amber-700'}`}
-                                                >
-                                                    {s.name}
-                                                </p>
-                                                <p
-                                                    className={`text-xs ${s.expired ? 'text-red-500' : 'text-amber-600'}`}
-                                                >
-                                                    {s.environment}
-                                                </p>
-                                            </div>
-                                            <span
-                                                className={`text-xs font-bold px-1.5 py-0.5 rounded-sm ${s.expired ? 'bg-red-500/20 text-red-400' : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}
+                                    {expiring.map((s: any) => {
+                                        const expiryBadgeColor = s.expired
+                                            ? 'bg-red-500/20 text-red-400'
+                                            : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600';
+                                        return (
+                                            <div
+                                                key={s.id}
+                                                className={`flex items-center justify-between p-3 rounded-lg ${s.expired ? 'bg-red-950/30 border border-red-900/40' : 'bg-amber-50 dark:bg-amber-950/20'}`}
                                             >
-                                                {s.expired ? `${Math.abs(s.daysLeft)}d overdue` : `${s.daysLeft}d`}
-                                            </span>
-                                        </div>
-                                    ))}
+                                                <div>
+                                                    <p
+                                                        className={`text-xs font-semibold ${s.expired ? 'text-red-400' : 'text-amber-700'}`}
+                                                    >
+                                                        {s.name}
+                                                    </p>
+                                                    <p
+                                                        className={`text-xs ${s.expired ? 'text-red-500' : 'text-amber-600'}`}
+                                                    >
+                                                        {s.environment}
+                                                    </p>
+                                                </div>
+                                                <span
+                                                    className={`text-xs font-bold px-1.5 py-0.5 rounded-sm ${expiryBadgeColor}`}
+                                                >
+                                                    {s.expired ? `${Math.abs(s.daysLeft)}d overdue` : `${s.daysLeft}d`}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -483,6 +523,7 @@ export const DashboardPage: React.FC = () => {
                                     Audit (30d)
                                 </h2>
                                 <button
+                                    type="button"
                                     onClick={() => navigate(ROUTES.AUDIT)}
                                     className="text-xs text-base-muted hover:text-base-secondary transition-colors"
                                 >

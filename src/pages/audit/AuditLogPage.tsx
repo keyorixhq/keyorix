@@ -138,8 +138,12 @@ function eventLabel(eventType: string): string {
 function eventBadge(eventType: string, isDark: boolean) {
     const e = EVENT_STYLES[eventType];
     const label = e?.label ?? eventType;
-    const bg = e ? (isDark ? e.darkBg : e.lightBg) : isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9';
-    const color = e ? (isDark ? e.darkColor : e.lightColor) : isDark ? '#94a3b8' : '#475569';
+    const defaultBg = isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9';
+    const eBg = e ? (isDark ? e.darkBg : e.lightBg) : null;
+    const bg = eBg ?? defaultBg;
+    const defaultColor = isDark ? '#94a3b8' : '#475569';
+    const eColor = e ? (isDark ? e.darkColor : e.lightColor) : null;
+    const color = eColor ?? defaultColor;
     return (
         <span
             className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium"
@@ -152,7 +156,7 @@ function eventBadge(eventType: string, isDark: boolean) {
 
 function fmtTime(ts: string): string {
     const d = new Date(ts);
-    if (isNaN(d.getTime())) return ts;
+    if (Number.isNaN(d.getTime())) return ts;
     return d.toLocaleString('en', {
         month: 'short',
         day: 'numeric',
@@ -254,6 +258,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 {resultCount} event{resultCount !== 1 ? 's' : ''}
             </span>
             <button
+                type="button"
                 onClick={onExport}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-base bg-surface text-base-secondary hover:text-base-primary hover:bg-subtle transition-colors"
                 title="Export as CSV"
@@ -355,6 +360,7 @@ const Pagination: React.FC<PaginationProps> = ({ page, totalPages, total, pageSi
             </span>
             <div className="flex items-center gap-2">
                 <button
+                    type="button"
                     onClick={() => onChange(page - 1)}
                     disabled={page <= 1}
                     className="px-3 py-1.5 rounded-md text-xs border border-base bg-surface text-base-secondary hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -365,6 +371,7 @@ const Pagination: React.FC<PaginationProps> = ({ page, totalPages, total, pageSi
                     {page} / {totalPages}
                 </span>
                 <button
+                    type="button"
                     onClick={() => onChange(page + 1)}
                     disabled={page >= totalPages}
                     className="px-3 py-1.5 rounded-md text-xs border border-base bg-surface text-base-secondary hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -393,6 +400,33 @@ const SEV: Record<string, { dark: { bg: string; color: string }; light: { bg: st
 function sevStyle(severity: string, isDark: boolean) {
     return isDark ? (SEV[severity] ?? SEV['low']!).dark : (SEV[severity] ?? SEV['low']!).light;
 }
+
+// ─── ColBtn ───────────────────────────────────────────────────────────────────
+
+interface ColBtnProps {
+    field: SortField;
+    label: string;
+    sortField: SortField;
+    sortDir: SortDir;
+    onToggle: (field: SortField) => void;
+}
+
+const ColBtn: React.FC<ColBtnProps> = ({ field, label, sortField, sortDir, onToggle }) => {
+    const active = sortField === field;
+    const dirArrow = sortDir === 'asc' ? '▲' : '▼';
+    const sortIndicator = active ? dirArrow : '⇅';
+    return (
+        <button
+            type="button"
+            onClick={() => onToggle(field)}
+            className={`flex items-center gap-1 uppercase tracking-wider text-xs font-semibold transition-colors select-none
+                ${active ? 'text-base-primary' : 'text-base-muted hover:text-base-secondary'}`}
+        >
+            {label}
+            <span className="text-[10px] opacity-60">{sortIndicator}</span>
+        </button>
+    );
+};
 
 // ─── AnomalyTable ─────────────────────────────────────────────────────────────
 
@@ -432,20 +466,6 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
             return sortDir === 'asc' ? cmp : -cmp;
         });
 
-    const ColBtn: React.FC<{ field: SortField; label: string }> = ({ field, label }) => {
-        const active = sortField === field;
-        return (
-            <button
-                onClick={() => toggleSort(field)}
-                className={`flex items-center gap-1 uppercase tracking-wider text-xs font-semibold transition-colors select-none
-                    ${active ? 'text-base-primary' : 'text-base-muted hover:text-base-secondary'}`}
-            >
-                {label}
-                <span className="text-[10px] opacity-60">{active ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
-            </button>
-        );
-    };
-
     if (isLoading)
         return (
             <div className="bg-surface border border-base rounded-xl shadow-xs p-12 flex justify-center">
@@ -474,13 +494,15 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                     {(['all', 'critical', 'high', 'medium', 'low'] as const).map((s) => {
                         const active = filterSev === s;
                         const style = s !== 'all' ? sevStyle(s, isDark) : null;
+                        const activeClass = style ? '' : 'bg-surface border-base text-base-primary shadow-xs';
                         return (
                             <button
+                                type="button"
                                 key={s}
                                 onClick={() => setFilterSev(s)}
                                 className={`px-2.5 py-1 rounded text-xs font-medium border transition-all duration-100 capitalize
                                     ${active
-                                        ? style ? '' : 'bg-surface border-base text-base-primary shadow-xs'
+                                        ? activeClass
                                         : 'border-transparent text-base-muted hover:text-base-secondary'
                                     }`}
                                 style={active && style ? { backgroundColor: style.bg, color: style.color, borderColor: style.color + '50' } : {}}
@@ -496,6 +518,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                 <div className="flex gap-1">
                     {[{ k: 'open', l: 'Open' }, { k: 'ack', l: 'Acknowledged' }, { k: 'all', l: 'All' }].map(({ k, l }) => (
                         <button
+                            type="button"
                             key={k}
                             onClick={() => setFilterStatus(k)}
                             className={`px-2.5 py-1 rounded text-xs font-medium border transition-all duration-100
@@ -541,12 +564,12 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                         <thead>
                             <tr className="bg-subtle border-b border-base">
                                 <th className="pl-4 pr-2 py-3 w-6" />
-                                <th className="px-5 py-3 text-left"><ColBtn field="alert_type" label="Alert Type" /></th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="secret_name" label="Secret" /></th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="accessed_by" label="Actor" /></th>
+                                <th className="px-5 py-3 text-left"><ColBtn field="alert_type" label="Alert Type" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
+                                <th className="px-5 py-3 text-left"><ColBtn field="secret_name" label="Secret" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
+                                <th className="px-5 py-3 text-left"><ColBtn field="accessed_by" label="Actor" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
                                 <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider">IP Address</th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="severity" label="Severity" /></th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="detected_at" label="Detected" /></th>
+                                <th className="px-5 py-3 text-left"><ColBtn field="severity" label="Severity" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
+                                <th className="px-5 py-3 text-left"><ColBtn field="detected_at" label="Detected" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
                                 <th className="px-5 py-3 w-20" />
                             </tr>
                         </thead>
@@ -555,6 +578,9 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                 const isExpanded = expandedId === a.ID;
                                 const sty = sevStyle(a.Severity, isDark);
                                 const isHigh = a.Severity === 'high' || a.Severity === 'critical';
+                                const expandedBgDark = isHigh ? 'rgba(239,68,68,0.05)' : 'rgba(245,158,11,0.05)';
+                                const expandedBgLight = isHigh ? 'rgba(254,242,242,0.8)' : 'rgba(255,251,235,0.8)';
+                                const expandedBg = isDark ? expandedBgDark : expandedBgLight;
                                 return (
                                     <React.Fragment key={a.ID}>
                                         <tr
@@ -590,6 +616,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                             <td className="px-5 py-3 text-right">
                                                 {!a.Acknowledged && (
                                                     <button
+                                                        type="button"
                                                         onClick={(e) => { e.stopPropagation(); onDismiss(a.ID); }}
                                                         className="text-xs text-base-muted hover:text-base-secondary transition-colors"
                                                     >
@@ -604,9 +631,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                                     colSpan={8}
                                                     className="px-8 py-5"
                                                     style={{
-                                                        backgroundColor: isDark
-                                                            ? isHigh ? 'rgba(239,68,68,0.05)' : 'rgba(245,158,11,0.05)'
-                                                            : isHigh ? 'rgba(254,242,242,0.8)' : 'rgba(255,251,235,0.8)',
+                                                        backgroundColor: expandedBg,
                                                     }}
                                                 >
                                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -742,6 +767,7 @@ export const AuditLogPage: React.FC = () => {
                         ]
                     ).map(({ id, label, badge }) => (
                         <button
+                            type="button"
                             key={id}
                             onClick={() => resetPageOnTabChange(id)}
                             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-100 flex items-center gap-2 ${
@@ -775,12 +801,15 @@ export const AuditLogPage: React.FC = () => {
                                 <div className="px-5 py-2 border-b border-base flex items-center gap-2 bg-subtle">
                                     <span className="text-xs text-base-muted">Filtered:</span>
                                     <span className="text-xs font-medium text-base-secondary">
-                                        {urlFilter === 'failed' ? 'Failed auth attempts'
-                                            : urlFilter === 'reads' ? 'Secret reads'
-                                            : urlFilter === 'logins' ? 'Login events'
-                                            : 'Custom filter'}
+                                        {(() => {
+                                            if (urlFilter === 'failed') return 'Failed auth attempts';
+                                            if (urlFilter === 'reads') return 'Secret reads';
+                                            if (urlFilter === 'logins') return 'Login events';
+                                            return 'Custom filter';
+                                        })()}
                                     </span>
                                     <button
+                                        type="button"
                                         onClick={() => window.history.replaceState({}, '', window.location.pathname + '?tab=audit')}
                                         className="text-xs text-base-muted hover:text-base-secondary ml-auto"
                                     >

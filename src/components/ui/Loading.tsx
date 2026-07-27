@@ -72,9 +72,9 @@ export interface SkeletonProps {
 const Skeleton: React.FC<SkeletonProps> = ({ className, lines = 1, height = 'h-4' }) => {
     return (
         <div className={clsx('animate-pulse space-y-2', className)}>
-            {Array.from({ length: lines }).map((_, index) => (
+            {Array.from({ length: lines }, (_, index) => `skeleton-line-${index}`).map((key, index) => (
                 <div
-                    key={index}
+                    key={key}
                     className={clsx(
                         'bg-gray-200 rounded-sm',
                         height,

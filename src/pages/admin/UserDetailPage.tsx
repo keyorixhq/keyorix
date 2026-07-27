@@ -13,9 +13,9 @@ import {
     useRequirePasswordReset,
     useRevokeSessions,
     useResendSetupLink,
+    useMigrateUserToMachine,
     AccountStateBadge,
 } from '../../features/admin';
-import { useMigrateUserToMachine } from '../../features/admin';
 import { useAuth } from '../../features/auth';
 import { useProjects } from '../../features/projects/api';
 import { Button } from '../../components/ui/Button';
@@ -78,6 +78,17 @@ const ACTION_COPY: Record<
         danger: true,
     },
 };
+
+const Stat: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+    <div>
+        <p className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            {label}
+        </p>
+        <div className="text-sm mt-0.5" style={{ color: 'var(--text-primary)' }}>
+            {value}
+        </div>
+    </div>
+);
 
 export const UserDetailPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -203,17 +214,6 @@ export const UserDetailPage: React.FC = () => {
             /* link is visible for manual selection */
         }
     };
-
-    const Stat: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
-        <div>
-            <p className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-                {label}
-            </p>
-            <div className="text-sm mt-0.5" style={{ color: 'var(--text-primary)' }}>
-                {value}
-            </div>
-        </div>
-    );
 
     return (
         <div className="max-w-4xl mx-auto px-4 py-8">
@@ -552,8 +552,8 @@ export const UserDetailPage: React.FC = () => {
                             type="checkbox"
                             checked={migKeepUser}
                             onChange={(e) => setMigKeepUser(e.target.checked)}
-                        />
-                        Keep the source user active (don’t suspend)
+                        />{' '}
+                        Keep the source user active (don&apos;t suspend)
                     </label>
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={() => setShowMigrate(false)}>

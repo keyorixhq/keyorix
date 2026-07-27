@@ -50,10 +50,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="create-project-name" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Project name <span style={{ color: 'var(--error)' }}>*</span>
                         </label>
                         <input
+                            id="create-project-name"
                             type="text"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
@@ -69,10 +70,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="create-project-description" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <input
+                            id="create-project-description"
                             type="text"
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
@@ -93,6 +95,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
 
                 <div className="flex justify-end gap-2 mt-6">
                     <button
+                        type="button"
                         onClick={onClose}
                         className="px-4 py-2 text-sm rounded-lg"
                         style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-subtle)' }}
@@ -100,6 +103,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                         Cancel
                     </button>
                     <button
+                        type="button"
                         onClick={handleSubmit}
                         disabled={!name.trim() || createProject.isPending}
                         className="px-4 py-2 text-sm rounded-lg font-medium disabled:opacity-50"
@@ -127,8 +131,15 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
     const deleted = project.deleted;
     return (
         <div
+            role={deleted ? undefined : 'button'}
+            tabIndex={deleted ? undefined : 0}
             onClick={() => {
                 if (!deleted) navigate(ROUTES.PROJECT_DETAIL(project.id));
+            }}
+            onKeyDown={(e) => {
+                if (!deleted && (e.key === 'Enter' || e.key === ' ')) {
+                    navigate(ROUTES.PROJECT_DETAIL(project.id));
+                }
             }}
             className={`flex items-center gap-4 px-4 py-3 rounded-lg transition-colors duration-100 group ${deleted ? '' : 'cursor-pointer'}`}
             style={{
@@ -186,6 +197,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
                 )}
                 {deleted ? (
                     <button
+                        type="button"
                         onClick={(e) => {
                             e.stopPropagation();
                             onRestore(project);
@@ -200,6 +212,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
                     </button>
                 ) : (
                     <button
+                        type="button"
                         onClick={(e) => {
                             e.stopPropagation();
                             onDeleteRequest(project);
@@ -283,6 +296,7 @@ export const ProjectsListPage: React.FC = () => {
                     </p>
                 </div>
                 <button
+                    type="button"
                     onClick={() => setShowCreate(true)}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium"
                     style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
@@ -313,11 +327,12 @@ export const ProjectsListPage: React.FC = () => {
                     />
                 </div>
                 <label
+                    htmlFor="show-deleted-checkbox"
                     className="flex items-center gap-2 text-sm shrink-0 cursor-pointer"
                     style={{ color: 'var(--text-secondary)' }}
                 >
-                    <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
-                    Show deleted
+                    <input id="show-deleted-checkbox" type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
+                    {' '}Show deleted
                 </label>
             </div>
 
@@ -406,6 +421,7 @@ export const ProjectsListPage: React.FC = () => {
                                         Create your first project to start managing secrets.
                                     </p>
                                     <button
+                                        type="button"
                                         onClick={() => setShowCreate(true)}
                                         className="px-4 py-2 rounded-lg text-sm font-medium"
                                         style={{ backgroundColor: 'var(--accent)', color: '#fff' }}

@@ -61,9 +61,63 @@ apiClient.interceptors.request.use(
     },
     (error) => {
         logError(error);
-        return Promise.reject(error);
+        throw error;
     }
 );
+
+const handle401 = async (error: AxiosError, authStore: ReturnType<typeof useAuthStore.getState>): Promise<AxiosResponse | void> => {
+    if (!authStore.isAuthenticated) {
+        return;
+    }
+    if (error.config?.url?.includes('/auth/refresh')) {
+        await authStore.logout();
+        authStore.setError('Your session has expired. Please log in again.');
+        return;
+    }
+    try {
+        await authStore.refreshToken();
+        // The retry rides the rotated session cookie automatically —
+        // no header to reattach, unlike the old Bearer-token flow.
+        if (error.config) {
+            return apiClient.request(error.config);
+        }
+    } catch {
+        await authStore.logout();
+        authStore.setError('Your session has expired. Please log in again.');
+    }
+};
+
+const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.getState>): void => {
+    // ADR-025: a restricted account is blocked from everything but the
+    // password change. Route it to the profile page rather than just
+    // showing a permission error (robust across reloads / a lost flag).
+    const code = (error.response?.data as { error?: string } | undefined)?.error;
+    if (code === 'PasswordChangeRequired') {
+        if (!window.location.pathname.startsWith('/profile')) {
+            window.location.href = '/profile';
+        }
+    } else {
+        authStore.setError('You do not have permission to perform this action.');
+    }
+};
+
+const handleErrorByStatus = async (error: AxiosError, authStore: ReturnType<typeof useAuthStore.getState>): Promise<AxiosResponse | void> => {
+    const status = error.response?.status;
+    if (status === 401) {
+        return handle401(error, authStore);
+    }
+    if (status === 403) {
+        handle403(error, authStore);
+    } else if (status === 429) {
+        authStore.setError('Too many requests. Please wait a moment and try again.');
+    } else if (status && status >= 500) {
+        authStore.setError('Server error. Please try again later.');
+    } else if (error.code === 'ECONNABORTED') {
+        authStore.setError('Request timeout. Please check your connection and try again.');
+    } else if (!error.response) {
+        authStore.setError('Network error. Please check your connection.');
+    }
+};
 
 apiClient.interceptors.response.use(
     (response: AxiosResponse) => {
@@ -73,49 +127,12 @@ apiClient.interceptors.response.use(
         logError(error);
 
         const authStore = useAuthStore.getState();
-
-        if (error.response?.status === 401) {
-            if (authStore.isAuthenticated) {
-                if (!error.config?.url?.includes('/auth/refresh')) {
-                    try {
-                        await authStore.refreshToken();
-                        // The retry rides the rotated session cookie automatically —
-                        // no header to reattach, unlike the old Bearer-token flow.
-                        if (error.config) {
-                            return apiClient.request(error.config);
-                        }
-                    } catch {
-                        await authStore.logout();
-                        authStore.setError('Your session has expired. Please log in again.');
-                    }
-                } else {
-                    await authStore.logout();
-                    authStore.setError('Your session has expired. Please log in again.');
-                }
-            }
-        } else if (error.response?.status === 403) {
-            // ADR-025: a restricted account is blocked from everything but the
-            // password change. Route it to the profile page rather than just
-            // showing a permission error (robust across reloads / a lost flag).
-            const code = (error.response?.data as { error?: string } | undefined)?.error;
-            if (code === 'PasswordChangeRequired') {
-                if (!window.location.pathname.startsWith('/profile')) {
-                    window.location.href = '/profile';
-                }
-            } else {
-                authStore.setError('You do not have permission to perform this action.');
-            }
-        } else if (error.response?.status === 429) {
-            authStore.setError('Too many requests. Please wait a moment and try again.');
-        } else if (error.response?.status && error.response.status >= 500) {
-            authStore.setError('Server error. Please try again later.');
-        } else if (error.code === 'ECONNABORTED') {
-            authStore.setError('Request timeout. Please check your connection and try again.');
-        } else if (!error.response) {
-            authStore.setError('Network error. Please check your connection.');
+        const result = await handleErrorByStatus(error, authStore);
+        if (result !== undefined) {
+            return result;
         }
 
-        return Promise.reject(error);
+        throw error;
     }
 );
 

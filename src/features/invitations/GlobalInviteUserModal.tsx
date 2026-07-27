@@ -15,7 +15,7 @@ interface GlobalInviteUserModalProps {
 // "system_auditor" → "Auditor"
 const systemRoleLabel = (role: string) => role.replace(/^system_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[^@\s]+@[^@\s.]+\.[^@\s]+$/;
 
 /**
  * ADR-024 Global-Admin invitation dialog. Invites an email (which may not yet have
@@ -90,6 +90,80 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
 
     const sentEmail = email.trim();
 
+    const fallbackContent = deliveryError ? (
+        <div className="space-y-4">
+            <Alert
+                type="warning"
+                message={`Invitation created for ${sentEmail}, but the setup link couldn't be delivered: ${deliveryError}`}
+            />
+            <p className="text-sm text-base-secondary">
+                Fix the credential-delivery configuration (e.g. the server base URL), then resend the link from
+                the user's detail page.
+            </p>
+            <div className="flex justify-end pt-2">
+                <Button variant="default" onClick={handleClose}>
+                    Done
+                </Button>
+            </div>
+        </div>
+    ) : (
+        <div className="space-y-4">
+            <p className="text-sm text-base-muted">
+                Invite someone by email. They don't need an account yet — it's created when they accept the
+                single-use setup link, with the system role and project assignments below applied in one step.
+            </p>
+
+            {error && <Alert type="error" message={error} />}
+
+            <div>
+                <label htmlFor="invite-email-input" className="block text-sm font-medium text-base-secondary mb-1">Email</label>
+                <input
+                    id="invite-email-input"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="jane@example.com"
+                    autoFocus
+                    className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                />
+            </div>
+
+            <div>
+                <label htmlFor="invite-system-role-select" className="block text-sm font-medium text-base-secondary mb-1">
+                    System role <span className="font-normal text-base-muted">(optional)</span>
+                </label>
+                <select
+                    id="invite-system-role-select"
+                    value={systemRole}
+                    onChange={(e) => setSystemRole(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-surface"
+                >
+                    <option value="">Default (Viewer)</option>
+                    {SYSTEM_ROLES.map((r) => (
+                        <option key={r} value={r}>
+                            {systemRoleLabel(r)}
+                        </option>
+                    ))}
+                </select>
+            </div>
+
+            <ProjectAssignmentsPicker
+                assignments={assignments}
+                onChange={setAssignments}
+                disabled={invite.isPending}
+            />
+
+            <div className="flex justify-end gap-3 pt-2">
+                <Button variant="ghost" onClick={handleClose} disabled={invite.isPending}>
+                    Cancel
+                </Button>
+                <Button variant="default" onClick={handleSubmit} disabled={invite.isPending || !email.trim()}>
+                    {invite.isPending ? 'Sending…' : 'Send Invitation'}
+                </Button>
+            </div>
+        </div>
+    );
+
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title="Invite User" size="md">
             {result ? (
@@ -113,7 +187,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                     ) : (
                         <p className="text-sm text-base-secondary">
                             A setup link was sent to <span className="font-medium">{result.email}</span>
-                            {result.channel ? <> via {result.channel}</> : null}. They’ll set their own password on
+                            {result.channel ? <> via {result.channel}</> : null}. They'll set their own password on
                             first use, and their assignments apply on accept.
                         </p>
                     )}
@@ -123,77 +197,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         </Button>
                     </div>
                 </div>
-            ) : deliveryError ? (
-                <div className="space-y-4">
-                    <Alert
-                        type="warning"
-                        message={`Invitation created for ${sentEmail}, but the setup link couldn’t be delivered: ${deliveryError}`}
-                    />
-                    <p className="text-sm text-base-secondary">
-                        Fix the credential-delivery configuration (e.g. the server base URL), then resend the link from
-                        the user’s detail page.
-                    </p>
-                    <div className="flex justify-end pt-2">
-                        <Button variant="default" onClick={handleClose}>
-                            Done
-                        </Button>
-                    </div>
-                </div>
-            ) : (
-                <div className="space-y-4">
-                    <p className="text-sm text-base-muted">
-                        Invite someone by email. They don’t need an account yet — it’s created when they accept the
-                        single-use setup link, with the system role and project assignments below applied in one step.
-                    </p>
-
-                    {error && <Alert type="error" message={error} />}
-
-                    <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
-                        <input
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="jane@example.com"
-                            autoFocus
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">
-                            System role <span className="font-normal text-base-muted">(optional)</span>
-                        </label>
-                        <select
-                            value={systemRole}
-                            onChange={(e) => setSystemRole(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-surface"
-                        >
-                            <option value="">Default (Viewer)</option>
-                            {SYSTEM_ROLES.map((r) => (
-                                <option key={r} value={r}>
-                                    {systemRoleLabel(r)}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <ProjectAssignmentsPicker
-                        assignments={assignments}
-                        onChange={setAssignments}
-                        disabled={invite.isPending}
-                    />
-
-                    <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={handleClose} disabled={invite.isPending}>
-                            Cancel
-                        </Button>
-                        <Button variant="default" onClick={handleSubmit} disabled={invite.isPending || !email.trim()}>
-                            {invite.isPending ? 'Sending…' : 'Send Invitation'}
-                        </Button>
-                    </div>
-                </div>
-            )}
+            ) : fallbackContent}
         </Modal>
     );
 };

@@ -252,6 +252,243 @@ export const SharingManagementPage: React.FC = () => {
         );
     }
 
+    const sharesContent = filteredShares.length === 0 ? (
+        <div className="p-8 text-center">
+            <div className="text-base-muted dark:text-base-muted mb-4">
+                <ShareIcon className="h-12 w-12 mx-auto" />
+            </div>
+            <h3 className="text-lg font-medium text-base-primary dark:text-white mb-2">No shares found</h3>
+            <p className="text-base-muted dark:text-base-muted">
+                {filters.search || filters.recipientType !== 'all' || filters.permission !== 'all'
+                    ? 'Try adjusting your filters.'
+                    : 'No secrets have been shared yet.'}
+            </p>
+        </div>
+    ) : (
+        <div className="overflow-hidden">
+            <table className="min-w-full divide-y divide-base dark:divide-gray-700">
+                <thead className="bg-subtle dark:bg-gray-900">
+                    <tr>
+                        {bulkActionMode && (
+                            <th className="px-6 py-3 text-left">
+                                <input
+                                    type="checkbox"
+                                    className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    checked={
+                                        filteredShares.length > 0 &&
+                                        filteredShares.every((s) => selectedItems.has(s.id))
+                                    }
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                            filteredShares.forEach((s) => toggleSelectedItem(s.id));
+                                        } else {
+                                            clearSelectedItems();
+                                        }
+                                    }}
+                                />
+                            </th>
+                        )}
+                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                            Secret
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                            Recipient
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                            Permission
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                            Shared By
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                            Created
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                            Expires
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody className="bg-surface dark:bg-gray-800 divide-y divide-base dark:divide-gray-700">
+                    {filteredShares.map((share) => (
+                        <tr key={share.id} className="hover:bg-subtle dark:hover:bg-gray-700">
+                            {bulkActionMode && (
+                                <td className="px-6 py-4">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        checked={selectedItems.has(share.id)}
+                                        onChange={() => toggleSelectedItem(share.id)}
+                                    />
+                                </td>
+                            )}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-sm font-medium text-base-primary dark:text-white">
+                                    Secret #{share.secretId}
+                                </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="flex items-center">
+                                    <div className="shrink-0 mr-3">
+                                        {share.recipientType === 'user' ? (
+                                            <UserIcon className="h-5 w-5 text-base-muted" />
+                                        ) : (
+                                            <UserGroupIcon className="h-5 w-5 text-base-muted" />
+                                        )}
+                                    </div>
+                                    <div>
+                                        <div className="text-sm font-medium text-base-primary dark:text-white">
+                                            {share.recipientName}
+                                        </div>
+                                        <div className="text-xs text-base-muted dark:text-base-muted">
+                                            {share.recipientType}
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                                <span
+                                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                        share.permission === 'write'
+                                            ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                            : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                    }`}
+                                >
+                                    {share.permission === 'write' ? 'Read & Write' : 'Read Only'}
+                                </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
+                                {share.createdBy}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
+                                <div>
+                                    <div>{formatDate(share.createdAt)}</div>
+                                    <div className="text-xs">{formatTime(share.createdAt)}</div>
+                                </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                                {(() => {
+                                    const e = shareExpiry(share.expiresAt);
+                                    return (
+                                        <span
+                                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${e.className}`}
+                                            title={share.expiresAt ?? 'No expiry'}
+                                        >
+                                            {e.label}
+                                        </span>
+                                    );
+                                })()}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <div className="flex items-center justify-end space-x-2">
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleViewSecret(share)}
+                                        title="View secret"
+                                    >
+                                        <EyeIcon className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleEditShare(share)}
+                                        title="Edit permissions"
+                                    >
+                                        <PencilIcon className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleDeleteShare(share)}
+                                        title="Revoke access"
+                                        className="text-red-600 hover:text-red-700"
+                                    >
+                                        <TrashIcon className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+
+            {/* Pagination */}
+            {pagination.totalPages > 1 && (
+                <div className="bg-surface dark:bg-gray-800 px-4 py-3 border-t border-base dark:border-gray-700 sm:px-6">
+                    <div className="flex items-center justify-between">
+                        <div className="flex-1 flex justify-between sm:hidden">
+                            <Button
+                                variant="outline"
+                                onClick={() => handlePageChange(pagination.page - 1)}
+                                disabled={pagination.page === 1}
+                            >
+                                Previous
+                            </Button>
+                            <Button
+                                variant="outline"
+                                onClick={() => handlePageChange(pagination.page + 1)}
+                                disabled={pagination.page === pagination.totalPages}
+                            >
+                                Next
+                            </Button>
+                        </div>
+                        <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                            <div>
+                                <p className="text-sm text-base-secondary dark:text-base-muted">
+                                    Showing{' '}
+                                    <span className="font-medium">
+                                        {(pagination.page - 1) * pagination.pageSize + 1}
+                                    </span>{' '}
+                                    to{' '}
+                                    <span className="font-medium">
+                                        {Math.min(pagination.page * pagination.pageSize, pagination.total)}
+                                    </span>{' '}
+                                    of <span className="font-medium">{pagination.total}</span> results
+                                </p>
+                            </div>
+                            <div>
+                                <nav className="relative z-0 inline-flex rounded-md shadow-xs -space-x-px">
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => handlePageChange(pagination.page - 1)}
+                                        disabled={pagination.page === 1}
+                                        className="rounded-l-md"
+                                    >
+                                        Previous
+                                    </Button>
+                                    {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                                        const page = i + 1;
+                                        return (
+                                            <Button
+                                                key={page}
+                                                variant={pagination.page === page ? 'default' : 'outline'}
+                                                onClick={() => handlePageChange(page)}
+                                                className="rounded-none"
+                                            >
+                                                {page}
+                                            </Button>
+                                        );
+                                    })}
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => handlePageChange(pagination.page + 1)}
+                                        disabled={pagination.page === pagination.totalPages}
+                                        className="rounded-r-md"
+                                    >
+                                        Next
+                                    </Button>
+                                </nav>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+
     return (
         <div className="p-6 space-y-6">
             {/* Header */}
@@ -376,242 +613,7 @@ export const SharingManagementPage: React.FC = () => {
                     <div className="p-8">
                         <Loading />
                     </div>
-                ) : filteredShares.length === 0 ? (
-                    <div className="p-8 text-center">
-                        <div className="text-base-muted dark:text-base-muted mb-4">
-                            <ShareIcon className="h-12 w-12 mx-auto" />
-                        </div>
-                        <h3 className="text-lg font-medium text-base-primary dark:text-white mb-2">No shares found</h3>
-                        <p className="text-base-muted dark:text-base-muted">
-                            {filters.search || filters.recipientType !== 'all' || filters.permission !== 'all'
-                                ? 'Try adjusting your filters.'
-                                : 'No secrets have been shared yet.'}
-                        </p>
-                    </div>
-                ) : (
-                    <div className="overflow-hidden">
-                        <table className="min-w-full divide-y divide-base dark:divide-gray-700">
-                            <thead className="bg-subtle dark:bg-gray-900">
-                                <tr>
-                                    {bulkActionMode && (
-                                        <th className="px-6 py-3 text-left">
-                                            <input
-                                                type="checkbox"
-                                                className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-                                                checked={
-                                                    filteredShares.length > 0 &&
-                                                    filteredShares.every((s) => selectedItems.has(s.id))
-                                                }
-                                                onChange={(e) => {
-                                                    if (e.target.checked) {
-                                                        filteredShares.forEach((s) => toggleSelectedItem(s.id));
-                                                    } else {
-                                                        clearSelectedItems();
-                                                    }
-                                                }}
-                                            />
-                                        </th>
-                                    )}
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
-                                        Secret
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
-                                        Recipient
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
-                                        Permission
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
-                                        Shared By
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
-                                        Created
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
-                                        Expires
-                                    </th>
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
-                                        Actions
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-surface dark:bg-gray-800 divide-y divide-base dark:divide-gray-700">
-                                {filteredShares.map((share) => (
-                                    <tr key={share.id} className="hover:bg-subtle dark:hover:bg-gray-700">
-                                        {bulkActionMode && (
-                                            <td className="px-6 py-4">
-                                                <input
-                                                    type="checkbox"
-                                                    className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-                                                    checked={selectedItems.has(share.id)}
-                                                    onChange={() => toggleSelectedItem(share.id)}
-                                                />
-                                            </td>
-                                        )}
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="text-sm font-medium text-base-primary dark:text-white">
-                                                Secret #{share.secretId}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center">
-                                                <div className="shrink-0 mr-3">
-                                                    {share.recipientType === 'user' ? (
-                                                        <UserIcon className="h-5 w-5 text-base-muted" />
-                                                    ) : (
-                                                        <UserGroupIcon className="h-5 w-5 text-base-muted" />
-                                                    )}
-                                                </div>
-                                                <div>
-                                                    <div className="text-sm font-medium text-base-primary dark:text-white">
-                                                        {share.recipientName}
-                                                    </div>
-                                                    <div className="text-xs text-base-muted dark:text-base-muted">
-                                                        {share.recipientType}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span
-                                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                                    share.permission === 'write'
-                                                        ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                                                        : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                                                }`}
-                                            >
-                                                {share.permission === 'write' ? 'Read & Write' : 'Read Only'}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
-                                            {share.createdBy}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
-                                            <div>
-                                                <div>{formatDate(share.createdAt)}</div>
-                                                <div className="text-xs">{formatTime(share.createdAt)}</div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            {(() => {
-                                                const e = shareExpiry(share.expiresAt);
-                                                return (
-                                                    <span
-                                                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${e.className}`}
-                                                        title={share.expiresAt ?? 'No expiry'}
-                                                    >
-                                                        {e.label}
-                                                    </span>
-                                                );
-                                            })()}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                            <div className="flex items-center justify-end space-x-2">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleViewSecret(share)}
-                                                    title="View secret"
-                                                >
-                                                    <EyeIcon className="h-4 w-4" />
-                                                </Button>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleEditShare(share)}
-                                                    title="Edit permissions"
-                                                >
-                                                    <PencilIcon className="h-4 w-4" />
-                                                </Button>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleDeleteShare(share)}
-                                                    title="Revoke access"
-                                                    className="text-red-600 hover:text-red-700"
-                                                >
-                                                    <TrashIcon className="h-4 w-4" />
-                                                </Button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-
-                        {/* Pagination */}
-                        {pagination.totalPages > 1 && (
-                            <div className="bg-surface dark:bg-gray-800 px-4 py-3 border-t border-base dark:border-gray-700 sm:px-6">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex-1 flex justify-between sm:hidden">
-                                        <Button
-                                            variant="outline"
-                                            onClick={() => handlePageChange(pagination.page - 1)}
-                                            disabled={pagination.page === 1}
-                                        >
-                                            Previous
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            onClick={() => handlePageChange(pagination.page + 1)}
-                                            disabled={pagination.page === pagination.totalPages}
-                                        >
-                                            Next
-                                        </Button>
-                                    </div>
-                                    <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-                                        <div>
-                                            <p className="text-sm text-base-secondary dark:text-base-muted">
-                                                Showing{' '}
-                                                <span className="font-medium">
-                                                    {(pagination.page - 1) * pagination.pageSize + 1}
-                                                </span>{' '}
-                                                to{' '}
-                                                <span className="font-medium">
-                                                    {Math.min(pagination.page * pagination.pageSize, pagination.total)}
-                                                </span>{' '}
-                                                of <span className="font-medium">{pagination.total}</span> results
-                                            </p>
-                                        </div>
-                                        <div>
-                                            <nav className="relative z-0 inline-flex rounded-md shadow-xs -space-x-px">
-                                                <Button
-                                                    variant="outline"
-                                                    onClick={() => handlePageChange(pagination.page - 1)}
-                                                    disabled={pagination.page === 1}
-                                                    className="rounded-l-md"
-                                                >
-                                                    Previous
-                                                </Button>
-                                                {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
-                                                    const page = i + 1;
-                                                    return (
-                                                        <Button
-                                                            key={page}
-                                                            variant={pagination.page === page ? 'default' : 'outline'}
-                                                            onClick={() => handlePageChange(page)}
-                                                            className="rounded-none"
-                                                        >
-                                                            {page}
-                                                        </Button>
-                                                    );
-                                                })}
-                                                <Button
-                                                    variant="outline"
-                                                    onClick={() => handlePageChange(pagination.page + 1)}
-                                                    disabled={pagination.page === pagination.totalPages}
-                                                    className="rounded-r-md"
-                                                >
-                                                    Next
-                                                </Button>
-                                            </nav>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                ) : sharesContent}
             </div>
 
             <Modal
@@ -633,10 +635,11 @@ export const SharingManagementPage: React.FC = () => {
                         />
                     )}
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="edit-permission-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Permission
                         </label>
                         <Select
+                            id="edit-permission-select"
                             value={editPermission}
                             onChange={(e) => setEditPermission(e.target.value as 'read' | 'write')}
                             options={[
@@ -647,10 +650,11 @@ export const SharingManagementPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="edit-expiry-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Access expires
                         </label>
                         <Select
+                            id="edit-expiry-select"
                             value={editExpiry}
                             onChange={(e) => setEditExpiry(e.target.value)}
                             options={EDIT_EXPIRY_OPTIONS}

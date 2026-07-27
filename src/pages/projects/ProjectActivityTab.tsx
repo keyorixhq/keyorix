@@ -48,6 +48,132 @@ export const ProjectActivityTab: React.FC<ProjectActivityTabProps> = ({ projectI
     const events = data?.data ?? [];
     const totalPages = data?.totalPages ?? 1;
 
+    const loadingContent = (
+        <div className="p-6 space-y-3">
+            {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="flex items-center gap-3 animate-pulse">
+                    <div className="h-5 w-24 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                    <div className="h-3 flex-1 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                    <div className="h-3 w-16 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                </div>
+            ))}
+        </div>
+    );
+
+    const errorContent = (
+        <div className="p-6 text-center">
+            <p className="text-sm" style={{ color: 'var(--error)' }}>
+                Failed to load activity.
+            </p>
+        </div>
+    );
+
+    const emptyContent = (
+        <div className="p-10 text-center">
+            <DocumentTextIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+            <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                No activity yet
+            </p>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Events will appear here when secrets in this project are accessed or modified.
+            </p>
+        </div>
+    );
+
+    const tableContent = (
+        <>
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
+                    <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                        <tr>
+                            {['Event', 'Actor', 'Description', 'Time'].map((h) => (
+                                <th
+                                    key={h}
+                                    className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
+                                    {h}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                        {events.map((ev) => {
+                            const badge = badgeStyle(ev.event_type);
+                            return (
+                                <tr key={ev.id}>
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                        <span
+                                            className="text-xs font-medium px-2 py-0.5 rounded-full"
+                                            style={{ backgroundColor: badge.bg, color: badge.text }}
+                                        >
+                                            {ev.event_type}
+                                        </span>
+                                    </td>
+                                    <td
+                                        className="px-4 py-3 text-sm whitespace-nowrap"
+                                        style={{ color: 'var(--text-secondary)' }}
+                                    >
+                                        {ev.actor || '—'}
+                                    </td>
+                                    <td
+                                        className="px-4 py-3 text-sm max-w-xs truncate"
+                                        style={{ color: 'var(--text-secondary)' }}
+                                    >
+                                        {ev.description || '—'}
+                                    </td>
+                                    <td
+                                        className="px-4 py-3 text-xs whitespace-nowrap"
+                                        style={{ color: 'var(--text-muted)' }}
+                                    >
+                                        {relativeTime(ev.timestamp)}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+
+            {totalPages > 1 && (
+                <div
+                    className="px-4 py-3 border-t flex items-center justify-between"
+                    style={{ borderColor: 'var(--border)' }}
+                >
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        Page {page} of {totalPages}
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPage((p) => p - 1)}
+                            disabled={page === 1}
+                        >
+                            <ChevronLeftIcon className="h-4 w-4" />
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPage((p) => p + 1)}
+                            disabled={page === totalPages}
+                        >
+                            <ChevronRightIcon className="h-4 w-4" />
+                        </Button>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+
+    const bodyContent = isLoading
+        ? loadingContent
+        : isError
+            ? errorContent
+            : events.length === 0
+                ? emptyContent
+                : tableContent;
+
     return (
         <div>
             <div className="mb-4">
@@ -63,117 +189,7 @@ export const ProjectActivityTab: React.FC<ProjectActivityTabProps> = ({ projectI
                 className="rounded-lg border"
                 style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
             >
-                {isLoading ? (
-                    <div className="p-6 space-y-3">
-                        {[1, 2, 3, 4, 5].map((i) => (
-                            <div key={i} className="flex items-center gap-3 animate-pulse">
-                                <div className="h-5 w-24 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                                <div className="h-3 flex-1 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                                <div className="h-3 w-16 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                            </div>
-                        ))}
-                    </div>
-                ) : isError ? (
-                    <div className="p-6 text-center">
-                        <p className="text-sm" style={{ color: 'var(--error)' }}>
-                            Failed to load activity.
-                        </p>
-                    </div>
-                ) : events.length === 0 ? (
-                    <div className="p-10 text-center">
-                        <DocumentTextIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
-                        <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-                            No activity yet
-                        </p>
-                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            Events will appear here when secrets in this project are accessed or modified.
-                        </p>
-                    </div>
-                ) : (
-                    <>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
-                                <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                                    <tr>
-                                        {['Event', 'Actor', 'Description', 'Time'].map((h) => (
-                                            <th
-                                                key={h}
-                                                className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
-                                                style={{ color: 'var(--text-muted)' }}
-                                            >
-                                                {h}
-                                            </th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                                    {events.map((ev) => {
-                                        const badge = badgeStyle(ev.event_type);
-                                        return (
-                                            <tr key={ev.id}>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <span
-                                                        className="text-xs font-medium px-2 py-0.5 rounded-full"
-                                                        style={{ backgroundColor: badge.bg, color: badge.text }}
-                                                    >
-                                                        {ev.event_type}
-                                                    </span>
-                                                </td>
-                                                <td
-                                                    className="px-4 py-3 text-sm whitespace-nowrap"
-                                                    style={{ color: 'var(--text-secondary)' }}
-                                                >
-                                                    {ev.actor || '—'}
-                                                </td>
-                                                <td
-                                                    className="px-4 py-3 text-sm max-w-xs truncate"
-                                                    style={{ color: 'var(--text-secondary)' }}
-                                                >
-                                                    {ev.description || '—'}
-                                                </td>
-                                                <td
-                                                    className="px-4 py-3 text-xs whitespace-nowrap"
-                                                    style={{ color: 'var(--text-muted)' }}
-                                                >
-                                                    {relativeTime(ev.timestamp)}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {totalPages > 1 && (
-                            <div
-                                className="px-4 py-3 border-t flex items-center justify-between"
-                                style={{ borderColor: 'var(--border)' }}
-                            >
-                                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                    Page {page} of {totalPages}
-                                </p>
-                                <div className="flex items-center gap-2">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => setPage((p) => p - 1)}
-                                        disabled={page === 1}
-                                    >
-                                        <ChevronLeftIcon className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => setPage((p) => p + 1)}
-                                        disabled={page === totalPages}
-                                    >
-                                        <ChevronRightIcon className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
-                    </>
-                )}
+                {bodyContent}
             </div>
         </div>
     );

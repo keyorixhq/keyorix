@@ -7,7 +7,8 @@ function lastUsedLabel(iso?: string | null): string {
     if (!iso) return 'never used';
     const ms = Date.now() - new Date(iso).getTime();
     const days = Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
-    return days === 0 ? 'used today' : `used ${days} day${days === 1 ? '' : 's'} ago`;
+    const plural = days === 1 ? '' : 's';
+    return days === 0 ? 'used today' : `used ${days} day${plural} ago`;
 }
 
 /**
@@ -23,8 +24,10 @@ export const PATHygieneSection: React.FC = () => {
 
     if (dismissed || tokens.length === 0) return null;
 
-    const flag = (t: { expired: boolean; stale: boolean }) =>
-        t.expired && t.stale ? 'expired · stale' : t.expired ? 'expired' : 'stale';
+    const flag = (t: { expired: boolean; stale: boolean }) => {
+        const expiredLabel = t.expired ? 'expired' : 'stale';
+        return t.expired && t.stale ? 'expired · stale' : expiredLabel;
+    };
 
     return (
         <div

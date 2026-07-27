@@ -37,19 +37,19 @@ import { TransferOwnership } from './TransferOwnership';
 import { SecretDependenciesSection } from './SecretDependenciesSection';
 import { CertificatePanel } from './CertificatePanel';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
-import { RiskBand } from '../../types';
+import { RiskBand, Secret } from '../../types';
 import { copyToClipboard } from '../../utils';
 import { queryKeys } from '../../lib/queryClient';
-const formatDate = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
-const formatTime = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
-import { Secret } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Spinner, Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
 import { Textarea } from '../../components/ui/Textarea';
+
+const formatDate = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
+const formatTime = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 
 const relativeFromNow = (d: string | Date): string => {
     const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
@@ -87,7 +87,39 @@ const RISK_BAND_STYLE: Record<RiskBand, { label: string; color: string }> = {
     high: { label: 'High risk', color: '#ef4444' },
 };
 
-const factorColor = (score: number): string => (score >= 67 ? '#ef4444' : score >= 34 ? '#f59e0b' : '#10b981');
+const factorColor = (score: number): string => {
+    const mediumOrLow = score >= 34 ? '#f59e0b' : '#10b981';
+    return score >= 67 ? '#ef4444' : mediumOrLow;
+};
+
+const formatSecretValue = (value: string, type: string): string => {
+    if (type === 'json') {
+        try {
+            return JSON.stringify(JSON.parse(value), null, 2);
+        } catch {
+            return value;
+        }
+    }
+    return value;
+};
+
+const TYPE_COLORS: Record<string, string> = {
+    text: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+    password: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+    api_key: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+    certificate: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+    json: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+};
+
+const getTypeColor = (type: string): string => TYPE_COLORS[type] ?? TYPE_COLORS['text']!;
+
+const PERMISSION_COLORS: Record<string, string> = {
+    owner: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
+    write: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+};
+const DEFAULT_PERMISSION_COLOR = 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
+const getPermissionColor = (permission: string): string =>
+    PERMISSION_COLORS[permission] ?? DEFAULT_PERMISSION_COLOR;
 
 interface SecretDetailViewProps {
     secret: Secret;
@@ -215,27 +247,48 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
         setShowValue(!showValue);
     };
 
-    const formatSecretValue = (value: string, type: string) => {
-        if (type === 'json') {
-            try {
-                return JSON.stringify(JSON.parse(value), null, 2);
-            } catch {
-                return value;
-            }
-        }
-        return value;
-    };
+    const revealButtonContent = showValue ? (
+        <>
+            <EyeSlashIcon className="h-4 w-4 mr-2" />
+            Hide
+        </>
+    ) : (
+        <>
+            <EyeIcon className="h-4 w-4 mr-2" />
+            Reveal
+        </>
+    );
 
-    const getTypeColor = (type: string) => {
-        const colors = {
-            text: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-            password: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-            api_key: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-            certificate: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-            json: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-        };
-        return colors[type as keyof typeof colors] || colors.text;
-    };
+    const revealedValueContent = secretValue ? (
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
+            {secret.type === 'json' ? (
+                <pre className="text-sm font-mono text-gray-900 dark:text-white whitespace-pre-wrap overflow-x-auto">
+                    {formatSecretValue(secretValue, secret.type)}
+                </pre>
+            ) : (
+                <div className="text-sm font-mono text-gray-900 dark:text-white break-all">
+                    {secretValue}
+                </div>
+            )}
+        </div>
+    ) : null;
+
+    const loadingOrValue = isLoading ? (
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
+            <Loading />
+        </div>
+    ) : revealedValueContent;
+
+    const secretValueDisplay = !showValue ? (
+        <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4 text-center">
+            <div className="text-gray-400 dark:text-gray-500 mb-2">
+                <EyeSlashIcon className="h-8 w-8 mx-auto" />
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+                Secret value is hidden for security. Click "Reveal" to view.
+            </p>
+        </div>
+    ) : loadingOrValue;
 
     return (
         <div className="space-y-6">
@@ -376,17 +429,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                         >
                             {showValue && isLoading ? (
                                 <Spinner size="sm" />
-                            ) : showValue ? (
-                                <>
-                                    <EyeSlashIcon className="h-4 w-4 mr-2" />
-                                    Hide
-                                </>
-                            ) : (
-                                <>
-                                    <EyeIcon className="h-4 w-4 mr-2" />
-                                    Reveal
-                                </>
-                            )}
+                            ) : revealButtonContent}
                         </Button>
 
                         {showValue && secretValue && (
@@ -411,32 +454,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                     />
                 )}
 
-                {!showValue ? (
-                    <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4 text-center">
-                        <div className="text-gray-400 dark:text-gray-500 mb-2">
-                            <EyeSlashIcon className="h-8 w-8 mx-auto" />
-                        </div>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                            Secret value is hidden for security. Click "Reveal" to view.
-                        </p>
-                    </div>
-                ) : isLoading ? (
-                    <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
-                        <Loading />
-                    </div>
-                ) : secretValue ? (
-                    <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
-                        {secret.type === 'json' ? (
-                            <pre className="text-sm font-mono text-gray-900 dark:text-white whitespace-pre-wrap overflow-x-auto">
-                                {formatSecretValue(secretValue, secret.type)}
-                            </pre>
-                        ) : (
-                            <div className="text-sm font-mono text-gray-900 dark:text-white break-all">
-                                {secretValue}
-                            </div>
-                        )}
-                    </div>
-                ) : null}
+                {secretValueDisplay}
 
                 {copySuccess && (
                     <div className="mt-2">
@@ -513,13 +531,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                                     <span className="text-xs text-gray-500 dark:text-gray-400">{a.source}</span>
                                 </div>
                                 <span
-                                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                                        a.permission === 'owner'
-                                            ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300'
-                                            : a.permission === 'write'
-                                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-                                              : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                                    }`}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${getPermissionColor(a.permission)}`}
                                 >
                                     {a.permission}
                                 </span>
@@ -537,8 +549,8 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                         Reads of this secret in the last 30 days.
                     </p>
                     <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                        {accessLog.slice(0, 25).map((e, i) => (
-                            <div key={i} className="flex items-center justify-between py-2 text-sm">
+                        {accessLog.slice(0, 25).map((e) => (
+                            <div key={`${e.AccessedBy}-${e.AccessTime}-${e.Action}`} className="flex items-center justify-between py-2 text-sm">
                                 <div className="flex items-center gap-2 min-w-0">
                                     <UserIcon className="h-4 w-4 text-gray-400 shrink-0" />
                                     <span className="font-medium text-gray-900 dark:text-white">

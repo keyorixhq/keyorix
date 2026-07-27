@@ -32,7 +32,7 @@ function getTokenStatus(token: APIToken): 'active' | 'revoked' | 'expired' {
     return 'active';
 }
 
-function TokenStatusBadge({ status, isDark }: { status: 'active' | 'revoked' | 'expired'; isDark: boolean }) {
+function TokenStatusBadge({ status, isDark }: Readonly<{ status: 'active' | 'revoked' | 'expired'; isDark: boolean }>) {
     const styles: Record<string, React.CSSProperties> = {
         active: {
             backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7',
@@ -101,6 +101,152 @@ export const APITokensPage: React.FC = () => {
         );
     }
 
+    let mainContent: React.ReactNode;
+    if (saLoading || tokensLoading) {
+        mainContent = <Loading className="py-20" />;
+    } else if (saError) {
+        mainContent = (
+            <Alert
+                type="error"
+                title="Failed to load service accounts"
+                message="Check that the server is running and you have admin access."
+            />
+        );
+    } else if (flatTokens.length === 0) {
+        mainContent = (
+            <div className="text-center py-20 text-base-muted">
+                <CircleStackIcon className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                <p className="text-sm">No tokens found across any service accounts.</p>
+            </div>
+        );
+    } else {
+        mainContent = (
+            <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-xs">
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-base">
+                        <thead>
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                    Token ID
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                    Service Account
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                    Scope
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                    Created
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                    Expires
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                    Status
+                                </th>
+                                <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
+                                    Actions
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-base">
+                            {flatTokens.map((token) => {
+                                const status = getTokenStatus(token);
+                                const inactive = status === 'revoked' || status === 'expired';
+                                const isPending = pendingRevokeTokenId === token.id;
+                                const revokeButtonColor = inactive
+                                    ? 'var(--text-muted)'
+                                    : isDark
+                                      ? '#f87171'
+                                      : '#dc2626';
+                                return (
+                                    <tr key={token.id} className="hover:bg-subtle transition-colors">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-base-secondary">
+                                            #{token.id}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
+                                            {token.serviceAccountName}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {token.scope ? (
+                                                <span
+                                                    className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
+                                                    style={{
+                                                        backgroundColor: isDark
+                                                            ? 'rgba(59,130,246,0.15)'
+                                                            : '#eff6ff',
+                                                        color: isDark ? '#93c5fd' : '#1d4ed8',
+                                                    }}
+                                                >
+                                                    {token.scope}
+                                                </span>
+                                            ) : (
+                                                '—'
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
+                                            {formatDate(token.created_at)}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
+                                            {token.expires_at ? formatDate(token.expires_at) : '—'}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <TokenStatusBadge status={status} isDark={isDark} />
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                                            {isPending ? (
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <span className="text-xs text-base-muted">Revoke?</span>
+                                                    <Button
+                                                        variant="destructive"
+                                                        size="sm"
+                                                        onClick={() => handleRevokeToken(token.id)}
+                                                        disabled={revokeTokenMutation.isPending}
+                                                    >
+                                                        {revokeTokenMutation.isPending ? '…' : 'Revoke'}
+                                                    </Button>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => setPendingRevokeTokenId(null)}
+                                                    >
+                                                        Cancel
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setPendingRevokeTokenId(token.id)}
+                                                    disabled={inactive}
+                                                    className="text-xs font-medium px-2.5 py-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    style={{
+                                                        color: revokeButtonColor,
+                                                        backgroundColor: 'transparent',
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        if (!inactive)
+                                                            (e.currentTarget as HTMLElement).style.backgroundColor =
+                                                                isDark ? 'rgba(239,68,68,0.12)' : '#fee2e2';
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        (e.currentTarget as HTMLElement).style.backgroundColor =
+                                                            'transparent';
+                                                    }}
+                                                >
+                                                    Revoke
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="max-w-6xl mx-auto px-4 py-8">
             <div className="mb-6">
@@ -120,142 +266,7 @@ export const APITokensPage: React.FC = () => {
                 <Alert type="error" title={pageError} dismissible onDismiss={() => setPageError('')} className="mb-4" />
             )}
 
-            {saLoading || tokensLoading ? (
-                <Loading className="py-20" />
-            ) : saError ? (
-                <Alert
-                    type="error"
-                    title="Failed to load service accounts"
-                    message="Check that the server is running and you have admin access."
-                />
-            ) : flatTokens.length === 0 ? (
-                <div className="text-center py-20 text-base-muted">
-                    <CircleStackIcon className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                    <p className="text-sm">No tokens found across any service accounts.</p>
-                </div>
-            ) : (
-                <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-xs">
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-base">
-                            <thead>
-                                <tr>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                        Token ID
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                        Service Account
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                        Scope
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                        Created
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                        Expires
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                                        Status
-                                    </th>
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
-                                        Actions
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-base">
-                                {flatTokens.map((token) => {
-                                    const status = getTokenStatus(token);
-                                    const inactive = status === 'revoked' || status === 'expired';
-                                    const isPending = pendingRevokeTokenId === token.id;
-                                    return (
-                                        <tr key={token.id} className="hover:bg-subtle transition-colors">
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-base-secondary">
-                                                #{token.id}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
-                                                {token.serviceAccountName}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                {token.scope ? (
-                                                    <span
-                                                        className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
-                                                        style={{
-                                                            backgroundColor: isDark
-                                                                ? 'rgba(59,130,246,0.15)'
-                                                                : '#eff6ff',
-                                                            color: isDark ? '#93c5fd' : '#1d4ed8',
-                                                        }}
-                                                    >
-                                                        {token.scope}
-                                                    </span>
-                                                ) : (
-                                                    '—'
-                                                )}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                                {formatDate(token.created_at)}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                                {token.expires_at ? formatDate(token.expires_at) : '—'}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <TokenStatusBadge status={status} isDark={isDark} />
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                {isPending ? (
-                                                    <div className="flex items-center justify-end gap-2">
-                                                        <span className="text-xs text-base-muted">Revoke?</span>
-                                                        <Button
-                                                            variant="destructive"
-                                                            size="sm"
-                                                            onClick={() => handleRevokeToken(token.id)}
-                                                            disabled={revokeTokenMutation.isPending}
-                                                        >
-                                                            {revokeTokenMutation.isPending ? '…' : 'Revoke'}
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => setPendingRevokeTokenId(null)}
-                                                        >
-                                                            Cancel
-                                                        </Button>
-                                                    </div>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => setPendingRevokeTokenId(token.id)}
-                                                        disabled={inactive}
-                                                        className="text-xs font-medium px-2.5 py-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                                        style={{
-                                                            color: inactive
-                                                                ? 'var(--text-muted)'
-                                                                : isDark
-                                                                  ? '#f87171'
-                                                                  : '#dc2626',
-                                                            backgroundColor: 'transparent',
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            if (!inactive)
-                                                                (e.currentTarget as HTMLElement).style.backgroundColor =
-                                                                    isDark ? 'rgba(239,68,68,0.12)' : '#fee2e2';
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            (e.currentTarget as HTMLElement).style.backgroundColor =
-                                                                'transparent';
-                                                        }}
-                                                    >
-                                                        Revoke
-                                                    </button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
+            {mainContent}
         </div>
     );
 };

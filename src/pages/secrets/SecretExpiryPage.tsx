@@ -304,14 +304,9 @@ export function SecretExpiryPage() {
     const future = useMemo(() => withExpiry.filter((s) => daysRemaining(s.Expiration!) > 30), [withExpiry]);
 
     const tabSecrets = useMemo(() => {
-        const base =
-            tab === 'expired'
-                ? expired
-                : tab === 'soon'
-                  ? soon
-                  : tab === 'future'
-                    ? future
-                    : [...withExpiry].sort((a, b) => daysRemaining(a.Expiration!) - daysRemaining(b.Expiration!));
+        const allSorted = [...withExpiry].sort((a, b) => daysRemaining(a.Expiration!) - daysRemaining(b.Expiration!));
+        const nonExpiredBase = tab === 'future' ? future : allSorted;
+        const base = tab === 'expired' ? expired : tab === 'soon' ? soon : nonExpiredBase;
 
         if (!search.trim()) return base;
         const q = search.toLowerCase();
@@ -327,6 +322,7 @@ export function SecretExpiryPage() {
                     message="There was an error fetching secrets. Please try again."
                 >
                     <button
+                        type="button"
                         onClick={() => refetch()}
                         className="text-sm font-medium underline"
                         style={{ color: 'var(--accent-text)' }}

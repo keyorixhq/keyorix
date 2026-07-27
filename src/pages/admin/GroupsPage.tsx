@@ -312,10 +312,11 @@ export const GroupsPage: React.FC = () => {
                         placeholder="e.g. platform-team"
                     />
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="create-group-description" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <textarea
+                            id="create-group-description"
                             value={formData.description}
                             onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
                             rows={3}
@@ -355,10 +356,11 @@ export const GroupsPage: React.FC = () => {
                         onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
                     />
                     <div>
-                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label htmlFor="edit-group-description" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                             Description
                         </label>
                         <textarea
+                            id="edit-group-description"
                             value={formData.description}
                             onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
                             rows={3}
@@ -516,30 +518,36 @@ export const GroupsPage: React.FC = () => {
                     <div className="flex justify-center py-8">
                         <Spinner />
                     </div>
-                ) : (sharedSecrets ?? []).length === 0 ? (
-                    <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>
-                        No secrets are shared with this group.
-                    </p>
-                ) : (
-                    <ul className="space-y-1 max-h-[55vh] overflow-y-auto pr-1">
-                        {(sharedSecrets ?? []).map((s) => (
-                            <li
-                                key={s.id}
-                                className="flex items-center justify-between rounded-md px-3 py-2.5"
-                                style={{ backgroundColor: 'var(--bg-subtle)' }}
-                            >
-                                <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                                    {s.name}
-                                </span>
-                                {s.type && (
-                                    <span className="text-xs ml-3 shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                        {s.type}
+                ) : (() => {
+                    const secretsList = sharedSecrets ?? [];
+                    if (secretsList.length === 0) {
+                        return (
+                            <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>
+                                No secrets are shared with this group.
+                            </p>
+                        );
+                    }
+                    return (
+                        <ul className="space-y-1 max-h-[55vh] overflow-y-auto pr-1">
+                            {secretsList.map((s) => (
+                                <li
+                                    key={s.id}
+                                    className="flex items-center justify-between rounded-md px-3 py-2.5"
+                                    style={{ backgroundColor: 'var(--bg-subtle)' }}
+                                >
+                                    <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                        {s.name}
                                     </span>
-                                )}
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                                    {s.type && (
+                                        <span className="text-xs ml-3 shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                            {s.type}
+                                        </span>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    );
+                })()}
                 <div className="flex justify-end pt-4 mt-2 border-t" style={{ borderColor: 'var(--border)' }}>
                     <Button variant="secondary" onClick={() => setSecretsGroup(null)}>
                         Close

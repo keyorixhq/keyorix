@@ -48,7 +48,7 @@ const TABS = [
 function formatDate(value?: string | null): string {
     if (!value) return '—';
     const d = new Date(value);
-    return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 }
 
 // ── Basic Info ──────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ const BasicInfoTab: React.FC = () => {
     const [saved, setSaved] = useState(false);
     const updateProfile = useUpdateProfile();
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setSaved(false);
         updateProfile.mutate(
@@ -108,9 +108,9 @@ const BasicInfoTab: React.FC = () => {
             <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
 
             <div>
-                <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                <p className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                     Username
-                </label>
+                </p>
                 <div
                     className="text-sm px-3 py-2 rounded-md"
                     style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-app)' }}
@@ -142,7 +142,7 @@ const SecurityTab: React.FC = () => {
     const [done, setDone] = useState(false);
     const changePassword = useChangePassword();
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setLocalError('');
         setDone(false);
@@ -305,19 +305,22 @@ const SessionsTab: React.FC = () => {
 
 // ScopeChip renders a token's least-privilege restriction (ADR-042): a project or
 // environment confinement, or an allowed permission.
-const ScopeChip: React.FC<{ label: string; kind: 'project' | 'env' | 'perm' }> = ({ label, kind }) => (
-    <span
-        className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium"
-        style={{
-            fontFamily: kind === 'perm' ? 'var(--font-mono)' : undefined,
-            backgroundColor: kind === 'perm' ? 'var(--bg-subtle)' : 'var(--bg-app)',
-            color: 'var(--text-secondary)',
-            border: '1px solid var(--border)',
-        }}
-    >
-        {kind === 'project' ? `▣ ${label}` : kind === 'env' ? `⬢ ${label}` : label}
-    </span>
-);
+const ScopeChip: React.FC<{ label: string; kind: 'project' | 'env' | 'perm' }> = ({ label, kind }) => {
+    const chipLabel = kind === 'project' ? `▣ ${label}` : kind === 'env' ? `⬢ ${label}` : label;
+    return (
+        <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium"
+            style={{
+                fontFamily: kind === 'perm' ? 'var(--font-mono)' : undefined,
+                backgroundColor: kind === 'perm' ? 'var(--bg-subtle)' : 'var(--bg-app)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border)',
+            }}
+        >
+            {chipLabel}
+        </span>
+    );
+};
 
 const TokensTab: React.FC = () => {
     const { data: tokens, isLoading, isError } = usePersonalTokens();
@@ -362,7 +365,7 @@ const TokensTab: React.FC = () => {
         setShowCreate(true);
     };
 
-    const handleCreate = (e: React.FormEvent) => {
+    const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         const body = buildCreateTokenBody({
             name,
@@ -384,32 +387,18 @@ const TokensTab: React.FC = () => {
         setCopied(true);
     };
 
-    return (
-        <div className="space-y-4">
-            <div className="flex items-start justify-between">
-                <div>
-                    <h3 className="text-lg font-medium" style={{ color: 'var(--text-primary)' }}>
-                        Personal Access Tokens
-                    </h3>
-                    <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-                        Tokens authenticate API and CLI requests as you. By default they carry all of your permissions —
-                        restrict a token to least privilege when you create it.
-                    </p>
-                </div>
-                <Button size="sm" onClick={openCreate}>
-                    <PlusIcon className="h-4 w-4 mr-1.5" />
-                    New Token
-                </Button>
+    let tokenListContent: React.ReactNode;
+    if (isLoading) {
+        tokenListContent = (
+            <div className="flex justify-center py-10">
+                <Spinner />
             </div>
-
-            {isLoading ? (
-                <div className="flex justify-center py-10">
-                    <Spinner />
-                </div>
-            ) : isError ? (
-                <Alert type="error" title="Could not load tokens" message="Please try again." />
-            ) : (
-                <div className="space-y-3">
+        );
+    } else if (isError) {
+        tokenListContent = <Alert type="error" title="Could not load tokens" message="Please try again." />;
+    } else {
+        tokenListContent = (
+            <div className="space-y-3">
                     {(tokens || []).map((t: PersonalAccessToken) => (
                         <div
                             key={t.id}
@@ -481,7 +470,28 @@ const TokensTab: React.FC = () => {
                         </p>
                     )}
                 </div>
-            )}
+        );
+    }
+
+    return (
+        <div className="space-y-4">
+            <div className="flex items-start justify-between">
+                <div>
+                    <h3 className="text-lg font-medium" style={{ color: 'var(--text-primary)' }}>
+                        Personal Access Tokens
+                    </h3>
+                    <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+                        Tokens authenticate API and CLI requests as you. By default they carry all of your permissions —
+                        restrict a token to least privilege when you create it.
+                    </p>
+                </div>
+                <Button size="sm" onClick={openCreate}>
+                    <PlusIcon className="h-4 w-4 mr-1.5" />
+                    New Token
+                </Button>
+            </div>
+
+            {tokenListContent}
 
             <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="New Personal Access Token">
                 {newToken ? (
@@ -615,12 +625,14 @@ const TokensTab: React.FC = () => {
                                 />
                                 <div>
                                     <label
+                                        htmlFor="pat-project-scope"
                                         className="block text-sm font-medium mb-1"
                                         style={{ color: 'var(--text-primary)' }}
                                     >
                                         Project
                                     </label>
                                     <select
+                                        id="pat-project-scope"
                                         value={projectScope}
                                         onChange={(e) => {
                                             setProjectScope(Number(e.target.value));
@@ -644,12 +656,14 @@ const TokensTab: React.FC = () => {
                                 {projectScope > 0 && (
                                     <div>
                                         <label
+                                            htmlFor="pat-environment-scope"
                                             className="block text-sm font-medium mb-1"
                                             style={{ color: 'var(--text-primary)' }}
                                         >
                                             Environment
                                         </label>
                                         <select
+                                            id="pat-environment-scope"
                                             value={environmentScope}
                                             onChange={(e) => setEnvironmentScope(Number(e.target.value))}
                                             className="w-full rounded-md px-3 py-2 text-sm"
@@ -721,6 +735,7 @@ export const ProfilePage: React.FC = () => {
                         const active = activeTab === tab.id;
                         return (
                             <button
+                                type="button"
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
                                 className="flex items-center py-3 px-1 border-b-2 font-medium text-sm transition-colors"
