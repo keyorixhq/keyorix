@@ -28,6 +28,15 @@ type AnomalyDetector struct {
 	// Requiring sustained presence for `quarantine` before promotion raises the cost of
 	// that evasion from one pass to a sustained, repeatedly-observed presence.
 	quarantine time.Duration
+	// volumeMinCount overrides volumeSpikeMinCount when non-zero (ANOMALY-06).
+	volumeMinCount int
+	// cumulativeRateFloor is the dailyAvg ceiling below which the 24h cumulative rate
+	// rule applies (ANOMALY-06). Defaults to defaultCumulativeRateFloor when zero.
+	cumulativeRateFloor float64
+	// cumulativeRateMax is the maximum accesses in a 24h window before the
+	// cumulative_rate rule fires for low-traffic secrets (ANOMALY-06). Defaults to
+	// defaultCumulativeRateMax when zero.
+	cumulativeRateMax int
 }
 
 // minDetectionLookback is the floor for the per-pass scan window.
@@ -36,6 +45,18 @@ const minDetectionLookback = time.Hour
 // defaultBaselineQuarantine is how long a newly observed IP/user must have been present
 // before buildBaseline promotes it to "known" — see AnomalyDetector.quarantine.
 const defaultBaselineQuarantine = 24 * time.Hour
+
+const (
+	// defaultCumulativeRateFloor is the dailyAvg threshold below which the 24h
+	// cumulative rate rule applies. Secrets with a higher learnt rate already have
+	// enough traffic for the per-hour spike rule to work reliably.
+	defaultCumulativeRateFloor = 1.0
+	// defaultCumulativeRateMax is the absolute access count over a 24h rolling
+	// window that triggers a cumulative_rate alert for low-traffic secrets. An
+	// attacker reading 9 times/hour evades the per-hour floor (10) indefinitely,
+	// but crosses this 24h cumulative threshold in just over two hours.
+	defaultCumulativeRateMax = 20
+)
 
 // StorageInterface is satisfied by *storage.LocalStorage and *storage.RemoteStorage.
 type StorageInterface = interface {
@@ -67,6 +88,31 @@ func (d *AnomalyDetector) SetLookback(window time.Duration) {
 // the pre-#101 behaviour) — accepted as an explicit opt-out, not silently floored.
 func (d *AnomalyDetector) SetBaselineQuarantine(window time.Duration) {
 	d.quarantine = window
+}
+
+// SetVolumeMinCount overrides the absolute floor below which the per-hour volume spike
+// detector never fires (ANOMALY-06). Positive values only; non-positive is ignored.
+func (d *AnomalyDetector) SetVolumeMinCount(n int) {
+	if n > 0 {
+		d.volumeMinCount = n
+	}
+}
+
+// SetCumulativeRateFloor sets the dailyAvg threshold below which the 24h cumulative
+// rate rule applies (ANOMALY-06). Positive values only; non-positive is ignored.
+func (d *AnomalyDetector) SetCumulativeRateFloor(floor float64) {
+	if floor > 0 {
+		d.cumulativeRateFloor = floor
+	}
+}
+
+// SetCumulativeRateMax sets the maximum accesses in a 24h rolling window before the
+// cumulative_rate rule fires for low-traffic secrets (ANOMALY-06). Positive values
+// only; non-positive is ignored.
+func (d *AnomalyDetector) SetCumulativeRateMax(max int) {
+	if max > 0 {
+		d.cumulativeRateMax = max
+	}
 }
 
 // NewAnomalyDetector creates a new AnomalyDetector with the ML pass disabled, the
@@ -258,7 +304,25 @@ func (d *AnomalyDetector) detectOneSecretAnomalies(ctx context.Context, secret m
 	}
 	// Per-secret aggregate: a read-volume spike for the window vs. the learned baseline
 	// (one alert per secret per pass, not per access).
-	if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, now); alert != nil {
+	if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, d.effectiveVolumeMinCount(), now); alert != nil {
+		if err := d.storage.CreateAnomalyAlert(ctx, alert); err != nil {
+			failures++
+		}
+	}
+	// ANOMALY-06 cumulative rate rule: count accesses over the last 24h from
+	// baselineLogs (which covers 30 days) so we catch sustained low-rate exfiltration
+	// that stays below the per-hour floor on every individual pass.
+	window24h := now.Add(-24 * time.Hour)
+	logs24h := logsSince(baselineLogs, window24h)
+	// Also include any logs in the current detection window (recentLogs) that fall
+	// within the last 24h — the baseline query may exclude the live window on some
+	// storage implementations.
+	for _, lg := range recentLogs {
+		if !lg.AccessTime.Before(window24h) {
+			logs24h = append(logs24h, lg)
+		}
+	}
+	if alert := cumulativeRateAlert(secret, len(logs24h), baseline, d.effectiveCumulativeRateFloor(), d.effectiveCumulativeRateMax(), now); alert != nil {
 		if err := d.storage.CreateAnomalyAlert(ctx, alert); err != nil {
 			failures++
 		}
@@ -350,6 +414,27 @@ func logsBefore(logs []models.SecretAccessLog, t time.Time) []models.SecretAcces
 	return out
 }
 
+// logsSince returns the access logs whose AccessTime is at or after t, preserving
+// order. Used to compute a 24h rolling count from the already-fetched baseline slice
+// without an extra storage query.
+func logsSince(logs []models.SecretAccessLog, t time.Time) []models.SecretAccessLog {
+	out := make([]models.SecretAccessLog, 0, len(logs))
+	for _, lg := range logs {
+		if !lg.AccessTime.Before(t) {
+			out = append(out, lg)
+		}
+	}
+	return out
+}
+
+// baselineMinSeen is the minimum number of times an IP or user must appear in the
+// pre-quarantine baseline window before it is promoted to "known." A single occurrence
+// is not sufficient — an attacker can generate exactly one historical access and then
+// be treated as trusted on every subsequent pass. Requiring N distinct baseline
+// observations raises the cost of that poisoning attack from one access to a sustained,
+// repeatedly-observed presence spanning the full quarantine period.
+const baselineMinSeen = 3
+
 // buildBaseline computes the statistical baseline from historical access logs,
 // EXCLUDING the live detection window [windowStart, now]. The reads being evaluated
 // this pass must not seed their own baseline: the baseline query spans 30 days and
@@ -365,7 +450,15 @@ func logsBefore(logs []models.SecretAccessLog, t time.Time) []models.SecretAcces
 // stops triggering new_ip/new_user after a single successful access. Requiring an
 // access to predate `windowStart - quarantine`, not just `windowStart`, means an IP/user
 // must be observed continuously for the full quarantine period before it is trusted.
-// dailyAvg is unaffected by quarantine — it measures volume trend, not identity trust.
+//
+// ANOMALY-02: a single pre-quarantine access is no longer sufficient to promote an
+// IP/user to "known" — it must appear at least baselineMinSeen times. This prevents an
+// attacker from generating one carefully-timed historical access to permanently silence
+// the new_ip/new_user rules.
+//
+// dailyAvg counts only accesses that are OUTSIDE the quarantine window (older than
+// trustCutoff) to prevent warm-up accesses during quarantine from inflating the volume
+// baseline, which would in turn raise the spike threshold and blind the spike detector.
 func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time, quarantine time.Duration) accessBaseline {
 	b := accessBaseline{
 		knownIPs:   make(map[string]bool),
@@ -373,6 +466,13 @@ func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time, qu
 	}
 	sevenDaysAgo := now.Add(-7 * 24 * time.Hour)
 	trustCutoff := windowStart.Add(-quarantine)
+
+	// Count occurrences for each IP/user in the pre-quarantine window so we can
+	// apply the baselineMinSeen threshold before promoting to "known."
+	ipCount := make(map[string]int)
+	userCount := make(map[string]int)
+	// recentCount tracks daily volume for dailyAvg, counting only accesses that are
+	// outside the quarantine window to avoid inflating the spike baseline.
 	recentCount := 0
 
 	for _, log := range logs {
@@ -380,19 +480,36 @@ func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time, qu
 		if !log.AccessTime.Before(windowStart) {
 			continue
 		}
+		if !log.AccessTime.Before(trustCutoff) {
+			// Inside the quarantine window: count toward the frequency maps for threshold
+			// checking but do NOT yet promote to "known" — that happens after the loop once
+			// we know the full count.
+			continue
+		}
+		// Pre-quarantine access: count it for trust promotion and for dailyAvg.
+		if log.IPAddress != "" {
+			ipCount[log.IPAddress]++
+		}
+		if log.AccessedBy != "" {
+			userCount[log.AccessedBy]++
+		}
 		if log.AccessTime.After(sevenDaysAgo) {
 			recentCount++
 		}
-		if !log.AccessTime.Before(trustCutoff) {
-			continue // observed too recently to be trusted yet — still in quarantine
-		}
-		if log.IPAddress != "" {
-			b.knownIPs[log.IPAddress] = true
-		}
-		if log.AccessedBy != "" {
-			b.knownUsers[log.AccessedBy] = true
+	}
+
+	// Promote IPs/users that meet the minimum-seen threshold.
+	for ip, cnt := range ipCount {
+		if cnt >= baselineMinSeen {
+			b.knownIPs[ip] = true
 		}
 	}
+	for user, cnt := range userCount {
+		if cnt >= baselineMinSeen {
+			b.knownUsers[user] = true
+		}
+	}
+
 	b.dailyAvg = float64(recentCount) / 7.0
 	return b
 }
@@ -468,32 +585,72 @@ func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, basel
 }
 
 const (
-	// volumeSpikeMinCount is the absolute floor below which a burst is never flagged —
-	// avoids false positives on low-traffic secrets where a handful of reads dwarfs a
-	// near-zero baseline.
+	// volumeSpikeMinCount is the default absolute floor below which a burst is never
+	// flagged — avoids false positives on low-traffic secrets where a handful of reads
+	// dwarfs a near-zero baseline. Overridable per-deployment via AnomalyConfigRecord.
 	volumeSpikeMinCount = 10
 	// volumeSpikeMultiplier flags a window whose read count exceeds this many times the
 	// secret's learned hourly baseline.
 	volumeSpikeMultiplier = 3.0
 )
 
+// effectiveVolumeMinCount returns the configurable floor, falling back to the default.
+func (d *AnomalyDetector) effectiveVolumeMinCount() int {
+	if d.volumeMinCount > 0 {
+		return d.volumeMinCount
+	}
+	return volumeSpikeMinCount
+}
+
+// effectiveCumulativeRateFloor returns the configured floor, falling back to the default.
+func (d *AnomalyDetector) effectiveCumulativeRateFloor() float64 {
+	if d.cumulativeRateFloor > 0 {
+		return d.cumulativeRateFloor
+	}
+	return defaultCumulativeRateFloor
+}
+
+// effectiveCumulativeRateMax returns the configured max, falling back to the default.
+func (d *AnomalyDetector) effectiveCumulativeRateMax() int {
+	if d.cumulativeRateMax > 0 {
+		return d.cumulativeRateMax
+	}
+	return defaultCumulativeRateMax
+}
+
 // isVolumeSpike reports whether recentCount reads in the (one-hour) detection window
 // is anomalously high versus the secret's learned hourly baseline (dailyAvg / 24).
 // Requires both an absolute floor and a multiple of the baseline, so neither a quiet
 // secret seeing a few reads nor a busy secret at its normal rate is flagged.
-func isVolumeSpike(recentCount int, baseline accessBaseline) bool {
-	if recentCount < volumeSpikeMinCount {
+// minCount is the absolute floor (configurable via AnomalyDetector.volumeMinCount).
+func isVolumeSpike(recentCount int, baseline accessBaseline, minCount int) bool {
+	if recentCount < minCount {
 		return false
 	}
 	hourlyAvg := baseline.dailyAvg / 24.0
 	return float64(recentCount) > volumeSpikeMultiplier*hourlyAvg
 }
 
+// isCumulativeRateAnomaly reports whether the 24h rolling access count is anomalously
+// high for a secret whose learned daily average is below the configured floor. This
+// catches the sustained low-rate exfiltration pattern (e.g. 9 reads/hour) that the
+// per-hour spike floor misses: 9 reads/hour stays below volumeSpikeMinCount=10 per
+// pass, but accumulates to 216 reads in 24h — well above the cumulative threshold.
+//
+// The rule only applies when dailyAvg < rateFloor so it doesn't interfere with
+// high-traffic secrets that already have enough history for the per-hour spike rule.
+func isCumulativeRateAnomaly(count24h int, dailyAvg float64, rateFloor float64, rateMax int) bool {
+	if dailyAvg >= rateFloor {
+		return false // high-traffic secret: per-hour spike rule already covers it
+	}
+	return count24h > rateMax
+}
+
 // volumeSpikeAlert returns a frequency_spike alert when the window's read count is a
 // spike versus the baseline, or nil otherwise. The alert is a per-secret aggregate, so
 // it carries no single accessor/IP.
-func volumeSpikeAlert(secret models.SecretNode, recentCount int, baseline accessBaseline, now time.Time) *models.AnomalyAlert {
-	if !isVolumeSpike(recentCount, baseline) {
+func volumeSpikeAlert(secret models.SecretNode, recentCount int, baseline accessBaseline, minCount int, now time.Time) *models.AnomalyAlert {
+	if !isVolumeSpike(recentCount, baseline, minCount) {
 		return nil
 	}
 	return &models.AnomalyAlert{
@@ -503,6 +660,23 @@ func volumeSpikeAlert(secret models.SecretNode, recentCount int, baseline access
 		Severity:     "medium",
 		Description: fmt.Sprintf("Unusual access volume: %d reads in the last hour (baseline ~%.1f/hour)",
 			recentCount, baseline.dailyAvg/24.0),
+		DetectedAt: now,
+	}
+}
+
+// cumulativeRateAlert returns a cumulative_rate alert when the 24h access count is
+// anomalously high for a low-traffic secret, or nil otherwise.
+func cumulativeRateAlert(secret models.SecretNode, count24h int, baseline accessBaseline, rateFloor float64, rateMax int, now time.Time) *models.AnomalyAlert {
+	if !isCumulativeRateAnomaly(count24h, baseline.dailyAvg, rateFloor, rateMax) {
+		return nil
+	}
+	return &models.AnomalyAlert{
+		SecretNodeID: secret.ID,
+		SecretName:   secret.Name,
+		AlertType:    "cumulative_rate",
+		Severity:     "medium",
+		Description: fmt.Sprintf("Sustained access volume: %d reads in the last 24h for a low-traffic secret (baseline ~%.1f/day); possible slow-rate exfiltration",
+			count24h, baseline.dailyAvg),
 		DetectedAt: now,
 	}
 }

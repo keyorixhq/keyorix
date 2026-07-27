@@ -1287,8 +1287,23 @@ type AnomalyConfigRecord struct {
 	MLThreshold  float64 `json:"ml_threshold"`   // 0.5–1.0
 	MLNumTrees   int     `json:"ml_num_trees"`
 	MLSampleSize int     `json:"ml_sample_size"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	UpdatedBy    string    `json:"updated_by"` // username of last editor
+	// VolumeMinCount overrides the volumeSpikeMinCount absolute floor for the
+	// per-hour spike detector (default: 10 when zero). Setting it lower lets
+	// operators catch exfiltration on low-traffic secrets without accepting
+	// false positives on zero-baseline secrets at the default floor.
+	VolumeMinCount int `json:"volume_min_count"`
+	// CumulativeRateFloor is the maximum dailyAvg below which the 24h cumulative
+	// rate rule applies (default: 1.0 when zero). Secrets with a higher baseline
+	// rate are not subject to the absolute-count check — they already have enough
+	// history for the per-hour spike rule to work reliably.
+	CumulativeRateFloor float64 `json:"cumulative_rate_floor"`
+	// CumulativeRateMax is the maximum number of accesses in a 24h rolling window
+	// before the cumulative_rate rule fires for low-traffic secrets (default: 20
+	// when zero). An attacker reading 9 reads/hour over 3 hours evades the per-hour
+	// spike floor but crosses this cumulative threshold.
+	CumulativeRateMax int `json:"cumulative_rate_max"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	UpdatedBy         string    `json:"updated_by"` // username of last editor
 }
 
 // MachineIdentity is a non-human project member (ADR-023): a CI runner, a
