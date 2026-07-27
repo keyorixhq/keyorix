@@ -111,20 +111,19 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
     };
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
-            style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
-            onClick={(e) => {
-                if (e.target === e.currentTarget) onClose();
-            }}
-            onKeyDown={(e) => {
-                if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) onClose();
-            }}
-        >
-            <div
-                className="w-full max-w-xl rounded-xl shadow-2xl overflow-hidden"
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)' }}
-            >
+        <div className="fixed inset-0 z-50">
+            <button
+                type="button"
+                aria-label="Close search"
+                className="absolute inset-0 w-full h-full cursor-default"
+                style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+                onClick={onClose}
+            />
+            <div className="absolute inset-0 flex items-start justify-center pt-[15vh] pointer-events-none">
+                <div
+                    className="pointer-events-auto w-full max-w-xl rounded-xl shadow-2xl overflow-hidden"
+                    style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)' }}
+                >
                 {/* Input */}
                 <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
                     <MagnifyingGlassIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--text-muted)' }} />
@@ -226,6 +225,7 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                         </span>
                     </div>
                 )}
+                </div>
             </div>
         </div>
     );

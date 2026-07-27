@@ -47,11 +47,6 @@ interface StatCardProps {
     onClick?: () => void;
 }
 
-function buildStatCardKeyDown(onClick: (() => void) | undefined): React.KeyboardEventHandler<HTMLDivElement> | undefined {
-    if (!onClick) return undefined;
-    return (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); };
-}
-
 function buildStatCardClassName(onClick: (() => void) | undefined): string {
     const clickable = onClick ? 'cursor-pointer hover:shadow-md hover:border-base transition-all duration-150' : '';
     return `relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs ${clickable}`;
@@ -60,13 +55,9 @@ function buildStatCardClassName(onClick: (() => void) | undefined): string {
 const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue, accent, onClick }) => {
     const numericValue = typeof value === 'number' ? value : 0;
     const delta = trend && prevValue != null ? Math.round(numericValue - prevValue) : null;
-    return (
-        <div
-            tabIndex={onClick ? 0 : undefined}
-            onClick={onClick}
-            onKeyDown={buildStatCardKeyDown(onClick)}
-            className={buildStatCardClassName(onClick)}
-        >
+    const cardClass = buildStatCardClassName(onClick);
+    const cardContent = (
+        <>
             <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
             <span className="text-xs font-semibold text-base-muted uppercase tracking-widest pl-3">{label}</span>
             <span className="text-4xl font-bold text-base-primary pl-3 tabular-nums leading-none">
@@ -86,8 +77,12 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue
                 )}
                 {sub && <span className="text-xs text-base-muted">{sub}</span>}
             </div>
-        </div>
+        </>
     );
+    if (onClick) {
+        return <button type="button" onClick={onClick} className={cardClass}>{cardContent}</button>;
+    }
+    return <div className={cardClass}>{cardContent}</div>;
 };
 
 // FeaturePillProps removed — inline props used directly
@@ -194,15 +189,9 @@ const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, o
     const styles = getSignalCardStyles(severity, isDark);
     const valueColor = severity === 'neutral' ? 'var(--text-primary)' : (styles.color as string);
 
-    return (
-        <div
-            tabIndex={onClick ? 0 : undefined}
-            onClick={onClick}
-            onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); } : undefined}
-            className={`flex items-center justify-between px-4 py-3 rounded-lg border transition-all duration-100
-                ${onClick ? 'cursor-pointer hover:brightness-95' : ''}`}
-            style={styles}
-        >
+    const cardClass = `flex items-center justify-between px-4 py-3 rounded-lg border transition-all duration-100${onClick ? ' cursor-pointer hover:brightness-95' : ''}`;
+    const cardContent = (
+        <>
             <div>
                 <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
                 <p className="text-xs opacity-60 mt-0.5">{hint}</p>
@@ -210,8 +199,12 @@ const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, o
             <span className="text-2xl font-bold tabular-nums" style={{ color: valueColor }}>
                 {value}
             </span>
-        </div>
+        </>
     );
+    if (onClick) {
+        return <button type="button" onClick={onClick} className={cardClass} style={styles}>{cardContent}</button>;
+    }
+    return <div className={cardClass} style={styles}>{cardContent}</div>;
 };
 
 // ─── Main Page ───────────────────────────────────────────────────────────────

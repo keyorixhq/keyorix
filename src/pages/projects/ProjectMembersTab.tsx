@@ -355,12 +355,16 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                             return (
                                 <React.Fragment key={m.userId}>
                                     <li
-                                        tabIndex={0}
-                                        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-subtle transition-colors duration-75"
-                                        onClick={() => toggleMember(m.userId)}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleMember(m.userId); }}
+                                        className="relative hover:bg-subtle transition-colors duration-75"
                                         style={{ borderColor: 'var(--border)' }}
                                     >
+                                        <button
+                                            type="button"
+                                            className="absolute inset-0 cursor-pointer"
+                                            onClick={() => toggleMember(m.userId)}
+                                            aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${m.displayName || m.username || ''}`}
+                                        />
+                                        <div className="relative flex items-center gap-3 px-4 py-3 pointer-events-none">
                                         {/* Expand chevron */}
                                         <span className="text-base-muted text-xs select-none">
                                             {isExpanded ? '▾' : '▸'}
@@ -390,7 +394,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                                             }}
                                             onClick={(e) => e.stopPropagation()}
                                             disabled={updateRole.isPending}
-                                            className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0"
+                                            className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 pointer-events-auto"
                                             style={selectStyle}
                                         >
                                             {/* Include the current role even if it's outside the standard set (e.g. a custom or system role). */}
@@ -410,12 +414,13 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                                                 removeMember.mutate(m.userId);
                                             }}
                                             disabled={removeMember.isPending}
-                                            className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0"
+                                            className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0 pointer-events-auto"
                                             style={{ color: 'var(--error)' }}
                                             title="Remove from project"
                                         >
                                             <TrashIcon className="h-4 w-4" />
                                         </button>
+                                        </div>
                                     </li>
                                     {isExpanded && (
                                         <li className="border-t" style={{ borderColor: 'var(--border)' }}>
