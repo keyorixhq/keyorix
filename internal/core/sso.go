@@ -216,6 +216,9 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		c.syncSSORoles(ctx, p, user.ID, rawID)
 	}
 
+	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
+		return nil, nil, "", err
+	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, "", err
@@ -336,6 +339,9 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		}
 	}
 
+	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
+		return nil, nil, "", err
+	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, "", err

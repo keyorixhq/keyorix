@@ -37,6 +37,10 @@ func (h *AuditHandler) IngestAuditEventProxy(w http.ResponseWriter, r *http.Requ
 		sendError(w, "BadRequest", "invalid audit event body", http.StatusBadRequest, nil)
 		return
 	}
+	// Zero the ID so the hub's DB assigns it. A caller-supplied ID could forge a
+	// specific chain position, skip auto-increment sequences, or collide with an
+	// existing entry — all of which corrupt VerifyAuditChain.
+	event.ID = 0
 	if err := h.coreService.Storage().LogAuditEvent(r.Context(), &event); err != nil {
 		sendError(w, "InternalServerError", "failed to persist audit event", http.StatusInternalServerError, nil)
 		return
