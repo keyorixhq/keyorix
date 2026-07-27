@@ -87,6 +87,37 @@ function generateSecret(): string {
         .join('');
 }
 
+function filterSecretsForDisplay(secrets: any[], urlFilter: string | null): any[] {
+    if (urlFilter === 'expiring') {
+        return secrets.filter((s: any) => s.Expiration != null);
+    }
+    return secrets;
+}
+
+type ModalDefaults = {
+    editName: string;
+    editType: SecretType;
+    rotateValue: string;
+    arEnabled: boolean;
+    arLength: string;
+    arCharset: string;
+    arBackend: string;
+    arRef: string;
+};
+
+function buildModalDefaults(activeModal: string | null, secret: any): Partial<ModalDefaults> {
+    if (activeModal === 'edit-secret' && secret) {
+        return { editName: secret.name, editType: secret.type as SecretType, rotateValue: '' };
+    }
+    if (activeModal === 'rotate-secret') {
+        return { rotateValue: generateSecret() };
+    }
+    if (activeModal === 'auto-rotate') {
+        return { arEnabled: true, arLength: '', arCharset: '', arBackend: '', arRef: '' };
+    }
+    return {};
+}
+
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
     const bulkClassify = useBulkClassifySecrets();
@@ -102,8 +133,7 @@ export const SecretsListPage: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     const urlFilter = searchParams.get('filter'); // 'expiring' | null
-    const displayedSecrets =
-        urlFilter === 'expiring' ? list.secrets.filter((s: any) => s.Expiration != null) : list.secrets;
+    const displayedSecrets = filterSecretsForDisplay(list.secrets, urlFilter);
     const [viewingSecret, setViewingSecret] = React.useState<any>(null);
     const [createName, setCreateName] = React.useState('');
     const [createValue, setCreateValue] = React.useState('');
@@ -164,21 +194,16 @@ export const SecretsListPage: React.FC = () => {
     const autoRotate = useSetAutoRotate(list.modalData?.secret?.id ?? 0);
 
     React.useEffect(() => {
-        if (list.activeModal === 'edit-secret' && list.modalData?.secret) {
-            setEditName(list.modalData.secret.name);
-            setEditType(list.modalData.secret.type as SecretType);
-            setEditValue('');
-        }
-        if (list.activeModal === 'rotate-secret') {
-            setRotateValue(generateSecret());
-        }
-        if (list.activeModal === 'auto-rotate') {
-            setArEnabled(true);
-            setArLength('');
-            setArCharset('');
-            setArBackend('');
-            setArRef('');
-        }
+        const defaults = buildModalDefaults(list.activeModal, list.modalData?.secret ?? null);
+        if (defaults.editName !== undefined) setEditName(defaults.editName);
+        if (defaults.editType !== undefined) setEditType(defaults.editType);
+        if (defaults.rotateValue !== undefined) setRotateValue(defaults.rotateValue);
+        if (defaults.arEnabled !== undefined) setArEnabled(defaults.arEnabled);
+        if (defaults.arLength !== undefined) setArLength(defaults.arLength);
+        if (defaults.arCharset !== undefined) setArCharset(defaults.arCharset);
+        if (defaults.arBackend !== undefined) setArBackend(defaults.arBackend);
+        if (defaults.arRef !== undefined) setArRef(defaults.arRef);
+        if (list.activeModal === 'edit-secret' && list.modalData?.secret) setEditValue('');
     }, [list.activeModal, list.modalData]);
 
     const handleRotate = (secret: any) => {
@@ -189,7 +214,7 @@ export const SecretsListPage: React.FC = () => {
         list.openModal('auto-rotate', { secret });
     };
 
-    const submitAutoRotate = (e: React.FormEvent<HTMLFormElement>) => {
+    const submitAutoRotate = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         if ((arBackend === '') !== (arRef === '')) return; // both-or-neither (UI guard)
         autoRotate.mutate(

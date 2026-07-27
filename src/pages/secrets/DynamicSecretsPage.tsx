@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, SubmitEvent } from 'react';
 import { BoltIcon, PlusIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -223,7 +223,7 @@ const CreateConfigModal: React.FC<{
 
     const cloud = isCloudBackend(backendType);
 
-    const submit = (e: React.FormEvent<HTMLFormElement>) => {
+    const submit = (e: SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         if (!name.trim() || !adminDsn.trim()) {
             setError(

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { SubmitEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
     PlusIcon,
@@ -188,7 +188,7 @@ export function RotationPoliciesPage() {
         resetForm();
     }
 
-    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
         e.preventDefault();
         setFError('');
 

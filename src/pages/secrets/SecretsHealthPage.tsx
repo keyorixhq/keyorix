@@ -335,8 +335,9 @@ interface AccessCardContentProps {
 }
 
 const AccessCardContent: React.FC<AccessCardContentProps> = ({ access, isDark, onFailedAuthClick }) => {
-    const failedAuthDot: StatRowProps['dot'] =
-        access.failedAuth24h === 0 ? 'green' : access.failedAuth24h >= 5 ? 'red' : 'amber';
+    let failedAuthDot: StatRowProps['dot'] = 'amber';
+    if (access.failedAuth24h === 0) failedAuthDot = 'green';
+    else if (access.failedAuth24h >= 5) failedAuthDot = 'red';
 
     return (
         <>
@@ -353,9 +354,8 @@ const AccessCardContent: React.FC<AccessCardContentProps> = ({ access, isDark, o
             />
 
             {access.failedAuth24h >= 5 && (
-                <div
-                    role="button"
-                    tabIndex={0}
+                <button
+                    type="button"
                     className="mt-4 flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium cursor-pointer"
                     style={{
                         backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fee2e2',
@@ -363,12 +363,11 @@ const AccessCardContent: React.FC<AccessCardContentProps> = ({ access, isDark, o
                         color: isDark ? '#f87171' : '#991b1b',
                     }}
                     onClick={onFailedAuthClick}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onFailedAuthClick(); }}
                 >
                     <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
                     High number of failed auth attempts. Review audit log for potential brute-force
                     activity.
-                </div>
+                </button>
             )}
         </>
     );
