@@ -99,7 +99,7 @@ func migrateSessions(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun boo
 		return nil
 	}
 	for _, session := range sessions {
-		enc, meta, err := authEnc.EncryptSessionToken(session.SessionToken)
+		enc, meta, err := authEnc.EncryptSessionToken(session.SessionToken, session.UserID)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt session token for session %d: %w", session.ID, err)
 		}
@@ -126,7 +126,11 @@ func migrateAPITokens(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun bo
 		return nil
 	}
 	for _, token := range tokens {
-		enc, meta, err := authEnc.EncryptAPIToken(token.Token)
+		var migrateTokenUserID uint
+		if token.UserID != nil {
+			migrateTokenUserID = *token.UserID
+		}
+		enc, meta, err := authEnc.EncryptAPIToken(token.Token, migrateTokenUserID)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt API token %d: %w", token.ID, err)
 		}
@@ -153,7 +157,7 @@ func migratePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption,
 		return nil
 	}
 	for _, reset := range resets {
-		enc, meta, err := authEnc.EncryptPasswordResetToken(reset.Token)
+		enc, meta, err := authEnc.EncryptPasswordResetToken(reset.Token, reset.UserID)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt password reset token %d: %w", reset.ID, err)
 		}

@@ -99,7 +99,7 @@ func TestAuthEncryption_SessionToken(t *testing.T) {
 	sessionToken := "session-token-abc123def456"
 
 	// Encrypt session token
-	encryptedData, metadata, err := authEnc.EncryptSessionToken(sessionToken)
+	encryptedData, metadata, err := authEnc.EncryptSessionToken(sessionToken, uint(1))
 	require.NoError(t, err)
 	assert.NotEmpty(t, encryptedData)
 
@@ -109,7 +109,7 @@ func TestAuthEncryption_SessionToken(t *testing.T) {
 	}
 
 	// Decrypt session token
-	decryptedToken, err := authEnc.DecryptSessionToken(encryptedData, metadata)
+	decryptedToken, err := authEnc.DecryptSessionToken(encryptedData, metadata, uint(1))
 	require.NoError(t, err)
 	assert.Equal(t, sessionToken, decryptedToken)
 }
@@ -121,7 +121,7 @@ func TestAuthEncryption_APIToken(t *testing.T) {
 	apiToken := "api-token-xyz789uvw012"
 
 	// Encrypt API token
-	encryptedData, metadata, err := authEnc.EncryptAPIToken(apiToken)
+	encryptedData, metadata, err := authEnc.EncryptAPIToken(apiToken, uint(1))
 	require.NoError(t, err)
 	assert.NotEmpty(t, encryptedData)
 
@@ -131,7 +131,7 @@ func TestAuthEncryption_APIToken(t *testing.T) {
 	}
 
 	// Decrypt API token
-	decryptedToken, err := authEnc.DecryptAPIToken(encryptedData, metadata)
+	decryptedToken, err := authEnc.DecryptAPIToken(encryptedData, metadata, uint(1))
 	require.NoError(t, err)
 	assert.Equal(t, apiToken, decryptedToken)
 }
@@ -143,7 +143,7 @@ func TestAuthEncryption_PasswordResetToken(t *testing.T) {
 	resetToken := "password-reset-token-mno345pqr678"
 
 	// Encrypt password reset token
-	encryptedData, metadata, err := authEnc.EncryptPasswordResetToken(resetToken)
+	encryptedData, metadata, err := authEnc.EncryptPasswordResetToken(resetToken, uint(1))
 	require.NoError(t, err)
 	assert.NotEmpty(t, encryptedData)
 
@@ -153,7 +153,7 @@ func TestAuthEncryption_PasswordResetToken(t *testing.T) {
 	}
 
 	// Decrypt password reset token
-	decryptedToken, err := authEnc.DecryptPasswordResetToken(encryptedData, metadata)
+	decryptedToken, err := authEnc.DecryptPasswordResetToken(encryptedData, metadata, uint(1))
 	require.NoError(t, err)
 	assert.Equal(t, resetToken, decryptedToken)
 }
@@ -239,16 +239,16 @@ func TestAuthEncryption_ValidateEncryptedToken(t *testing.T) {
 	originalToken := "test-validation-token"
 
 	// Encrypt token
-	encryptedData, metadata, err := authEnc.EncryptSessionToken(originalToken)
+	encryptedData, metadata, err := authEnc.EncryptSessionToken(originalToken, uint(1))
 	require.NoError(t, err)
 
 	// Test valid token
-	isValid, err := authEnc.ValidateEncryptedToken(encryptedData, metadata, originalToken)
+	isValid, err := authEnc.ValidateEncryptedToken(encryptedData, metadata, originalToken, uint(1))
 	require.NoError(t, err)
 	assert.True(t, isValid)
 
 	// Test invalid token
-	isValid, err = authEnc.ValidateEncryptedToken(encryptedData, metadata, "wrong-token")
+	isValid, err = authEnc.ValidateEncryptedToken(encryptedData, metadata, "wrong-token", uint(1))
 	require.NoError(t, err)
 	assert.False(t, isValid)
 }
