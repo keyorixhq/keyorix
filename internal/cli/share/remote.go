@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -39,6 +40,36 @@ func runListRemote(rc *common.RemoteClient, secretID uint) error {
 			formatShareExpiry(share.ExpiresAt))
 	}
 	_ = w.Flush() // #nosec G104
+	return nil
+}
+
+func runRevokeRemote(rc *common.RemoteClient, shareID uint) error {
+	if err := rc.Delete(context.Background(), fmt.Sprintf("/api/v1/shares/%d", shareID)); err != nil {
+		return fmt.Errorf("failed to revoke share: %w", err)
+	}
+	fmt.Printf("Share revoked successfully!\n")
+	fmt.Printf("Share ID: %d\n", shareID)
+	return nil
+}
+
+func runUpdateRemote(rc *common.RemoteClient, shareID uint, permission string, expiresAt *time.Time, clearExpiry bool) error {
+	body := struct {
+		Permission  string     `json:"permission"`
+		ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+		ClearExpiry bool       `json:"clear_expiry,omitempty"`
+	}{
+		Permission:  permission,
+		ExpiresAt:   expiresAt,
+		ClearExpiry: clearExpiry,
+	}
+	var resp models.ShareRecord
+	if err := rc.Put(context.Background(), fmt.Sprintf("/api/v1/shares/%d", shareID), body, &resp); err != nil {
+		return fmt.Errorf("failed to update share permission: %w", err)
+	}
+	fmt.Printf("Share permission updated successfully!\n")
+	fmt.Printf("Share ID: %d\n", resp.ID)
+	fmt.Printf("Permission: %s\n", resp.Permission)
+	fmt.Printf("Expires At: %s\n", formatShareExpiry(resp.ExpiresAt))
 	return nil
 }
 

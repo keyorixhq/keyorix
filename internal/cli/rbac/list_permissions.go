@@ -49,13 +49,6 @@ func runListPermissions(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Permissions for user '%s':\n", listPermissionsUserEmail)
-
-	// Group permissions by resource
-	resourceMap := make(map[string][]interface{})
-	for _, perm := range permissions {
-		resourceMap["permissions"] = append(resourceMap["permissions"], perm)
-	}
-
 	for _, perm := range permissions {
 		fmt.Printf("  - Permission: %+v\n", perm)
 	}

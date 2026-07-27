@@ -37,7 +37,7 @@ func TestRunListRemote_ResolvesProjectScope(t *testing.T) {
 	t.Setenv("KEYORIX_PROJECT", "")
 
 	listProjectName, listLimit, listOffset, listEnv, listFormat = "web", 50, 0, 0, "table"
-	t.Cleanup(func() { listProjectName, listLimit, listOffset, listEnv, listFormat = "", 0, 0, 0, "" })
+	t.Cleanup(func() { listProjectName, listLimit, listOffset, listEnv, listFormat = "", 0, 0, 0, "table" })
 
 	rc, ok := common.NewRemoteClient()
 	require.True(t, ok)

@@ -111,7 +111,7 @@ func TestRunList_RemoteMode(t *testing.T) {
 	listEnv = 0
 	listLimit = 50
 	listOffset = 0
-	listFormat = "table" // must be set; TestRunListRemote_ResolvesProjectScope leaves it ""
+	listFormat = "table"
 
 	require.NoError(t, runList(nil, nil))
 	assert.Equal(t, "/api/v1/secrets", gotPath)
