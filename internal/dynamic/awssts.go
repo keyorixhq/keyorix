@@ -96,11 +96,19 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	if strings.TrimSpace(cfg.RoleARN) == "" {
 		return Credential{}, "", fmt.Errorf("aws-sts: role_arn is required")
 	}
-	if cfg.AllowedAccountID != "" {
-		gotAccount := arnAccountID(cfg.RoleARN)
-		if gotAccount != cfg.AllowedAccountID {
-			return Credential{}, "", fmt.Errorf("aws-sts: role ARN account ID %q does not match allowed_account_id %q", gotAccount, cfg.AllowedAccountID)
+	// Always enforce account-ID pinning: derive from the ARN when not set explicitly
+	// so a config without allowed_account_id still rejects cross-account role ARNs
+	// that may be injected through a config update (DYN-003).
+	if cfg.AllowedAccountID == "" {
+		derived := arnAccountID(cfg.RoleARN)
+		if derived == "" {
+			return Credential{}, "", fmt.Errorf("aws-sts: role_arn %q does not contain a recognisable AWS account ID; set allowed_account_id explicitly", cfg.RoleARN)
 		}
+		cfg.AllowedAccountID = derived
+	}
+	gotAccount := arnAccountID(cfg.RoleARN)
+	if gotAccount != cfg.AllowedAccountID {
+		return Credential{}, "", fmt.Errorf("aws-sts: role ARN account ID %q does not match allowed_account_id %q", gotAccount, cfg.AllowedAccountID)
 	}
 
 	duration := cfg.DurationSeconds

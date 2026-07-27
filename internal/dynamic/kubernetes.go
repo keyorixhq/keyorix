@@ -54,6 +54,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -106,6 +107,9 @@ type k8sConfig struct {
 	Namespace      string   `json:"namespace"`
 	ServiceAccount string   `json:"service_account"`
 	Audiences      []string `json:"audiences,omitempty"`
+	// AllowedNamespaces, when non-empty, restricts which namespaces a lease may
+	// target (DYN-004). If empty, any namespace in the cluster is permitted.
+	AllowedNamespaces []string `json:"allowed_namespaces,omitempty"`
 	// Revocable opts this config into bound-token revocation (see the file
 	// header): Issue creates a dedicated per-lease Secret and binds the token to
 	// it, so Revoke can delete that Secret to invalidate the token early. Default
@@ -130,6 +134,9 @@ func (e *KubernetesEngine) Issue(ctx context.Context, adminDSN, _ string, ttl ti
 	}
 	if strings.TrimSpace(cfg.ServiceAccount) == "" {
 		return Credential{}, "", fmt.Errorf("kubernetes: service_account is required")
+	}
+	if len(cfg.AllowedNamespaces) > 0 && !slices.Contains(cfg.AllowedNamespaces, cfg.Namespace) {
+		return Credential{}, "", fmt.Errorf("kubernetes: namespace %q is not in the allowed_namespaces list", cfg.Namespace)
 	}
 
 	expiration := ttl
