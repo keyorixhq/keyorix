@@ -1022,7 +1022,8 @@ func TestUpdateAccessReviewItemProxy_HappyPath_S26(t *testing.T) {
 		"principal_id":   1,
 		"principal_type": "user",
 		"decision":       "attest",
-		"decided_by":     1,
+		// decided_by must differ from principal_id (ARC-005: no self-certification).
+		"decided_by": 2,
 	})
 	req := withChiParam_S25(
 		httptest.NewRequest(http.MethodPut,

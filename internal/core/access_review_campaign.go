@@ -130,6 +130,17 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, pro
 	return &CampaignWithProgress{Campaign: campaign, Progress: CampaignProgress{Total: len(items), Pending: len(items)}}, nil
 }
 
+// AuditCampaignCreated emits the campaign_opened audit event on behalf of a
+// proxy caller (e.g. CreateAccessReviewCampaignProxy) that already ran the
+// OpenAccessReviewCampaign business logic on the downstream server and only
+// persisted the raw campaign row here. The proxy calls this after a successful
+// CreateAccessReviewCampaign storage write to keep the upstream audit trail
+// consistent with the human-facing OpenAccessReviewCampaign path.
+func (c *KeyorixCore) AuditCampaignCreated(ctx context.Context, actorID, projectID, campaignID uint, name string, itemCount int) {
+	c.auditProjectScoped(ctx, EventCampaignOpened, actorID, projectID,
+		fmt.Sprintf("opened access-review campaign %d (%q) with %d item(s) [via proxy]", campaignID, name, itemCount))
+}
+
 // ListAccessReviewCampaigns returns the project's campaigns, newest first, each
 // with its decision tally.
 func (c *KeyorixCore) ListAccessReviewCampaigns(ctx context.Context, projectID uint) ([]*CampaignWithProgress, error) {
@@ -220,6 +231,17 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	}
 	if item.PrincipalType == "group" && c.userInGroup(ctx, actorID, item.PrincipalID) {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
+	}
+	// ARC-001: a machine identity provisioned by the actor must not be self-certified
+	// by its creator. Fail closed on lookup error (can't prove independence → deny).
+	if item.PrincipalType == "machine" {
+		machine, err := c.storage.GetMachineIdentity(ctx, item.PrincipalID)
+		if err != nil {
+			return fmt.Errorf("loading machine identity: %w", err)
+		}
+		if machine.CreatedBy == actorID {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
+		}
 	}
 
 	decision := AccessReviewDecision{
@@ -319,6 +341,23 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, pr
 	progress := tallyProgress(items)
 	if progress.Pending > 0 && !force {
 		return nil, fmt.Errorf("%s: %d item(s) still pending — decide them or close with force", i18n.T("ErrorValidation", nil), progress.Pending)
+	}
+	// ARC-002: even a forced close must not let the actor suppress their own
+	// undecided access item — that would allow the closer to silently freeze a
+	// campaign before an independent reviewer could decide on their grant.
+	// Mirror the DecideAccessReviewItem independence check: fail closed on lookup.
+	if force && progress.Pending > 0 {
+		for _, it := range items {
+			if it.Decision != ReviewItemPending {
+				continue
+			}
+			if it.PrincipalType == "user" && it.PrincipalID == actorID {
+				return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while your own access item is still pending; an independent reviewer must decide it first")
+			}
+			if it.PrincipalType == "group" && c.userInGroup(ctx, actorID, it.PrincipalID) {
+				return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
+			}
+		}
 	}
 	now := c.now()
 	campaign.State = CampaignStateClosed
