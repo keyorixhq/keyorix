@@ -1318,7 +1318,7 @@ func TestRunAssignRoleRemote_RoleFetchError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to list roles")
 }
 
-// ── runAssignRoleToGroupRemote group/role error paths ─────────��───────────────
+// ── runAssignRoleToGroupRemote group/role error paths ──────────────────────────
 
 // TestRunAssignRoleToGroupRemote_GroupError verifies group resolution error.
 func TestRunAssignRoleToGroupRemote_GroupError(t *testing.T) {

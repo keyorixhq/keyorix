@@ -101,6 +101,9 @@ func TestAdminAccountTransitions(t *testing.T) {
 			})).Return(nil)
 			// Every state change evicts the user's cached session tokens from the auth cache.
 			store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
+			// Every state change also evicts PAT hashes for immediate cache invalidation
+			// (#r125-H2: password_reset_required previously skipped PAT eviction).
+			store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
 			// A login-blocking transition (suspend) must purge the user's sessions AND PATs.
 			if AccountLoginBlocked(tc.wantState) {
 				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)
@@ -235,5 +238,40 @@ func TestChangePassword_ClearsRestriction(t *testing.T) {
 
 	err := c.ChangePassword(ctx, 1, "oldpassword", "Brandnew#Passw0rd!", "tok")
 	require.NoError(t, err)
+	store.AssertExpectations(t)
+}
+
+// TestRequirePasswordReset_EvictsPATCache verifies that RequirePasswordReset evicts
+// PAT token hashes from the auth cache, not only session hashes (#r125-H2). Without
+// this eviction, a cached PAT request would bypass the password_reset_required
+// restriction for up to validTokenTTL (30 s) — the cache fast-path returns the
+// old, unrestricted identity without re-reading the DB.
+func TestRequirePasswordReset_EvictsPATCache(t *testing.T) {
+	store := new(MockStorage)
+	c := newAccountCore(store)
+	ctx := context.Background()
+
+	const userID = uint(5)
+	patHash := "sha256-pat-hash-abc"
+
+	// LockUserForUpdate delegates to GetUser inside the mock.
+	store.On("GetUser", ctx, userID).Return(&models.User{ID: userID, AccountState: AccountActive}, nil)
+	store.On("ListSessionTokenHashesForUser", ctx, userID).Return([]string{}, nil)
+	store.On("ListPersonalAccessTokensByUser", ctx, userID).Return([]*models.PersonalAccessToken{
+		{ID: 1, UserID: userID, TokenHash: patHash, Revoked: false},
+	}, nil)
+	store.On("SetAccountState", ctx, userID, AccountPasswordResetRequired, mock.Anything).Return(nil)
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == "account.password_reset_required"
+	})).Return(nil)
+
+	var evicted []string
+	c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
+	require.NoError(t, c.RequirePasswordReset(ctx, 1, userID))
+
+	// The PAT hash must have been evicted so the next PAT request re-reads the DB
+	// and observes the new password_reset_required restriction.
+	assert.Contains(t, evicted, patHash, "RequirePasswordReset must evict PAT hashes from auth cache")
 	store.AssertExpectations(t)
 }

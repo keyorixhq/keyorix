@@ -139,6 +139,7 @@ func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
 	stubAdminRoleLookups(store, ctx)
 	// Inviter 9 holds only a non-admin role (id 6) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 
 	// Inviting as project_admin → refused before any invitation is created.
 	_, err := c.InviteToProject(ctx, 1, "a@b.io", "project_admin", 9)
@@ -167,6 +168,7 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 	stubAdminRoleLookups(store, ctx)
 	// Approver 9 holds only a non-admin role (id 6) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 
 	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "admin")
 	require.Error(t, err)
@@ -189,6 +191,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	stubAdminRoleLookups(store, ctx)
 	// Approver 9 holds the admin role (id 2) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{2}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(2), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)

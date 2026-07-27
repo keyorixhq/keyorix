@@ -38,6 +38,7 @@ func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint) {
 		&models.AuditEvent{},
 		&models.SecretAccessLog{},
 		&models.ShareRecord{},
+		&models.SecretACL{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -204,6 +205,7 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 		&models.AuditEvent{},
 		&models.SecretAccessLog{},
 		&models.ShareRecord{},
+		&models.SecretACL{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -241,7 +243,7 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 	require.NoError(t, err)
 
 	// Exactly one deleted (the one in project 1).
-	assert.Len(t, result.Deleted, 1, "only the in-scope secret should be deleted")
+	require.Len(t, result.Deleted, 1, "only the in-scope secret should be deleted")
 	assert.Equal(t, secretInProj1.ID, result.Deleted[0])
 
 	// Exactly one failure: the cross-project secret.

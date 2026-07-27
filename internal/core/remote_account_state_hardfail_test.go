@@ -34,6 +34,8 @@ func TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState(t *testing.T)
 
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, AccountState: AccountActive}, nil)
 	store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
+	// H-2: ListPersonalAccessTokensByUser is called before SetAccountState.
+	store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)
 	store.On("SetAccountState", ctx, uint(2), AccountSuspended, mock.Anything).Return(errRemoteAccountState)
 
 	err := c.SuspendUser(ctx, 1, 2)

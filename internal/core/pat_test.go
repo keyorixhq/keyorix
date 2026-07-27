@@ -188,3 +188,36 @@ func TestRevokeOwnPAT(t *testing.T) {
 		ms.AssertNotCalled(t, "RevokePersonalAccessToken", mock.Anything, mock.Anything)
 	})
 }
+
+// TestDecodePATScopes covers the three branches: empty → nil (unrestricted),
+// valid JSON → parsed list, and corrupted JSON → patScopeCorrupted sentinel
+// (fail-closed, #r124-M).
+func TestDecodePATScopes(t *testing.T) {
+	t.Run("empty string returns nil (unrestricted)", func(t *testing.T) {
+		assert.Nil(t, DecodePATScopes(""))
+	})
+	t.Run("whitespace-only treated as empty", func(t *testing.T) {
+		assert.Nil(t, DecodePATScopes("   "))
+	})
+	t.Run("valid JSON array returns scopes", func(t *testing.T) {
+		scopes := DecodePATScopes(`["secrets.read","secrets.write"]`)
+		assert.Equal(t, []string{"secrets.read", "secrets.write"}, scopes)
+	})
+	t.Run("corrupted JSON returns sentinel not nil (fail-closed)", func(t *testing.T) {
+		got := DecodePATScopes(`{bad json}`)
+		assert.Equal(t, patScopeCorrupted, got,
+			"a corrupted scope column must fail CLOSED (sentinel), not return nil (unrestricted)")
+	})
+	t.Run("sentinel is never matched by any real permission string", func(t *testing.T) {
+		sentinel := patScopeCorrupted
+		for _, real := range []string{"secrets.read", "secrets.write", "secrets.delete", "system.read", "system.write"} {
+			found := false
+			for _, s := range sentinel {
+				if s == real {
+					found = true
+				}
+			}
+			assert.False(t, found, "sentinel must not overlap any real permission: %q", real)
+		}
+	})
+}
