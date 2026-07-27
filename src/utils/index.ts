@@ -206,13 +206,10 @@ export const url = {
     /**
      * Parses query parameters from current URL
      */
-    getQueryParams: (): Record<string, string> => {
-        const params = new URLSearchParams(window.location.search);
-        const result = Object.create(null) as Record<string, string>;
-        params.forEach((value, key) => {
-            result[key] = value;
-        });
-        return result;
+    getQueryParams: (): Map<string, string> => {
+        // Map has no prototype surface, so user-supplied URL param keys
+        // cannot cause property injection (CodeQL js/remote-property-injection).
+        return new Map(new URLSearchParams(window.location.search));
     },
 };
 
