@@ -23,6 +23,7 @@ describe('Alert', () => {
         rerender(<Alert type="error" title="ok" />);
         rerender(<Alert type="warning" title="ok" />);
         rerender(<Alert type="info" title="ok" />);
+        expect(screen.getByText('ok')).toBeInTheDocument();
     });
 
     it('shows a dismiss button when dismissible and onDismiss provided', () => {

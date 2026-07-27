@@ -46,7 +46,7 @@ try {
     process.exit(1);
 }
 
-const found = Object.keys(licenses).sort();
+const found = Object.keys(licenses).sort((a, b) => a.localeCompare(b));
 const violations = found.filter(l => !ALLOWED.has(l));
 
 console.log('[license] found:', found.join(', ') || '(none)');

@@ -36,7 +36,7 @@ authApi.interceptors.request.use((requestConfig) => {
         }
     }
     // Consistent request ID for log correlation (matches apiClient).
-    requestConfig.headers['X-Request-ID'] = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    requestConfig.headers['X-Request-ID'] = `req_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     return requestConfig;
 });
 

@@ -175,7 +175,7 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                             {credential.fields &&
                                 Object.keys(credential.fields)
                                     .filter((k) => k !== 'expiration')
-                                    .sort()
+                                    .sort((a, b) => a.localeCompare(b))
                                     .map((k) => (
                                         <CopyRow key={k} label={fieldLabel(k)} value={credential.fields![k] ?? ''} />
                                     ))}

@@ -11,7 +11,7 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     ({ className, label, error, helperText, fullWidth = true, resize = 'vertical', id, rows = 3, ...props }, ref) => {
-        const textareaId = id || `textarea-${Math.random().toString(36).substr(2, 9)}`;
+        const textareaId = id || `textarea-${crypto.randomUUID().slice(0, 8)}`;
         const hasError = Boolean(error);
 
         const baseTextareaClasses = [

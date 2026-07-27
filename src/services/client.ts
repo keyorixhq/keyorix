@@ -55,7 +55,7 @@ apiClient.interceptors.request.use(
             }
         }
 
-        interceptorConfig.headers['X-Request-ID'] = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        interceptorConfig.headers['X-Request-ID'] = `req_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 
         return interceptorConfig;
     },

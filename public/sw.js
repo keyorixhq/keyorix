@@ -58,14 +58,12 @@ self.addEventListener('activate', (event) => {
         caches.keys()
             .then((cacheNames) => {
                 return Promise.all(
-                    cacheNames.map((cacheName) => {
-                        if (cacheName !== STATIC_CACHE_NAME &&
-                            cacheName !== DYNAMIC_CACHE_NAME &&
-                            cacheName !== CACHE_NAME) {
+                    cacheNames
+                        .filter((n) => n !== STATIC_CACHE_NAME && n !== DYNAMIC_CACHE_NAME && n !== CACHE_NAME)
+                        .map((cacheName) => {
                             console.log('[SW] Deleting old cache:', cacheName);
                             return caches.delete(cacheName);
-                        }
-                    })
+                        })
                 );
             })
             .then(() => {

@@ -411,7 +411,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
     const [filterStatus, setFilterStatus] = useState('open');
     const [filterType, setFilterType] = useState('all');
 
-    const alertTypes = Array.from(new Set(anomalies.map((a) => a.AlertType))).sort();
+    const alertTypes = Array.from(new Set(anomalies.map((a) => a.AlertType))).sort((a, b) => a.localeCompare(b));
 
     const toggleSort = (field: SortField) => {
         if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -699,10 +699,10 @@ export const AuditLogPage: React.FC = () => {
     const rbacEntries = applyFilters(allEntries.filter((e) => e.event_type.startsWith('rbac.')));
 
     // Unique event types for the dropdown
-    const auditTypes = Array.from(new Set(allEntries.map((e) => e.event_type))).sort();
+    const auditTypes = Array.from(new Set(allEntries.map((e) => e.event_type))).sort((a, b) => a.localeCompare(b));
     const rbacTypes = Array.from(new Set(allEntries
         .filter((e) => e.event_type.startsWith('rbac.'))
-        .map((e) => e.event_type))).sort();
+        .map((e) => e.event_type))).sort((a, b) => a.localeCompare(b));
 
     const activeEntries = activeTab === 'rbac' ? rbacEntries : auditEntries;
     const activeTypes = activeTab === 'rbac' ? rbacTypes : auditTypes;

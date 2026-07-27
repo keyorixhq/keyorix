@@ -13,5 +13,11 @@ export default defineConfig({
         setupFiles: ['./src/test/setup.ts'],
         css: true,
         exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
+        coverage: {
+            provider: 'v8',
+            reporter: ['text', 'lcov'],
+            reportsDirectory: './coverage',
+            exclude: ['src/test/**', '**/__tests__/**', '**/*.test.*'],
+        },
     },
 });

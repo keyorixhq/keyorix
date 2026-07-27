@@ -66,11 +66,11 @@ describe('formatRelativeTime', () => {
 });
 
 describe('generateId', () => {
-    it('returns a short alphanumeric id', () => {
+    it('delegates to crypto.randomUUID and returns a string', () => {
         const id = generateId();
         expect(typeof id).toBe('string');
-        expect(id.length).toBeLessThanOrEqual(9);
-        expect(id).toMatch(/^[a-z0-9]*$/);
+        expect(id.length).toBeGreaterThan(0);
+        expect(crypto.randomUUID).toHaveBeenCalled();
     });
 });
 
