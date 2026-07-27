@@ -357,6 +357,10 @@ self.addEventListener('notificationclick', (event) => {
 
 // Handle messages from clients
 self.addEventListener('message', (event) => {
+    // Messages from controlled clients are same-origin by definition, but we
+    // verify explicitly so the SW ignores any synthetic cross-origin messages.
+    if (event.origin && event.origin !== self.location.origin) return;
+
     console.log('[SW] Message received:', event.data);
 
     const { type, payload } = event.data;

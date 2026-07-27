@@ -35,6 +35,14 @@ const makeUser = (id: number, username: string): User =>
         lastLogin: '2026-06-05T00:00:00Z',
     }) as User;
 
+// Build a storage event without the StorageEvent init-dict constructor argument
+// (which some static analysers flag as a superfluous trailing argument). The key
+// and newValue are attached as own properties so listeners can read them via
+// event.key / event.newValue exactly as a real browser storage event would.
+function mkStorageEvent(key: string | null, newValue: string | null): Event {
+    return Object.assign(new Event('storage'), { key, newValue });
+}
+
 // Simulates what another same-origin tab would produce: it writes its own new
 // state to the shared 'auth-storage' localStorage key, then the browser fires
 // a `storage` event on every OTHER tab (never on the tab that wrote it) —
@@ -42,7 +50,7 @@ const makeUser = (id: number, username: string): User =>
 function writeAuthStorageFromAnotherTab(state: Record<string, unknown>) {
     const raw = JSON.stringify({ state, version: 0 });
     localStorage.setItem('auth-storage', raw);
-    window.dispatchEvent(new StorageEvent('storage', { key: 'auth-storage', newValue: raw }));
+    window.dispatchEvent(mkStorageEvent('auth-storage', raw));
 }
 
 describe('authStore multi-tab session sync', () => {
@@ -101,7 +109,7 @@ describe('authStore multi-tab session sync', () => {
     });
 
     it('ignores storage events for unrelated keys', () => {
-        window.dispatchEvent(new StorageEvent('storage', { key: 'some-other-key', newValue: 'noise' }));
+        window.dispatchEvent(mkStorageEvent('some-other-key', 'noise'));
 
         const s = useAuthStore.getState();
         expect(s.isAuthenticated).toBe(true);
@@ -110,7 +118,7 @@ describe('authStore multi-tab session sync', () => {
 
     it('re-syncs on a storage.clear() signal (key: null)', () => {
         localStorage.clear();
-        window.dispatchEvent(new StorageEvent('storage', { key: null, newValue: null }));
+        window.dispatchEvent(mkStorageEvent(null, null));
 
         // Nothing left in storage to hydrate from — state is left as-is by
         // hydrate() when there's no stored value, so this just proves the

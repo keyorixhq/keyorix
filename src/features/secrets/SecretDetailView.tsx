@@ -420,7 +420,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                             Secret value is hidden for security. Click "Reveal" to view.
                         </p>
                     </div>
-                ) : showValue && isLoading ? (
+                ) : isLoading ? (
                     <div className="bg-gray-50 dark:bg-gray-700 rounded-md p-4">
                         <Loading />
                     </div>
