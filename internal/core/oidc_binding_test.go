@@ -30,6 +30,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 		// Actor 2 has NO role grants at global scope (project_id=0) — only within
 		// project 1, which requireAuthorityForRole(..., projectID=0, ...) never sees.
 		store.On("GetUserRoleIDsAt", ctx, uint(2), mock.MatchedBy(func(s interface{}) bool { return true })).Return([]uint{}, nil)
+		store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.MatchedBy(func(s interface{}) bool { return true })).Return([]uint{}, nil)
 
 		_, err := c.CreateOIDCBinding(ctx, 1, 5, "https://idp.test", "system:serviceaccount:victim:ci", 2)
 		require.Error(t, err)
@@ -44,6 +45,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
 		store.On("GetRoleByName", ctx, mock.Anything).Return(&models.Role{ID: 99, Name: "system_admin"}, nil)
 		store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{99}, nil)
+		store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 		store.On("CreateOIDCBinding", ctx, mock.MatchedBy(func(b *models.MachineIdentityOIDCBinding) bool {
 			return b.MachineIdentityID == 5 && b.Issuer == "https://idp.test" && b.Subject == "system:serviceaccount:victim:ci"
 		})).Return(&models.MachineIdentityOIDCBinding{ID: 1, MachineIdentityID: 5}, nil)

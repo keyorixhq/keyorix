@@ -35,6 +35,53 @@ func TestClampPageSize(t *testing.T) {
 	}
 }
 
+// TestClampPage pins the ceiling on caller-supplied page numbers to prevent
+// deep-pagination DoS via huge OFFSET values (#r124-M).
+func TestClampPage(t *testing.T) {
+	cases := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"page 1 unchanged", 1, 1},
+		{"typical mid-page unchanged", 50, 50},
+		{"exactly at ceiling unchanged", maxStoragePage, maxStoragePage},
+		{"one over ceiling clamped", maxStoragePage + 1, maxStoragePage},
+		{"hostile million-page clamped", 1_000_000, maxStoragePage},
+		{"page 0 becomes 1", 0, 1},
+		{"negative becomes 1", -5, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, clampPage(tc.in))
+		})
+	}
+}
+
+// TestEscapeLIKE verifies that SQL LIKE wildcard metacharacters are neutralised
+// by escapeLIKE so user-supplied search terms cannot expand a match unexpectedly
+// (#r124-M LIKE injection).
+func TestEscapeLIKE(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain string untouched", "admin", "admin"},
+		{"percent escaped", "admin%", `admin\%`},
+		{"underscore escaped", "a_b", `a\_b`},
+		{"both wildcards", "%_foo_%", `\%\_foo\_\%`},
+		{"backslash first", `a\b`, `a\\b`},
+		{"backslash then percent", `a\%b`, `a\\\%b`},
+		{"empty string", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, escapeLIKE(tc.input))
+		})
+	}
+}
+
 // TestListSecrets_PageSizeClampedAtStorage confirms a future caller that forgets to
 // clamp PageSize itself (bypassing the ≤100 clamp every current HTTP/gRPC handler
 // applies before reaching storage) cannot force an unbounded SQL LIMIT — the storage

@@ -30,6 +30,8 @@ func TestMigrateUserToMachine(t *testing.T) {
 		store.On("DeleteSessionsForUserExcept", ctx, uint(7), uint(0)).Return(nil)
 		// Suspension also evicts the user's cached session tokens and revokes their PATs.
 		store.On("ListSessionTokenHashesForUser", ctx, uint(7)).Return([]string{}, nil)
+		// H-2: ALL state transitions collect PAT hashes for cache eviction.
+		store.On("ListPersonalAccessTokensByUser", ctx, uint(7)).Return([]*models.PersonalAccessToken{}, nil)
 		store.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(7)).Return([]string{}, nil)
 
 		seen := map[string]bool{}
