@@ -4,65 +4,33 @@ Deferred technical work and the decisions behind it. Product/feature roadmap
 lives in the app itself (`src/pages/roadmap/RoadmapPage.tsx`); this file tracks
 internal engineering work only.
 
-_Last updated: 2026-06-03._
+_Last updated: 2026-07-27._
 
-## The shadcn/ui rewrite (umbrella)
+## The shadcn/ui rewrite (umbrella) — COMPLETE
 
-The planned migration of the UI to shadcn/ui is the single largest pending
-item, and several smaller deferrals are blocked on it. Until it is scoped,
-the dependents below stay parked. When it lands, revisit each.
+The full phased migration is done (Phases 0–10, PRs #107–#116 on main,
+2026-07-27). See `docs/SHADCN-REWRITE-PLAN.md` for the plan and decisions.
 
-**Now scoped: see `docs/SHADCN-REWRITE-PLAN.md`** for the full phased plan
-(Phase 0 pre-rewrite security audit, architecture decisions, migration order,
-test-suite rebuild, post-rewrite re-audit). That plan is currently QUEUED —
-deliberately held until the concurrent keyorix (Go backend) hardening campaign
-finishes, to avoid running two audit/fix efforts at once.
+Remaining follow-ons (no longer blocked):
 
-**Unblocks / should be done as part of it:**
-
-- **Restore `App` test coverage.** The old `App.test.tsx` was a tombstone stub
-  (referenced a deleted i18n module + stale UI assertions) and was removed.
-  `App.tsx` is almost entirely page composition that the rewrite will reshape,
-  so coverage is best (re)written against the new structure.
+- **Restore `App` test coverage.** `App.tsx` is now stable post-rewrite;
+  `App.test.tsx` was a tombstone stub and was removed. Re-add against the new
+  structure.
 - **Accessibility test coverage.** The old `accessibility.test.ts` referenced
-  `LoginForm`/`SecretForm` deleted in the May 2026 refactor. Write fresh a11y
-  tests against the rewritten components. Re-add `jest-axe` (at latest) at that
-  point — see below.
-- **Formatting policy.** Adopting enforced Prettier (see below) is best
-  coordinated with the rewrite so the large reformat doesn't collide with it.
+  deleted components. Write fresh a11y tests; re-add `jest-axe` at that point.
 
-## End-to-end tests (Playwright) — stale, needs rewrite
+## End-to-end tests (Playwright) — rebuilt 2026-07-27
 
-The `e2e/` Playwright specs are **stale** (verified 2026-06-03, not just
-unrun):
+Specs were rewritten with `page.route` API mocking (no real backend required).
+`data-testid` attributes added to LoginForm, Header. `playwright.config.ts`
+switched to pnpm and Chromium-only. The `e2e` job is now wired into CI (runs
+after the unit gate passes). See `.github/workflows/ci.yml`.
 
-- `auth.spec.ts` and `secrets.spec.ts` target `data-testid`s
-  (`email-input`, `password-input`, `login-button`, `create-secret-button`, …)
-  that **exist nowhere in the current source** — they predate the UI refactor.
-- They drive a real login (`password123` → `/dashboard`) but there is **no API
-  mocking** (no MSW, no `page.route`) and `webServer` runs only the frontend
-  (`npm run dev`), so the auth/secrets flows can't pass.
-- `example.spec.ts` (title / viewport / `#root` smoke checks) is backend-free
-  and would likely still pass.
+## Formatting / Prettier — enforced 2026-07-27
 
-Rewrite as part of / alongside the shadcn rewrite: add stable `data-testid`s to
-the new components and a mock backend (MSW or `page.route`) or a seeded test
-environment. Until then `test:e2e` is not wired into CI (CI runs the unit gate
-only). Vite dev server is on port 3000, matching the Playwright `baseURL`.
-
-## Formatting / Prettier (not enforced — deliberate)
-
-The repo's house style is **4-space indentation + single quotes**, but there is
-**no `.prettierrc`** and the codebase has never been Prettier-formatted to its
-own style. Prettier's defaults (2-space, double quotes) would rewrite all ~131
-files.
-
-- Prettier is kept current as a devDependency (v3) but `format` is **not** run.
-- If/when we want enforced formatting, do it deliberately as its own focused
-  effort: add `.prettierrc` matching the house style (`tabWidth: 4`,
-  `singleQuote: true`, and a `printWidth` chosen to minimize churn), run
-  `format` once, and commit it standalone. Coordinate timing with the shadcn
-  rewrite and avoid colliding with in-flight branches.
+Prettier is now enforced. `.prettierrc` was added with house style (`tabWidth:
+4`, `singleQuote: true`), all ~131 source files were reformatted in one
+standalone commit (Phase 9, PR #115), and `pnpm format:check` runs in CI.
 
 ## Dependency maintenance
 
