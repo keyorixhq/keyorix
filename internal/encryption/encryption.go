@@ -164,6 +164,25 @@ func MFASecretAAD(userID uint) []byte {
 	return []byte(fmt.Sprintf("keyorix:mfa:v1:%d", userID))
 }
 
+// SessionTokenAAD returns the AAD for a user's encrypted session token (AUTH-CRYPTO-001),
+// binding the ciphertext to the owning user so a DB-write attacker cannot transplant
+// one user's encrypted session token onto another user's row.
+func SessionTokenAAD(userID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:session:v1:%d", userID))
+}
+
+// APITokenAAD returns the AAD for a user's encrypted personal-access token
+// (AUTH-CRYPTO-002), binding the ciphertext to the issuing user.
+func APITokenAAD(userID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:apitoken:v1:%d", userID))
+}
+
+// PasswordResetTokenAAD returns the AAD for a user's encrypted password-reset token
+// (AUTH-CRYPTO-001), binding the ciphertext to the owning user.
+func PasswordResetTokenAAD(userID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:pwreset:v1:%d", userID))
+}
+
 // DynamicSecretConfigAAD returns the AAD for a dynamic-secret config's encrypted admin
 // DSN (#94), binding the ciphertext to the config's identity and project/environment
 // scope. None of configID/projectID/environmentID are reassigned after creation (see

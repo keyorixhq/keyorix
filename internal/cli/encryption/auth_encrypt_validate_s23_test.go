@@ -42,7 +42,7 @@ func TestValidateSessions_S23_VerboseNoUnmigrated(t *testing.T) {
 
 	// Insert a single fully-encrypted session (session_token must be unique, so
 	// we insert only one with an empty string cleared via NULL-equivalent pointer).
-	enc, meta, err := ae.EncryptSessionToken("s23-sess-tok-only")
+	enc, meta, err := ae.EncryptSessionToken("s23-sess-tok-only", uint(10))
 	require.NoError(t, err)
 	// Use Exec directly to set session_token to NULL (satisfies the unique constraint).
 	require.NoError(t, db.Exec(
@@ -62,7 +62,7 @@ func TestValidateAPITokens_S23_VerboseNoUnmigrated(t *testing.T) {
 
 	// Insert a single fully-encrypted API token with token set to NULL
 	// to satisfy the unique constraint on the token column.
-	enc, meta, err := ae.EncryptAPIToken("s23-api-tok-only")
+	enc, meta, err := ae.EncryptAPIToken("s23-api-tok-only", uint(0))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(
 		`INSERT INTO api_tokens (client_id, token, encrypted_token, token_metadata, revoked) VALUES (?, NULL, ?, ?, false)`,
@@ -82,7 +82,7 @@ func TestValidatePasswordResetTokens_S23_VerboseNoUnmigrated(t *testing.T) {
 
 	// Insert a single fully-encrypted reset token with token set to NULL
 	// to satisfy the unique constraint on the token column.
-	enc, meta, err := ae.EncryptPasswordResetToken("s23-reset-tok-only")
+	enc, meta, err := ae.EncryptPasswordResetToken("s23-reset-tok-only", uint(30))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(
 		`INSERT INTO password_resets (user_id, token, encrypted_token, token_metadata) VALUES (?, NULL, ?, ?)`,

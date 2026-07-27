@@ -218,30 +218,30 @@ func TestAuthEncryption_Enabled_Suite(t *testing.T) {
 
 	t.Run("SessionTokenRoundTrip", func(t *testing.T) {
 		plain := "session-token-enabled-path"
-		enc, meta, err := ae.EncryptSessionToken(plain)
+		enc, meta, err := ae.EncryptSessionToken(plain, uint(1))
 		require.NoError(t, err)
 		assert.NotEqual(t, plain, string(enc), "token must be encrypted")
 		assert.NotNil(t, meta)
-		dec, err := ae.DecryptSessionToken(enc, meta)
+		dec, err := ae.DecryptSessionToken(enc, meta, uint(1))
 		require.NoError(t, err)
 		assert.Equal(t, plain, dec)
 	})
 
 	t.Run("APITokenRoundTrip", func(t *testing.T) {
 		plain := "api-token-enabled-path"
-		enc, meta, err := ae.EncryptAPIToken(plain)
+		enc, meta, err := ae.EncryptAPIToken(plain, uint(1))
 		require.NoError(t, err)
 		assert.NotEqual(t, plain, string(enc))
-		dec, err := ae.DecryptAPIToken(enc, meta)
+		dec, err := ae.DecryptAPIToken(enc, meta, uint(1))
 		require.NoError(t, err)
 		assert.Equal(t, plain, dec)
 	})
 
 	t.Run("PasswordResetTokenRoundTrip", func(t *testing.T) {
 		plain := "reset-token-enabled-path"
-		enc, meta, err := ae.EncryptPasswordResetToken(plain)
+		enc, meta, err := ae.EncryptPasswordResetToken(plain, uint(1))
 		require.NoError(t, err)
-		dec, err := ae.DecryptPasswordResetToken(enc, meta)
+		dec, err := ae.DecryptPasswordResetToken(enc, meta, uint(1))
 		require.NoError(t, err)
 		assert.Equal(t, plain, dec)
 	})
@@ -255,18 +255,18 @@ func TestAuthEncryption_Enabled_Suite(t *testing.T) {
 
 	t.Run("ValidateEncryptedToken", func(t *testing.T) {
 		plain := "valid-session-token"
-		enc, meta, err := ae.EncryptSessionToken(plain)
+		enc, meta, err := ae.EncryptSessionToken(plain, uint(1))
 		require.NoError(t, err)
-		ok, err := ae.ValidateEncryptedToken(enc, meta, plain)
+		ok, err := ae.ValidateEncryptedToken(enc, meta, plain, uint(1))
 		require.NoError(t, err)
 		assert.True(t, ok)
-		ok, err = ae.ValidateEncryptedToken(enc, meta, "wrong-token")
+		ok, err = ae.ValidateEncryptedToken(enc, meta, "wrong-token", uint(1))
 		require.NoError(t, err)
 		assert.False(t, ok)
 	})
 
 	t.Run("ValidateEncryptedToken_DecryptError", func(t *testing.T) {
-		_, err := ae.ValidateEncryptedToken([]byte("not-valid-ciphertext"), nil, "token")
+		_, err := ae.ValidateEncryptedToken([]byte("not-valid-ciphertext"), nil, "token", uint(1))
 		require.Error(t, err)
 	})
 
@@ -1007,13 +1007,13 @@ func TestAuthEncryption_EncryptError_Suite(t *testing.T) {
 	})
 
 	t.Run("EncryptSessionToken_Error", func(t *testing.T) {
-		_, _, err := ae.EncryptSessionToken("token")
+		_, _, err := ae.EncryptSessionToken("token", uint(1))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to encrypt session token")
 	})
 
 	t.Run("EncryptAPIToken_Error", func(t *testing.T) {
-		_, _, err := ae.EncryptAPIToken("token")
+		_, _, err := ae.EncryptAPIToken("token", uint(1))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to encrypt API token")
 	})
@@ -1022,7 +1022,7 @@ func TestAuthEncryption_EncryptError_Suite(t *testing.T) {
 		ae.service.mu.Lock()
 		ae.service.initialized = true
 		ae.service.mu.Unlock()
-		_, err := ae.DecryptAPIToken([]byte("not-valid-json"), nil)
+		_, err := ae.DecryptAPIToken([]byte("not-valid-json"), nil, uint(1))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to decrypt API token")
 		ae.service.mu.Lock()
@@ -1031,7 +1031,7 @@ func TestAuthEncryption_EncryptError_Suite(t *testing.T) {
 	})
 
 	t.Run("EncryptPasswordResetToken_Error", func(t *testing.T) {
-		_, _, err := ae.EncryptPasswordResetToken("token")
+		_, _, err := ae.EncryptPasswordResetToken("token", uint(1))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to encrypt password reset token")
 	})
@@ -1040,7 +1040,7 @@ func TestAuthEncryption_EncryptError_Suite(t *testing.T) {
 		ae.service.mu.Lock()
 		ae.service.initialized = true
 		ae.service.mu.Unlock()
-		_, err := ae.DecryptPasswordResetToken([]byte("not-valid-json"), nil)
+		_, err := ae.DecryptPasswordResetToken([]byte("not-valid-json"), nil, uint(1))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to decrypt password reset token")
 	})

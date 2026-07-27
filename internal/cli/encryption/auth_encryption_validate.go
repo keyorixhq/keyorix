@@ -117,7 +117,7 @@ func validateSessions(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose b
 		fmt.Printf("🎫 Validating %d encrypted sessions...\n", len(sessions))
 	}
 	for _, session := range sessions {
-		if _, err := authEnc.DecryptSessionToken(session.EncryptedSessionToken, []byte(session.SessionTokenMetadata)); err != nil {
+		if _, err := authEnc.DecryptSessionToken(session.EncryptedSessionToken, []byte(session.SessionTokenMetadata), session.UserID); err != nil {
 			return 0, fmt.Errorf("failed to decrypt session token for session %d: %w", session.ID, err)
 		}
 		if verbose {
@@ -144,7 +144,11 @@ func validateAPITokens(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose 
 		fmt.Printf("🎟️  Validating %d encrypted API tokens...\n", len(tokens))
 	}
 	for _, token := range tokens {
-		if _, err := authEnc.DecryptAPIToken(token.EncryptedToken, []byte(token.TokenMetadata)); err != nil {
+		var validateTokenUserID uint
+		if token.UserID != nil {
+			validateTokenUserID = *token.UserID
+		}
+		if _, err := authEnc.DecryptAPIToken(token.EncryptedToken, []byte(token.TokenMetadata), validateTokenUserID); err != nil {
 			return 0, fmt.Errorf("failed to decrypt API token %d: %w", token.ID, err)
 		}
 		if verbose {
@@ -171,7 +175,7 @@ func validatePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption
 		fmt.Printf("🔄 Validating %d encrypted password reset tokens...\n", len(resets))
 	}
 	for _, reset := range resets {
-		if _, err := authEnc.DecryptPasswordResetToken(reset.EncryptedToken, []byte(reset.TokenMetadata)); err != nil {
+		if _, err := authEnc.DecryptPasswordResetToken(reset.EncryptedToken, []byte(reset.TokenMetadata), reset.UserID); err != nil {
 			return 0, fmt.Errorf("failed to decrypt password reset token %d: %w", reset.ID, err)
 		}
 		if verbose {

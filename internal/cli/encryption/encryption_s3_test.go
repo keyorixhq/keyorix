@@ -102,7 +102,7 @@ func TestValidateSessions_UnmigratedRow(t *testing.T) {
 func TestValidateSessions_EncryptedRow_Verbose(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	enc, meta, err := ae.EncryptSessionToken("valid-session-token")
+	enc, meta, err := ae.EncryptSessionToken("valid-session-token", uint(1))
 	require.NoError(t, err)
 	s := &models.Session{UserID: 1, EncryptedSessionToken: enc, SessionTokenMetadata: meta}
 	require.NoError(t, db.Create(s).Error)
@@ -142,7 +142,7 @@ func TestValidateAPITokens_UnmigratedRow(t *testing.T) {
 func TestValidateAPITokens_EncryptedRow_Verbose(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	enc, meta, err := ae.EncryptAPIToken("api-token-value")
+	enc, meta, err := ae.EncryptAPIToken("api-token-value", uint(0))
 	require.NoError(t, err)
 	tok := &models.APIToken{ClientID: 1, EncryptedToken: enc, TokenMetadata: meta}
 	require.NoError(t, db.Create(tok).Error)
@@ -182,7 +182,7 @@ func TestValidatePasswordResetTokens_UnmigratedRow(t *testing.T) {
 func TestValidatePasswordResetTokens_EncryptedRow_Verbose(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	enc, meta, err := ae.EncryptPasswordResetToken("reset-token-value")
+	enc, meta, err := ae.EncryptPasswordResetToken("reset-token-value", uint(1))
 	require.NoError(t, err)
 	reset := &models.PasswordReset{UserID: 1, EncryptedToken: enc, TokenMetadata: meta}
 	require.NoError(t, db.Create(reset).Error)
