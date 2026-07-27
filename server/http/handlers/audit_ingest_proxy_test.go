@@ -3,8 +3,10 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -17,10 +19,14 @@ import (
 	"gorm.io/gorm"
 )
 
+var auditIngestTestCounter atomic.Int64
+
 func newAuditIngestHandler(t *testing.T) *AuditHandler {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open("file::memory:?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	n := auditIngestTestCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxauditingest_%d?mode=memory&cache=shared&_busy_timeout=5000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	return NewAuditHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
