@@ -442,13 +442,56 @@ const SectionCard: React.FC<SectionCardProps> = ({ title, children }) => (
 );
 
 // ControlMatrixPanel renders the framework control matrix (GET /compliance/controls):
-// each enforced control with its live status and ISO/SOC2/NIS2/DORA references.
+// each enforced control with its live status and ISO/SOC2/NIS2/DORA/ENS references.
+// A framework selector tab bar filters the view to a single framework and shows
+// a per-framework compliance score — the "compliance mapping reports" Q3 feature.
 const NA_META = { label: 'N/A', color: 'var(--text-muted)', bg: 'var(--bg-muted)' };
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
     pass: { label: 'Pass', color: 'var(--success)', bg: 'var(--success-subtle)' },
     gap: { label: 'Gap', color: 'var(--error)', bg: 'var(--error-subtle)' },
     not_configured: NA_META,
 };
+
+type FrameworkKey = 'all' | 'iso27001' | 'soc2' | 'nis2' | 'dora' | 'ens';
+
+const FRAMEWORKS: { key: FrameworkKey; label: string; fullName: string; description: string }[] = [
+    { key: 'all', label: 'All', fullName: 'All frameworks', description: '' },
+    {
+        key: 'iso27001',
+        label: 'ISO 27001',
+        fullName: 'ISO/IEC 27001:2022',
+        description:
+            'Information security management system standard. Annex A controls cover access management (A.8), cryptography (A.8.24), and operations security.',
+    },
+    {
+        key: 'soc2',
+        label: 'SOC 2',
+        fullName: 'SOC 2 Type II',
+        description:
+            'AICPA trust service criteria. Security, Availability, Confidentiality, and Privacy principles relevant to secrets management.',
+    },
+    {
+        key: 'nis2',
+        label: 'NIS2',
+        fullName: 'NIS2 Directive (EU 2022/2555)',
+        description:
+            'Article 21 mandates technical security measures including access controls, encryption, and audit logging for essential and important entities.',
+    },
+    {
+        key: 'dora',
+        label: 'DORA',
+        fullName: 'Digital Operational Resilience Act (EU 2022/2554)',
+        description:
+            'Article 30 requires ICT risk management records, access logs, and cryptographic controls for financial entities and their ICT providers.',
+    },
+    {
+        key: 'ens',
+        label: 'ENS',
+        fullName: 'Esquema Nacional de Seguridad',
+        description:
+            "Spain's mandatory security certification for public-sector ICT. Maps to op.acc, op.exp, mp.s, and mp.sw control families.",
+    },
+];
 
 const ControlMatrixPanel: React.FC = () => {
     const { data: m, isError } = useQuery({
@@ -458,7 +501,9 @@ const ControlMatrixPanel: React.FC = () => {
         retry: false,
     });
     const [csvBusy, setCsvBusy] = useState(false);
-    if (isError || !m) return null; // 403/unavailable — the posture panel already notes admin-only
+    const [activeFramework, setActiveFramework] = useState<FrameworkKey>('all');
+
+    if (isError || !m) return null;
 
     // Download the control matrix as a CSV for an auditor's spreadsheet (server #376).
     const onDownloadCsv = async () => {
@@ -488,21 +533,38 @@ const ControlMatrixPanel: React.FC = () => {
         return parts.join(' · ');
     };
 
+    // Filter controls to the selected framework
+    const visibleControls =
+        activeFramework === 'all'
+            ? m.controls
+            : m.controls.filter(
+                  (c) => (c.frameworks[activeFramework as Exclude<FrameworkKey, 'all'>] ?? []).length > 0
+              );
+
+    // Per-framework score
+    const passCount = visibleControls.filter((c) => c.status === 'pass').length;
+    const gapCount = visibleControls.filter((c) => c.status === 'gap').length;
+    const scoreDenom = passCount + gapCount;
+    const scorePercent = scoreDenom > 0 ? Math.round((passCount / scoreDenom) * 100) : 100;
+    const activeFw = FRAMEWORKS.find((f) => f.key === activeFramework)!;
+
     return (
         <div
             className="rounded-xl border mb-8 overflow-hidden"
             style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
         >
+            {/* Header */}
             <div
                 className="px-6 py-4 border-b flex items-center justify-between"
                 style={{ borderColor: 'var(--border)' }}
             >
                 <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-                    Control matrix (ISO 27001 / SOC 2 / NIS2 / DORA / ENS)
+                    Compliance mapping reports
                 </h2>
                 <div className="flex items-center gap-3 shrink-0">
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        {m.summary.pass} pass · {m.summary.gap} gap · {m.summary.notConfigured} n/a
+                        {visibleControls.length} control{visibleControls.length !== 1 ? 's' : ''} ·{' '}
+                        {passCount} pass · {gapCount} gap
                     </span>
                     <button
                         type="button"
@@ -515,39 +577,130 @@ const ControlMatrixPanel: React.FC = () => {
                     </button>
                 </div>
             </div>
-            <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                {m.controls.map((c) => {
-                    const s = STATUS_META[c.status] ?? NA_META;
-                    return (
-                        <li
-                            key={c.id}
-                            className="px-6 py-3 flex items-start gap-3"
-                            style={{ borderColor: 'var(--border)' }}
-                        >
-                            <span
-                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 mt-0.5"
-                                style={{ color: s.color, backgroundColor: s.bg }}
+
+            {/* Framework tabs */}
+            <div
+                className="px-6 py-3 border-b flex items-center gap-1 overflow-x-auto"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-subtle)' }}
+            >
+                {FRAMEWORKS.map((fw) => (
+                    <button
+                        key={fw.key}
+                        onClick={() => setActiveFramework(fw.key)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-all duration-100 ${
+                            activeFramework === fw.key
+                                ? 'bg-surface text-base-primary border border-base shadow-xs'
+                                : 'text-base-muted hover:text-base-secondary'
+                        }`}
+                    >
+                        {fw.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Per-framework score card (shown when a specific framework is selected) */}
+            {activeFramework !== 'all' && (
+                <div
+                    className="px-6 py-4 border-b"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-app)' }}
+                >
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                {activeFw.fullName}
+                            </p>
+                            {activeFw.description && (
+                                <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                                    {activeFw.description}
+                                </p>
+                            )}
+                        </div>
+                        <div className="shrink-0 text-right">
+                            <div
+                                className="text-2xl font-bold tabular-nums"
+                                style={{
+                                    color:
+                                        scorePercent >= 90
+                                            ? 'var(--success)'
+                                            : scorePercent >= 70
+                                              ? 'var(--warning)'
+                                              : 'var(--error)',
+                                }}
                             >
-                                {s.label}
-                            </span>
-                            <div className="min-w-0">
-                                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                    {c.name}{' '}
-                                    <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>
-                                        · {c.area}
-                                    </span>
-                                </div>
-                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                                    {c.detail}
-                                </div>
-                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                                    {refLine(c)}
-                                </div>
+                                {scorePercent}%
                             </div>
-                        </li>
-                    );
-                })}
-            </ul>
+                            <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                compliance score
+                            </div>
+                        </div>
+                    </div>
+                    {/* Progress bar */}
+                    <div
+                        className="mt-3 h-1.5 rounded-full overflow-hidden"
+                        style={{ backgroundColor: 'var(--bg-muted)' }}
+                    >
+                        <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                                width: `${scorePercent}%`,
+                                backgroundColor:
+                                    scorePercent >= 90
+                                        ? 'var(--success)'
+                                        : scorePercent >= 70
+                                          ? 'var(--warning)'
+                                          : 'var(--error)',
+                            }}
+                        />
+                    </div>
+                    {gapCount > 0 && (
+                        <p className="text-xs mt-2" style={{ color: 'var(--error)' }}>
+                            {gapCount} control{gapCount !== 1 ? 's' : ''} with gaps require remediation to achieve full
+                            {' '}{activeFw.label} coverage.
+                        </p>
+                    )}
+                </div>
+            )}
+
+            {/* Control list */}
+            {visibleControls.length === 0 ? (
+                <div className="px-6 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                    No controls mapped to {activeFw.fullName} yet.
+                </div>
+            ) : (
+                <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {visibleControls.map((c) => {
+                        const s = STATUS_META[c.status] ?? NA_META;
+                        return (
+                            <li
+                                key={c.id}
+                                className="px-6 py-3 flex items-start gap-3"
+                                style={{ borderColor: 'var(--border)' }}
+                            >
+                                <span
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 mt-0.5"
+                                    style={{ color: s.color, backgroundColor: s.bg }}
+                                >
+                                    {s.label}
+                                </span>
+                                <div className="min-w-0">
+                                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                        {c.name}{' '}
+                                        <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>
+                                            · {c.area}
+                                        </span>
+                                    </div>
+                                    <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                        {c.detail}
+                                    </div>
+                                    <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                        {refLine(c)}
+                                    </div>
+                                </div>
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
         </div>
     );
 };
@@ -791,14 +944,15 @@ export const CompliancePage: React.FC = () => (
             Keyorix supports NIS2 Article 21 technical requirements — access controls, encryption of data at rest and in
             transit, and audit logging. Every secret access, rotation, and user action is logged with actor identity and
             timestamp. On-premise deployment means audit data stays on your infrastructure under your data retention
-            policy.
+            policy. Use the NIS2 tab in the control matrix above for a live view of covered controls.
         </SectionCard>
 
         <SectionCard title="DORA">
             DORA Article 30 requires financial entities to maintain detailed ICT risk management records including
             access logs and cryptographic controls. Keyorix provides tamper-evident audit logs, envelope encryption with
             key rotation support, and PostgreSQL-backed storage designed for long-term operational continuity. Air-gap
-            compatibility means no dependency on external cloud services for secret resolution.
+            compatibility means no dependency on external cloud services for secret resolution. See the DORA tab in the
+            control matrix above for the live coverage view.
         </SectionCard>
 
         <SectionCard title="ENS (Esquema Nacional de Seguridad)">
@@ -810,14 +964,10 @@ export const CompliancePage: React.FC = () => (
         </SectionCard>
 
         <SectionCard title="ISO 27001">
-            Keyorix maps directly to ISO 27001 Annex A controls for access management (A.9), cryptography (A.10), and
-            operations security (A.12). RBAC, AES-256-GCM encryption, and full audit trails are shipped by default — not
+            Keyorix maps directly to ISO 27001 Annex A controls for access management (A.8), cryptography (A.8.24),
+            and operations security. RBAC, AES-256-GCM encryption, and full audit trails are shipped by default — not
             add-ons. On-premise deployment supports your organisation's asset management and boundary control
-            requirements.
+            requirements. Use the ISO 27001 tab in the control matrix above for a live per-control status.
         </SectionCard>
-
-        <p className="text-xs text-center mt-8 pb-4" style={{ color: 'var(--text-muted)' }}>
-            Detailed compliance mapping reports — Q3 2026. Contact support@keyorix.com for pre-release access.
-        </p>
     </div>
 );

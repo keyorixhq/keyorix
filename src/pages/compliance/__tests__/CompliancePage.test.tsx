@@ -122,11 +122,11 @@ describe('CompliancePage posture panel', () => {
         expect(await screen.findByText(/available to administrators/i)).toBeInTheDocument();
     });
 
-    it('renders ENS in the matrix title and shows the ENS section card', async () => {
+    it('renders the compliance mapping reports panel and shows the ENS section card', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);
         render(<CompliancePage />);
 
-        expect(await screen.findByText(/Control matrix.*ENS/i)).toBeInTheDocument();
+        expect(await screen.findByText(/Compliance mapping reports/i)).toBeInTheDocument();
         expect(screen.getByText(/ENS \(Esquema Nacional de Seguridad\)/i)).toBeInTheDocument();
     });
 
@@ -156,8 +156,8 @@ describe('CompliancePage posture panel', () => {
         });
         render(<CompliancePage />);
 
-        expect(await screen.findByText(/Control matrix/i)).toBeInTheDocument();
-        expect(screen.getByText('1 pass · 1 gap · 0 n/a')).toBeInTheDocument();
+        expect(await screen.findByText(/Compliance mapping reports/i)).toBeInTheDocument();
+        expect(screen.getByText('2 controls · 1 pass · 1 gap')).toBeInTheDocument();
         expect(screen.getByText(/Separation of duties/)).toBeInTheDocument();
         expect(screen.getByText('ISO A.5.3 · SOC2 CC5.1 · DORA Art.5 · ENS op.acc.3')).toBeInTheDocument();
     });
