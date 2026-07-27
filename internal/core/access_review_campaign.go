@@ -193,7 +193,58 @@ func (c *KeyorixCore) GetAccessReviewCampaign(ctx context.Context, projectID, ca
 // DecideAccessReviewItem records a reviewer's decision on one item of an open
 // campaign: "attest" keeps the grant (evidence only), "revoke" removes the
 // underlying grant via RevokeAccessReviewGrant. actorID is the reviewer.
-func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, projectID, campaignID, itemID uint, action, reason string) error { // NOSONAR -- cognitive complexity 20, suppress go:S3776
+// checkReviewerIndependence enforces ISO 27001 A.5.18: a reviewer must not certify
+// their own access, directly (user-scoped item) or via group membership. Fails closed:
+// a group-lookup error is treated as membership to block self-certification by error.
+func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uint, item *models.AccessReviewItem) error {
+	if item.PrincipalType == "user" && item.PrincipalID == actorID {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
+	}
+	if item.PrincipalType == "group" && c.userInGroup(ctx, actorID, item.PrincipalID) {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
+	}
+	return nil
+}
+
+// applyAccessDecision executes the grant action (attest or revoke) and stamps the
+// item's Decision field. Extracted from DecideAccessReviewItem to reduce its complexity.
+func (c *KeyorixCore) applyAccessDecision(ctx context.Context, actorID, projectID uint, item *models.AccessReviewItem, action string, decision AccessReviewDecision) error {
+	switch action {
+	case "attest":
+		if err := c.AttestAccessReviewGrant(ctx, actorID, projectID, decision); err != nil {
+			return err
+		}
+		item.Decision = ReviewItemAttested
+	case "revoke":
+		if err := c.RevokeAccessReviewGrant(ctx, actorID, projectID, decision); err != nil {
+			return err
+		}
+		item.Decision = ReviewItemRevoked
+	default:
+		return fmt.Errorf("%s: action must be attest or revoke", i18n.T("ErrorValidation", nil))
+	}
+	return nil
+}
+
+// persistItemDecision persists the decided item via a conditional UPDATE that also
+// guards the race between concurrent decisions and concurrent force-closes (#319, #343).
+// ok==false means this call lost the race; the re-read is cosmetic only — the security
+// decision was already made atomically by the UPDATE, win or lose.
+func (c *KeyorixCore) persistItemDecision(ctx context.Context, item *models.AccessReviewItem, itemID uint) error {
+	ok, err := c.storage.UpdateAccessReviewItem(ctx, item)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if !ok {
+		if reloaded, rerr := c.storage.GetAccessReviewItem(ctx, itemID); rerr == nil && reloaded.Decision != ReviewItemPending {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
+		}
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
+	}
+	return nil
+}
+
+func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, projectID, campaignID, itemID uint, action, reason string) error {
 	// A recertification decision must come from an attributable HUMAN reviewer. A
 	// machine identity authenticates with UserID==0 (authz uses its PrincipalID), so a
 	// non-zero actorID is required — otherwise an automation token holding roles.assign
@@ -222,15 +273,8 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if item.Decision != ReviewItemPending {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
 	}
-	// Independence (ISO 27001 A.5.18): a reviewer must not certify their OWN access —
-	// directly (a user-scoped item that is themselves) OR indirectly (a group-scoped item
-	// for a group they belong to). Self-certification, including via a group grant,
-	// defeats the control; an independent reviewer is required.
-	if item.PrincipalType == "user" && item.PrincipalID == actorID {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
-	}
-	if item.PrincipalType == "group" && c.userInGroup(ctx, actorID, item.PrincipalID) {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
+	if err := c.checkReviewerIndependence(ctx, actorID, item); err != nil {
+		return err
 	}
 	// ARC-001: a machine identity provisioned by the actor must not be self-certified
 	// by its creator. Fail closed on lookup error (can't prove independence → deny).
@@ -243,7 +287,6 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
 		}
 	}
-
 	decision := AccessReviewDecision{
 		Source:        item.Source,
 		PrincipalType: item.PrincipalType,
@@ -252,48 +295,14 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 		EnvironmentID: item.EnvironmentID,
 		SecretID:      item.SecretID,
 	}
-	switch action {
-	case "attest":
-		if err := c.AttestAccessReviewGrant(ctx, actorID, projectID, decision); err != nil {
-			return err
-		}
-		item.Decision = ReviewItemAttested
-	case "revoke":
-		if err := c.RevokeAccessReviewGrant(ctx, actorID, projectID, decision); err != nil {
-			return err
-		}
-		item.Decision = ReviewItemRevoked
-	default:
-		return fmt.Errorf("%s: action must be attest or revoke", i18n.T("ErrorValidation", nil))
+	if err := c.applyAccessDecision(ctx, actorID, projectID, item, action, decision); err != nil {
+		return err
 	}
 	now := c.now()
 	item.Reason = reason
 	item.DecidedBy = actorID
 	item.DecidedAt = &now
-	// Both pre-checks above (item still pending, campaign still open) are plain reads,
-	// so a concurrent/replayed second decision (#319) or a concurrent force-close
-	// (#343) can reach here too, having read the same "pending"/"open" state before
-	// either write lands. UpdateAccessReviewItem's single conditional UPDATE — WHERE
-	// decision='pending' AND the parent campaign's state='open', both checked
-	// atomically in the same statement — is the actual race-closing guard: ok==false
-	// means this call lost the race, either to another decision or to a concurrent
-	// close, so don't silently let this decision overwrite the winner or land into a
-	// campaign whose evidence snapshot was supposed to be frozen at close time.
-	ok, err := c.storage.UpdateAccessReviewItem(ctx, item)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	if !ok {
-		// The conditional UPDATE doesn't say WHICH precondition failed, so re-read the
-		// item to shape an accurate error. This re-read is purely cosmetic — the
-		// security decision was already made atomically by the UPDATE above, win or
-		// lose; nothing here re-opens the race.
-		if reloaded, rerr := c.storage.GetAccessReviewItem(ctx, itemID); rerr == nil && reloaded.Decision != ReviewItemPending {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
-		}
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
-	}
-	return nil
+	return c.persistItemDecision(ctx, item, itemID)
 }
 
 // requireHumanReviewer rejects a recertification action by a non-human / unattributable

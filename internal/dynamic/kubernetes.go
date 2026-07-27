@@ -120,6 +120,28 @@ type k8sConfig struct {
 	Token     string `json:"token,omitempty"`
 }
 
+func validateK8sCfg(cfg k8sConfig) error {
+	if strings.TrimSpace(cfg.Namespace) == "" {
+		return fmt.Errorf("kubernetes: namespace is required")
+	}
+	if strings.TrimSpace(cfg.ServiceAccount) == "" {
+		return fmt.Errorf("kubernetes: service_account is required")
+	}
+	return nil
+}
+
+func k8sCredentialFields(cfg k8sConfig, token string, expiry time.Time) map[string]string {
+	fields := map[string]string{
+		"token":           token,
+		"namespace":       cfg.Namespace,
+		"service_account": cfg.ServiceAccount,
+	}
+	if !expiry.IsZero() {
+		fields["expiration"] = expiry.UTC().Format(time.RFC3339)
+	}
+	return fields
+}
+
 // Issue mints a token for the configured ServiceAccount. roleName is the lease
 // label; when Revocable is set it is also the name of the per-lease bound Secret
 // created below (needed by Revoke to find and delete it later). creationTemplate
@@ -129,11 +151,8 @@ func (e *KubernetesEngine) Issue(ctx context.Context, adminDSN, _ string, ttl ti
 	if err := json.Unmarshal([]byte(adminDSN), &cfg); err != nil {
 		return Credential{}, "", fmt.Errorf("kubernetes: config must be JSON ({\"namespace\":...,\"service_account\":...}): %w", err)
 	}
-	if strings.TrimSpace(cfg.Namespace) == "" {
-		return Credential{}, "", fmt.Errorf("kubernetes: namespace is required")
-	}
-	if strings.TrimSpace(cfg.ServiceAccount) == "" {
-		return Credential{}, "", fmt.Errorf("kubernetes: service_account is required")
+	if err := validateK8sCfg(cfg); err != nil {
+		return Credential{}, "", err
 	}
 	if len(cfg.AllowedNamespaces) > 0 && !slices.Contains(cfg.AllowedNamespaces, cfg.Namespace) {
 		return Credential{}, "", fmt.Errorf("kubernetes: namespace %q is not in the allowed_namespaces list", cfg.Namespace)
@@ -181,15 +200,7 @@ func (e *KubernetesEngine) Issue(ctx context.Context, adminDSN, _ string, ttl ti
 		return Credential{}, "", fmt.Errorf("kubernetes: request token: %w", err)
 	}
 
-	fields := map[string]string{
-		"token":           token,
-		"namespace":       cfg.Namespace,
-		"service_account": cfg.ServiceAccount,
-	}
-	if !expiry.IsZero() {
-		fields["expiration"] = expiry.UTC().Format(time.RFC3339)
-	}
-	return Credential{Fields: fields}, label, nil
+	return Credential{Fields: k8sCredentialFields(cfg, token, expiry)}, label, nil
 }
 
 // Revoke is a no-op unless the lease's config set "revocable":true, in which case

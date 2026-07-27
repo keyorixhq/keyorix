@@ -515,6 +515,53 @@ func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time, qu
 }
 
 // detectAnomalies checks a single access log entry against the baseline.
+// newIPAlert returns a new_ip alert when log.IPAddress is unknown to baseline, or nil.
+// An empty baseline (no known IPs yet) downgrades to "low" severity: a secret's very
+// first access from any IP is unremarkable on its own, but still auditable (#101).
+func newIPAlert(secret models.SecretNode, log models.SecretAccessLog, baseline accessBaseline, now time.Time) *models.AnomalyAlert {
+	if log.IPAddress == "" || baseline.knownIPs[log.IPAddress] {
+		return nil
+	}
+	severity, desc := "high", fmt.Sprintf("Secret accessed from unrecognised IP address: %s", log.IPAddress)
+	if len(baseline.knownIPs) == 0 {
+		severity = "low"
+		desc = fmt.Sprintf("Secret's first observed access is from IP address %s (no prior baseline to compare against)", log.IPAddress)
+	}
+	return &models.AnomalyAlert{
+		SecretNodeID: secret.ID,
+		SecretName:   secret.Name,
+		AlertType:    "new_ip",
+		Severity:     severity,
+		Description:  desc,
+		AccessedBy:   log.AccessedBy,
+		IPAddress:    log.IPAddress,
+		DetectedAt:   now,
+	}
+}
+
+// newUserAlert returns a new_user alert when log.AccessedBy is unknown to baseline, or nil.
+// Same empty-baseline downgrade reasoning as newIPAlert.
+func newUserAlert(secret models.SecretNode, log models.SecretAccessLog, baseline accessBaseline, now time.Time) *models.AnomalyAlert {
+	if log.AccessedBy == "" || baseline.knownUsers[log.AccessedBy] {
+		return nil
+	}
+	severity, desc := "high", fmt.Sprintf("Secret accessed by user with no prior access history: %s", log.AccessedBy)
+	if len(baseline.knownUsers) == 0 {
+		severity = "low"
+		desc = fmt.Sprintf("Secret's first observed access is by user %s (no prior baseline to compare against)", log.AccessedBy)
+	}
+	return &models.AnomalyAlert{
+		SecretNodeID: secret.ID,
+		SecretName:   secret.Name,
+		AlertType:    "new_user",
+		Severity:     severity,
+		Description:  desc,
+		AccessedBy:   log.AccessedBy,
+		IPAddress:    log.IPAddress,
+		DetectedAt:   now,
+	}
+}
+
 func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, baseline accessBaseline, offHours offHoursPolicy) []models.AnomalyAlert {
 	var alerts []models.AnomalyAlert
 	now := time.Now().UTC()
@@ -533,52 +580,14 @@ func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, basel
 		})
 	}
 
-	// Rule 2: Access from unknown IP. An empty baseline (no prior history at all —
-	// bootstrap, or a brand-new secret) used to suppress this rule entirely (#101): a
-	// first-ever access from ANY IP was silently waved through with zero novelty
-	// signal, which is exactly what an attacker deliberately targeting a
-	// freshly-provisioned, never-accessed secret would rely on. It still fires, but at
-	// "low" severity when there is no established baseline to violate — an established
-	// pattern being violated (baseline non-empty) is a stronger signal than a secret's
-	// first-ever access being from some IP, which is unremarkable on its own but now at
-	// least visible and auditable rather than invisible.
-	if log.IPAddress != "" && !baseline.knownIPs[log.IPAddress] {
-		severity := "high"
-		desc := fmt.Sprintf("Secret accessed from unrecognised IP address: %s", log.IPAddress)
-		if len(baseline.knownIPs) == 0 {
-			severity = "low"
-			desc = fmt.Sprintf("Secret's first observed access is from IP address %s (no prior baseline to compare against)", log.IPAddress)
-		}
-		alerts = append(alerts, models.AnomalyAlert{
-			SecretNodeID: secret.ID,
-			SecretName:   secret.Name,
-			AlertType:    "new_ip",
-			Severity:     severity,
-			Description:  desc,
-			AccessedBy:   log.AccessedBy,
-			IPAddress:    log.IPAddress,
-			DetectedAt:   now,
-		})
+	// Rule 2: Access from unknown IP — see newIPAlert for the empty-baseline reasoning (#101).
+	if a := newIPAlert(secret, log, baseline, now); a != nil {
+		alerts = append(alerts, *a)
 	}
 
-	// Rule 3: Access by unknown user — same empty-baseline reasoning as Rule 2.
-	if log.AccessedBy != "" && !baseline.knownUsers[log.AccessedBy] {
-		severity := "high"
-		desc := fmt.Sprintf("Secret accessed by user with no prior access history: %s", log.AccessedBy)
-		if len(baseline.knownUsers) == 0 {
-			severity = "low"
-			desc = fmt.Sprintf("Secret's first observed access is by user %s (no prior baseline to compare against)", log.AccessedBy)
-		}
-		alerts = append(alerts, models.AnomalyAlert{
-			SecretNodeID: secret.ID,
-			SecretName:   secret.Name,
-			AlertType:    "new_user",
-			Severity:     severity,
-			Description:  desc,
-			AccessedBy:   log.AccessedBy,
-			IPAddress:    log.IPAddress,
-			DetectedAt:   now,
-		})
+	// Rule 3: Access by unknown user — same reasoning as Rule 2.
+	if a := newUserAlert(secret, log, baseline, now); a != nil {
+		alerts = append(alerts, *a)
 	}
 
 	return alerts
