@@ -2,6 +2,7 @@ package notary
 
 import (
 	"context"
+	"crypto/x509"
 	"testing"
 	"time"
 
@@ -16,6 +17,30 @@ import (
 func TestNewRFC3161_ZeroTimeout_UsesDefault(t *testing.T) {
 	r := NewRFC3161("https://example.tsa/rfc3161", 0)
 	assert.Equal(t, defaultTimeout, r.client.Timeout)
+}
+
+// ---------------------------------------------------------------------------
+// VerifyReceipt — malformed token must not panic (fuzz regression)
+// ---------------------------------------------------------------------------
+
+// TestVerifyReceipt_MalformedToken_NoPanic guards against digitorus/pkcs7
+// panicking on truncated BER inputs (index out of range in ber.go:readObject,
+// found by the continuous fuzz rig on 2026-07-27).
+func TestVerifyReceipt_MalformedToken_NoPanic(t *testing.T) {
+	roots := x509.NewCertPool()
+	msg := []byte("any message")
+	cases := [][]byte{
+		{0x30, 0x81},             // SEQUENCE + long-form length, no length byte follows
+		{0x30, 0x82},             // SEQUENCE + long-form length claiming 2 bytes, none follow
+		{0x30, 0x01},             // SEQUENCE claiming 1 content byte, none present
+		{0xff, 0x81},             // high-tag-number form, truncated
+		{0x30, 0x80, 0x00, 0x00}, // indefinite-length SEQUENCE
+	}
+	for _, token := range cases {
+		require.NotPanics(t, func() {
+			_, _ = VerifyReceipt(roots, msg, token)
+		})
+	}
 }
 
 func TestNewRFC3161_NegativeTimeout_UsesDefault(t *testing.T) {
