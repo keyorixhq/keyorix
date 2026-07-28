@@ -8,14 +8,15 @@ on:
   schedule:
     - cron: '19 17 * * 5'
 
-permissions:
-  contents: read
-  security-events: write
-  actions: read
+permissions: {}
 
 jobs:
   scan:
     uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8bd1ce1c4be9d98053ffd9e6e14585276a36762c" # v1.9.1
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     with:
       scan-args: |-
         --recursive
