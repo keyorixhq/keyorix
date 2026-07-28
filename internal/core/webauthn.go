@@ -279,6 +279,21 @@ func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) 
 	return assertion, token, nil
 }
 
+// checkWebAuthnAccountGates refuses a WebAuthn second-factor login when the account
+// is blocked (suspended/deactivated) or locked out, mirroring the TOTP path in
+// VerifyMFALogin and the passwordless path below.
+func (c *KeyorixCore) checkWebAuthnAccountGates(wu *webauthnUser) error {
+	if !wu.user.IsActive || AccountLoginBlocked(wu.user.AccountState) {
+		return fmt.Errorf("account is not active")
+	}
+	// Per-IP limiters are spoofable behind a proxy; bind assertion failures to the
+	// account instead. ch.UserID is password-gated so this cannot lock an arbitrary victim.
+	if c.loginLocked(wu.user) {
+		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
+	return nil
+}
+
 // FinishWebAuthnLogin consumes the challenge + webauthn session, verifies the
 // assertion, updates the credential's signature counter, and mints the session.
 func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, error) {
@@ -309,16 +324,9 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	// deactivated account must be refused — the challenge may have been issued just
 	// before suspension, with nothing rechecking state between steps. Mirrors the
 	// passwordless path's AccountLoginBlocked gate (and the password/session gates).
-	if !wu.user.IsActive || AccountLoginBlocked(wu.user.AccountState) {
-		return nil, nil, fmt.Errorf("account is not active")
-	}
-	// Per-account lockout also gates the WebAuthn second factor (parity with the TOTP
-	// path in VerifyMFALogin): the per-IP limiter is spoofable behind a proxy and fails
-	// open, so bind assertion failures to the account. ch.UserID comes from the
-	// password-gated challenge (not an attacker-chosen handle), so this cannot be abused
-	// to lock out an arbitrary victim.
-	if c.loginLocked(wu.user) {
-		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	// Per-account lockout also gates the second factor (parity with VerifyMFALogin).
+	if err := c.checkWebAuthnAccountGates(wu); err != nil {
+		return nil, nil, err
 	}
 	cred, err := c.webauthnRP.ValidateLogin(wu, sd, parsed)
 	if err != nil {
