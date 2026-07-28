@@ -478,10 +478,9 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 		}
 		// MT-007: re-check the impersonation ceiling so an elevation of the target's
 		// roles AFTER impersonation started does not silently extend the impersonator's
-		// reach beyond their current authority. The auth cache (30s TTL) bounds how
-		// stale this check can be — at worst the impersonator retains the session for
-		// one cache window after the target's authority rises above theirs.
-		if err := c.requireEqualOrGreaterAdminAuthority(ctx, *session.ImpersonatedBy, session.UserID, "impersonate"); err != nil {
+		// reach beyond their current authority. Cached (IMP-001) to avoid repeated DB
+		// queries on every session validation; cache TTL is 2× the auth-cache window.
+		if err := c.cachedImpersonationCeiling(ctx, *session.ImpersonatedBy, session.UserID); err != nil {
 			return nil, nil, fmt.Errorf("impersonation ceiling exceeded — target's authority now exceeds impersonator's: %w", err)
 		}
 	}

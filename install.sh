@@ -78,29 +78,36 @@ TMP_CHECKSUMS="${TMP_DIR}/checksums.txt"
 TMP_CHECKSUMS_PEM="${TMP_DIR}/checksums.txt.pem"
 TMP_CHECKSUMS_SIG="${TMP_DIR}/checksums.txt.sig"
 if command -v curl >/dev/null 2>&1; then
-    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt" -o "$TMP_CHECKSUMS" || error "Failed to download checksums.txt" # NOSONAR -- bash:S6506 false positive
-    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.pem" -o "$TMP_CHECKSUMS_PEM" 2>/dev/null || true # NOSONAR
-    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.sig" -o "$TMP_CHECKSUMS_SIG" 2>/dev/null || true # NOSONAR
+    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt" -o "$TMP_CHECKSUMS" || error "Failed to download checksums.txt" # NOSONAR -- bash:S6506 false positive: --proto '=https' --tlsv1.2 enforces HTTPS; redirect-following is required for GitHub release CDN
 else
-    wget -qO "$TMP_CHECKSUMS"     "${CHECKSUMS_BASE}/checksums.txt"     || error "Failed to download checksums.txt" # NOSONAR
-    wget -qO "$TMP_CHECKSUMS_PEM" "${CHECKSUMS_BASE}/checksums.txt.pem" 2>/dev/null || true # NOSONAR
-    wget -qO "$TMP_CHECKSUMS_SIG" "${CHECKSUMS_BASE}/checksums.txt.sig" 2>/dev/null || true # NOSONAR
+    wget -qO "$TMP_CHECKSUMS" "${CHECKSUMS_BASE}/checksums.txt" || error "Failed to download checksums.txt" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
 fi
 
 # Verify checksums.txt with cosign (fail hard if cosign is present but verification fails).
+# SC-014 / SC-R124-001: when cosign is installed, .pem/.sig artifact downloads are
+# mandatory and hard-fail on any error — a download failure must NOT be silently
+# treated as "not published" since an attacker can force failures while serving a
+# tampered checksums.txt, downgrading verification without cosign exiting non-zero.
 COSIGN_IDENTITY_REGEXP="https://github.com/${REPO}/\\.github/workflows/release\\.yml@.*"
 if command -v cosign >/dev/null 2>&1; then
-    if [ -s "$TMP_CHECKSUMS_PEM" ] && [ -s "$TMP_CHECKSUMS_SIG" ]; then
-        cosign verify-blob \
-            --certificate "$TMP_CHECKSUMS_PEM" \
-            --signature   "$TMP_CHECKSUMS_SIG" \
-            --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "$TMP_CHECKSUMS" || error "cosign: checksums.txt signature verification FAILED — aborting (supply-chain integrity check)"
-        success "checksums.txt cosign signature verified"
+    if command -v curl >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.pem" -o "$TMP_CHECKSUMS_PEM" \
+            || error "cosign: checksums.txt.pem download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- bash:S6506 false positive
+        curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.sig" -o "$TMP_CHECKSUMS_SIG" \
+            || error "cosign: checksums.txt.sig download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- bash:S6506 false positive
     else
-        info "cosign signature artifacts not published for this release; skipping cosign step"
+        wget -qO "$TMP_CHECKSUMS_PEM" "${CHECKSUMS_BASE}/checksums.txt.pem" \
+            || error "cosign: checksums.txt.pem download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
+        wget -qO "$TMP_CHECKSUMS_SIG" "${CHECKSUMS_BASE}/checksums.txt.sig" \
+            || error "cosign: checksums.txt.sig download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
     fi
+    cosign verify-blob \
+        --certificate "$TMP_CHECKSUMS_PEM" \
+        --signature   "$TMP_CHECKSUMS_SIG" \
+        --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        "$TMP_CHECKSUMS" || error "cosign: checksums.txt signature verification FAILED — aborting (supply-chain integrity check)"
+    success "checksums.txt cosign signature verified"
 else
     printf "${RED}WARNING:${NC} cosign is not installed — checksums.txt signature not verified.\n" >&2
     printf "  To verify supply-chain integrity, install cosign (https://docs.sigstore.dev/)\n" >&2

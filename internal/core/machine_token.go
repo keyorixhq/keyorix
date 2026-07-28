@@ -71,6 +71,12 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	if m.State != MachineActive {
 		return nil, fmt.Errorf("cannot issue a token for a %s machine identity (must be active)", m.State)
 	}
+	// MACH-001: enforce a privilege ceiling — a non-admin cannot issue a token for
+	// a machine that holds admin-tier roles, since the token would carry those roles
+	// and the actor could use it to escalate their own effective privileges.
+	if err := c.requireMachinePrivilegeCeiling(ctx, actorID, machineID); err != nil {
+		return nil, err
+	}
 	classification := params.Classification
 	if !IsValidClassification(classification) {
 		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")

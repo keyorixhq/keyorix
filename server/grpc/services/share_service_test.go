@@ -59,6 +59,13 @@ func newShareTestRig(t *testing.T) *shareTestRig {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID}).Error)                    // global
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: writerRoleID, ProjectID: 1}).Error) // project member for recipient
 
+	// Give recipient (user 2) a project-scoped role with NO permissions so that
+	// IsProjectMember(2, 1) passes but authorizeSecretScoped still denies user 2
+	// as a sharer (preserving the PermissionDenied and FlatPermissionDenied tests).
+	const recipientMemberRoleID = 99
+	require.NoError(t, db.Create(&models.Role{ID: recipientMemberRoleID, Name: "project-member"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: recipientMemberRoleID, ProjectID: 1}).Error)
+
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	secret, err := coreService.CreateSecret(context.Background(), &core.CreateSecretRequest{
 		Name: "shared-secret", Value: []byte("v"), ProjectID: 1, EnvironmentID: 1,
