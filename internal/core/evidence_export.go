@@ -73,13 +73,8 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		return nil, fmt.Errorf("evidence export: marshal: %w", err)
 	}
 
-	// Sign the exact bytes we deliver (when encryption is enabled) so an archived
-	// pack's authenticity is provable later. signature is "" when unavailable.
-	signature, signed := c.signEvidence(data)
-
 	res := &EvidenceExportResult{
 		Bytes:           len(data),
-		Signed:          signed,
 		Degraded:        ev.Posture != nil && ev.Posture.Degraded,
 		DegradedReasons: postureDegradedReasons(ev.Posture),
 	}
@@ -87,6 +82,12 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 	// The pack's canonical name — used both as the local filename and the off-box
 	// object key, so a file and an object-store copy of the same run line up.
 	name := fmt.Sprintf("keyorix-evidence-%s.json", ev.GeneratedAt.UTC().Format(evidenceFileTimeLayout))
+
+	// Sign filename+data so the signature binds the pack to its canonical name
+	// (AUD-009: signing data alone let a valid signature be presented as authenticating
+	// a differently-named pack). Signature is "" when signing is unavailable.
+	signature, signed := c.signEvidence(name, data)
+	res.Signed = signed
 
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {
