@@ -1351,6 +1351,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
 		&models.AnomalyAlert{},
+		&models.AnomalyConfigRecord{},
 		&models.StatsSnapshot{},
 		&models.DeploymentStatsSnapshot{},
 	} {
