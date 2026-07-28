@@ -15,6 +15,7 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
@@ -320,6 +321,58 @@ func (c *KeyorixCore) requireGlobalAdminToReinstateAdminRoles(ctx context.Contex
 	}
 	if !isAdmin {
 		return fmt.Errorf("only an administrator can restore a %s holding an administrative role grant", objectDesc)
+	}
+	return nil
+}
+
+// ceilingCacheEntry is a single cached result of requireEqualOrGreaterAdminAuthority.
+type ceilingCacheEntry struct {
+	err       error
+	expiresAt time.Time
+}
+
+const ceilingCacheTTL = 60 * time.Second
+
+// cachedImpersonationCeiling wraps requireEqualOrGreaterAdminAuthority with a
+// short-lived cache (ceilingCacheTTL) so the expensive DB reads it issues are
+// not repeated on every ValidateSessionToken call (IMP-001). The cache TTL is
+// intentionally 2× the auth-cache window so a cache miss here never triggers
+// two consecutive uncached ceiling checks within the same outer auth-cache miss.
+func (c *KeyorixCore) cachedImpersonationCeiling(ctx context.Context, actorID, targetID uint) error {
+	key := fmt.Sprintf("%d:%d", actorID, targetID)
+	if v, ok := c.impersonationCeilingCache.Load(key); ok {
+		if entry := v.(ceilingCacheEntry); c.now().Before(entry.expiresAt) {
+			return entry.err
+		}
+	}
+	err := c.requireEqualOrGreaterAdminAuthority(ctx, actorID, targetID, "impersonate")
+	c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.now().Add(ceilingCacheTTL)})
+	return err
+}
+
+// requireMachinePrivilegeCeiling refuses to issue a token for machineID when the
+// machine holds any admin-tier role and the actor is not a global admin (MACH-001).
+// A token inherits the machine's roles, so issuing one is equivalent to granting
+// the actor those roles — the same privilege-ceiling contract enforced for user
+// impersonation and role grants.
+func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorID, machineID uint) error {
+	roles, err := c.storage.GetMachineRoles(ctx, machineID)
+	if err != nil {
+		return fmt.Errorf("failed to check machine privilege ceiling: %w", err)
+	}
+	roleIDs := make([]uint, len(roles))
+	for i, r := range roles {
+		roleIDs[i] = r.ID
+	}
+	if !c.roleSetContainsAdmin(ctx, roleIDs) {
+		return nil
+	}
+	isAdmin, err := c.IsGlobalAdmin(ctx, actorID)
+	if err != nil {
+		return fmt.Errorf("failed to verify actor authority: %w", err)
+	}
+	if !isAdmin {
+		return fmt.Errorf("issuing a token for a machine identity that holds administrative roles requires administrative authority")
 	}
 	return nil
 }
