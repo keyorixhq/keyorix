@@ -51,13 +51,21 @@ type Notary interface {
 // an attacker who can write the checkpoint row (the very actor the anchor defends
 // against) could mint a self-signed token over the same bytes. A nil roots
 // therefore fails closed rather than asserting an unverifiable proof.
-func VerifyReceipt(roots *x509.CertPool, message, token []byte) (time.Time, error) {
+func VerifyReceipt(roots *x509.CertPool, message, token []byte) (_ time.Time, err error) {
 	if roots == nil {
 		return time.Time{}, fmt.Errorf("notary: no TSA trust anchor configured — cannot verify receipt issuer")
 	}
 	if len(token) == 0 {
 		return time.Time{}, fmt.Errorf("notary: empty receipt token")
 	}
+	// digitorus/pkcs7 panics on certain malformed BER inputs instead of returning
+	// an error (index out of range in ber.go:readObject, found by fuzz rig).
+	// Convert any such panic to an error so VerifyReceipt never panics itself.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("notary: parser panic on malformed token: %v", r)
+		}
+	}()
 	ts, err := timestamp.Parse(token)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("notary: invalid timestamp token: %w", err)
