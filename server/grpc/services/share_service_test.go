@@ -56,7 +56,8 @@ func newShareTestRig(t *testing.T) *shareTestRig {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 2}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 3}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID}).Error) // global
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID}).Error)                    // global
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: writerRoleID, ProjectID: 1}).Error) // project member for recipient
 
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	secret, err := coreService.CreateSecret(context.Background(), &core.CreateSecretRequest{

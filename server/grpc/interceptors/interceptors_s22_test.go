@@ -24,19 +24,20 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// isPublicMethod — all three entries in grpcPublicMethods
+// isPublicMethod — all two entries in grpcPublicMethods
 // ---------------------------------------------------------------------------
 
 // TestIsPublicMethod_S22_AllPublicMethods verifies that every entry in
-// grpcPublicMethods is recognised as public, and that an arbitrary private
-// method is not.
+// grpcPublicMethods is recognised as public, that reflection (now
+// auth-gated per r137 Sprint 1 GRPC-reflection-auth) is not, and that
+// an arbitrary private method is not.
 func TestIsPublicMethod_S22_AllPublicMethods(t *testing.T) {
 	cases := []struct {
 		method string
 		want   bool
 	}{
 		{"/grpc.health.v1.Health/Check", true},
-		{"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo", true},
+		{"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo", false},
 		{"/keyorix.v1.SystemService/HealthCheck", true},
 		{"/keyorix.v1.SecretService/GetSecret", false},
 		{"", false},
@@ -279,11 +280,11 @@ func streamBearerCtx(token string) context.Context {
 }
 
 // TestStreamAuthInterceptor_S22_PublicMethodBypasses confirms that a public
-// stream method (e.g. ServerReflection) skips authentication entirely — the
-// coreService is nil so any auth attempt would panic/error.
+// stream method (e.g. /grpc.health.v1.Health/Check) skips authentication
+// entirely — the coreService is nil so any auth attempt would panic/error.
 func TestStreamAuthInterceptor_S22_PublicMethodBypasses(t *testing.T) {
 	interceptor := StreamAuthInterceptor(nil, false)
-	info := &grpc.StreamServerInfo{FullMethod: "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"}
+	info := &grpc.StreamServerInfo{FullMethod: "/grpc.health.v1.Health/Check"}
 
 	called := false
 	err := interceptor(nil, &fakeStream{ctx: context.Background()}, info,
