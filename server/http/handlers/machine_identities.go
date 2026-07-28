@@ -219,10 +219,11 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Name           string   `json:"name"`
-		ExpiresInDays  int      `json:"expires_in_days"`
-		Classification string   `json:"classification"`
-		AllowedCIDRs   []string `json:"allowed_cidrs"`
+		Name                string   `json:"name"`
+		ExpiresInDays       int      `json:"expires_in_days"`
+		Classification      string   `json:"classification"`
+		AllowedCIDRs        []string `json:"allowed_cidrs"`
+		ReplaceCredentialID uint     `json:"replace_credential_id"` // PAT-006: atomic rotation
 	}
 	if !mustDecodeBody(w, r, &body) {
 		return
@@ -233,16 +234,19 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		expiresAt = &t
 	}
 	result, err := h.coreService.IssueMachineToken(r.Context(), projectID, uint(machineID), actor.UserID, core.IssueMachineTokenParams{
-		Name:           body.Name,
-		ExpiresAt:      expiresAt,
-		Classification: body.Classification,
-		AllowedCIDRs:   body.AllowedCIDRs,
+		Name:                body.Name,
+		ExpiresAt:           expiresAt,
+		Classification:      body.Classification,
+		AllowedCIDRs:        body.AllowedCIDRs,
+		ReplaceCredentialID: body.ReplaceCredentialID,
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, errNotFound):
+			status = http.StatusNotFound
+		case strings.Contains(msg, "replace_credential_id"):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "must be active"):
 			status = http.StatusConflict
@@ -253,6 +257,15 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		sendError(w, "Error", msg, status, nil)
 		return
 	}
+	// PAT-006: evict the replaced credential from the auth cache so it stops
+	// authenticating immediately — the same eviction RevokeMachineToken performs.
+	if result.ReplacedTokenHash != "" {
+		middleware.InvalidateTokenCacheByHash(result.ReplacedTokenHash)
+	}
+	msg := "Machine token issued — copy it now; it will not be shown again"
+	if result.ReplacedTokenHash != "" {
+		msg = "Machine token rotated — old credential revoked; copy the new token now, it will not be shown again"
+	}
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, map[string]interface{}{
 		"token":          result.PlainToken, // shown once
@@ -261,7 +274,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		"expires_at":     result.Credential.ExpiresAt,
 		"classification": result.Credential.Classification,
 		"allowed_cidrs":  body.AllowedCIDRs,
-	}, "Machine token issued — copy it now; it will not be shown again")
+	}, msg)
 }
 
 // ListMachineTokens handles GET /api/v1/projects/{id}/machine-identities/{machineId}/tokens.

@@ -27,8 +27,9 @@ const (
 // IssueMachineTokenResult carries the freshly minted token. PlainToken is shown
 // once and never persisted (only its hash is stored).
 type IssueMachineTokenResult struct {
-	Credential *models.MachineIdentityCredential
-	PlainToken string
+	Credential        *models.MachineIdentityCredential
+	PlainToken        string
+	ReplacedTokenHash string // non-empty when ReplaceCredentialID was set; caller should evict auth cache
 }
 
 // machineInProject fetches a machine identity and verifies it belongs to the
@@ -51,6 +52,11 @@ type IssueMachineTokenParams struct {
 	ExpiresAt      *time.Time
 	Classification string
 	AllowedCIDRs   []string
+	// ReplaceCredentialID, when non-zero, atomically revokes the specified existing
+	// credential immediately after the new one is issued (PAT-006: eliminates the
+	// overlap window in the manual two-step issue-then-revoke rotation flow).
+	// The credential must belong to the same machine; it is rejected if not found.
+	ReplaceCredentialID uint
 }
 
 // IssueMachineToken mints an opaque bearer token for an active machine identity.
@@ -80,6 +86,17 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	}
 	raw := machineTokenPrefix + base64.RawURLEncoding.EncodeToString(b)
 
+	// PAT-006: pre-validate the credential to replace BEFORE creating the new one
+	// so we fail fast without leaving an orphaned new credential if the old ID is bad.
+	var oldCredHash string
+	if params.ReplaceCredentialID != 0 {
+		oldCred, err := c.storage.GetMachineIdentityCredentialByID(ctx, params.ReplaceCredentialID)
+		if err != nil || oldCred.MachineIdentityID != machineID {
+			return nil, fmt.Errorf("replace_credential_id: credential not found on this machine")
+		}
+		oldCredHash = oldCred.TokenHash
+	}
+
 	var cidrJSON string
 	if len(params.AllowedCIDRs) > 0 {
 		validated, err := encodePATCIDRs(params.AllowedCIDRs)
@@ -101,6 +118,16 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 	created, err := c.storage.CreateMachineIdentityCredential(ctx, cred)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store machine token: %w", err)
+	}
+
+	// PAT-006: revoke the replaced credential after the new one is safely stored so
+	// the machine is never left without a valid credential during the rotation.
+	if params.ReplaceCredentialID != 0 {
+		if err := c.storage.RevokeMachineIdentityCredential(ctx, params.ReplaceCredentialID); err != nil {
+			return nil, fmt.Errorf("new token issued but failed to revoke old credential %d: %w", params.ReplaceCredentialID, err)
+		}
+		c.logMachineEvent(ctx, "machine_identity.token_rotated", m, actorID)
+		return &IssueMachineTokenResult{Credential: created, PlainToken: raw, ReplacedTokenHash: oldCredHash}, nil
 	}
 	c.logMachineEvent(ctx, "machine_identity.token_issued", m, actorID)
 	return &IssueMachineTokenResult{Credential: created, PlainToken: raw}, nil

@@ -26,6 +26,11 @@ jobs:
         run: go build -o /tmp/keyorix-server ./server
 
       - name: Write DAST config
+        # SC-015: encryption is enabled so the DAST server matches production
+        # configuration (authenticated + encrypted surface).  The DEK is derived
+        # from a per-run disposable key via the "env" key provider: KEYORIX_DAST_KEK
+        # carries 32 hex-encoded random bytes generated once for this DAST job (see
+        # the "Generate DAST KEK" step below); it is never committed or reused.
         run: |
           cat > /tmp/keyorix-dast.yaml << 'EOF'
           environment: "development"
@@ -48,13 +53,23 @@ jobs:
             database:
               path: "/tmp/keyorix-dast.db"
             encryption:
-              enabled: false
+              enabled: true
+              dek_path: "/tmp/keyorix-dast.dek"
+              salt_path: "/tmp/keyorix-dast.salt"
+              key_provider:
+                type: env
+                env_var: KEYORIX_DAST_KEK
           security:
             enable_file_permission_check: false
           soft_delete:
             enabled: true
             retention_days: 30
           EOF
+
+      - name: Generate DAST KEK
+        # SC-015: generate a per-run disposable hex-encoded 32-byte KEK and export
+        # it into GITHUB_ENV so the server start step inherits it.  Never reused.
+        run: printf 'KEYORIX_DAST_KEK=%s\n' "$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - name: Start server
         run: |

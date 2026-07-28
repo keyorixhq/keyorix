@@ -68,14 +68,48 @@ else
     wget -qO "$TMP_BIN" "$DOWNLOAD_URL" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
 fi
 
-# Verify SHA-256 checksum against the release's published checksums.txt.
-info "Verifying checksum..."
-CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${LATEST}/checksums.txt"
+# SC-014: Verify checksums.txt supply-chain integrity with cosign before trusting
+# its contents.  checksums.txt is keylessly signed in CI (see SECURITY.md); a
+# tampered checksums.txt would otherwise let an attacker substitute any binary
+# while still passing the SHA-256 check below.
+info "Downloading checksums.txt..."
+CHECKSUMS_BASE="https://github.com/${REPO}/releases/download/${LATEST}"
+TMP_CHECKSUMS="${TMP_DIR}/checksums.txt"
+TMP_CHECKSUMS_PEM="${TMP_DIR}/checksums.txt.pem"
+TMP_CHECKSUMS_SIG="${TMP_DIR}/checksums.txt.sig"
 if command -v curl >/dev/null 2>&1; then
-    EXPECTED=$(curl --proto '=https' --tlsv1.2 -fsSL "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}') # NOSONAR -- bash:S6506 false positive: --proto '=https' --tlsv1.2 enforces HTTPS; redirect-following is required for GitHub release CDN
+    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt" -o "$TMP_CHECKSUMS" || error "Failed to download checksums.txt" # NOSONAR -- bash:S6506 false positive
+    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.pem" -o "$TMP_CHECKSUMS_PEM" 2>/dev/null || true # NOSONAR
+    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.sig" -o "$TMP_CHECKSUMS_SIG" 2>/dev/null || true # NOSONAR
 else
-    EXPECTED=$(wget -qO- "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}') # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
+    wget -qO "$TMP_CHECKSUMS"     "${CHECKSUMS_BASE}/checksums.txt"     || error "Failed to download checksums.txt" # NOSONAR
+    wget -qO "$TMP_CHECKSUMS_PEM" "${CHECKSUMS_BASE}/checksums.txt.pem" 2>/dev/null || true # NOSONAR
+    wget -qO "$TMP_CHECKSUMS_SIG" "${CHECKSUMS_BASE}/checksums.txt.sig" 2>/dev/null || true # NOSONAR
 fi
+
+# Verify checksums.txt with cosign (fail hard if cosign is present but verification fails).
+COSIGN_IDENTITY_REGEXP="https://github.com/${REPO}/\\.github/workflows/release\\.yml@.*"
+if command -v cosign >/dev/null 2>&1; then
+    if [ -s "$TMP_CHECKSUMS_PEM" ] && [ -s "$TMP_CHECKSUMS_SIG" ]; then
+        cosign verify-blob \
+            --certificate "$TMP_CHECKSUMS_PEM" \
+            --signature   "$TMP_CHECKSUMS_SIG" \
+            --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$TMP_CHECKSUMS" || error "cosign: checksums.txt signature verification FAILED — aborting (supply-chain integrity check)"
+        success "checksums.txt cosign signature verified"
+    else
+        info "cosign signature artifacts not published for this release; skipping cosign step"
+    fi
+else
+    printf "${RED}WARNING:${NC} cosign is not installed — checksums.txt signature not verified.\n" >&2
+    printf "  To verify supply-chain integrity, install cosign (https://docs.sigstore.dev/)\n" >&2
+    printf "  and re-run, or verify manually per SECURITY.md.\n" >&2
+fi
+
+# Verify SHA-256 checksum of the downloaded binary against the (now-verified) checksums.txt.
+info "Verifying checksum..."
+EXPECTED=$(awk -v n="$BINARY_NAME" '$2==n {print $1}' "$TMP_CHECKSUMS")
 
 if [ -n "$EXPECTED" ]; then
     if command -v sha256sum >/dev/null 2>&1; then
