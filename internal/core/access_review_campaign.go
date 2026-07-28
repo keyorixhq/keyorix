@@ -366,6 +366,19 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, pr
 			if it.PrincipalType == "group" && c.userInGroup(ctx, actorID, it.PrincipalID) {
 				return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
 			}
+			// AUD-010: machine identities provisioned by the actor confer the same
+			// indirect self-certification risk as groups the actor belongs to; apply
+			// the same guard here that DecideAccessReviewItem already enforces.
+			// Fail closed on lookup error (can't prove independence → deny).
+			if it.PrincipalType == "machine" {
+				machine, err := c.storage.GetMachineIdentity(ctx, it.PrincipalID)
+				if err != nil {
+					return nil, fmt.Errorf("loading machine identity for independence check: %w", err)
+				}
+				if machine.CreatedBy == actorID {
+					return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a machine identity you provisioned is still pending; an independent reviewer must decide it first")
+				}
+			}
 		}
 	}
 	now := c.now()

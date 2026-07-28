@@ -33,13 +33,14 @@ func TestRunCreate_WithExpires_UserShare(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	_, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "exptgt", Email: "exptgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup, origExpires :=
 		createSecretID, createRecipientID, createPermission, createIsGroup, createExpires
@@ -69,7 +70,7 @@ func TestRunCreate_WithExpires_GroupShare(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	_, secretID := seedShareData(t, svc)
+	_, secretID, _ := seedShareData(t, svc)
 
 	ctx := context.Background()
 	grp, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "expires-grp"})

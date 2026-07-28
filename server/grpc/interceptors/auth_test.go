@@ -176,12 +176,12 @@ func TestAuthInterceptor_NilCoreFailsClosed(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
-// Public methods (health, reflection) bypass authentication entirely.
+// Public methods (health) bypass authentication entirely.
 func TestAuthInterceptor_PublicMethodBypassesAuth(t *testing.T) {
 	interceptor := AuthInterceptor(nil, false) // never consulted for public methods
 	var captured context.Context
 	resp, err := interceptor(context.Background(), nil,
-		&grpc.UnaryServerInfo{FullMethod: "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"},
+		&grpc.UnaryServerInfo{FullMethod: "/grpc.health.v1.Health/Check"},
 		okHandler(&captured))
 
 	require.NoError(t, err)

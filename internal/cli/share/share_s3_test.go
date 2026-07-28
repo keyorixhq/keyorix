@@ -65,8 +65,8 @@ func openShareCore(t *testing.T) *core.KeyorixCore {
 }
 
 // seedShareData seeds a user, project, environment, and secret needed by the
-// share commands and returns ownerID and secretID.
-func seedShareData(t *testing.T, svc *core.KeyorixCore) (ownerID, secretID uint) {
+// share commands and returns ownerID, secretID, and projID.
+func seedShareData(t *testing.T, svc *core.KeyorixCore) (ownerID, secretID, projID uint) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -84,6 +84,7 @@ func seedShareData(t *testing.T, svc *core.KeyorixCore) (ownerID, secretID uint)
 
 	proj, err := svc.CreateProject(ctx, "shareproj", "")
 	require.NoError(t, err)
+	projID = proj.ID
 
 	// CreateProject seeds default environments; fetch the first one.
 	envs, err := svc.Storage().ListEnvironmentsByProject(ctx, proj.ID)
@@ -116,14 +117,14 @@ func TestRunCreate_UserShare_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "recipient", Email: "recipient@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
-	_ = ownerID
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup :=
 		createSecretID, createRecipientID, createPermission, createIsGroup
@@ -150,7 +151,7 @@ func TestRunCreate_GroupShare_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	_, secretID := seedShareData(t, svc)
+	_, secretID, _ := seedShareData(t, svc)
 
 	ctx := context.Background()
 	grp, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "teamalpha"})
@@ -181,13 +182,14 @@ func TestRunCreate_WithTTL_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	_, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "recv2", Email: "recv2@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	origSecretID, origRecipientID, origPerm, origIsGroup, origTTL :=
 		createSecretID, createRecipientID, createPermission, createIsGroup, createTTL
@@ -218,13 +220,14 @@ func TestRunList_PrintsTableForExistingShares(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "listtgt", Email: "listtgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	_, err = svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -248,13 +251,14 @@ func TestRunList_PrintsTableWithExpiry(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "listtgt2", Email: "listtgt2@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	exp := time.Now().Add(48 * time.Hour)
 	_, err = svc.ShareSecret(ctx, &core.ShareSecretRequest{
@@ -281,13 +285,14 @@ func TestRunRevoke_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "revoketgt", Email: "revoketgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -314,7 +319,7 @@ func TestRunGroupShares_PrintsTable(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, _ := seedShareData(t, svc)
 
 	ctx := context.Background()
 	grp, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "devteam"})
@@ -346,13 +351,14 @@ func TestRunSharedSecrets_PrintsTable(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "sharedtgt", Email: "sharedtgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	_, err = svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -378,13 +384,14 @@ func TestRunUpdate_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "updatetgt", Email: "updatetgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -414,13 +421,14 @@ func TestRunUpdate_WithTTL_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "updatetgt2", Email: "updatetgt2@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{
 		SecretID: secretID, RecipientID: recipient.ID,
@@ -450,13 +458,14 @@ func TestRunUpdate_ClearExpiry_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	ownerID, secretID := seedShareData(t, svc)
+	ownerID, secretID, projID := seedShareData(t, svc)
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
 		Username: "clearexptgt", Email: "clearexptgt@example.com", IsActive: true,
 	})
 	require.NoError(t, err)
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, projID, recipient.ID, "project_viewer"))
 
 	exp := time.Now().Add(24 * time.Hour)
 	share, err := svc.ShareSecret(ctx, &core.ShareSecretRequest{

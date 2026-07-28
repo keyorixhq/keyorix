@@ -241,6 +241,10 @@ func (c *KeyorixCore) DeleteWebAuthnCredential(ctx context.Context, userID, id u
 		if err := c.storage.SetUserWebAuthnEnabled(ctx, userID, false); err != nil {
 			return err
 		}
+		// Last passkey removed — security downgrade. Purge all sessions so a session
+		// minted under WebAuthn enforcement cannot outlive the second-factor removal,
+		// symmetric with FinishWebAuthnRegistration's session purge on first enrolment.
+		_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
 	}
 	uid := userID
 	c.writeAuditEventFull(ctx, "webauthn.credential_removed", &uid, nil, nil, "",

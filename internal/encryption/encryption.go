@@ -21,7 +21,7 @@ const (
 
 // EncryptionService handles all encryption/decryption operations
 type EncryptionService struct {
-	kek []byte // Key Encryption Key
+	dek []byte // Data Encryption Key
 	gcm cipher.AEAD
 }
 
@@ -49,10 +49,10 @@ type EncryptedData struct {
 	Metadata EncryptionMetadata `json:"metadata"`
 }
 
-// NewEncryptionService creates a new encryption service with KEK
+// NewEncryptionService creates a new encryption service with the given DEK.
 func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 	if len(kek) != 32 {
-		return nil, fmt.Errorf("KEK must be 32 bytes, got %d", len(kek))
+		return nil, fmt.Errorf("DEK must be 32 bytes, got %d", len(kek))
 	}
 
 	block, err := aes.NewCipher(kek)
@@ -66,7 +66,7 @@ func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 	}
 
 	return &EncryptionService{
-		kek: kek,
+		dek: kek,
 		gcm: gcm,
 	}, nil
 }
@@ -367,11 +367,12 @@ func DeserializeEncryptedData(data []byte) (*EncryptedData, error) {
 	return &encrypted, nil
 }
 
-// RotateKey re-encrypts data with a new key version
-func (es *EncryptionService) RotateKey(encryptedData *EncryptedData, newKeyVersion string) (*EncryptedData, error) {
-	// WARNING: RotateKey uses no-AAD decrypt/encrypt and is incompatible with
-	// AAD-bound ciphertexts (e.g. secret versions encrypted with EncryptWithAAD).
-	// To re-key AAD-bound ciphertexts, use sweepSecretVersions in sweep.go instead.
+// rotateKey re-encrypts data with a new key version.
+// WARNING: rotateKey uses no-AAD decrypt/encrypt and is incompatible with
+// AAD-bound ciphertexts (e.g. secret versions encrypted with EncryptWithAAD).
+// To re-key AAD-bound ciphertexts, use sweepSecretVersions in sweep.go instead.
+// Unexported (CRYPTO-003): callers outside this package must use the AAD-aware sweep path.
+func (es *EncryptionService) rotateKey(encryptedData *EncryptedData, newKeyVersion string) (*EncryptedData, error) {
 
 	// Decrypt with current key
 	plaintext, err := es.Decrypt(encryptedData)

@@ -12,29 +12,35 @@ func TestEvidenceSignature_RoundTrip(t *testing.T) {
 	c := &KeyorixCore{}
 	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
 	data := []byte(`{"generated_at":"2026-06-15T00:00:00Z"}`)
+	const fname = "keyorix-evidence-20260615T000000Z.json"
 
-	sig, ok := c.signEvidence(data)
+	sig, ok := c.signEvidence(fname, data)
 	require.True(t, ok)
 	require.True(t, strings.HasPrefix(sig, "v1:"))
 
-	res := c.VerifyEvidenceSignature(data, sig)
+	res := c.VerifyEvidenceSignature(fname, data, sig)
 	assert.True(t, res.Valid)
 
 	// Tampered data → invalid (not authentic).
-	res = c.VerifyEvidenceSignature([]byte(`{"generated_at":"changed"}`), sig)
+	res = c.VerifyEvidenceSignature(fname, []byte(`{"generated_at":"changed"}`), sig)
+	assert.False(t, res.Valid)
+	assert.Contains(t, res.Reason, "does not match")
+
+	// Wrong filename → invalid (AUD-009: signature is filename-bound).
+	res = c.VerifyEvidenceSignature("keyorix-evidence-20260101T000000Z.json", data, sig)
 	assert.False(t, res.Valid)
 	assert.Contains(t, res.Reason, "does not match")
 
 	// Signature from a superseded key version → reported distinctly, not a mismatch.
 	superseded := "v0:" + strings.SplitN(sig, ":", 2)[1]
-	res = c.VerifyEvidenceSignature(data, superseded)
+	res = c.VerifyEvidenceSignature(fname, data, superseded)
 	assert.False(t, res.Valid)
 	assert.Contains(t, res.Reason, "superseded")
 	assert.Equal(t, "v0", res.KeyVersion)
 	assert.Equal(t, "v1", res.CurrentVersion)
 
 	// Malformed signature.
-	assert.False(t, c.VerifyEvidenceSignature(data, "garbage").Valid)
+	assert.False(t, c.VerifyEvidenceSignature(fname, data, "garbage").Valid)
 }
 
 // TestEvidenceSignature_WrongKeySameVersionRejected pins that the key-version label is NOT a
@@ -45,11 +51,12 @@ func TestEvidenceSignature_RoundTrip(t *testing.T) {
 // evidence signatures trivially forgeable — this catches it.
 func TestEvidenceSignature_WrongKeySameVersionRejected(t *testing.T) {
 	data := []byte(`{"generated_at":"2026-06-15T00:00:00Z"}`)
+	const fname = "keyorix-evidence-20260615T000000Z.json"
 
 	// A different deployment signs the same data with ITS OWN key, under the same "v1" label.
 	other := &KeyorixCore{}
 	other.SetEvidenceSignKey([]byte("ffffffffffffffffffffffffffffffff"), "v1")
-	foreignSig, ok := other.signEvidence(data)
+	foreignSig, ok := other.signEvidence(fname, data)
 	require.True(t, ok)
 	require.True(t, strings.HasPrefix(foreignSig, "v1:"))
 
@@ -58,7 +65,7 @@ func TestEvidenceSignature_WrongKeySameVersionRejected(t *testing.T) {
 	// differs, so verification must report a mismatch.
 	c := &KeyorixCore{}
 	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
-	res := c.VerifyEvidenceSignature(data, foreignSig)
+	res := c.VerifyEvidenceSignature(fname, data, foreignSig)
 	assert.False(t, res.Valid, "a signature from a different deployment's key must not verify")
 	assert.Contains(t, res.Reason, "does not match")
 	assert.NotContains(t, res.Reason, "superseded", "the version matched — the HMAC check, not version handling, must reject it")
@@ -76,12 +83,13 @@ func TestEvidenceSignature_WrongKeySameVersionRejected(t *testing.T) {
 // freshly "tampered" just because the fix changed the label format.
 func TestEvidenceSignature_PreFixPackReportedSupersededNotTampered(t *testing.T) {
 	data := []byte(`{"generated_at":"2026-01-01T00:00:00Z"}`)
+	const fname = "keyorix-evidence-20260101T000000Z.json"
 
 	// Simulate the pack as it would have been signed BEFORE this fix, under the
 	// old DEK-rotation-version-derived label.
 	oldPackCore := &KeyorixCore{}
 	oldPackCore.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1700000000")
-	sig, ok := oldPackCore.signEvidence(data)
+	sig, ok := oldPackCore.signEvidence(fname, data)
 	require.True(t, ok)
 	require.True(t, strings.HasPrefix(sig, "v1700000000:"))
 
@@ -91,7 +99,7 @@ func TestEvidenceSignature_PreFixPackReportedSupersededNotTampered(t *testing.T)
 	c := &KeyorixCore{}
 	c.SetEvidenceSignKey([]byte("ffffffffffffffffffffffffffffffff"), "esk-0123456789abcdef0123456789abcd")
 
-	res := c.VerifyEvidenceSignature(data, sig)
+	res := c.VerifyEvidenceSignature(fname, data, sig)
 	assert.False(t, res.Valid)
 	assert.Contains(t, res.Reason, "superseded")
 	assert.NotContains(t, res.Reason, "does not match", "an old-scheme pack must be reported as superseded, not tampered")
@@ -102,9 +110,9 @@ func TestEvidenceSignature_PreFixPackReportedSupersededNotTampered(t *testing.T)
 func TestEvidenceSignature_UnavailableWithoutKey(t *testing.T) {
 	c := &KeyorixCore{}
 	assert.False(t, c.EvidenceSigningAvailable())
-	_, ok := c.signEvidence([]byte("x"))
+	_, ok := c.signEvidence("pack.json", []byte("x"))
 	assert.False(t, ok)
-	res := c.VerifyEvidenceSignature([]byte("x"), "v1:ab")
+	res := c.VerifyEvidenceSignature("pack.json", []byte("x"), "v1:ab")
 	assert.False(t, res.Valid)
 	assert.Contains(t, res.Reason, "unavailable")
 }

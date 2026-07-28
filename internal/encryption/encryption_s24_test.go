@@ -115,7 +115,7 @@ func TestSweepSessions_DecryptError(t *testing.T) {
 	row := &models.Session{UserID: 91, SessionToken: "h91", EncryptedSessionToken: encBytes}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err := sweepSessions(db, es, es, "v2", false)
+	_, _, err := sweepSessions(db, es, es, "v2", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decrypt session")
 }
@@ -128,7 +128,7 @@ func TestSweepSessions_SkipsEmptyToken(t *testing.T) {
 	row := &models.Session{UserID: 92, SessionToken: "h92"}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepSessions(db, es, es, "v1", false)
+	swept, _, err := sweepSessions(db, es, es, "v1", false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, swept)
 }
@@ -141,7 +141,7 @@ func TestSweepAPITokens_SkipsEmptyToken(t *testing.T) {
 	row := &models.APIToken{Token: "h-empty"}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepAPITokens(db, es, es, "v1", false)
+	swept, _, err := sweepAPITokens(db, es, es, "v1", false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, swept)
 }
@@ -164,7 +164,7 @@ func TestSweepPasswordResets_DecryptError(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	_, err = sweepPasswordResets(db, es, es, "v2", false)
+	_, _, err = sweepPasswordResets(db, es, es, "v2", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decrypt password_reset")
 }
@@ -177,7 +177,7 @@ func TestSweepPasswordResets_SkipsEmptyToken(t *testing.T) {
 	row := &models.PasswordReset{UserID: 94, Token: "h94"}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepPasswordResets(db, es, es, "v1", false)
+	swept, _, err := sweepPasswordResets(db, es, es, "v1", false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, swept)
 }
@@ -201,7 +201,7 @@ func TestSweepAPITokens_HappyPath_Persists(t *testing.T) {
 	}
 	require.NoError(t, db.Create(row).Error)
 
-	swept, err := sweepAPITokens(db, es, es, "v2", false)
+	swept, _, err := sweepAPITokens(db, es, es, "v2", false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, swept)
 }
@@ -1064,7 +1064,7 @@ func TestEncryptionService_RotateKey_RoundTrip(t *testing.T) {
 	enc, err := es.Encrypt(plain, "v1")
 	require.NoError(t, err)
 
-	rotated, err := es.RotateKey(enc, "v2")
+	rotated, err := es.rotateKey(enc, "v2")
 	require.NoError(t, err)
 	assert.Equal(t, "v2", rotated.Metadata.KeyVersion)
 

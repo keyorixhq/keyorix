@@ -476,6 +476,14 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 		if !admin.IsActive || AccountLoginBlocked(admin.AccountState) {
 			return nil, nil, fmt.Errorf("impersonating account is not active")
 		}
+		// MT-007: re-check the impersonation ceiling so an elevation of the target's
+		// roles AFTER impersonation started does not silently extend the impersonator's
+		// reach beyond their current authority. The auth cache (30s TTL) bounds how
+		// stale this check can be — at worst the impersonator retains the session for
+		// one cache window after the target's authority rises above theirs.
+		if err := c.requireEqualOrGreaterAdminAuthority(ctx, *session.ImpersonatedBy, session.UserID, "impersonate"); err != nil {
+			return nil, nil, fmt.Errorf("impersonation ceiling exceeded — target's authority now exceeds impersonator's: %w", err)
+		}
 	}
 	// Best-effort, throttled last-seen stamp for the My Account sessions view.
 	// Only writes when the stored value is older than sessionTouchInterval, so the

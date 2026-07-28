@@ -121,8 +121,10 @@ func TestAuditService_StreamAuditLogs_ResumesFromCursor(t *testing.T) {
 // one fallback interval, not only when the client eventually disconnects on its own.
 func TestAuditService_StreamAuditLogs_RevokedRoleTerminatesStream(t *testing.T) {
 	old := auditStreamFallbackInterval
+	oldReauth := auditStreamReauthInterval
 	auditStreamFallbackInterval = 15 * time.Millisecond
-	defer func() { auditStreamFallbackInterval = old }()
+	auditStreamReauthInterval = 15 * time.Millisecond
+	defer func() { auditStreamFallbackInterval = old; auditStreamReauthInterval = oldReauth }()
 
 	svc, db := newStreamCore(t)
 	ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
@@ -151,8 +153,10 @@ func TestAuditService_StreamAuditLogs_RevokedRoleTerminatesStream(t *testing.T) 
 // grant is untouched.
 func TestAuditService_StreamAuditLogs_SuspendedAccountTerminatesStream(t *testing.T) {
 	old := auditStreamFallbackInterval
+	oldReauth := auditStreamReauthInterval
 	auditStreamFallbackInterval = 15 * time.Millisecond
-	defer func() { auditStreamFallbackInterval = old }()
+	auditStreamReauthInterval = 15 * time.Millisecond
+	defer func() { auditStreamFallbackInterval = old; auditStreamReauthInterval = oldReauth }()
 
 	svc, db := newStreamCore(t)
 	ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))

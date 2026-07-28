@@ -197,6 +197,13 @@ func (c *KeyorixCore) dispatchToChannel(ctx context.Context, ch *models.Notifica
 	}
 }
 
+// noEscalationRedirect refuses all HTTP redirects from webhook endpoints. An
+// attacker-controlled endpoint cannot bounce the POST to an internal host (e.g.
+// cloud IMDS at 169.254.169.254) via a 3xx response (SSRF-004).
+func noEscalationRedirect(_ *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("alert escalation: redirect refused (SSRF prevention)")
+}
+
 // postJSONToURL marshals payload to JSON and sends a best-effort HTTP POST to rawURL.
 func (c *KeyorixCore) postJSONToURL(_ context.Context, rawURL string, payload any) error {
 	body, err := json.Marshal(payload)
@@ -205,7 +212,7 @@ func (c *KeyorixCore) postJSONToURL(_ context.Context, rawURL string, payload an
 	}
 	client := c.httpClient
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: noEscalationRedirect}
 	}
 	// Compute a redacted form of the URL for use in error messages so that
 	// embedded credentials (e.g. https://token:secret@hooks.example.com) are

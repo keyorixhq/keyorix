@@ -202,12 +202,12 @@ func TestRotateWithConfig_DryRun_AccuratePreviewNoChanges(t *testing.T) {
 	for _, want := range []string{
 		"secret_versions: 1", "sessions: 1", "api_tokens: 1", "api_clients: 1",
 		"password_resets: 1", "mfa_secrets: 1", "dynamic_secret_configs: 1",
-		// seedOneRowPerTable encrypts the mfa_secrets/dynamic_secret_configs/
-		// dynamic_secret_leases rows via the legacy (no-AAD) path — those 3
-		// sweepers always reconstruct AAD and upgrade a legacy row in place, so 3
-		// legacy upgrades are expected (secret_versions was seeded already
-		// AAD-bound, and the other 4 tables have no AAD binding to upgrade to).
-		"dynamic_secret_leases: 1", "legacy AAD upgraded: 3",
+		// seedOneRowPerTable encrypts all 8 table rows via the legacy (no-AAD) path.
+		// Sweepers that bind AAD (mfa_secrets, dynamic_secret_configs,
+		// dynamic_secret_leases, sessions, api_tokens, password_resets) upgrade their
+		// rows in place — 6 tables × 1 row = 6 legacy upgrades. secret_versions was
+		// seeded AAD-bound; api_clients does not bind AAD.
+		"dynamic_secret_leases: 1", "legacy AAD upgraded: 6",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected dry-run preview to report %q, got:\n%s", want, output)
@@ -327,12 +327,12 @@ func TestRotateWithConfig_RealRotation_PrintsAllSweepResultFields(t *testing.T) 
 	for _, want := range []string{
 		"secret_versions: 1", "sessions: 1", "api_tokens: 1", "api_clients: 1",
 		"password_resets: 1", "mfa_secrets: 1", "dynamic_secret_configs: 1",
-		// seedOneRowPerTable encrypts the mfa_secrets/dynamic_secret_configs/
-		// dynamic_secret_leases rows via the legacy (no-AAD) path — those 3
-		// sweepers always reconstruct AAD and upgrade a legacy row in place, so 3
-		// legacy upgrades are expected (secret_versions was seeded already
-		// AAD-bound, and the other 4 tables have no AAD binding to upgrade to).
-		"dynamic_secret_leases: 1", "legacy AAD upgraded: 3",
+		// seedOneRowPerTable encrypts all 8 table rows via the legacy (no-AAD) path.
+		// Sweepers that bind AAD (mfa_secrets, dynamic_secret_configs,
+		// dynamic_secret_leases, sessions, api_tokens, password_resets) upgrade their
+		// rows in place — 6 tables × 1 row = 6 legacy upgrades. secret_versions was
+		// seeded AAD-bound; api_clients does not bind AAD.
+		"dynamic_secret_leases: 1", "legacy AAD upgraded: 6",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected post-rotation summary to report %q, got:\n%s", want, output)

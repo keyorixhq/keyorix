@@ -31,13 +31,17 @@ func (c *KeyorixCore) EvidenceSigningAvailable() bool {
 	return len(c.evidenceSignKey) > 0
 }
 
-// signEvidence returns "<keyVersion>:<hmac-hex>" over data, or ("", false) when
-// signing is unavailable.
-func (c *KeyorixCore) signEvidence(data []byte) (string, bool) {
+// signEvidence returns "<keyVersion>:<hmac-hex>" over filename+data, or ("", false)
+// when signing is unavailable. Including the filename in the HMAC binds the signature
+// to a specific pack identity, so a valid signature for one pack cannot be presented
+// as authenticating a differently-named pack (AUD-009).
+func (c *KeyorixCore) signEvidence(filename string, data []byte) (string, bool) {
 	if !c.EvidenceSigningAvailable() {
 		return "", false
 	}
 	mac := hmac.New(sha256.New, c.evidenceSignKey)
+	mac.Write([]byte(filename))
+	mac.Write([]byte{0}) // null separator prevents length-extension across fields
 	mac.Write(data)
 	return c.evidenceSignKeyVersion + ":" + hex.EncodeToString(mac.Sum(nil)), true
 }
@@ -50,12 +54,11 @@ type EvidenceVerifyResult struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
-// VerifyEvidenceSignature recomputes the HMAC over data and compares it to signature
-// in constant time. A signature made under a superseded key version — i.e. a KEK
-// change, since a routine DEK rotation no longer affects this key at all (#268) — is
-// reported unverifiable (not just invalid), so a false alarm is distinguishable from
-// real tampering.
-func (c *KeyorixCore) VerifyEvidenceSignature(data []byte, signature string) *EvidenceVerifyResult {
+// VerifyEvidenceSignature recomputes the HMAC over filename+data and compares it to
+// signature in constant time. filename must match what was supplied to signEvidence at
+// export time (i.e. the pack's canonical filename). A signature made under a superseded
+// key version is reported unverifiable rather than invalid.
+func (c *KeyorixCore) VerifyEvidenceSignature(filename string, data []byte, signature string) *EvidenceVerifyResult {
 	if !c.EvidenceSigningAvailable() {
 		return &EvidenceVerifyResult{Reason: "evidence signing is unavailable (encryption disabled)"}
 	}
@@ -74,12 +77,14 @@ func (c *KeyorixCore) VerifyEvidenceSignature(data []byte, signature string) *Ev
 		return res
 	}
 	mac := hmac.New(sha256.New, c.evidenceSignKey)
+	mac.Write([]byte(filename))
+	mac.Write([]byte{0})
 	mac.Write(data)
 	if hmac.Equal(mac.Sum(nil), want) {
 		res.Valid = true
 		return res
 	}
-	res.Reason = "signature does not match — the pack was modified or signed by a different deployment"
+	res.Reason = "signature does not match — the pack was modified, signed by a different deployment, or presented under the wrong filename"
 	return res
 }
 

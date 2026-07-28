@@ -202,7 +202,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 
@@ -217,6 +217,16 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	}
 
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
+		return nil, nil, "", err
+	}
+	// Enforce per-account brute-force lockout (distinct from deactivation/suspension).
+	// A locked account must not receive a new session via SSO even though the IdP
+	// authenticated it — the lockout signals an active attack and must be honoured on
+	// all login paths, same as password/TOTP/WebAuthn (see auth.go).
+	if c.loginLocked(user) {
+		return nil, nil, "", fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
 		return nil, nil, "", err
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
@@ -323,7 +333,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 			return nil, nil, "", err
 		}
 	}
-	if AccountLoginBlocked(user.AccountState) {
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 
@@ -340,6 +350,12 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	}
 
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
+		return nil, nil, "", err
+	}
+	if c.loginLocked(user) {
+		return nil, nil, "", fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
 		return nil, nil, "", err
 	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)

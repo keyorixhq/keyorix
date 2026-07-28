@@ -38,7 +38,17 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 		}
 		if email != user.Email {
-			if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+			// For MFA-enabled accounts, require a TOTP code or password via requireReauth
+			// (the same bar as DisableMFA / DeleteWebAuthnCredential). The email is the
+			// password-reset anchor and SSO linking key: redirecting it to an
+			// attacker-controlled address with only a stolen session suffices for full
+			// account takeover. Password-only re-auth is too weak when a second factor is
+			// enrolled. For non-MFA accounts, fall back to the bcrypt password check.
+			if user.MFAEnabled {
+				if err := c.requireReauth(ctx, user, currentPassword, "email_change"); err != nil {
+					return nil, err
+				}
+			} else if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
 				return nil, fmt.Errorf("%w: current password is incorrect", ErrIncorrectCurrentPassword)
 			}
 		}

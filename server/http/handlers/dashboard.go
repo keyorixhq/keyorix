@@ -87,6 +87,7 @@ func (h *DashboardHandler) VerifyComplianceEvidence(w http.ResponseWriter, r *ht
 	var body struct {
 		DataB64   string `json:"data_b64"`
 		Signature string `json:"signature"`
+		Filename  string `json:"filename"` // canonical pack filename (e.g. keyorix-evidence-20060102T150405Z.json); required for AUD-009 filename-bound signatures
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
@@ -97,7 +98,7 @@ func (h *DashboardHandler) VerifyComplianceEvidence(w http.ResponseWriter, r *ht
 		sendError(w, "InvalidParameter", "data_b64 must be base64-encoded", http.StatusBadRequest, nil)
 		return
 	}
-	result := h.coreService.VerifyEvidenceSignature(data, body.Signature)
+	result := h.coreService.VerifyEvidenceSignature(body.Filename, data, body.Signature)
 	sendSuccess(w, result, "")
 }
 

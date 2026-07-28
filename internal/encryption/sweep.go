@@ -56,17 +56,19 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	result.SecretVersionsSwept = sweptVersions
 	result.LegacyAADUpgraded = legacyUpgraded
 
-	sweptSessions, err := sweepSessions(tx, oldSvc, newSvc, newKeyVersion, dryRun)
+	sweptSessions, legacySessions, err := sweepSessions(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("sessions sweep failed: %w", err)
 	}
 	result.SessionsSwept = sweptSessions
+	result.LegacyAADUpgraded += legacySessions
 
-	sweptAPITokens, err := sweepAPITokens(tx, oldSvc, newSvc, newKeyVersion, dryRun)
+	sweptAPITokens, legacyAPITokens, err := sweepAPITokens(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("api_tokens sweep failed: %w", err)
 	}
 	result.APITokensSwept = sweptAPITokens
+	result.LegacyAADUpgraded += legacyAPITokens
 
 	sweptClients, err := sweepAPIClients(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
@@ -74,11 +76,12 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	}
 	result.APIClientsSwept = sweptClients
 
-	sweptResets, err := sweepPasswordResets(tx, oldSvc, newSvc, newKeyVersion, dryRun)
+	sweptResets, legacyResets, err := sweepPasswordResets(tx, oldSvc, newSvc, newKeyVersion, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("password_resets sweep failed: %w", err)
 	}
 	result.AccountResetsSwept = sweptResets
+	result.LegacyAADUpgraded += legacyResets
 
 	// These three tables are also DEK-encrypted but were previously omitted from the
 	// sweep entirely — so a DEK rotation orphaned their ciphertext under the wiped old
