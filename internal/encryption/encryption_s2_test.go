@@ -64,7 +64,7 @@ func TestEncryptionService_RotateKey(t *testing.T) {
 	enc, err := es.Encrypt(original, "v1")
 	require.NoError(t, err)
 
-	rotated, err := es.RotateKey(enc, "v2")
+	rotated, err := es.rotateKey(enc, "v2")
 	require.NoError(t, err)
 	assert.Equal(t, "v2", rotated.Metadata.KeyVersion)
 
@@ -78,7 +78,7 @@ func TestEncryptionService_RotateKey_CorruptInput(t *testing.T) {
 	es, err := NewEncryptionService(key)
 	require.NoError(t, err)
 
-	// Corrupt ciphertext must fail decrypt-step inside RotateKey.
+	// Corrupt ciphertext must fail decrypt-step inside rotateKey.
 	bad := &EncryptedData{
 		Data: []byte("not-valid-ciphertext"),
 		Metadata: EncryptionMetadata{
@@ -88,7 +88,7 @@ func TestEncryptionService_RotateKey_CorruptInput(t *testing.T) {
 		},
 	}
 	// Wrong nonce length → error on Decrypt
-	_, err = es.RotateKey(bad, "v2")
+	_, err = es.rotateKey(bad, "v2")
 	require.Error(t, err)
 }
 
