@@ -297,6 +297,10 @@ type KeyorixCore struct {
 	// no license configured → the community baseline. Evaluation is fail-safe (it never
 	// denies access or stops the server) and fresh on every call. Set via SetLicenseGate.
 	licenseGate *license.Gate
+	// impersonationCeilingCache caches requireEqualOrGreaterAdminAuthority results
+	// by "actorID:targetID" to reduce per-request DB load on the auth hot path for
+	// impersonation sessions (IMP-001). Zero value is ready to use (sync.Map).
+	impersonationCeilingCache sync.Map
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).

@@ -208,20 +208,8 @@ func runRotationE2E(t *testing.T, kind string) {
 		t.Error("legacy secret: old DEK still decrypts after rotation")
 	}
 
-	// auth tables — sessions/api_tokens/password_resets are now AAD-bound after the
-	// sweep upgrades legacy rows (sweepSessions/sweepAPITokens/sweepPasswordResets).
-	// api_clients remain plain (no-AAD) because EncryptClientSecret has no owner AAD.
-	checkAuthRowAAD := func(name string, blob, aad []byte, want string) {
-		if pt, err := newSvc.DecryptSecretWithAAD(blob, aad); err != nil {
-			t.Errorf("%s: new DEK decrypt failed: %v", name, err)
-		} else if string(pt) != want {
-			t.Errorf("%s: got %q want %q", name, pt, want)
-		}
-		if _, err := oldSvc.DecryptSecretWithAAD(blob, aad); err == nil {
-			t.Errorf("%s: old DEK still decrypts after rotation", name)
-		}
-	}
-	checkAuthRow := func(name string, blob []byte, want string) {
+	// api_clients: plain (no-AAD) re-encryption — sweepAPIClients uses EncryptSecret.
+	checkPlainRow := func(name string, blob []byte, want string) {
 		if pt, err := newSvc.DecryptSecret(blob); err != nil {
 			t.Errorf("%s: new DEK decrypt failed: %v", name, err)
 		} else if string(pt) != want {
@@ -231,25 +219,37 @@ func runRotationE2E(t *testing.T, kind string) {
 			t.Errorf("%s: old DEK still decrypts after rotation", name)
 		}
 	}
+	// sessions/api_tokens/password_resets: per-owner AAD after rotation.
+	checkAADRow := func(name string, blob []byte, aad []byte, want string) {
+		if pt, err := newSvc.DecryptSecretWithAAD(blob, aad); err != nil {
+			t.Errorf("%s: new DEK decrypt failed: %v", name, err)
+		} else if string(pt) != want {
+			t.Errorf("%s: got %q want %q", name, pt, want)
+		}
+		if _, err := oldSvc.DecryptSecretWithAAD(blob, aad); err == nil {
+			t.Errorf("%s: old DEK still decrypts after rotation", name)
+		}
+	}
+
 	var gotSession models.Session
 	mustFirst(t, db, &gotSession, session.ID)
-	checkAuthRowAAD("session", gotSession.EncryptedSessionToken, enc.SessionTokenAAD(session.UserID), ptSession)
+	checkAADRow("session", gotSession.EncryptedSessionToken, enc.SessionTokenAAD(gotSession.UserID), ptSession)
 
 	var gotToken models.APIToken
 	mustFirst(t, db, &gotToken, apiToken.ID)
-	var tokenUserID uint // nil UserID → 0, matching sweepAPITokens behaviour
-	if apiToken.UserID != nil {
-		tokenUserID = *apiToken.UserID
+	var apiTokenUserID uint
+	if gotToken.UserID != nil {
+		apiTokenUserID = *gotToken.UserID
 	}
-	checkAuthRowAAD("api_token", gotToken.EncryptedToken, enc.APITokenAAD(tokenUserID), ptAPIToken)
+	checkAADRow("api_token", gotToken.EncryptedToken, enc.APITokenAAD(apiTokenUserID), ptAPIToken)
 
 	var gotClient models.APIClient
 	mustFirst(t, db, &gotClient, apiClient.ID)
-	checkAuthRow("api_client", gotClient.EncryptedClientSecret, ptAPIClient)
+	checkPlainRow("api_client", gotClient.EncryptedClientSecret, ptAPIClient)
 
 	var gotReset models.PasswordReset
 	mustFirst(t, db, &gotReset, passwordReset.ID)
-	checkAuthRowAAD("password_reset", gotReset.EncryptedToken, enc.PasswordResetTokenAAD(passwordReset.UserID), ptPasswordRst)
+	checkAADRow("password_reset", gotReset.EncryptedToken, enc.PasswordResetTokenAAD(gotReset.UserID), ptPasswordRst)
 
 	// backup files deleted.
 	if matches, _ := filepath.Glob(filepath.Join(workDir, "dek.key.backup.*")); len(matches) != 0 {
