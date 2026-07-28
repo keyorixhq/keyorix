@@ -142,7 +142,11 @@ func TestGetSecret_PanicInDetachedAuditGoroutineDoesNotCrash(t *testing.T) {
 	done := make(chan struct{})
 	handler.coreService.SetAuditForwarder(&panicAuditForwarder{done: done})
 
-	r := withIDParam(userReq(http.MethodGet, "/api/v1/secrets/"+strconv.FormatUint(uint64(created.ID), 10), nil), created.ID)
+	// AUDIT-001 (commit 25fd0861): secret.read is now emitted only when the value
+	// payload is returned (?include_value=true). Without it the audit goroutine is
+	// never launched and the test would time out waiting for done.
+	url := "/api/v1/secrets/" + strconv.FormatUint(uint64(created.ID), 10) + "?include_value=true"
+	r := withIDParam(userReq(http.MethodGet, url, nil), created.ID)
 	rr := httptest.NewRecorder()
 	handler.GetSecret(rr, r)
 	assert.Equal(t, http.StatusOK, rr.Code, rr.Body.String())

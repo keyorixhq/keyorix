@@ -144,8 +144,12 @@ func TestShareSecret_GroupShare_NotFound_S13(t *testing.T) {
 // error branch → 400 ValidationError.
 func TestShareSecret_ExpiryInPast_S13(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
+	// r137 Sprint 1: ShareSecret checks IsProjectMember(recipient, secret.ProjectID).
+	// Seed a project, put the recipient (ID=2) in it, and assign the secret that project.
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 	// Seed a secret owned by user 1.
-	require.NoError(t, db.Create(&models.SecretNode{ID: 101, Name: "expiry-test", IsSecret: true, OwnerID: 1}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 101, Name: "expiry-test", IsSecret: true, OwnerID: 1, ProjectID: 1}).Error)
 
 	h, err := NewShareHandler(cs)
 	require.NoError(t, err)
@@ -754,12 +758,16 @@ func TestRevokeShare_Success_S13(t *testing.T) {
 
 // TestShareSecret_Success_S13 seeds a secret owned by user 1 and shares it → 201.
 // freshCoreS12WithAdmin already creates user ID=1 as system_admin, so we just
-// need to add a recipient user (ID=2) and a secret.
+// need to add a recipient user (ID=2), a project, and a secret.
 func TestShareSecret_Success_S13(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
+	// r137 Sprint 1: ShareSecret checks IsProjectMember(recipient, secret.ProjectID).
+	// Seed a project and make the recipient a member.
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
 	// User ID=1 is already seeded by freshCoreS12WithAdmin. Add recipient.
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recip-share-s13", Email: "recip-share-s13@x.com", AccountState: "active"}).Error)
-	require.NoError(t, db.Create(&models.SecretNode{ID: 300, Name: "my-secret-s13", IsSecret: true, OwnerID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 300, Name: "my-secret-s13", IsSecret: true, OwnerID: 1, ProjectID: 1}).Error)
 
 	h, err := NewShareHandler(cs)
 	require.NoError(t, err)
