@@ -39,5 +39,5 @@ func TestSecurityHeaders_CSPAlwaysSet(t *testing.T) {
 
 func TestSecurityHeaders_HSTSOnlyWithTLS(t *testing.T) {
 	hdr := serve(t, true)
-	assert.Equal(t, "max-age=31536000; includeSubDomains", hdr.Get("Strict-Transport-Security"))
+	assert.Equal(t, "max-age=31536000; includeSubDomains; preload", hdr.Get("Strict-Transport-Security"))
 }
