@@ -435,6 +435,32 @@ func logsSince(logs []models.SecretAccessLog, t time.Time) []models.SecretAccess
 // repeatedly-observed presence spanning the full quarantine period.
 const baselineMinSeen = 3
 
+// countBaselineAccesses tallies IP/user occurrences and the 7-day access count
+// across the pre-quarantine historical window (before trustCutoff). It is the
+// inner counting pass factored out of buildBaseline to keep cognitive complexity low.
+func countBaselineAccesses(logs []models.SecretAccessLog, windowStart, trustCutoff, sevenDaysAgo time.Time) (ipCount, userCount map[string]int, recentCount int) {
+	ipCount = make(map[string]int)
+	userCount = make(map[string]int)
+	for _, log := range logs {
+		if !log.AccessTime.Before(windowStart) {
+			continue
+		}
+		if !log.AccessTime.Before(trustCutoff) {
+			continue
+		}
+		if log.IPAddress != "" {
+			ipCount[log.IPAddress]++
+		}
+		if log.AccessedBy != "" {
+			userCount[log.AccessedBy]++
+		}
+		if log.AccessTime.After(sevenDaysAgo) {
+			recentCount++
+		}
+	}
+	return
+}
+
 // buildBaseline computes the statistical baseline from historical access logs,
 // EXCLUDING the live detection window [windowStart, now]. The reads being evaluated
 // this pass must not seed their own baseline: the baseline query spans 30 days and
@@ -467,36 +493,7 @@ func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time, qu
 	sevenDaysAgo := now.Add(-7 * 24 * time.Hour)
 	trustCutoff := windowStart.Add(-quarantine)
 
-	// Count occurrences for each IP/user in the pre-quarantine window so we can
-	// apply the baselineMinSeen threshold before promoting to "known."
-	ipCount := make(map[string]int)
-	userCount := make(map[string]int)
-	// recentCount tracks daily volume for dailyAvg, counting only accesses that are
-	// outside the quarantine window to avoid inflating the spike baseline.
-	recentCount := 0
-
-	for _, log := range logs {
-		// Skip the live window so this pass's reads don't establish their own baseline.
-		if !log.AccessTime.Before(windowStart) {
-			continue
-		}
-		if !log.AccessTime.Before(trustCutoff) {
-			// Inside the quarantine window: count toward the frequency maps for threshold
-			// checking but do NOT yet promote to "known" — that happens after the loop once
-			// we know the full count.
-			continue
-		}
-		// Pre-quarantine access: count it for trust promotion and for dailyAvg.
-		if log.IPAddress != "" {
-			ipCount[log.IPAddress]++
-		}
-		if log.AccessedBy != "" {
-			userCount[log.AccessedBy]++
-		}
-		if log.AccessTime.After(sevenDaysAgo) {
-			recentCount++
-		}
-	}
+	ipCount, userCount, recentCount := countBaselineAccesses(logs, windowStart, trustCutoff, sevenDaysAgo)
 
 	// Promote IPs/users that meet the minimum-seen threshold.
 	for ip, cnt := range ipCount {

@@ -8,29 +8,17 @@ on:
   schedule:
     - cron: '19 17 * * 5'
 
-permissions: {}
+permissions:
+  contents: read
+  security-events: write
+  actions: read
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Install osv-scanner
-        run: go install github.com/google/osv-scanner/cmd/osv-scanner@v1.9.1 # pinned; bump via Dependabot or manual review
-
-      - name: Run osv-scanner
-        run: osv-scanner scan --recursive --skip-git --format sarif --output osv-results.sarif . || true
-
-      - name: Upload results
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
-        with:
-          sarif_file: osv-results.sarif
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8bd1ce1c4be9d98053ffd9e6e14585276a36762c" # v1.9.1
+    with:
+      scan-args: |-
+        --recursive
+        --skip-git
+        ./
+      fail-on-vuln: false

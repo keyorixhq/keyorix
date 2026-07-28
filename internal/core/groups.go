@@ -154,28 +154,36 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 // any role directly via AssignRoleToUser, which bypasses this ceiling entirely) and
 // the exemption avoids forcing an existing admin group deployment through this new
 // check retroactively.
+// validateGroupJoinRoles checks that actorID has the authority to grant all roles
+// the group already holds, and that userID would not gain a SoD-violating role
+// combination by joining (AUTHZ-007). Skips roles whose definition cannot be loaded.
+func (c *KeyorixCore) validateGroupJoinRoles(ctx context.Context, actorID, userID, groupID uint) error {
+	grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, g := range grants {
+		role, err := c.storage.GetRole(ctx, g.RoleID)
+		if err != nil {
+			continue
+		}
+		if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
+			return err
+		}
+		if err := c.requireNoSoDViolation(ctx, userID, g.RoleID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
 	if actorID != 0 {
-		grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
-		if err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-		}
-		for _, g := range grants {
-			role, err := c.storage.GetRole(ctx, g.RoleID)
-			if err != nil {
-				continue
-			}
-			if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
-				return err
-			}
-			// AUTHZ-007: joining a group confers its roles just as directly as a role grant,
-			// so the same SoD preventive gate that guards AssignUserRole must run here too.
-			if err := c.requireNoSoDViolation(ctx, userID, g.RoleID); err != nil {
-				return err
-			}
+		if err := c.validateGroupJoinRoles(ctx, actorID, userID, groupID); err != nil {
+			return err
 		}
 	}
 	if err := c.storage.AddUserToGroup(ctx, userID, groupID, projectID); err != nil {
