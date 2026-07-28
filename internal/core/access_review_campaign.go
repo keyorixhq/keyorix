@@ -332,6 +332,41 @@ func (c *KeyorixCore) userInGroup(ctx context.Context, userID, groupID uint) boo
 	return false
 }
 
+// checkMachineIndependence verifies the actor did not provision the machine identity
+// behind a pending review item. Fails closed on lookup error (AUD-010).
+func (c *KeyorixCore) checkMachineIndependence(ctx context.Context, actorID uint, principalID uint) error {
+	machine, err := c.storage.GetMachineIdentity(ctx, principalID)
+	if err != nil {
+		return fmt.Errorf("loading machine identity for independence check: %w", err)
+	}
+	if machine.CreatedBy == actorID {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a machine identity you provisioned is still pending; an independent reviewer must decide it first")
+	}
+	return nil
+}
+
+// checkForceCloseIndependence ensures the actor does not have a conflict of interest
+// in any pending review item before a force-close is allowed (ARC-002).
+func (c *KeyorixCore) checkForceCloseIndependence(ctx context.Context, actorID uint, items []*models.AccessReviewItem) error {
+	for _, it := range items {
+		if it.Decision != ReviewItemPending {
+			continue
+		}
+		if it.PrincipalType == "user" && it.PrincipalID == actorID {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while your own access item is still pending; an independent reviewer must decide it first")
+		}
+		if it.PrincipalType == "group" && c.userInGroup(ctx, actorID, it.PrincipalID) {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
+		}
+		if it.PrincipalType == "machine" {
+			if err := c.checkMachineIndependence(ctx, actorID, it.PrincipalID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // CloseAccessReviewCampaign freezes a campaign as the evidence record. It refuses
 // while items remain pending unless force is set (so an auditor sees either a fully
 // decided cycle or an explicit early close). actorID is the closer.
@@ -356,29 +391,8 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, pr
 	// campaign before an independent reviewer could decide on their grant.
 	// Mirror the DecideAccessReviewItem independence check: fail closed on lookup.
 	if force && progress.Pending > 0 {
-		for _, it := range items {
-			if it.Decision != ReviewItemPending {
-				continue
-			}
-			if it.PrincipalType == "user" && it.PrincipalID == actorID {
-				return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while your own access item is still pending; an independent reviewer must decide it first")
-			}
-			if it.PrincipalType == "group" && c.userInGroup(ctx, actorID, it.PrincipalID) {
-				return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a group you belong to is still pending; an independent reviewer must decide it first")
-			}
-			// AUD-010: machine identities provisioned by the actor confer the same
-			// indirect self-certification risk as groups the actor belongs to; apply
-			// the same guard here that DecideAccessReviewItem already enforces.
-			// Fail closed on lookup error (can't prove independence → deny).
-			if it.PrincipalType == "machine" {
-				machine, err := c.storage.GetMachineIdentity(ctx, it.PrincipalID)
-				if err != nil {
-					return nil, fmt.Errorf("loading machine identity for independence check: %w", err)
-				}
-				if machine.CreatedBy == actorID {
-					return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot force-close a campaign while an access item for a machine identity you provisioned is still pending; an independent reviewer must decide it first")
-				}
-			}
+		if err := c.checkForceCloseIndependence(ctx, actorID, items); err != nil {
+			return nil, err
 		}
 	}
 	now := c.now()

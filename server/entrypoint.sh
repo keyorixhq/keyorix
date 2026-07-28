@@ -52,7 +52,7 @@ if [ -n "$KEYORIX_ADMIN_PASSWORD" ]; then
         # Escape JSON special characters (backslash then double-quote) before
         # interpolating values into the payload — prevents malformed JSON or
         # JSON-injection if the password contains \ or " characters.
-        json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+        json_escape() { local v; v="$1"; printf '%s' "$v" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
         ADMIN_USER_J=$(json_escape "$ADMIN_USER")
         ADMIN_EMAIL_J=$(json_escape "$ADMIN_EMAIL")
         ADMIN_PASS_J=$(json_escape "$KEYORIX_ADMIN_PASSWORD")

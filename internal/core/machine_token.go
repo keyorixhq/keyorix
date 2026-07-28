@@ -59,6 +59,20 @@ type IssueMachineTokenParams struct {
 	ReplaceCredentialID uint
 }
 
+// validateReplacementCredential pre-validates the credential-to-replace (PAT-006):
+// fetches it and confirms it belongs to the given machine. Returns the old token
+// hash (for cache eviction) or empty string when replaceID is 0.
+func (c *KeyorixCore) validateReplacementCredential(ctx context.Context, machineID, replaceID uint) (string, error) {
+	if replaceID == 0 {
+		return "", nil
+	}
+	oldCred, err := c.storage.GetMachineIdentityCredentialByID(ctx, replaceID)
+	if err != nil || oldCred.MachineIdentityID != machineID {
+		return "", fmt.Errorf("replace_credential_id: credential not found on this machine")
+	}
+	return oldCred.TokenHash, nil
+}
+
 // IssueMachineToken mints an opaque bearer token for an active machine identity.
 // The raw token is returned once for out-of-band delivery; only its SHA-256 hash
 // is stored. params.AllowedCIDRs, when non-nil and non-empty, restricts the token
@@ -88,13 +102,9 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 
 	// PAT-006: pre-validate the credential to replace BEFORE creating the new one
 	// so we fail fast without leaving an orphaned new credential if the old ID is bad.
-	var oldCredHash string
-	if params.ReplaceCredentialID != 0 {
-		oldCred, err := c.storage.GetMachineIdentityCredentialByID(ctx, params.ReplaceCredentialID)
-		if err != nil || oldCred.MachineIdentityID != machineID {
-			return nil, fmt.Errorf("replace_credential_id: credential not found on this machine")
-		}
-		oldCredHash = oldCred.TokenHash
+	oldCredHash, err := c.validateReplacementCredential(ctx, machineID, params.ReplaceCredentialID)
+	if err != nil {
+		return nil, err
 	}
 
 	var cidrJSON string

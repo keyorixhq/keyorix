@@ -7,6 +7,7 @@ set -e
 REPO="keyorixhq/keyorix"
 BINARY="keyorix"
 INSTALL_DIR="/usr/local/bin"
+HTTPS_PROTO="=https"
 
 # Colors
 RED='\033[0;31m'
@@ -40,7 +41,7 @@ info "Detected platform: ${OS}/${ARCH}"
 # Get latest version from GitHub
 info "Fetching latest release..."
 if command -v curl >/dev/null 2>&1; then
-    LATEST=$(curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/') # NOSONAR -- bash:S6506 false positive: --proto '=https' --tlsv1.2 enforces HTTPS; redirect-following is required for GitHub API
+    LATEST=$(curl --proto "$HTTPS_PROTO" --tlsv1.2 -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/') # NOSONAR -- bash:S6506 false positive: --proto "$HTTPS_PROTO" --tlsv1.2 enforces HTTPS; redirect-following is required for GitHub API
 elif command -v wget >/dev/null 2>&1; then
     LATEST=$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/') # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
 else
@@ -63,7 +64,7 @@ TMP_BIN="${TMP_DIR}/${BINARY}"
 
 info "Downloading ${BINARY_NAME}..."
 if command -v curl >/dev/null 2>&1; then
-    curl --proto '=https' --tlsv1.2 -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}" # NOSONAR -- bash:S6506 false positive: --proto '=https' --tlsv1.2 enforces HTTPS; redirect-following is required for GitHub release CDN
+    curl --proto "$HTTPS_PROTO" --tlsv1.2 -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}" # NOSONAR -- bash:S6506 false positive: --proto "$HTTPS_PROTO" --tlsv1.2 enforces HTTPS; redirect-following is required for GitHub release CDN
 else
     wget -qO "$TMP_BIN" "$DOWNLOAD_URL" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
 fi
@@ -78,9 +79,9 @@ TMP_CHECKSUMS="${TMP_DIR}/checksums.txt"
 TMP_CHECKSUMS_PEM="${TMP_DIR}/checksums.txt.pem"
 TMP_CHECKSUMS_SIG="${TMP_DIR}/checksums.txt.sig"
 if command -v curl >/dev/null 2>&1; then
-    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt" -o "$TMP_CHECKSUMS" || error "Failed to download checksums.txt" # NOSONAR -- bash:S6506 false positive
-    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.pem" -o "$TMP_CHECKSUMS_PEM" 2>/dev/null || true # NOSONAR
-    curl --proto '=https' --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.sig" -o "$TMP_CHECKSUMS_SIG" 2>/dev/null || true # NOSONAR
+    curl --proto "$HTTPS_PROTO" --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt" -o "$TMP_CHECKSUMS" || error "Failed to download checksums.txt" # NOSONAR -- bash:S6506 false positive
+    curl --proto "$HTTPS_PROTO" --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.pem" -o "$TMP_CHECKSUMS_PEM" 2>/dev/null || true # NOSONAR
+    curl --proto "$HTTPS_PROTO" --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.sig" -o "$TMP_CHECKSUMS_SIG" 2>/dev/null || true # NOSONAR
 else
     wget -qO "$TMP_CHECKSUMS"     "${CHECKSUMS_BASE}/checksums.txt"     || error "Failed to download checksums.txt" # NOSONAR
     wget -qO "$TMP_CHECKSUMS_PEM" "${CHECKSUMS_BASE}/checksums.txt.pem" 2>/dev/null || true # NOSONAR

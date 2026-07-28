@@ -162,6 +162,22 @@ func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo strin
 	return p.OAuth.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce)), nil
 }
 
+// validateSSOLoginState consumes and validates the stored login state for a
+// callback: checks provider match and expiry. Returns the state row on success.
+func (c *KeyorixCore) validateSSOLoginState(ctx context.Context, providerName, state string) (*models.SSOLoginState, error) {
+	st, err := c.storage.ConsumeSSOLoginState(ctx, state)
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired login state")
+	}
+	if st.Provider != providerName {
+		return nil, fmt.Errorf("login state does not match the callback provider")
+	}
+	if c.now().After(st.ExpiresAt) {
+		return nil, fmt.Errorf("login state expired")
+	}
+	return st, nil
+}
+
 // CompleteSSO consumes the state, exchanges the code, verifies the id_token, maps it
 // to a user, and mints a session. Returns the session, the user, and the in-app path
 // to land on (ReturnTo, may be empty).
@@ -170,15 +186,9 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("unknown SSO provider")
 	}
-	st, err := c.storage.ConsumeSSOLoginState(ctx, state)
+	st, err := c.validateSSOLoginState(ctx, providerName, state)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("invalid or expired login state")
-	}
-	if st.Provider != providerName {
-		return nil, nil, "", fmt.Errorf("login state does not match the callback provider")
-	}
-	if c.now().After(st.ExpiresAt) {
-		return nil, nil, "", fmt.Errorf("login state expired")
+		return nil, nil, "", err
 	}
 
 	tok, err := p.OAuth.Exchange(ctx, code)

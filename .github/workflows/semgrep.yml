@@ -16,13 +16,13 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    container:
+      image: semgrep/semgrep:1.93.0@sha256:9927548daa9013430d2c6c67e9513fc1b9e9e87003f6e914f95e54dcb567e800
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Run Semgrep (community rules, no account required)
-        run: |
-          pip install semgrep==1.93.0 --quiet --only-binary :all: # pinned; bump via Dependabot or manual review
-          semgrep scan --config=auto --sarif --output=semgrep.sarif . || true
+        run: semgrep scan --config=auto --sarif --output=semgrep.sarif . || true
 
       - name: Upload results
         uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
