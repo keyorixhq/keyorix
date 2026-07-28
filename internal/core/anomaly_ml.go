@@ -121,6 +121,34 @@ func accessFeatures(lg models.SecretAccessLog, ipFreq, userFreq map[string]int) 
 	}
 }
 
+// buildFreqMapsWithCutoff is like buildFreqMaps but skips any log entry whose
+// AccessTime is not strictly before trustCutoff — the ANOMALY-03 quarantine
+// guard that prevents an attacker's recently-seen IP/user from inflating its
+// frequency score in the ML training features.
+func buildFreqMapsWithCutoff(logs []models.SecretAccessLog, trustCutoff time.Time) (ipFreq, userFreq map[string]int) {
+	ipFreq = make(map[string]int, len(logs))
+	userFreq = make(map[string]int, len(logs))
+	for _, lg := range logs {
+		if !lg.AccessTime.Before(trustCutoff) {
+			continue
+		}
+		if lg.IPAddress != "" {
+			ipFreq[lg.IPAddress]++
+		}
+		if lg.AccessedBy != "" {
+			userFreq[lg.AccessedBy]++
+		}
+	}
+	return
+}
+
+func mlOutlierSeverity(score float64) string {
+	if score >= mlHighSeverityScore {
+		return "high"
+	}
+	return "medium"
+}
+
 // mlOutlierAlerts trains a per-secret Isolation Forest on the baseline access logs and
 // returns an ml_outlier alert for each recent access whose anomaly score exceeds the
 // configured threshold. Returns nil when there is too little baseline to train on or
@@ -141,10 +169,8 @@ func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models
 
 	// ANOMALY-03: compute the same trustCutoff used by buildBaseline so that accesses
 	// inside the quarantine window are excluded from the ML feature-frequency maps.
-	// "windowStart" here is the start of the live detection window, which is the
-	// earliest time in recentLogs; we derive it as the minimum AccessTime across
-	// recentLogs. Falls back to now minus mlQuarantineDuration when recentLogs is empty
-	// (guarded above, so this is belt-and-suspenders).
+	// "windowStart" is derived as the minimum AccessTime across recentLogs; falls back
+	// to now minus mlQuarantineDuration (guarded above, so this is belt-and-suspenders).
 	windowStart := now
 	for _, lg := range recentLogs {
 		if lg.AccessTime.Before(windowStart) {
@@ -152,22 +178,7 @@ func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models
 		}
 	}
 	mlTrustCutoff := windowStart.Add(-mlQuarantineDuration)
-
-	ipFreq := make(map[string]int, len(baselineLogs))
-	userFreq := make(map[string]int, len(baselineLogs))
-	for _, lg := range baselineLogs {
-		// Skip logs inside the quarantine window so an attacker's recently-seen IP/user
-		// does not inflate its frequency score in the training data.
-		if !lg.AccessTime.Before(mlTrustCutoff) {
-			continue
-		}
-		if lg.IPAddress != "" {
-			ipFreq[lg.IPAddress]++
-		}
-		if lg.AccessedBy != "" {
-			userFreq[lg.AccessedBy]++
-		}
-	}
+	ipFreq, userFreq := buildFreqMapsWithCutoff(baselineLogs, mlTrustCutoff)
 
 	train := make([][]float64, len(baselineLogs))
 	for i, lg := range baselineLogs {
@@ -190,15 +201,11 @@ func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models
 		if score < cfg.Threshold {
 			continue
 		}
-		severity := "medium"
-		if score >= mlHighSeverityScore {
-			severity = "high"
-		}
 		alerts = append(alerts, models.AnomalyAlert{
 			SecretNodeID: secret.ID,
 			SecretName:   secret.Name,
 			AlertType:    "ml_outlier",
-			Severity:     severity,
+			Severity:     mlOutlierSeverity(score),
 			Description: fmt.Sprintf("ML detected an anomalous access pattern (score %.2f): %s from %s at %s UTC differs from this secret's learned baseline",
 				score, displayOrUnknown(lg.AccessedBy), displayOrUnknown(lg.IPAddress), lg.AccessTime.UTC().Format("15:04")),
 			AccessedBy: lg.AccessedBy,

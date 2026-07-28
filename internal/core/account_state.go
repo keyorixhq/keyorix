@@ -196,11 +196,7 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 		// sees the old identity from the cache and never re-checks the new account state
 		// (#r125-H2). We evict here without revoking; revoking follows for blocked states.
 		if pats, _ := tx.ListPersonalAccessTokensByUser(ctx, userID); len(pats) > 0 {
-			for _, p := range pats {
-				if !p.Revoked && p.TokenHash != "" {
-					sessionHashes = append(sessionHashes, p.TokenHash)
-				}
-			}
+			sessionHashes = append(sessionHashes, activePATHashes(pats)...)
 		}
 
 		if err := tx.SetAccountState(ctx, userID, state, c.now()); err != nil {
@@ -232,6 +228,18 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",
 		fmt.Sprintf("user %d account state set to %s", userID, state))
 	return nil
+}
+
+// activePATHashes returns the token hashes of all non-revoked PATs that have a hash,
+// used to evict them from the auth cache after an account-state transition.
+func activePATHashes(pats []*models.PersonalAccessToken) []string {
+	var hashes []string
+	for _, p := range pats {
+		if !p.Revoked && p.TokenHash != "" {
+			hashes = append(hashes, p.TokenHash)
+		}
+	}
+	return hashes
 }
 
 // clearRestrictionOnPasswordChange returns the account state a user should hold

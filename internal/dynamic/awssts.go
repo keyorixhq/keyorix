@@ -85,16 +85,9 @@ func (e *AWSSTSEngine) client(ctx context.Context, region string) (stsRoleAssume
 	return sts.NewFromConfig(cfg), nil
 }
 
-// Issue assumes the configured role and returns the temporary credential. roleName
-// is the generated session name (used only as a lease label — there is nothing to
-// drop on revoke). creationTemplate, when set, is an inline session policy.
-func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
-	var cfg awsSTSConfig
-	if err := json.Unmarshal([]byte(adminDSN), &cfg); err != nil {
-		return Credential{}, "", fmt.Errorf("aws-sts: config must be JSON ({\"role_arn\":...}): %w", err)
-	}
+func validateAWSSTSCfg(cfg awsSTSConfig) error {
 	if strings.TrimSpace(cfg.RoleARN) == "" {
-		return Credential{}, "", fmt.Errorf("aws-sts: role_arn is required")
+		return fmt.Errorf("aws-sts: role_arn is required")
 	}
 	// Always enforce account-ID pinning: derive from the ARN when not set explicitly
 	// so a config without allowed_account_id still rejects cross-account role ARNs
@@ -102,15 +95,18 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	if cfg.AllowedAccountID == "" {
 		derived := arnAccountID(cfg.RoleARN)
 		if derived == "" {
-			return Credential{}, "", fmt.Errorf("aws-sts: role_arn %q does not contain a recognisable AWS account ID; set allowed_account_id explicitly", cfg.RoleARN)
+			return fmt.Errorf("aws-sts: role_arn %q does not contain a recognisable AWS account ID; set allowed_account_id explicitly", cfg.RoleARN)
 		}
 		cfg.AllowedAccountID = derived
 	}
-	gotAccount := arnAccountID(cfg.RoleARN)
-	if gotAccount != cfg.AllowedAccountID {
-		return Credential{}, "", fmt.Errorf("aws-sts: role ARN account ID %q does not match allowed_account_id %q", gotAccount, cfg.AllowedAccountID)
+	if arnAccountID(cfg.RoleARN) != cfg.AllowedAccountID {
+		return fmt.Errorf("aws-sts: role ARN account ID %q does not match allowed_account_id %q",
+			arnAccountID(cfg.RoleARN), cfg.AllowedAccountID)
 	}
+	return nil
+}
 
+func buildAssumeRoleInput(cfg awsSTSConfig, sessionName, creationTemplate string, ttl time.Duration) *sts.AssumeRoleInput {
 	duration := cfg.DurationSeconds
 	if duration <= 0 {
 		duration = int32(ttl.Seconds())
@@ -118,13 +114,6 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	if duration < stsMinDurationSeconds {
 		duration = stsMinDurationSeconds // AWS rejects anything below 15 minutes
 	}
-
-	suffix, err := randString(12)
-	if err != nil {
-		return Credential{}, "", err
-	}
-	sessionName := "keyorix-dyn-" + suffix
-
 	in := &sts.AssumeRoleInput{
 		RoleArn:         aws.String(cfg.RoleARN),
 		RoleSessionName: aws.String(sessionName),
@@ -136,19 +125,10 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	if tmpl := strings.TrimSpace(creationTemplate); tmpl != "" {
 		in.Policy = aws.String(tmpl) // session policy scopes the assumed role down
 	}
+	return in
+}
 
-	client, err := e.client(ctx, cfg.Region)
-	if err != nil {
-		return Credential{}, "", err
-	}
-	out, err := client.AssumeRole(ctx, in)
-	if err != nil {
-		return Credential{}, "", fmt.Errorf("aws-sts: assume role: %w", err)
-	}
-	if out.Credentials == nil {
-		return Credential{}, "", fmt.Errorf("aws-sts: assume role returned no credentials")
-	}
-
+func stsCredentialFields(cfg awsSTSConfig, out *sts.AssumeRoleOutput) map[string]string {
 	fields := map[string]string{
 		"access_key_id":     aws.ToString(out.Credentials.AccessKeyId),
 		"secret_access_key": aws.ToString(out.Credentials.SecretAccessKey),
@@ -160,7 +140,39 @@ func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate str
 	if out.Credentials.Expiration != nil {
 		fields["expiration"] = out.Credentials.Expiration.UTC().Format(time.RFC3339)
 	}
-	return Credential{Fields: fields}, sessionName, nil
+	return fields
+}
+
+// Issue assumes the configured role and returns the temporary credential. roleName
+// is the generated session name (used only as a lease label — there is nothing to
+// drop on revoke). creationTemplate, when set, is an inline session policy.
+func (e *AWSSTSEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
+	var cfg awsSTSConfig
+	if err := json.Unmarshal([]byte(adminDSN), &cfg); err != nil {
+		return Credential{}, "", fmt.Errorf("aws-sts: config must be JSON ({\"role_arn\":...}): %w", err)
+	}
+	if err := validateAWSSTSCfg(cfg); err != nil {
+		return Credential{}, "", err
+	}
+
+	suffix, err := randString(12)
+	if err != nil {
+		return Credential{}, "", err
+	}
+	sessionName := "keyorix-dyn-" + suffix
+
+	client, err := e.client(ctx, cfg.Region)
+	if err != nil {
+		return Credential{}, "", err
+	}
+	out, err := client.AssumeRole(ctx, buildAssumeRoleInput(cfg, sessionName, creationTemplate, ttl))
+	if err != nil {
+		return Credential{}, "", fmt.Errorf("aws-sts: assume role: %w", err)
+	}
+	if out.Credentials == nil {
+		return Credential{}, "", fmt.Errorf("aws-sts: assume role returned no credentials")
+	}
+	return Credential{Fields: stsCredentialFields(cfg, out)}, sessionName, nil
 }
 
 // Revoke is a no-op: STS credentials self-expire and cannot be invalidated early

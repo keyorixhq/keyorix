@@ -152,40 +152,48 @@ func (c *KeyorixCore) ListStaleMachineIdentities(ctx context.Context, projectID 
 // a lost race reports matched=false, treated identically to an illegal transition.
 // This makes no behavioral difference against LocalStorage (the lock already
 // guarantees the state can't have moved by the time the conditional write runs).
+// transitionMachineInTx performs the state transition inside an existing transaction.
+// It is the body of TransitionMachineIdentity's WithTransaction closure, extracted to
+// keep the outer function's cognitive complexity within limits.
+func (c *KeyorixCore) transitionMachineInTx(ctx context.Context, tx storage.Storage, projectID, id uint, to string, now time.Time) (*models.MachineIdentity, error) {
+	m, err := tx.LockMachineIdentityForUpdate(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("machine identity not found")
+	}
+	if m.ProjectID != projectID {
+		// Cross-project guard: report as "not found" (not a permission error) to
+		// avoid confirming the machine's existence to a caller scoped elsewhere.
+		return nil, fmt.Errorf("machine identity not found")
+	}
+	fromState := m.State
+	if !canTransitionMachine(fromState, to) {
+		return nil, fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to)
+	}
+	m.State = to
+	m.UpdatedAt = now
+	if to == MachineRevoked {
+		m.RevokedAt = &now
+	}
+	matched, err := tx.TransitionMachineIdentityState(ctx, m, fromState)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update machine identity: %w", err)
+	}
+	if !matched {
+		// Lost the race: the row's persisted state moved away from fromState
+		// between the lock read and this write (#388) — treat exactly like an
+		// illegal transition rather than silently overwriting the winner.
+		return nil, fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to)
+	}
+	return m, nil
+}
+
 func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, id uint, to string, actorID uint) (*models.MachineIdentity, error) {
 	now := c.now()
 	var result *models.MachineIdentity
 	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		m, err := tx.LockMachineIdentityForUpdate(ctx, id)
-		if err != nil {
-			return fmt.Errorf("machine identity not found")
-		}
-		if m.ProjectID != projectID {
-			// Cross-project guard: report as "not found" (not a permission error) to
-			// avoid confirming the machine's existence to a caller scoped elsewhere.
-			return fmt.Errorf("machine identity not found")
-		}
-		fromState := m.State
-		if !canTransitionMachine(fromState, to) {
-			return fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to)
-		}
-		m.State = to
-		m.UpdatedAt = now
-		if to == MachineRevoked {
-			m.RevokedAt = &now
-		}
-		matched, err := tx.TransitionMachineIdentityState(ctx, m, fromState)
-		if err != nil {
-			return fmt.Errorf("failed to update machine identity: %w", err)
-		}
-		if !matched {
-			// Lost the race: the row's persisted state moved away from fromState
-			// between the lock read and this write (#388) — treat exactly like an
-			// illegal transition rather than silently overwriting the winner.
-			return fmt.Errorf("cannot transition machine identity from %s to %s", fromState, to)
-		}
-		result = m
-		return nil
+		var err error
+		result, err = c.transitionMachineInTx(ctx, tx, projectID, id, to, now)
+		return err
 	})
 	if err != nil {
 		return nil, err
