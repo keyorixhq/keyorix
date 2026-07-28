@@ -208,7 +208,19 @@ func runRotationE2E(t *testing.T, kind string) {
 		t.Error("legacy secret: old DEK still decrypts after rotation")
 	}
 
-	// auth tables — plain (no-AAD) re-encryption.
+	// auth tables — sessions/api_tokens/password_resets are now AAD-bound after the
+	// sweep upgrades legacy rows (sweepSessions/sweepAPITokens/sweepPasswordResets).
+	// api_clients remain plain (no-AAD) because EncryptClientSecret has no owner AAD.
+	checkAuthRowAAD := func(name string, blob, aad []byte, want string) {
+		if pt, err := newSvc.DecryptSecretWithAAD(blob, aad); err != nil {
+			t.Errorf("%s: new DEK decrypt failed: %v", name, err)
+		} else if string(pt) != want {
+			t.Errorf("%s: got %q want %q", name, pt, want)
+		}
+		if _, err := oldSvc.DecryptSecretWithAAD(blob, aad); err == nil {
+			t.Errorf("%s: old DEK still decrypts after rotation", name)
+		}
+	}
 	checkAuthRow := func(name string, blob []byte, want string) {
 		if pt, err := newSvc.DecryptSecret(blob); err != nil {
 			t.Errorf("%s: new DEK decrypt failed: %v", name, err)
@@ -221,11 +233,15 @@ func runRotationE2E(t *testing.T, kind string) {
 	}
 	var gotSession models.Session
 	mustFirst(t, db, &gotSession, session.ID)
-	checkAuthRow("session", gotSession.EncryptedSessionToken, ptSession)
+	checkAuthRowAAD("session", gotSession.EncryptedSessionToken, enc.SessionTokenAAD(session.UserID), ptSession)
 
 	var gotToken models.APIToken
 	mustFirst(t, db, &gotToken, apiToken.ID)
-	checkAuthRow("api_token", gotToken.EncryptedToken, ptAPIToken)
+	var tokenUserID uint // nil UserID → 0, matching sweepAPITokens behaviour
+	if apiToken.UserID != nil {
+		tokenUserID = *apiToken.UserID
+	}
+	checkAuthRowAAD("api_token", gotToken.EncryptedToken, enc.APITokenAAD(tokenUserID), ptAPIToken)
 
 	var gotClient models.APIClient
 	mustFirst(t, db, &gotClient, apiClient.ID)
@@ -233,7 +249,7 @@ func runRotationE2E(t *testing.T, kind string) {
 
 	var gotReset models.PasswordReset
 	mustFirst(t, db, &gotReset, passwordReset.ID)
-	checkAuthRow("password_reset", gotReset.EncryptedToken, ptPasswordRst)
+	checkAuthRowAAD("password_reset", gotReset.EncryptedToken, enc.PasswordResetTokenAAD(passwordReset.UserID), ptPasswordRst)
 
 	// backup files deleted.
 	if matches, _ := filepath.Glob(filepath.Join(workDir, "dek.key.backup.*")); len(matches) != 0 {

@@ -1291,9 +1291,11 @@ func TestService_RotateDEKWithSweep_AuthTables(t *testing.T) {
 	assert.NotNil(t, result)
 
 	// After rotation the service must still decrypt the re-encrypted session token.
+	// sweepSessions now upgrades legacy rows to AAD-bound encryption, so use
+	// DecryptSecretWithAAD with the same per-user AAD the sweeper constructs.
 	var updatedSess models.Session
 	require.NoError(t, db.First(&updatedSess, sess.ID).Error)
-	plain, err := svc.DecryptSecret(updatedSess.EncryptedSessionToken)
+	plain, err := svc.DecryptSecretWithAAD(updatedSess.EncryptedSessionToken, SessionTokenAAD(sess.UserID))
 	require.NoError(t, err)
 	assert.Equal(t, "my-session-token", string(plain))
 }
