@@ -370,7 +370,6 @@ func ClientUserAgent(ctx context.Context) string {
 // isPublicMethod checks if a gRPC method is public (doesn't require authentication)
 var grpcPublicMethods = []string{
 	"/grpc.health.v1.Health/Check",
-	"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
 	"/keyorix.v1.SystemService/HealthCheck", // liveness probe — no auth
 }
 

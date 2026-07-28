@@ -291,7 +291,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	coreService.SetTokenCacheInvalidator(middleware.InvalidateTokenCacheByHash)
 	if needs, berr := coreService.SystemNeedsBootstrap(context.Background()); berr == nil && needs && bootstrapToken != "" {
 		if bootstrapTokenGenerated {
-			log.Printf("system not initialised — run `keyorix system init` with this one-time bootstrap token (set KEYORIX_BOOTSTRAP_TOKEN to pin your own):\n    BOOTSTRAP TOKEN: %s", bootstrapToken)
+			masked := bootstrapToken[:8] + "***" + bootstrapToken[len(bootstrapToken)-4:]
+			log.Printf("system not initialised — run `keyorix system init` with this one-time bootstrap token (set KEYORIX_BOOTSTRAP_TOKEN to pin your own):\n    BOOTSTRAP TOKEN: %s\n    (first 8 + last 4 chars shown; retrieve the full token from KEYORIX_BOOTSTRAP_TOKEN or reboot with it pre-set)", masked)
 		} else {
 			log.Printf("system not initialised — run `keyorix system init` with the configured KEYORIX_BOOTSTRAP_TOKEN")
 		}
@@ -1652,8 +1653,15 @@ func applyTLSHardening(tlsConfig *tls.Config, tlsCfg config.TLSConfig) error {
 // top instead of being silently discarded (#172), honoring tls.allowed_ciphers the
 // same way createTLSConfig does (#333).
 func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig) (*tls.Config, error) {
+	cacheDir := tlsCfg.CertCacheDir
+	if cacheDir == "" {
+		cacheDir = "certs"
+	}
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		return nil, fmt.Errorf("autocert: cannot create cert cache dir %q: %w", cacheDir, err)
+	}
 	m := &autocert.Manager{
-		Cache:      autocert.DirCache("certs"),
+		Cache:      autocert.DirCache(cacheDir),
 		Prompt:     autocert.AcceptTOS,
 		HostPolicy: autocert.HostWhitelist(domains...),
 	}

@@ -15,7 +15,8 @@ const minRetentionDays = 7
 // AuditLogRetentionConfig controls how old an audit event must be before it
 // can be purged. RetentionDays of 0 means "keep forever" (no purge).
 type AuditLogRetentionConfig struct {
-	RetentionDays int // 0 = no purge
+	RetentionDays int  // 0 = no purge
+	ActorID       uint // user who triggered the purge; 0 = system/scheduler
 }
 
 // PurgeAuditLogsResult summarises how many rows were deleted.
@@ -46,8 +47,15 @@ func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionC
 		return nil, fmt.Errorf("failed to purge audit logs: %w", err)
 	}
 
-	sysCtx := WithActorType(ctx, ActorTypeSystem)
-	c.writeAuditEvent(sysCtx, "system.audit_purge", nil, nil,
+	// AUD-004: attribute the purge to the triggering user when one is present,
+	// so the audit trail records WHO initiated the retention action and with which
+	// parameters — not just that it happened.
+	var actor *uint
+	if cfg.ActorID != 0 {
+		a := cfg.ActorID
+		actor = &a
+	}
+	c.writeAuditEventFull(ctx, "system.audit_purge", actor, nil, nil, "",
 		fmt.Sprintf("audit log retention purge: removed %d event(s) older than %d days (cutoff %s)",
 			n, cfg.RetentionDays, cutoff.Format(time.RFC3339)))
 

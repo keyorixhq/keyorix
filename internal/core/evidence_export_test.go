@@ -105,13 +105,14 @@ func TestExportComplianceEvidence_SignsAndVerifies(t *testing.T) {
 	data, err := os.ReadFile(res.Path)
 	require.NoError(t, err)
 
-	vr := c.VerifyEvidenceSignature(data, strings.TrimSpace(string(sig)))
+	filename := filepath.Base(res.Path)
+	vr := c.VerifyEvidenceSignature(filename, data, strings.TrimSpace(string(sig)))
 	assert.True(t, vr.Valid, "the exported pack verifies against its signature")
 
 	// A byte flipped in the archived pack fails verification.
 	tampered := append([]byte{}, data...)
 	tampered[0] = '!'
-	assert.False(t, c.VerifyEvidenceSignature(tampered, strings.TrimSpace(string(sig))).Valid)
+	assert.False(t, c.VerifyEvidenceSignature(filename, tampered, strings.TrimSpace(string(sig))).Valid)
 }
 
 func TestExportComplianceEvidence_EmptyOutputDirErrors(t *testing.T) {

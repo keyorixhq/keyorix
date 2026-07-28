@@ -30,9 +30,18 @@ const EventAutoRotationFailures = "rotation.failures_alerted"
 // backend-bound secret fails outright, or partially completes (new credential minted
 // but a prior one survived upstream), respectively — distinct from the plain
 // "secret.rotated" success event so an operator can find and act on them.
+//
+// EventSecretRotateBackendStarted is emitted immediately before calling the upstream
+// rotation backend (ROTATION-001: crash-recovery observability). If the server crashes
+// after upstream rotation succeeds but before RotateSecret stores the new value, the
+// audit trail will contain a "started" event without any subsequent completion or
+// failure event — an operator scanning for orphaned "started" events can identify
+// secrets that need manual reconciliation (the upstream may have a new credential
+// while Keyorix still holds the old one).
 const (
-	EventSecretRotateFailed     = "secret.rotate_failed"
-	EventSecretRotateIncomplete = "secret.rotate_incomplete"
+	EventSecretRotateFailed          = "secret.rotate_failed"
+	EventSecretRotateIncomplete      = "secret.rotate_incomplete"
+	EventSecretRotateBackendStarted  = "secret.rotate_backend_started"
 )
 
 // notifyRotationFailures broadcasts a single summary of ONE project's rotation
@@ -362,6 +371,12 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 	storeVal := val
 	incompleteMsg := ""
 	if secret.RotationBackend != "" {
+		// ROTATION-001: emit before calling upstream so a crash between upstream success
+		// and Keyorix store is visible in the audit trail as an orphaned "started" event.
+		sid := secret.ID
+		c.writeAuditEvent(ctx, EventSecretRotateBackendStarted, nil, &sid,
+			fmt.Sprintf("auto-rotation: calling upstream backend %q ref %q for secret %q",
+				secret.RotationBackend, secret.RotationRef, secret.Name))
 		upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
 		var partial *rotation.PartialRotationError
 		switch {
@@ -483,6 +498,12 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 		return c.RotateSecret(ctx, id, newValue, rotatedBy)
 	}
 
+	// ROTATION-001: emit before calling upstream so a crash between upstream success
+	// and Keyorix store is visible in the audit trail as an orphaned "started" event.
+	oidSid := id
+	c.writeAuditEvent(ctx, EventSecretRotateBackendStarted, nil, &oidSid,
+		fmt.Sprintf("on-demand rotation: calling upstream backend %q ref %q for secret %q",
+			secret.RotationBackend, secret.RotationRef, secret.Name))
 	upstreamVal, berr := c.applyBackendRotation(ctx, secret, string(newValue))
 	var partial *rotation.PartialRotationError
 	switch {

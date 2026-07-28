@@ -1,10 +1,14 @@
 // sweep_auth.go — Re-encryption sweep for auth tables (sessions, API tokens, clients,
 // password resets, MFA secrets, dynamic-secret configs/leases).
 //
-// sweepSessions/sweepAPITokens/sweepAPIClients/sweepPasswordResets follow an identical
-// pattern: fetch all rows, decrypt with oldSvc, re-encrypt with newSvc, write back. No
-// AAD (these 4 tables' encrypted columns are unpopulated by any live write path today
-// — see #129 — so they carry no AAD-transplant exposure to close).
+// sweepSessions/sweepAPITokens/sweepPasswordResets use per-row AAD, matching the live
+// write path in auth_encryption_store.go (SessionTokenAAD/APITokenAAD/PasswordResetTokenAAD).
+// Legacy rows (AADVersion == "") are decrypted via the no-AAD fallback and re-encrypted
+// WITH AAD, upgrading them in place — same pattern as sweepMFASecrets. Re-encrypting
+// without AAD would strip transplant protection and widen any stolen ciphertext's scope.
+//
+// sweepAPIClients re-encrypts without AAD: EncryptClientSecret (the live write path)
+// does not bind to a user identity (client secrets have no owner AAD).
 //
 // sweepMFASecrets/sweepDynamicSecretConfigs/sweepDynamicSecretLeases (#94) ARE
 // live-path AAD-bound categories: they reconstruct each row's AAD from its own
@@ -26,93 +30,119 @@ const (
 )
 
 // dryRun skips the final Updates() write only; every other step still runs.
-func sweepSessions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
+// Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepSessions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776
 	var sessions []models.Session
 	if err := tx.Find(&sessions).Error; err != nil {
-		return 0, fmt.Errorf("failed to fetch sessions: %w", err)
+		return 0, 0, fmt.Errorf("failed to fetch sessions: %w", err)
 	}
-	swept := 0
+	swept, legacyUpgraded := 0, 0
 	for _, session := range sessions {
 		if len(session.EncryptedSessionToken) == 0 {
 			continue
 		}
 		encrypted, err := DeserializeEncryptedData(session.EncryptedSessionToken)
 		if err != nil {
-			return swept, fmt.Errorf("failed to deserialize session id=%d: %w", session.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize session id=%d: %w", session.ID, err)
 		}
-		plaintext, err := oldSvc.Decrypt(encrypted)
+		aad := SessionTokenAAD(session.UserID)
+		isLegacy := encrypted.Metadata.AADVersion == ""
+		var plaintext []byte
+		if isLegacy {
+			plaintext, err = oldSvc.Decrypt(encrypted)
+		} else {
+			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
+		}
 		if err != nil {
-			return swept, fmt.Errorf("failed to decrypt session id=%d: %w", session.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt session id=%d: %w", session.ID, err)
 		}
-		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
 		wipeBytes(plaintext)
 		if err != nil {
-			return swept, fmt.Errorf("failed to re-encrypt session id=%d: %w", session.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt session id=%d: %w", session.ID, err)
 		}
 		newBytes, err := SerializeEncryptedData(newEncrypted)
 		if err != nil {
-			return swept, fmt.Errorf("failed to serialize session id=%d: %w", session.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize session id=%d: %w", session.ID, err)
 		}
 		metaBytes, err := json.Marshal(newEncrypted.Metadata)
 		if err != nil {
-			return swept, fmt.Errorf("failed to marshal session metadata id=%d: %w", session.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal session metadata id=%d: %w", session.ID, err)
 		}
 		if !dryRun {
 			if err := tx.Model(&models.Session{}).Where(sqlWhereID, session.ID).Updates(map[string]interface{}{
 				"encrypted_session_token": newBytes,
 				"session_token_metadata":  models.JSON(metaBytes),
 			}).Error; err != nil {
-				return swept, fmt.Errorf("failed to update session id=%d: %w", session.ID, err)
+				return swept, legacyUpgraded, fmt.Errorf("failed to update session id=%d: %w", session.ID, err)
 			}
 		}
 		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
 	}
-	return swept, nil
+	return swept, legacyUpgraded, nil
 }
 
 // dryRun skips the final Updates() write only; every other step still runs.
-func sweepAPITokens(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
+// Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepAPITokens(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776
 	var tokens []models.APIToken
 	if err := tx.Find(&tokens).Error; err != nil {
-		return 0, fmt.Errorf("failed to fetch api_tokens: %w", err)
+		return 0, 0, fmt.Errorf("failed to fetch api_tokens: %w", err)
 	}
-	swept := 0
+	swept, legacyUpgraded := 0, 0
 	for _, token := range tokens {
 		if len(token.EncryptedToken) == 0 {
 			continue
 		}
 		encrypted, err := DeserializeEncryptedData(token.EncryptedToken)
 		if err != nil {
-			return swept, fmt.Errorf("failed to deserialize api_token id=%d: %w", token.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize api_token id=%d: %w", token.ID, err)
 		}
-		plaintext, err := oldSvc.Decrypt(encrypted)
+		var tokenUserID uint
+		if token.UserID != nil {
+			tokenUserID = *token.UserID
+		}
+		aad := APITokenAAD(tokenUserID)
+		isLegacy := encrypted.Metadata.AADVersion == ""
+		var plaintext []byte
+		if isLegacy {
+			plaintext, err = oldSvc.Decrypt(encrypted)
+		} else {
+			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
+		}
 		if err != nil {
-			return swept, fmt.Errorf("failed to decrypt api_token id=%d: %w", token.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt api_token id=%d: %w", token.ID, err)
 		}
-		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
 		wipeBytes(plaintext)
 		if err != nil {
-			return swept, fmt.Errorf("failed to re-encrypt api_token id=%d: %w", token.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt api_token id=%d: %w", token.ID, err)
 		}
 		newBytes, err := SerializeEncryptedData(newEncrypted)
 		if err != nil {
-			return swept, fmt.Errorf("failed to serialize api_token id=%d: %w", token.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize api_token id=%d: %w", token.ID, err)
 		}
 		metaBytes, err := json.Marshal(newEncrypted.Metadata)
 		if err != nil {
-			return swept, fmt.Errorf("failed to marshal api_token metadata id=%d: %w", token.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal api_token metadata id=%d: %w", token.ID, err)
 		}
 		if !dryRun {
 			if err := tx.Model(&models.APIToken{}).Where(sqlWhereID, token.ID).Updates(map[string]interface{}{
 				"encrypted_token": newBytes,
 				"token_metadata":  models.JSON(metaBytes),
 			}).Error; err != nil {
-				return swept, fmt.Errorf("failed to update api_token id=%d: %w", token.ID, err)
+				return swept, legacyUpgraded, fmt.Errorf("failed to update api_token id=%d: %w", token.ID, err)
 			}
 		}
 		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
 	}
-	return swept, nil
+	return swept, legacyUpgraded, nil
 }
 
 // dryRun skips the final Updates() write only; every other step still runs.
@@ -346,46 +376,57 @@ func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *En
 }
 
 // dryRun skips the final Updates() write only; every other step still runs.
-func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
+// Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string, dryRun bool) (int, int, error) { // NOSONAR -- cognitive complexity 24, suppress go:S3776
 	var resets []models.PasswordReset
 	if err := tx.Find(&resets).Error; err != nil {
-		return 0, fmt.Errorf("failed to fetch password_resets: %w", err)
+		return 0, 0, fmt.Errorf("failed to fetch password_resets: %w", err)
 	}
-	swept := 0
+	swept, legacyUpgraded := 0, 0
 	for _, reset := range resets {
 		if len(reset.EncryptedToken) == 0 {
 			continue
 		}
 		encrypted, err := DeserializeEncryptedData(reset.EncryptedToken)
 		if err != nil {
-			return swept, fmt.Errorf("failed to deserialize password_reset id=%d: %w", reset.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize password_reset id=%d: %w", reset.ID, err)
 		}
-		plaintext, err := oldSvc.Decrypt(encrypted)
+		aad := PasswordResetTokenAAD(reset.UserID)
+		isLegacy := encrypted.Metadata.AADVersion == ""
+		var plaintext []byte
+		if isLegacy {
+			plaintext, err = oldSvc.Decrypt(encrypted)
+		} else {
+			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
+		}
 		if err != nil {
-			return swept, fmt.Errorf("failed to decrypt password_reset id=%d: %w", reset.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt password_reset id=%d: %w", reset.ID, err)
 		}
-		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
 		wipeBytes(plaintext)
 		if err != nil {
-			return swept, fmt.Errorf("failed to re-encrypt password_reset id=%d: %w", reset.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt password_reset id=%d: %w", reset.ID, err)
 		}
 		newBytes, err := SerializeEncryptedData(newEncrypted)
 		if err != nil {
-			return swept, fmt.Errorf("failed to serialize password_reset id=%d: %w", reset.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize password_reset id=%d: %w", reset.ID, err)
 		}
 		metaBytes, err := json.Marshal(newEncrypted.Metadata)
 		if err != nil {
-			return swept, fmt.Errorf("failed to marshal password_reset metadata id=%d: %w", reset.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal password_reset metadata id=%d: %w", reset.ID, err)
 		}
 		if !dryRun {
 			if err := tx.Model(&models.PasswordReset{}).Where(sqlWhereID, reset.ID).Updates(map[string]interface{}{
 				"encrypted_token": newBytes,
 				"token_metadata":  models.JSON(metaBytes),
 			}).Error; err != nil {
-				return swept, fmt.Errorf("failed to update password_reset id=%d: %w", reset.ID, err)
+				return swept, legacyUpgraded, fmt.Errorf("failed to update password_reset id=%d: %w", reset.ID, err)
 			}
 		}
 		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
 	}
-	return swept, nil
+	return swept, legacyUpgraded, nil
 }

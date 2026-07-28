@@ -27,7 +27,8 @@ type purgeAuditLogsRequest struct {
 // Body:     {"retention_days": N}   (N must be >= 7)
 // Response: {"data": {"deleted_count": N, "cutoff_time": "..."}}
 func (h *AdminJobsHandler) PurgeAuditLogsJob(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	uc := middleware.GetUserFromContext(r.Context())
+	if uc == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -40,6 +41,7 @@ func (h *AdminJobsHandler) PurgeAuditLogsJob(w http.ResponseWriter, r *http.Requ
 
 	result, err := h.coreService.PurgeAuditLogs(r.Context(), core.AuditLogRetentionConfig{
 		RetentionDays: req.RetentionDays,
+		ActorID:       uc.UserID,
 	})
 	if err != nil {
 		if errors.Is(err, core.ErrInvalidAuditRetentionDays) {

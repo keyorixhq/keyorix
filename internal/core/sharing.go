@@ -51,9 +51,19 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 
 	// Only the secret owner may share it (an ownerless / machine-created secret —
 	// OwnerID 0 — is owned by nobody and cannot be shared via the owner gate).
-	// Sharing semantics: same-project only (RBAC is global; ownership enforces project boundary).
 	if !secretOwnedBy(secret.OwnerID, req.SharedBy) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
+	}
+
+	// For user shares, reject cross-project grants: the recipient must be a member of
+	// the secret's project. Group shares are not gated here because group membership
+	// is enforced separately at the point of access.
+	if !req.IsGroup {
+		if isMember, merr := c.storage.IsProjectMember(ctx, req.RecipientID, secret.ProjectID); merr != nil {
+			return nil, fmt.Errorf("failed to verify project membership: %w", merr)
+		} else if !isMember {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
+		}
 	}
 
 	// A time-bound share must expire in the future; a past/now expiry would create a

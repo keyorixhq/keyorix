@@ -171,6 +171,11 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, group
 			if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
 				return err
 			}
+			// AUTHZ-007: joining a group confers its roles just as directly as a role grant,
+			// so the same SoD preventive gate that guards AssignUserRole must run here too.
+			if err := c.requireNoSoDViolation(ctx, userID, g.RoleID); err != nil {
+				return err
+			}
 		}
 	}
 	if err := c.storage.AddUserToGroup(ctx, userID, groupID, projectID); err != nil {

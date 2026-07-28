@@ -239,7 +239,8 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 
 	var response interface{} = secret
-	if r.URL.Query().Get("include_value") == "true" { //nolint:goconst
+	valueIncluded := r.URL.Query().Get("include_value") == "true" //nolint:goconst
+	if valueIncluded {
 		var value []byte
 		if isMachine {
 			value, err = h.coreService.GetSecretValue(r.Context(), uint(id))
@@ -258,12 +259,17 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		response = map[string]interface{}{"secret": secret, "value": string(value)}
 	}
 
-	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
-	auditCtx := core.DetachedAuditContext(r.Context())
-	goSafe(func() {
-		h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
-	}) // #nosec G118
+	// AUDIT-001: emit secret.read ONLY when the value was actually returned. A
+	// metadata-only fetch (include_value omitted) does not expose the sensitive
+	// payload and must not be conflated with a value read in the audit trail.
+	if valueIncluded {
+		uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
+		ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+		auditCtx := core.DetachedAuditContext(r.Context())
+		goSafe(func() {
+			h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua)
+		}) // #nosec G118
+	}
 
 	h.sendSuccess(w, response, "")
 }

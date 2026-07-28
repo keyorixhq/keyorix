@@ -339,16 +339,32 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViola
 }
 
 // adminRoleName returns the name of an admin (permission-bypass) role the user holds
-// in ANY scope, or "" if none. The SoD scan is scope-agnostic (it unions a user's
-// permissions across scopes), so it checks admin membership the same way.
+// in ANY scope — direct or group-inherited — or "" if none. The SoD scan is
+// scope-agnostic, so both direct and group-inherited admin grants must be checked:
+// a user who is a member of an admin-role group effectively holds all permissions
+// and must be flagged, exactly like a directly-granted admin.
 func (c *KeyorixCore) adminRoleName(ctx context.Context, userID uint) string {
 	roles, err := c.storage.GetUserRoles(ctx, userID)
+	if err == nil {
+		for _, r := range roles {
+			if isAdminRoleName(r.Name) {
+				return r.Name
+			}
+		}
+	}
+	groups, err := c.storage.GetUserGroups(ctx, userID)
 	if err != nil {
 		return ""
 	}
-	for _, r := range roles {
-		if isAdminRoleName(r.Name) {
-			return r.Name
+	for _, g := range groups {
+		groupRoles, err := c.storage.GetGroupRoles(ctx, g.ID)
+		if err != nil {
+			continue
+		}
+		for _, r := range groupRoles {
+			if isAdminRoleName(r.Name) {
+				return r.Name
+			}
 		}
 	}
 	return ""

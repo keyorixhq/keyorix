@@ -620,6 +620,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// (gated on the table only) rather than nested inside the ALTER guard above.
 		db.Exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_cert_not_after ON secret_nodes (cert_not_after)")
 	}
+	// MT-006: partial unique index on (project_id, environment_id, name) WHERE
+	// deleted_at IS NULL — enforces at the DB layer the invariant the application
+	// already assumes in GetSecretByName (which scopes by project+environment+name
+	// without a parent_id qualifier). A soft-deleted secret's name is freed for reuse
+	// (the partial predicate excludes it), matching the deleted_at soft-delete pattern
+	// used for users, groups, and projects. This closes the TOCTOU window in
+	// core.CreateSecret (GetSecretByName check-then-act) the same way
+	// ensureSecretVersionIndex closes the RotateSecret race.
+	if tableExists(db, "secret_nodes") {
+		if err := ensureSecretNodeNameIndex(db); err != nil {
+			return err
+		}
+	}
 	// Anomaly alerting: additive `alerted` flag (false = not yet pushed out).
 	if tableExists(db, "anomaly_alerts") && !columnExists(db, "anomaly_alerts", "alerted") {
 		db.Exec("ALTER TABLE anomaly_alerts ADD COLUMN alerted BOOLEAN DEFAULT FALSE")
@@ -1391,6 +1404,27 @@ func ensureShareRecordUniqueIndex(db *gorm.DB) error {
 	}
 	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial share_records unique index: %w", err)
+	}
+	return nil
+}
+
+// ensureSecretNodeNameIndex creates a partial unique index on secret_nodes
+// (project_id, environment_id, name) WHERE deleted_at IS NULL, enforcing at the
+// DB layer the uniqueness the application already assumes in GetSecretByName.
+// Partial (deleted_at IS NULL) so a soft-deleted secret's name is freed for reuse,
+// matching the same soft-delete contract used for users, groups, and projects.
+// This closes the MT-006 TOCTOU in core.CreateSecret (GetSecretByName check-then-act).
+// Idempotent; works on SQLite and Postgres.
+func ensureSecretNodeNameIndex(db *gorm.DB) error {
+	const idxName = "uniq_secret_nodes_project_env_name_active"
+	if !indexExists(db, idxName) {
+		if err := warnIfDuplicatesExist(db, "secret_nodes", "project_id, environment_id, name", sqlWhereNotDeleted,
+			"rename or delete one of the conflicting secrets via the application's secret API before upgrading"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " ON secret_nodes (project_id, environment_id, name) WHERE deleted_at IS NULL").Error; err != nil {
+		return fmt.Errorf("failed to create secret_nodes unique-name index: %w", err)
 	}
 	return nil
 }

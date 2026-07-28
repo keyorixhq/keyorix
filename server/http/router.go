@@ -97,18 +97,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
 
-	// CORS configuration - updated for web dashboard. AllowCredentials is
-	// deliberately NOT set: this API is bearer-token-only (Authorization header),
-	// never cookie-based, so there is no credentialed cross-origin request to allow.
-	// Leaving it unset (defaults false) means a future cookie-based auth addition
-	// must explicitly opt back in here — and get re-reviewed — rather than silently
-	// inheriting a permissive flag that predates it.
+	// CORS configuration. AllowCredentials is set because MFA, WebAuthn, and SSO
+	// login paths now issue session cookies (r121); cross-origin requests from the
+	// dashboard must be allowed to send them. Credentials are only sent to origins
+	// in AllowedOrigins (never "*"), so this does not broaden the attack surface.
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: getAllowedOrigins(cfg),
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders: []string{"Accept", "Authorization", hdrContentType, "X-CSRF-Token", "X-Requested-With"},
-		ExposedHeaders: []string{"Link", "X-Total-Count", "X-Page-Count"},
-		MaxAge:         300,
+		AllowedOrigins:   getAllowedOrigins(cfg),
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders:   []string{"Accept", "Authorization", hdrContentType, "X-CSRF-Token", "X-Requested-With"},
+		ExposedHeaders:   []string{"Link", "X-Total-Count", "X-Page-Count"},
+		MaxAge:           300,
+		AllowCredentials: true,
 	}))
 
 	// Initialize handlers
@@ -208,9 +207,24 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// this replica. Unauthenticated, like /health (k8s probes are unauthenticated).
 	r.Get("/readyz", handlers.ReadinessCheck(coreService))
 
-	// Prometheus metrics — unauthenticated by design (standard for scraping); keep
-	// it inside your perimeter. Exposes HTTP request metrics + Go runtime/process.
-	r.Handle(pathMetrics, customMiddleware.MetricsHandler())
+	// Prometheus metrics. When cfg.HTTP.MetricsToken is set, require a matching
+	// "Authorization: Bearer <token>" header — suitable for internet-facing deploys
+	// where network perimeter control is not available. When unset, the endpoint is
+	// unauthenticated (standard for in-cluster Prometheus scraping); keep it inside
+	// your perimeter. Exposes HTTP request metrics + Go runtime/process.
+	metricsHandler := customMiddleware.MetricsHandler()
+	if tok := cfg.Server.HTTP.MetricsToken; tok != "" {
+		inner := metricsHandler
+		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			auth := req.Header.Get("Authorization")
+			if len(auth) < 8 || auth[:7] != "Bearer " || auth[7:] != tok {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			inner.ServeHTTP(w, req)
+		})
+	}
+	r.Handle(pathMetrics, metricsHandler)
 
 	// Status page endpoint - serves stylish status dashboard
 	r.Get(pathStatus, func(w http.ResponseWriter, r *http.Request) {

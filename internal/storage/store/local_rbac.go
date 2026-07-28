@@ -285,8 +285,12 @@ func (ls *LocalStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]s
 func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
 	var out []storage.RoleAssignment
 
+	now := time.Now()
 	var userRows []models.UserRole
-	if err := ls.db.WithContext(ctx).Where(sqlWhereProjectID, projectID).Find(&userRows).Error; err != nil {
+	if err := ls.db.WithContext(ctx).
+		Where(sqlWhereProjectID, projectID).
+		Where(sqlWhereURNotExpired, now).
+		Find(&userRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, r := range userRows {
@@ -297,7 +301,10 @@ func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectI
 	}
 
 	var groupRows []models.GroupRole
-	if err := ls.db.WithContext(ctx).Where(sqlWhereProjectID, projectID).Find(&groupRows).Error; err != nil {
+	if err := ls.db.WithContext(ctx).
+		Where(sqlWhereProjectID, projectID).
+		Where(sqlWhereGRNotExpired, now).
+		Find(&groupRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, r := range groupRows {
@@ -417,6 +424,7 @@ func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, sc
 	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Where("user_id = ? AND project_id = ? AND environment_id = ?",
 			userID, scope.ProjectID, scope.EnvironmentID).
+		Where(sqlWhereURNotExpired, time.Now()).
 		Distinct().Pluck("role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
