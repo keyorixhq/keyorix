@@ -40,8 +40,8 @@ Reproducer pushed to the $FUZZ_CORPUS_BRANCH branch." \
 fi
 
 # GitHub PR — open from fuzz-corpus to main, or comment on the existing one.
-# Uses the gh CLI already authenticated on this box (fine-grained PAT scoped
-# to keyorixhq/keyorix, configured during provisioning).
+# Authenticated via GH_TOKEN in /etc/keyorix-fuzz/config.env (see README.md
+# step 3). Required PAT scopes: Contents (Read), Pull requests (Read+Write).
 reproduce_cmd="go test -run=^${FUNC}\$ -fuzz=^${FUNC}\$ ./${PKG}"
 pr_body="## Fuzz crash: \`$FUNC\`
 
@@ -59,20 +59,37 @@ ${summary:-see log on the fuzz box}
 
 The crashing input is committed to the \`$FUZZ_CORPUS_BRANCH\` branch and will be in \`testdata/fuzz/$FUNC/\` once this PR merges. Fix the bug, add it to the relevant test, then merge this PR to lock the regression test in."
 
+# Log gh errors to a persistent file so auth/permission failures are visible.
+# Do NOT use 2>/dev/null — silent failures caused markers to be written for
+# crashes that were never actually reported, permanently suppressing them.
+gh_err="$NOTIFIED_STATE_DIR/gh-error-$FUNC-$fail_hash.log"
+
 cd "$KEYORIX_REPO"
-existing_pr="$(gh pr list --head "$FUZZ_CORPUS_BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+pr_notified=false
+existing_pr="$(gh pr list --head "$FUZZ_CORPUS_BRANCH" --state open --json number --jq '.[0].number' 2>>"$gh_err" || true)"
 if [[ -n "$existing_pr" ]]; then
-  gh pr comment "$existing_pr" \
+  if gh pr comment "$existing_pr" \
     --body "**Additional crash ($(date -u +%FT%TZ)):** \`$FUNC\` — hash \`$fail_hash\`
 \`\`\`
 $fail_line
-\`\`\`" 2>/dev/null || true
+\`\`\`" 2>>"$gh_err"; then
+    pr_notified=true
+  fi
 else
-  gh pr create \
+  if gh pr create \
     --title "fuzz(crash): $FUNC — crash reproducer" \
     --body "$pr_body" \
     --head "$FUZZ_CORPUS_BRANCH" \
-    --base main 2>/dev/null || true
+    --base main 2>>"$gh_err"; then
+    pr_notified=true
+  fi
 fi
 
-touch "$marker"
+# Only mark as notified when gh actually succeeded. If not, emit a visible
+# error so the systemd journal (journalctl -u keyorix-fuzz.service) shows it,
+# and leave the marker unwritten so the next rotation retries.
+if $pr_notified; then
+  touch "$marker"
+else
+  echo "notify-on-crash: GitHub notification failed for $FUNC (hash $fail_hash) — see $gh_err" >&2
+fi
