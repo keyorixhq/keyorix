@@ -14,10 +14,11 @@ import (
 )
 
 type fakeReader struct {
-	value   string
-	getErr  error
-	list    []SecretInfo
-	listErr error
+	value         string
+	getErr        error
+	list          []SecretInfo
+	listTruncated bool
+	listErr       error
 
 	gotRef string
 	gotEnv string
@@ -31,12 +32,12 @@ func (f *fakeReader) GetSecret(_ context.Context, ref string) (string, error) {
 	return f.value, nil
 }
 
-func (f *fakeReader) ListSecrets(_ context.Context, env string) ([]SecretInfo, error) {
+func (f *fakeReader) ListSecrets(_ context.Context, env string) ([]SecretInfo, bool, error) {
 	f.gotEnv = env
 	if f.listErr != nil {
-		return nil, f.listErr
+		return nil, false, f.listErr
 	}
-	return f.list, nil
+	return f.list, f.listTruncated, nil
 }
 
 // run feeds the given JSON-RPC messages through Serve and returns the decoded responses.

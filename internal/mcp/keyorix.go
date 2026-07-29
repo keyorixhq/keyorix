@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -89,7 +90,9 @@ func (c *KeyorixClient) GetSecret(ctx context.Context, ref string) (string, erro
 
 // ListSecrets returns the references the token can see, optionally filtered to one
 // environment. Metadata only — no values are read. Capped at one page (100).
-func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]SecretInfo, error) {
+// The second return value is true when the server returned a full page (≥100 entries),
+// indicating that results may be incomplete (MCP-005).
+func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]SecretInfo, bool, error) {
 	var body struct {
 		Secrets []struct {
 			Name            string `json:"Name"`
@@ -99,8 +102,9 @@ func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]
 		} `json:"secrets"`
 	}
 	if err := c.getJSON(ctx, "/api/v1/secrets?page_size=100", &body); err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	truncated := len(body.Secrets) >= 100
 	out := make([]SecretInfo, 0, len(body.Secrets))
 	for _, s := range body.Secrets {
 		if environment != "" && !strings.EqualFold(s.EnvironmentName, environment) {
@@ -114,7 +118,7 @@ func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]
 			Type: s.Type,
 		})
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // getJSON performs an authenticated GET and decodes the {"data": …} envelope into out.
@@ -146,7 +150,7 @@ func (c *KeyorixClient) getJSON(ctx context.Context, path string, out interface{
 	var env struct {
 		Data json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&env); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	if env.Data == nil {

@@ -88,6 +88,16 @@ func (s *Server) toolGetSecret(ctx context.Context, args json.RawMessage) map[st
 	if ref == "" {
 		return errorResult("ref is required (project/environment/name)")
 	}
+	// MCP-003: validate ref format before touching the network. A ref must be
+	// exactly "project/environment/name" (3 non-empty segments, ≤512 chars).
+	// Returning a clear format error here is safe — the agent needs it to fix
+	// the call, and no secret existence information is revealed.
+	if len(ref) > 512 || strings.Count(ref, "/") != 2 {
+		return errorResult("ref must be project/environment/name (e.g. app/production/db-password)")
+	}
+	if parts := strings.SplitN(ref, "/", 3); parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return errorResult("ref must be project/environment/name (e.g. app/production/db-password)")
+	}
 	if !refAllowed(s.allowedRefs, ref) {
 		log.Printf("keyorix_get_secret: ref %q rejected by the configured allowlist", ref)
 		return errorResult(genericReadError)
@@ -116,7 +126,7 @@ func (s *Server) toolListSecrets(ctx context.Context, args json.RawMessage) map[
 		Environment string `json:"environment"`
 	}
 	_ = json.Unmarshal(args, &a)
-	infos, err := s.reader.ListSecrets(ctx, a.Environment)
+	infos, truncated, err := s.reader.ListSecrets(ctx, a.Environment)
 	if err != nil {
 		log.Printf("keyorix_list_secrets: failed: %v", err)
 		return errorResult(genericListError)
@@ -137,7 +147,13 @@ func (s *Server) toolListSecrets(ctx context.Context, args json.RawMessage) map[
 	if shown == 0 {
 		return textResult("(no secrets visible to this token)")
 	}
-	return textResult(strings.TrimRight(b.String(), "\n"))
+	// MCP-005: warn when the server returned a full page (≥100 entries) and there
+	// may be more. The agent should re-query with an environment filter to narrow.
+	result := strings.TrimRight(b.String(), "\n")
+	if truncated {
+		result += "\n\n(results may be incomplete — more than 100 secrets exist; use an environment filter to narrow the list)"
+	}
+	return textResult(result)
 }
 
 // refAllowed reports whether ref matches at least one of patterns (path.Match-style

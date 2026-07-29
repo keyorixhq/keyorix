@@ -20,7 +20,7 @@ const jsonrpcVersion = "2.0"
 // unit-tested without HTTP. Satisfied by *KeyorixClient.
 type SecretReader interface {
 	GetSecret(ctx context.Context, ref string) (string, error)
-	ListSecrets(ctx context.Context, environment string) ([]SecretInfo, error)
+	ListSecrets(ctx context.Context, environment string) ([]SecretInfo, bool, error)
 }
 
 // Server speaks MCP over a JSON-RPC 2.0 stream (stdio). It exposes read-only Keyorix
