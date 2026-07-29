@@ -73,14 +73,23 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	// Owners have all permissions.
+	// Owners have all permissions, but only while still a member of the secret's
+	// project. A user removed from the project retains their OwnerID tag until
+	// ClearProjectSecretOwnership runs (RBAC-002), so we gate owner access on live
+	// project membership to prevent post-offboarding access (RBAC-001).
 	if secretOwnedBy(secret.OwnerID, userID) {
-		return &PermissionContext{
-			SecretID:   secretID,
-			UserID:     userID,
-			Permission: PermissionOwner,
-			Source:     "owner",
-		}, nil
+		member, err := c.storage.IsProjectMember(ctx, userID, secret.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		if member {
+			return &PermissionContext{
+				SecretID:   secretID,
+				UserID:     userID,
+				Permission: PermissionOwner,
+				Source:     "owner",
+			}, nil
+		}
 	}
 
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID)

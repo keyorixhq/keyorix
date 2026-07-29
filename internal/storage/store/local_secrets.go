@@ -453,6 +453,21 @@ func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, projec
 	return &secret, nil
 }
 
+// ClearProjectSecretOwnership sets owner_id = 0 for every live secret in
+// projectID owned by userID, removing the stale ownership tag left behind after
+// a project member is offboarded (RBAC-002). A zero owner_id signals "no human
+// owner" (the invariant enforced by secretOwnedBy), so CheckSecretPermission's
+// owner short-circuit no longer fires for the removed user.
+func (ls *LocalStorage) ClearProjectSecretOwnership(ctx context.Context, userID, projectID uint) error {
+	err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("owner_id = ? AND project_id = ? AND deleted_at IS NULL", userID, projectID).
+		Update("owner_id", 0).Error
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 // UpdateSecret updates an existing secret.
 func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
 	if err := ls.db.WithContext(ctx).Save(secret).Error; err != nil {

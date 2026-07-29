@@ -121,6 +121,8 @@ func TestUpdateSecret_MaxReadsValidation(t *testing.T) {
 	adminRole := &models.Role{Name: "admin"}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
+	// Project-scoped membership required by CheckSecretPermission's IsProjectMember gate.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID, ProjectID: 1}).Error)
 
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 10, ProjectID: 1, Name: "prod"}).Error)

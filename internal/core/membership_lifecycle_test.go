@@ -254,12 +254,14 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 		{PrincipalType: "user", PrincipalID: 2, RoleID: 5, ProjectID: 1},
 	}, nil)
 	store.On("RemoveAllProjectRoleGrants", ctx, uint(2), uint(1)).Return(nil)
+	store.On("ClearProjectSecretOwnership", ctx, uint(2), uint(1)).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	out, err := c.TransitionMembership(ctx, 1, 50, MembershipRevoked, 9)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipRevoked, out.State)
 	store.AssertCalled(t, "RemoveAllProjectRoleGrants", ctx, uint(2), uint(1))
+	store.AssertCalled(t, "ClearProjectSecretOwnership", ctx, uint(2), uint(1))
 }
 
 func TestStaleInvites_PassesCutoff(t *testing.T) {

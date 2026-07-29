@@ -1121,6 +1121,11 @@ func (m *MockStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, pr
 	return args.Error(0)
 }
 
+func (m *MockStorage) ClearProjectSecretOwnership(ctx context.Context, userID, projectID uint) error {
+	args := m.Called(ctx, userID, projectID)
+	return args.Error(0)
+}
+
 func (m *MockStorage) AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
 	args := m.Called(ctx, groupID, roleID, scope, expiresAt)
 	return args.Error(0)

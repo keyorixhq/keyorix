@@ -834,6 +834,12 @@ type Storage interface {
 	// same project; otherwise it silently survives project-level removal, invisible to
 	// the project admin who performed the offboarding (#232).
 	RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error
+	// ClearProjectSecretOwnership clears the owner_id field (sets to 0) for every
+	// live secret in projectID that is owned by userID. Called by RemoveProjectMember
+	// so that an offboarded user's stale owner_id tag cannot grant them post-offboarding
+	// owner-level access to those secrets via CheckSecretPermission's owner short-circuit
+	// (RBAC-002).
+	ClearProjectSecretOwnership(ctx context.Context, userID, projectID uint) error
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
 	// ListAllUserRoleGrants returns every user→role grant row in the deployment,
 	// including scoped (project/environment) and global (project_id=0) grants.

@@ -83,6 +83,8 @@ func freshDescribeFixtureS13(t *testing.T) (*SecretHandler, uint) {
 
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "proj-s13d"})
 	require.NoError(t, err)
+	// User 1 must be a project member so CheckSecretPermission's IsProjectMember gate passes.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: proj.ID}).Error)
 	env, err := st.CreateEnvironment(ctx, &models.Environment{Name: "env-s13d", ProjectID: proj.ID})
 	require.NoError(t, err)
 	secret, err := st.CreateSecret(ctx, &models.SecretNode{

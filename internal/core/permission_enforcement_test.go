@@ -70,8 +70,9 @@ func TestCheckSecretPermission(t *testing.T) {
 			userID:             1,
 			requiredPermission: PermissionRead,
 			setupMocks: func(ms *MockStorage) {
-				secret := createTestSecret(1, 1, "test-secret")
+				secret := &models.SecretNode{ID: 1, OwnerID: 1, ProjectID: 10, Name: "test-secret"}
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+				ms.On("IsProjectMember", mock.Anything, uint(1), uint(10)).Return(true, nil)
 			},
 			expectedPermission: PermissionOwner,
 			expectedSource:     "owner",
@@ -213,10 +214,12 @@ func TestEnforceSecretReadPermission(t *testing.T) {
 
 	mockStorage := &MockStorage{}
 	mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{
-		ID:      1,
-		OwnerID: 1,
-		Name:    "test-secret",
+		ID:        1,
+		OwnerID:   1,
+		ProjectID: 10,
+		Name:      "test-secret",
 	}, nil)
+	mockStorage.On("IsProjectMember", mock.Anything, uint(1), uint(10)).Return(true, nil)
 
 	core := NewKeyorixCore(mockStorage)
 
@@ -612,8 +615,9 @@ func TestGetSecretWithPermissionCheck(t *testing.T) {
 
 	t.Run("authorized reader (owner) retrieves the secret", func(t *testing.T) {
 		mockStorage := &MockStorage{}
-		secret := &models.SecretNode{ID: 1, OwnerID: 1, Name: "test-secret"}
+		secret := &models.SecretNode{ID: 1, OwnerID: 1, ProjectID: 10, Name: "test-secret"}
 		mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+		mockStorage.On("IsProjectMember", mock.Anything, uint(1), uint(10)).Return(true, nil)
 
 		core := NewKeyorixCore(mockStorage)
 
