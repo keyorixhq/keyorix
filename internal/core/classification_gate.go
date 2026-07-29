@@ -169,11 +169,11 @@ func (c *KeyorixCore) checkRestrictedApprovalGate(ctx context.Context, secret *m
 }
 
 func (c *KeyorixCore) checkRestrictedMFAGate(ctx context.Context, secret *models.SecretNode, userID uint) error {
-	ok, err := c.storage.HasActiveMFAStepup(ctx, userID)
+	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, c.now())
 	if err != nil {
 		return fmt.Errorf("secret %q is restricted: could not verify MFA step-up: %w", secret.Name, err)
 	}
-	if !ok {
+	if grant == nil {
 		return fmt.Errorf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
 	}
 	return nil

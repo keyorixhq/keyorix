@@ -36,7 +36,7 @@ func setupMFAStepUpTest(t *testing.T) (*AuthHandler, *core.KeyorixCore, *gorm.DB
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{},
 		&models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
-		&models.MFAStepupToken{},
+		&models.MFAStepupToken{}, &models.MFAStepUpGrant{},
 	))
 	hash, err := bcrypt.GenerateFromPassword([]byte(stepUpTestPassword), bcrypt.MinCost)
 	require.NoError(t, err)

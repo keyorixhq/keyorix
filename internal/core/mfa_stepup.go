@@ -1,16 +1,18 @@
 // mfa_stepup.go — explicit MFA step-up verification for an already-authenticated
 // user. Allows re-verifying a TOTP code (or recovery code) without going through
-// re-login, minting a short-lived MFAStepupToken that satisfies the
+// re-login, creating an MFAStepUpGrant that satisfies the
 // checkRestrictedMFAGate for reading "restricted" classified secrets.
 package core
 
 import (
 	"context"
 	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // VerifyMFAStepUp verifies a TOTP code (or recovery code) for an authenticated
-// user and, on success, upserts an MFAStepupToken that enables reading
+// user and, on success, creates an MFAStepUpGrant that enables reading
 // restricted secrets for the configured window (default 15 min).
 // Mirrors the TOTP-path of VerifyMFACredentials: loadTOTPSecret +
 // validateTOTPStep + MarkTOTPStepUsed for anti-replay, recovery-code fallback,
@@ -53,7 +55,11 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return err
 	}
 
-	if err := c.storage.UpsertMFAStepupToken(ctx, userID, c.now().Add(c.mfaStepUpWindow())); err != nil {
+	grant := &models.MFAStepUpGrant{
+		UserID:    userID,
+		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	}
+	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
 		return fmt.Errorf("failed to record MFA step-up: %w", err)
 	}
 	uid := userID
@@ -63,7 +69,11 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 }
 
 // HasActiveMFAStepUp reports whether userID holds a current, unexpired step-up
-// token. Returns (false, nil) — not an error — when no token exists.
+// grant. Returns (false, nil) — not an error — when no grant exists.
 func (c *KeyorixCore) HasActiveMFAStepUp(ctx context.Context, userID uint) (bool, error) {
-	return c.storage.HasActiveMFAStepup(ctx, userID)
+	grant, err := c.storage.GetActiveMFAStepUpGrant(ctx, userID, c.now())
+	if err != nil {
+		return false, err
+	}
+	return grant != nil, nil
 }

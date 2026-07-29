@@ -64,9 +64,9 @@ func TestVerifyMFAStepUp_WrongCode(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid code")
 }
 
-// TestVerifyMFAStepUp_CorrectTOTPCode_TokenUpserted verifies that a correct TOTP code
-// successfully upserts an MFAStepupToken into the database.
-func TestVerifyMFAStepUp_CorrectTOTPCode_TokenUpserted(t *testing.T) {
+// TestVerifyMFAStepUp_CorrectTOTPCode_GrantCreated verifies that a correct TOTP code
+// successfully creates an MFAStepUpGrant in the database.
+func TestVerifyMFAStepUp_CorrectTOTPCode_GrantCreated(t *testing.T) {
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	secret, _ := activateMFAForTest(t, c, fixed)
@@ -77,17 +77,17 @@ func TestVerifyMFAStepUp_CorrectTOTPCode_TokenUpserted(t *testing.T) {
 	err = c.VerifyMFAStepUp(ctx, 1, code)
 	require.NoError(t, err)
 
-	// Verify the token was written to the DB. HasActiveMFAStepup uses time.Now()
-	// internally; since the core clock is fixed to the past, check the row directly.
-	var tok models.MFAStepupToken
-	require.NoError(t, db.Where("user_id = ?", 1).First(&tok).Error,
-		"VerifyMFAStepUp must write an MFAStepupToken row")
-	assert.Equal(t, uint(1), tok.UserID)
+	// Verify the grant was written to the DB. The core clock is fixed; the grant
+	// should have ExpiresAt = fixed + mfaStepUpWindow (15 min).
+	var grant models.MFAStepUpGrant
+	require.NoError(t, db.Where("user_id = ?", 1).First(&grant).Error,
+		"VerifyMFAStepUp must write an MFAStepUpGrant row")
+	assert.Equal(t, uint(1), grant.UserID)
 }
 
-// TestVerifyMFAStepUp_CorrectRecoveryCode_TokenUpserted verifies that a correct recovery
-// code also successfully upserts an MFAStepupToken.
-func TestVerifyMFAStepUp_CorrectRecoveryCode_TokenUpserted(t *testing.T) {
+// TestVerifyMFAStepUp_CorrectRecoveryCode_GrantCreated verifies that a correct recovery
+// code also successfully creates an MFAStepUpGrant.
+func TestVerifyMFAStepUp_CorrectRecoveryCode_GrantCreated(t *testing.T) {
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 	_, codes := activateMFAForTest(t, c, fixed)
@@ -95,12 +95,11 @@ func TestVerifyMFAStepUp_CorrectRecoveryCode_TokenUpserted(t *testing.T) {
 	err := c.VerifyMFAStepUp(ctx, 1, codes[0])
 	require.NoError(t, err)
 
-	// Verify the token was written to the DB. HasActiveMFAStepup uses time.Now()
-	// internally; since the core clock is fixed to the past, check the row directly.
-	var tok models.MFAStepupToken
-	require.NoError(t, db.Where("user_id = ?", 1).First(&tok).Error,
-		"VerifyMFAStepUp via recovery code must write an MFAStepupToken row")
-	assert.Equal(t, uint(1), tok.UserID)
+	// Verify the grant was written to the DB.
+	var grant models.MFAStepUpGrant
+	require.NoError(t, db.Where("user_id = ?", 1).First(&grant).Error,
+		"VerifyMFAStepUp via recovery code must write an MFAStepUpGrant row")
+	assert.Equal(t, uint(1), grant.UserID)
 }
 
 // TestVerifyMFAStepUp_AntiReplay_SameTOTPStepRejectedTwice verifies that replaying the
@@ -123,42 +122,42 @@ func TestVerifyMFAStepUp_AntiReplay_SameTOTPStepRejectedTwice(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid code", "replaying the same TOTP step must be rejected")
 }
 
-// TestHasActiveMFAStepUp_NoToken verifies that a user with no token returns false.
-func TestHasActiveMFAStepUp_NoToken(t *testing.T) {
+// TestHasActiveMFAStepUp_NoGrant verifies that a user with no grant returns false.
+func TestHasActiveMFAStepUp_NoGrant(t *testing.T) {
 	c, _, _ := newMFATestCore(t)
 	ctx := context.Background()
 
 	active, err := c.HasActiveMFAStepUp(ctx, 1)
 	require.NoError(t, err)
-	assert.False(t, active, "no token — HasActiveMFAStepUp must return false")
+	assert.False(t, active, "no grant — HasActiveMFAStepUp must return false")
 }
 
-// TestHasActiveMFAStepUp_ExpiredToken verifies that an expired token is treated as absent.
-func TestHasActiveMFAStepUp_ExpiredToken(t *testing.T) {
-	c, db, _ := newMFATestCore(t)
+// TestHasActiveMFAStepUp_ExpiredGrant verifies that an expired grant is treated as absent.
+func TestHasActiveMFAStepUp_ExpiredGrant(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
-	// Insert an already-expired token directly. HasActiveMFAStepup compares against
-	// time.Now(), so use a real past time regardless of the core's fixed clock.
-	expiredAt := time.Now().Add(-1 * time.Minute)
-	require.NoError(t, db.Create(&models.MFAStepupToken{UserID: 1, ExpiresAt: expiredAt}).Error)
+	// Insert an already-expired grant directly. The core clock is fixed (to the
+	// past), so use a time even further in the past to ensure it's expired
+	// relative to the fixed clock.
+	expiredAt := fixed.Add(-1 * time.Minute)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: expiredAt}).Error)
 
 	active, err := c.HasActiveMFAStepUp(ctx, 1)
 	require.NoError(t, err)
-	assert.False(t, active, "expired token must not be treated as active")
+	assert.False(t, active, "expired grant must not be treated as active")
 }
 
-// TestHasActiveMFAStepUp_ActiveToken verifies that a non-expired token returns true.
-func TestHasActiveMFAStepUp_ActiveToken(t *testing.T) {
-	c, db, _ := newMFATestCore(t)
+// TestHasActiveMFAStepUp_ActiveGrant verifies that a non-expired grant returns true.
+func TestHasActiveMFAStepUp_ActiveGrant(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
 
-	// Insert a future-expiring token directly. HasActiveMFAStepup compares against
-	// time.Now(), so use a real future time regardless of the core's fixed clock.
-	future := time.Now().Add(15 * time.Minute)
-	require.NoError(t, db.Create(&models.MFAStepupToken{UserID: 1, ExpiresAt: future}).Error)
+	// Insert a future-expiring grant relative to the fixed clock.
+	future := fixed.Add(15 * time.Minute)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, ExpiresAt: future}).Error)
 
 	active, err := c.HasActiveMFAStepUp(ctx, 1)
 	require.NoError(t, err)
-	assert.True(t, active, "active (non-expired) token must return true")
+	assert.True(t, active, "active (non-expired) grant must return true")
 }

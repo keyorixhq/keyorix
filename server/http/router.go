@@ -1743,6 +1743,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/totp-step-used", authHandler.MarkTOTPStepUsedProxy)
 
+			// MFAStepUpGrant proxy — lets a RemoteStorage spoke node persist and
+			// query step-up grants against this server's real storage backend, so
+			// the classification gate works correctly under storage.type: remote.
+			// Static sub-path ("stepup-grants/active") is registered before the
+			// {userId} wildcard to avoid route shadowing.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/stepup-grants", authHandler.CreateMFAStepUpGrantProxy)
+			r.Post("/mfa/stepup-grants/active", authHandler.GetActiveMFAStepUpGrantProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/stepup-grants/{userId}", authHandler.DeleteMFAStepUpGrantsForProxy)
+
 			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
 			// Lets a downstream Keyorix server booted with storage.type: remote
 			// (ADR-049) proxy ListProjects/ListProjectsWithCounts/GetProject/
