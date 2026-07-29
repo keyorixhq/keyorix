@@ -97,10 +97,8 @@ if command -v cosign >/dev/null 2>&1; then
         curl --proto "$HTTPS_PROTO" --tlsv1.2 -fsSL "${CHECKSUMS_BASE}/checksums.txt.sig" -o "$TMP_CHECKSUMS_SIG" \
             || error "cosign: checksums.txt.sig download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- bash:S6506 false positive
     else
-        wget -qO "$TMP_CHECKSUMS_PEM" "${CHECKSUMS_BASE}/checksums.txt.pem" \
-            || error "cosign: checksums.txt.pem download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
-        wget -qO "$TMP_CHECKSUMS_SIG" "${CHECKSUMS_BASE}/checksums.txt.sig" \
-            || error "cosign: checksums.txt.sig download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
+        wget -qO "$TMP_CHECKSUMS_PEM" "${CHECKSUMS_BASE}/checksums.txt.pem" || error "cosign: checksums.txt.pem download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
+        wget -qO "$TMP_CHECKSUMS_SIG" "${CHECKSUMS_BASE}/checksums.txt.sig" || error "cosign: checksums.txt.sig download failed — aborting (supply-chain integrity check; see SECURITY.md)" # NOSONAR -- wget lacks --https-only on BusyBox; URL is already https://
     fi
     cosign verify-blob \
         --certificate "$TMP_CHECKSUMS_PEM" \
