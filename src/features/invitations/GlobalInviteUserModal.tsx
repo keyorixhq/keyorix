@@ -6,6 +6,7 @@ import { ProjectAssignmentsPicker } from '../admin';
 import { SYSTEM_ROLES } from '../../services/users';
 import type { ProjectAssignment, SetupLinkResult } from '../../services/users';
 import { useCreateGlobalInvitation } from './api';
+import { inviteErrorMessage } from './inviteErrorMessage';
 
 interface GlobalInviteUserModalProps {
     isOpen: boolean;
@@ -80,10 +81,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         setDeliveryError(res.delivery_error || 'The setup link could not be delivered.');
                     }
                 },
-                onError: (err: any) =>
-                    setError(
-                        err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to send invitation.'
-                    ),
+                onError: (err: any) => setError(inviteErrorMessage(err, 'Failed to send invitation.')),
             }
         );
     }

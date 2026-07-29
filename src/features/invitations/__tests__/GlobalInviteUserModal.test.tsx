@@ -81,6 +81,18 @@ describe('GlobalInviteUserModal', () => {
         expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument();
     });
 
+    it('shows actionable copy when the domain allowlist rejects the invite', () => {
+        mutate.mockImplementation((_vars, opts) =>
+            opts.onError({ response: { data: { message: 'email domain is not on the allowlist' } } })
+        );
+
+        render(<GlobalInviteUserModal isOpen onClose={onClose} />);
+        fireEvent.change(screen.getByPlaceholderText('jane@example.com'), { target: { value: 'e@evil.example' } });
+        fireEvent.click(screen.getByRole('button', { name: /send invitation/i }));
+
+        expect(screen.getByText(/contact a system admin to update the allowlist/i)).toBeInTheDocument();
+    });
+
     it('surfaces a delivery error when the link could not be sent', () => {
         mutate.mockImplementation((_vars, opts) =>
             opts.onSuccess({ invitation: { id: 13 }, delivery_error: 'base_url unset' })

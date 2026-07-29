@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Modal } from '../../components/ui/Modal';
 import { PROJECT_ROLES } from '../../services/projects';
 import { useCreateInvitation } from './api';
+import { inviteErrorMessage } from './inviteErrorMessage';
 
 interface InviteToProjectModalProps {
     isOpen: boolean;
@@ -58,10 +59,7 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
                     reset();
                     onClose();
                 },
-                onError: (err: any) =>
-                    setError(
-                        err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to send invitation.'
-                    ),
+                onError: (err: any) => setError(inviteErrorMessage(err, 'Failed to send invitation.')),
             }
         );
     };
