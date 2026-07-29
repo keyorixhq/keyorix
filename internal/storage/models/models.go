@@ -1120,11 +1120,15 @@ type StatsSnapshot struct {
 // Unlike StatsSnapshot (per-user secret counts), this is a singleton per day
 // (no UserID field).
 type DeploymentStatsSnapshot struct {
-	ID             uint      `gorm:"primarykey"`
-	ActiveUsers    int64     `json:"active_users"`
-	AuditEvents30d int64     `json:"audit_events_30d"`
-	SnapshotDate   time.Time `gorm:"index"` // UTC date (truncated to day)
-	CreatedAt      time.Time
+	ID                    uint      `gorm:"primarykey"`
+	ActiveUsers           int64     `json:"active_users"`
+	AuditEvents30d        int64     `json:"audit_events_30d"`
+	AuditLogins30d        int64     `json:"audit_logins_30d"`
+	AuditSecretReads30d   int64     `json:"audit_secret_reads_30d"`
+	FailedAuthAttempts24h int64     `json:"failed_auth_attempts_24h"`
+	InactiveUsers         int64     `json:"inactive_users"`
+	SnapshotDate          time.Time `gorm:"index"` // UTC date (truncated to day)
+	CreatedAt             time.Time
 }
 
 // HygieneTrendSnapshot captures one day's credential-hygiene counts for

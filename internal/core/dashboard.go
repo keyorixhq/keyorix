@@ -51,10 +51,18 @@ type DashboardStats struct {
 	TotalSecretsTrend      *StatTrend `json:"totalSecretsTrend,omitempty"`
 	SharedSecretsTrend     *StatTrend `json:"sharedSecretsTrend,omitempty"`
 	SharedWithMeTrend      *StatTrend `json:"sharedWithMeTrend,omitempty"`
-	PrevActiveUsers        *int64     `json:"prevActiveUsers,omitempty"`
-	ActiveUsersTrend       *StatTrend `json:"activeUsersTrend,omitempty"`
-	PrevAuditEvents30d     *int64     `json:"prevAuditEvents30d,omitempty"`
-	AuditEvents30dTrend    *StatTrend `json:"auditEvents30dTrend,omitempty"`
+	PrevActiveUsers              *int64     `json:"prevActiveUsers,omitempty"`
+	ActiveUsersTrend             *StatTrend `json:"activeUsersTrend,omitempty"`
+	PrevAuditEvents30d           *int64     `json:"prevAuditEvents30d,omitempty"`
+	AuditEvents30dTrend          *StatTrend `json:"auditEvents30dTrend,omitempty"`
+	PrevAuditLogins30d           *int64     `json:"prevAuditLogins30d,omitempty"`
+	AuditLogins30dTrend          *StatTrend `json:"auditLogins30dTrend,omitempty"`
+	PrevAuditSecretReads30d      *int64     `json:"prevAuditSecretReads30d,omitempty"`
+	AuditSecretReads30dTrend     *StatTrend `json:"auditSecretReads30dTrend,omitempty"`
+	PrevFailedAuthAttempts24h    *int64     `json:"prevFailedAuthAttempts24h,omitempty"`
+	FailedAuthAttempts24hTrend   *StatTrend `json:"failedAuthAttempts24hTrend,omitempty"`
+	PrevInactiveUsers            *int64     `json:"prevInactiveUsers,omitempty"`
+	InactiveUsersTrend           *StatTrend `json:"inactiveUsersTrend,omitempty"`
 	ExpiringSecrets       []ExpiringSecret `json:"expiringSecrets,omitempty"`
 	RecentActivity        []ActivityItem   `json:"recentActivity"`
 	// Degraded is true when one or more sub-checks above could not be queried —
@@ -190,9 +198,13 @@ func (c *KeyorixCore) saveDeploymentSnapshot(ctx context.Context, stats *Dashboa
 		return // best-effort; tolerate failure
 	}
 	newSnap := &models.DeploymentStatsSnapshot{
-		ActiveUsers:    stats.ActiveUsers,
-		AuditEvents30d: stats.AuditEvents30d,
-		SnapshotDate:   todayDate,
+		ActiveUsers:           stats.ActiveUsers,
+		AuditEvents30d:        stats.AuditEvents30d,
+		AuditLogins30d:        stats.AuditLogins30d,
+		AuditSecretReads30d:   stats.AuditSecretReads30d,
+		FailedAuthAttempts24h: stats.FailedAuthAttempts24h,
+		InactiveUsers:         stats.InactiveUsers,
+		SnapshotDate:          todayDate,
 	}
 	_ = c.storage.SaveDeploymentStatsSnapshot(ctx, newSnap)
 	if prevSnap != nil {
@@ -200,6 +212,14 @@ func (c *KeyorixCore) saveDeploymentSnapshot(ctx context.Context, stats *Dashboa
 		stats.ActiveUsersTrend = computeTrend(float64(prevSnap.ActiveUsers), float64(stats.ActiveUsers))
 		stats.PrevAuditEvents30d = &prevSnap.AuditEvents30d
 		stats.AuditEvents30dTrend = computeTrend(float64(prevSnap.AuditEvents30d), float64(stats.AuditEvents30d))
+		stats.PrevAuditLogins30d = &prevSnap.AuditLogins30d
+		stats.AuditLogins30dTrend = computeTrend(float64(prevSnap.AuditLogins30d), float64(stats.AuditLogins30d))
+		stats.PrevAuditSecretReads30d = &prevSnap.AuditSecretReads30d
+		stats.AuditSecretReads30dTrend = computeTrend(float64(prevSnap.AuditSecretReads30d), float64(stats.AuditSecretReads30d))
+		stats.PrevFailedAuthAttempts24h = &prevSnap.FailedAuthAttempts24h
+		stats.FailedAuthAttempts24hTrend = computeTrend(float64(prevSnap.FailedAuthAttempts24h), float64(stats.FailedAuthAttempts24h))
+		stats.PrevInactiveUsers = &prevSnap.InactiveUsers
+		stats.InactiveUsersTrend = computeTrend(float64(prevSnap.InactiveUsers), float64(stats.InactiveUsers))
 	}
 }
 
