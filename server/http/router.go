@@ -2007,6 +2007,12 @@ func isBackendRoute(p string) bool {
 		if strings.HasPrefix(p, prefix) {
 			return true
 		}
+		// A prefix ending in "/" (e.g. "/api/") also covers the bare path without
+		// the trailing slash (e.g. "/api"), so GET /api or GET /auth returns 404
+		// instead of falling through to the SPA and returning HTML.
+		if strings.HasSuffix(prefix, "/") && p == prefix[:len(prefix)-1] {
+			return true
+		}
 	}
 	return false
 }

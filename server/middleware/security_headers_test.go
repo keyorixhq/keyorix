@@ -41,3 +41,10 @@ func TestSecurityHeaders_HSTSOnlyWithTLS(t *testing.T) {
 	hdr := serve(t, true)
 	assert.Equal(t, "max-age=31536000; includeSubDomains; preload", hdr.Get("Strict-Transport-Security"))
 }
+
+// DAST #1209 (ZAP/90004): Cross-Origin-Resource-Policy must be set on every response
+// to counter Spectre-style cross-origin side-channel attacks.
+func TestSecurityHeaders_CORPAlwaysSet(t *testing.T) {
+	hdr := serve(t, false)
+	assert.Equal(t, "same-origin", hdr.Get("Cross-Origin-Resource-Policy"))
+}
