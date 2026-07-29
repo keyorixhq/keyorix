@@ -108,13 +108,13 @@ func breakGlassError(err error) error {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):
-		return status.Error(codes.NotFound, msg)
+		return status.Error(codes.NotFound, "break-glass activation not found") // GRPC-005: was msg — leaked storage error details
 	case strings.Contains(msg, "justification") || strings.Contains(msg, "required") || strings.Contains(msg, "invalid"):
-		return status.Error(codes.InvalidArgument, msg)
+		return status.Error(codes.InvalidArgument, "invalid request") // GRPC-005: was msg — leaked minimum justification length
 	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
 		return status.Error(codes.PermissionDenied, "access denied")
 	case strings.Contains(msg, "already revoked") || strings.Contains(msg, "not active") || strings.Contains(msg, "expired"):
-		return status.Error(codes.FailedPrecondition, msg)
+		return status.Error(codes.FailedPrecondition, "activation is not in a valid state for this operation") // GRPC-005: was msg
 	default:
 		return status.Error(codes.Internal, "break-glass operation failed")
 	}

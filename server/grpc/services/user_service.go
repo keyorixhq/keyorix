@@ -295,9 +295,9 @@ func mapUserError(err error) error {
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"):
 		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
 	case strings.Contains(msg, "administrator can grant"):
-		return status.Error(codes.PermissionDenied, err.Error())
+		return status.Error(codes.PermissionDenied, "insufficient privileges to assign this role") // GRPC-003: was err.Error() — leaked internal role name
 	case strings.Contains(msg, "validation"), strings.Contains(msg, "required"), strings.Contains(msg, "invalid"), strings.Contains(msg, "must be"):
-		return status.Error(codes.InvalidArgument, err.Error())
+		return status.Error(codes.InvalidArgument, "invalid request parameters") // GRPC-003: was err.Error() — leaked password policy thresholds
 	default:
 		return status.Error(codes.Internal, "user operation failed")
 	}

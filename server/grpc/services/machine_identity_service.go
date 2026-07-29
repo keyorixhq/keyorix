@@ -35,11 +35,11 @@ func mapMachineError(err error) error {
 	case strings.Contains(msg, "not found"):
 		return status.Error(codes.NotFound, "machine identity or token not found")
 	case strings.Contains(msg, "cannot transition"):
-		return status.Error(codes.FailedPrecondition, msg)
+		return status.Error(codes.FailedPrecondition, "invalid state transition") // GRPC-004: was msg — leaked internal state names
 	case strings.Contains(msg, "must be active"):
-		return status.Error(codes.FailedPrecondition, msg)
+		return status.Error(codes.FailedPrecondition, "machine identity is not active") // GRPC-004: was msg — leaked current state
 	case strings.Contains(msg, "invalid") || strings.Contains(msg, "classification must be") || strings.Contains(msg, "required"):
-		return status.Error(codes.InvalidArgument, msg)
+		return status.Error(codes.InvalidArgument, "invalid request") // GRPC-004: was msg — leaked classification enum values
 	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
 		return status.Error(codes.PermissionDenied, "access denied")
 	default:
