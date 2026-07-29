@@ -13,8 +13,9 @@ import (
 )
 
 // seedClassificationGateFixture creates a project, a requester (owner of the
-// secret, so ValidateSecretAccess passes without needing a separate RBAC role),
-// an admin approver, and a secret at the given classification with one version.
+// secret and project viewer, so ValidateSecretAccess passes the owner + live-
+// membership check introduced in #1205/RBAC-001), an admin approver, and a
+// secret at the given classification with one version.
 func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classification string) (secretID, requesterID, approverID, projectID uint) {
 	t.Helper()
 	ctx := context.Background()
@@ -25,6 +26,13 @@ func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classif
 	requester, err := st.CreateUser(ctx, &models.User{Username: "requester-" + classification, Email: "requester-" + classification + "@example.com", IsActive: true})
 	require.NoError(t, err)
 
+	// Assign the requester a project-scoped viewer role so IsProjectMember
+	// (added as an owner-bypass gate in #1205) returns true. Without this the
+	// owner shortcut in CheckSecretPermission falls through to "permission denied".
+	viewerRole, err := st.GetRoleByName(ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, requester.ID, viewerRole.ID, storage.Scope{ProjectID: proj.ID}))
+
 	approver, err := st.CreateUser(ctx, &models.User{Username: "approver-" + classification, Email: "approver-" + classification + "@example.com", IsActive: true})
 	require.NoError(t, err)
 	adminRole, err := st.GetRoleByName(ctx, "admin")
@@ -32,7 +40,7 @@ func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classif
 	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
 	// IsProjectMember (RBAC-001): requester must be a project member or the owner
 	// gate short-circuits before returning PermissionOwner.
-	viewerRole, err := st.GetRoleByName(ctx, "project_viewer")
+	viewerRole, err = st.GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, requester.ID, viewerRole.ID, storage.Scope{ProjectID: proj.ID}))
 
@@ -385,35 +393,35 @@ func TestClassificationMFAStepUp_On_NoUser_Denied(t *testing.T) {
 	assert.Contains(t, err.Error(), "restricted")
 }
 
-// Requirement: a user with an active (non-expired) step-up token can read.
+// Requirement: a user with an active (non-expired) step-up grant can read.
 func TestClassificationMFAStepUp_On_ActiveToken_Allowed(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
 	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
 
-	// Directly seed the step-up token (as VerifyMFALogin would).
+	// Directly seed the step-up grant (as VerifyMFAStepUp would).
 	expiresAt := c.now().Add(15 * time.Minute)
-	require.NoError(t, st.UpsertMFAStepupToken(ctx, ownerID, expiresAt))
+	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, ExpiresAt: expiresAt}))
 
 	val, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
-	require.NoError(t, err, "active MFA step-up token must allow the read")
+	require.NoError(t, err, "active MFA step-up grant must allow the read")
 	assert.Equal(t, "s3cr3t-value", string(val))
 }
 
-// Requirement: an expired step-up token is treated as absent — denied.
+// Requirement: an expired step-up grant is treated as absent — denied.
 func TestClassificationMFAStepUp_On_ExpiredToken_Denied(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	secretID, ownerID, _, _ := seedClassificationGateFixture(t, st, ClassificationRestricted)
 	ctx := context.Background()
 	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
 
-	// Seed an already-expired token.
+	// Seed an already-expired grant.
 	expiredAt := c.now().Add(-1 * time.Minute)
-	require.NoError(t, st.UpsertMFAStepupToken(ctx, ownerID, expiredAt))
+	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, ExpiresAt: expiredAt}))
 
 	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)
-	require.Error(t, err, "expired step-up token must not grant access")
+	require.Error(t, err, "expired step-up grant must not grant access")
 	assert.Contains(t, err.Error(), "MFA")
 }
 
@@ -443,8 +451,8 @@ func TestClassificationMFAStepUp_Combined_BothRequired(t *testing.T) {
 	c.SetClassificationRestrictedRequiresApproval(true)
 	c.SetClassificationRestrictedRequiresMFAStepUp(true, 0)
 
-	// Give the owner an active step-up token.
-	require.NoError(t, st.UpsertMFAStepupToken(ctx, ownerID, c.now().Add(15*time.Minute)))
+	// Give the owner an active step-up grant.
+	require.NoError(t, st.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{UserID: ownerID, ExpiresAt: c.now().Add(15 * time.Minute)}))
 
 	// No approved access request yet → denied.
 	_, err := c.GetSecretValueWithPermissionCheck(ctx, secretID, ownerID)

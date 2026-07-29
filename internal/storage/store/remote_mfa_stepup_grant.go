@@ -1,0 +1,108 @@
+// remote_mfa_stepup_grant.go — MFAStepUpGrant persistence for RemoteStorage.
+// These proxy the three MFAStepUpGrant storage primitives to the server-side
+// endpoints in server/http/handlers/mfa_stepup_proxy.go, following the same
+// pattern as the other RemoteStorage proxy methods in remote_mfa.go.
+package store
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// mfaStepUpGrantWire mirrors models.MFAStepUpGrant on the wire.
+type mfaStepUpGrantWire struct {
+	ID        uint      `json:"id"`
+	UserID    uint      `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func newMFAStepUpGrantWire(g *models.MFAStepUpGrant) mfaStepUpGrantWire {
+	return mfaStepUpGrantWire{
+		ID:        g.ID,
+		UserID:    g.UserID,
+		ExpiresAt: g.ExpiresAt,
+		CreatedAt: g.CreatedAt,
+	}
+}
+
+func (w mfaStepUpGrantWire) toModel() *models.MFAStepUpGrant {
+	return &models.MFAStepUpGrant{
+		ID:        w.ID,
+		UserID:    w.UserID,
+		ExpiresAt: w.ExpiresAt,
+		CreatedAt: w.CreatedAt,
+	}
+}
+
+func decodeMFAStepUpGrantResponse(data []byte) (*models.MFAStepUpGrant, error) {
+	var wire mfaStepUpGrantWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse MFA step-up grant response: %w", err)
+	}
+	return wire.toModel(), nil
+}
+
+// mfaStepUpGrantActiveWire is the request body for GetActiveMFAStepUpGrant.
+type mfaStepUpGrantActiveWire struct {
+	UserID uint      `json:"user_id"`
+	Now    time.Time `json:"now"`
+}
+
+// CreateMFAStepUpGrant persists a new MFA step-up grant via
+// POST /api/v1/system/mfa/stepup-grants, copying the upstream-assigned
+// fields (ID, CreatedAt) back into grant.
+func (rs *RemoteStorage) CreateMFAStepUpGrant(ctx context.Context, grant *models.MFAStepUpGrant) error {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/stepup-grants", newMFAStepUpGrantWire(grant))
+	if err != nil {
+		return fmt.Errorf("failed to create MFA step-up grant: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("create MFA step-up grant failed: %s", resp.Error.Error())
+	}
+	saved, err := decodeMFAStepUpGrantResponse(resp.Data)
+	if err != nil {
+		return err
+	}
+	*grant = *saved
+	return nil
+}
+
+// GetActiveMFAStepUpGrant returns the most recent non-expired MFA step-up
+// grant for userID via POST /api/v1/system/mfa/stepup-grants/active.
+// Returns (nil, nil) when the server returns null data (no active grant).
+func (rs *RemoteStorage) GetActiveMFAStepUpGrant(ctx context.Context, userID uint, now time.Time) (*models.MFAStepUpGrant, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/stepup-grants/active", mfaStepUpGrantActiveWire{
+		UserID: userID,
+		Now:    now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active MFA step-up grant: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get active MFA step-up grant failed: %s", resp.Error.Error())
+	}
+	// data is null when no active grant exists.
+	if len(resp.Data) == 0 || string(resp.Data) == "null" {
+		return nil, nil
+	}
+	return decodeMFAStepUpGrantResponse(resp.Data)
+}
+
+// DeleteMFAStepUpGrantsFor removes all step-up grants for userID via
+// DELETE /api/v1/system/mfa/stepup-grants/{userID}.
+func (rs *RemoteStorage) DeleteMFAStepUpGrantsFor(ctx context.Context, userID uint) error {
+	path := fmt.Sprintf("/api/v1/system/mfa/stepup-grants/%d", userID)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to delete MFA step-up grants: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("delete MFA step-up grants failed: %s", resp.Error.Error())
+	}
+	return nil
+}
