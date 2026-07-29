@@ -13,27 +13,31 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
+// selectProjectCount is the shared "GROUP BY project_id" count projection
+// used by every per-project aggregation query below.
+const selectProjectCount = "project_id, COUNT(*) AS count"
+
+// billingCounts accumulates the raw per-project aggregates that feed
+// storage.BillingProjectStat before the zero-activity filter is applied.
+type billingCounts struct {
+	SecretCount     int64
+	SecretReads     int64
+	SecretWrites    int64
+	SecretRotations int64
+	UniqueUsers     int
+	MachineReads    int64
+}
+
 // GetBillingReport returns per-project usage stats for the half-open interval
 // [from, to). When projectIDs is nil or empty, stats are returned for all
 // non-deleted projects that have at least one active secret or any audit
 // activity in the window. Projects with no secrets and no activity are omitted
 // to keep the report concise.
 func (ls *LocalStorage) GetBillingReport(ctx context.Context, from, to time.Time, projectIDs []uint) (*storage.BillingReport, error) {
-	allProjects := len(projectIDs) == 0
-
-	// --- Step 1: determine the project set ---
-	if allProjects {
-		type idRow struct{ ID uint }
-		var rows []idRow
-		if err := ls.db.WithContext(ctx).
-			Table("projects").
-			Select("id").
-			Where("deleted_at IS NULL").
-			Scan(&rows).Error; err != nil {
+	if len(projectIDs) == 0 {
+		var err error
+		if projectIDs, err = ls.allProjectIDs(ctx); err != nil {
 			return nil, err
-		}
-		for _, r := range rows {
-			projectIDs = append(projectIDs, r.ID)
 		}
 	}
 	if len(projectIDs) == 0 {
@@ -45,169 +49,175 @@ func (ls *LocalStorage) GetBillingReport(ctx context.Context, from, to time.Time
 		}, nil
 	}
 
-	// --- Step 2: fetch project names in one query ---
+	nameMap, err := ls.projectNames(ctx, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	statsMap, err := ls.billingCountsByProject(ctx, from, to, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	stats, totals := buildBillingStats(projectIDs, nameMap, statsMap)
+
+	return &storage.BillingReport{
+		From:        from,
+		To:          to,
+		GeneratedAt: time.Now().UTC(),
+		Projects:    stats,
+		Totals:      totals,
+	}, nil
+}
+
+func (ls *LocalStorage) allProjectIDs(ctx context.Context) ([]uint, error) {
+	type idRow struct{ ID uint }
+	var rows []idRow
+	if err := ls.db.WithContext(ctx).
+		Table("projects").
+		Select("id").
+		Where("deleted_at IS NULL").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	return ids, nil
+}
+
+func (ls *LocalStorage) projectNames(ctx context.Context, projectIDs []uint) (map[uint]string, error) {
 	type projectRow struct {
 		ID   uint
 		Name string
 	}
-	var projRows []projectRow
+	var rows []projectRow
 	if err := ls.db.WithContext(ctx).
 		Table("projects").
 		Select("id, name").
 		Where("id IN ?", projectIDs).
-		Scan(&projRows).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	nameMap := make(map[uint]string, len(projRows))
-	for _, p := range projRows {
+	nameMap := make(map[uint]string, len(rows))
+	for _, p := range rows {
 		nameMap[p.ID] = p.Name
 	}
+	return nameMap, nil
+}
 
-	// --- Step 3: aggregate per project ---
-	type counts struct {
-		SecretCount     int64
-		SecretReads     int64
-		SecretWrites    int64
-		SecretRotations int64
-		UniqueUsers     int
-		MachineReads    int64
-	}
-
-	statsMap := make(map[uint]*counts, len(projectIDs))
-	for _, id := range projectIDs {
-		statsMap[id] = &counts{}
-	}
-
-	// 3a. SecretCount — active leaf secrets
-	type secretRow struct {
+// countByProject runs a "COUNT(*) GROUP BY project_id" aggregation over table
+// filtered by where/args, returning a project_id -> count map.
+func (ls *LocalStorage) countByProject(ctx context.Context, table, where string, args ...any) (map[uint]int64, error) {
+	type row struct {
 		ProjectID uint
 		Count     int64
 	}
-	var secretRows []secretRow
+	var rows []row
 	if err := ls.db.WithContext(ctx).
-		Table("secret_nodes").
-		Select("project_id, COUNT(*) AS count").
-		Where("project_id IN ? AND is_secret = ? AND deleted_at IS NULL", projectIDs, true).
+		Table(table).
+		Select(selectProjectCount).
+		Where(where, args...).
 		Group("project_id").
-		Scan(&secretRows).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	for _, r := range secretRows {
-		if c, ok := statsMap[r.ProjectID]; ok {
-			c.SecretCount = r.Count
-		}
+	m := make(map[uint]int64, len(rows))
+	for _, r := range rows {
+		m[r.ProjectID] = r.Count
 	}
+	return m, nil
+}
 
-	// 3b. SecretReads — secret.read events in window
-	type readRow struct {
-		ProjectID uint
-		Count     int64
-	}
-	var readRows []readRow
-	if err := ls.db.WithContext(ctx).
-		Table("audit_events").
-		Select("project_id, COUNT(*) AS count").
-		Where("project_id IN ? AND event_type = ? AND success = ? AND event_time >= ? AND event_time < ?",
-			projectIDs, "secret.read", true, from, to).
-		Group("project_id").
-		Scan(&readRows).Error; err != nil {
-		return nil, err
-	}
-	for _, r := range readRows {
-		if c, ok := statsMap[r.ProjectID]; ok {
-			c.SecretReads = r.Count
-		}
-	}
-
-	// 3c. SecretWrites — secret.create + secret.update + secret.rotate
-	var writeRows []readRow
-	if err := ls.db.WithContext(ctx).
-		Table("audit_events").
-		Select("project_id, COUNT(*) AS count").
-		Where("project_id IN ? AND event_type IN ? AND success = ? AND event_time >= ? AND event_time < ?",
-			projectIDs, []string{"secret.create", "secret.update", "secret.rotate"}, true, from, to).
-		Group("project_id").
-		Scan(&writeRows).Error; err != nil {
-		return nil, err
-	}
-	for _, r := range writeRows {
-		if c, ok := statsMap[r.ProjectID]; ok {
-			c.SecretWrites = r.Count
-		}
-	}
-
-	// 3d. SecretRotations — secret.rotate only
-	var rotRows []readRow
-	if err := ls.db.WithContext(ctx).
-		Table("audit_events").
-		Select("project_id, COUNT(*) AS count").
-		Where("project_id IN ? AND event_type = ? AND success = ? AND event_time >= ? AND event_time < ?",
-			projectIDs, "secret.rotate", true, from, to).
-		Group("project_id").
-		Scan(&rotRows).Error; err != nil {
-		return nil, err
-	}
-	for _, r := range rotRows {
-		if c, ok := statsMap[r.ProjectID]; ok {
-			c.SecretRotations = r.Count
-		}
-	}
-
-	// 3e. UniqueUsers — distinct human user_ids in window
-	type userRow struct {
+func (ls *LocalStorage) distinctUsersByProject(ctx context.Context, projectIDs []uint, from, to time.Time) (map[uint]int, error) {
+	type row struct {
 		ProjectID uint
 		Count     int
 	}
-	var userRows []userRow
+	var rows []row
 	if err := ls.db.WithContext(ctx).
 		Table("audit_events").
 		Select("project_id, COUNT(DISTINCT user_id) AS count").
 		Where("project_id IN ? AND actor_type = ? AND event_time >= ? AND event_time < ?",
 			projectIDs, "user", from, to).
 		Group("project_id").
-		Scan(&userRows).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	for _, r := range userRows {
-		if c, ok := statsMap[r.ProjectID]; ok {
-			c.UniqueUsers = r.Count
-		}
+	m := make(map[uint]int, len(rows))
+	for _, r := range rows {
+		m[r.ProjectID] = r.Count
 	}
+	return m, nil
+}
 
-	// 3f. MachineReads — secret.read by machine actors
-	var machRows []readRow
-	if err := ls.db.WithContext(ctx).
-		Table("audit_events").
-		Select("project_id, COUNT(*) AS count").
-		Where("project_id IN ? AND event_type = ? AND actor_type = ? AND event_time >= ? AND event_time < ?",
-			projectIDs, "secret.read", "machine", from, to).
-		Group("project_id").
-		Scan(&machRows).Error; err != nil {
+// billingCountsByProject runs each of the SecretCount / SecretReads /
+// SecretWrites / SecretRotations / UniqueUsers / MachineReads aggregations
+// and merges them into one map keyed by project ID.
+func (ls *LocalStorage) billingCountsByProject(ctx context.Context, from, to time.Time, projectIDs []uint) (map[uint]*billingCounts, error) {
+	secretCounts, err := ls.countByProject(ctx, "secret_nodes",
+		"project_id IN ? AND is_secret = ? AND deleted_at IS NULL", projectIDs, true)
+	if err != nil {
 		return nil, err
 	}
-	for _, r := range machRows {
-		if c, ok := statsMap[r.ProjectID]; ok {
-			c.MachineReads = r.Count
-		}
+	reads, err := ls.countByProject(ctx, "audit_events",
+		"project_id IN ? AND event_type = ? AND success = ? AND event_time >= ? AND event_time < ?",
+		projectIDs, "secret.read", true, from, to)
+	if err != nil {
+		return nil, err
+	}
+	writes, err := ls.countByProject(ctx, "audit_events",
+		"project_id IN ? AND event_type IN ? AND success = ? AND event_time >= ? AND event_time < ?",
+		projectIDs, []string{"secret.create", "secret.update", "secret.rotate"}, true, from, to)
+	if err != nil {
+		return nil, err
+	}
+	rotations, err := ls.countByProject(ctx, "audit_events",
+		"project_id IN ? AND event_type = ? AND success = ? AND event_time >= ? AND event_time < ?",
+		projectIDs, "secret.rotate", true, from, to)
+	if err != nil {
+		return nil, err
+	}
+	users, err := ls.distinctUsersByProject(ctx, projectIDs, from, to)
+	if err != nil {
+		return nil, err
+	}
+	machineReads, err := ls.countByProject(ctx, "audit_events",
+		"project_id IN ? AND event_type = ? AND actor_type = ? AND event_time >= ? AND event_time < ?",
+		projectIDs, "secret.read", "machine", from, to)
+	if err != nil {
+		return nil, err
 	}
 
-	// --- Step 4: build result, filtering zero-activity / no-secret projects ---
+	statsMap := make(map[uint]*billingCounts, len(projectIDs))
+	for _, id := range projectIDs {
+		statsMap[id] = &billingCounts{
+			SecretCount:     secretCounts[id],
+			SecretReads:     reads[id],
+			SecretWrites:    writes[id],
+			SecretRotations: rotations[id],
+			UniqueUsers:     users[id],
+			MachineReads:    machineReads[id],
+		}
+	}
+	return statsMap, nil
+}
+
+// buildBillingStats converts the raw per-project counts into the report's
+// stat list and totals, omitting projects with no secrets and no activity.
+func buildBillingStats(projectIDs []uint, nameMap map[uint]string, statsMap map[uint]*billingCounts) ([]storage.BillingProjectStat, storage.BillingTotals) {
 	var stats []storage.BillingProjectStat
 	var totals storage.BillingTotals
 
 	for _, id := range projectIDs {
 		c := statsMap[id]
-		// Omit projects with no secrets AND no activity
 		if c.SecretCount == 0 && c.SecretReads == 0 && c.SecretWrites == 0 {
 			continue
 		}
-		name := nameMap[id]
-		if name == "" {
-			name = ""
-		}
 		stat := storage.BillingProjectStat{
 			ProjectID:       id,
-			ProjectName:     name,
+			ProjectName:     nameMap[id],
 			SecretCount:     c.SecretCount,
 			SecretReads:     c.SecretReads,
 			SecretWrites:    c.SecretWrites,
@@ -229,12 +239,5 @@ func (ls *LocalStorage) GetBillingReport(ctx context.Context, from, to time.Time
 	if stats == nil {
 		stats = []storage.BillingProjectStat{}
 	}
-
-	return &storage.BillingReport{
-		From:        from,
-		To:          to,
-		GeneratedAt: time.Now().UTC(),
-		Projects:    stats,
-		Totals:      totals,
-	}, nil
+	return stats, totals
 }

@@ -32,20 +32,7 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix auth mfa enroll' first")
 	}
 
-	verified := false
-	if secret, serr := c.loadTOTPSecret(ctx, userID); serr == nil {
-		if step, ok := c.validateTOTPStep(secret, code); ok {
-			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr == nil && fresh {
-				verified = true
-			}
-		}
-	}
-	if !verified {
-		if consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now()); cerr == nil && consumed {
-			verified = true
-		}
-	}
-	if !verified {
+	if !c.verifyMFAStepUpCode(ctx, userID, code) {
 		c.auditMFAFailed(ctx, userID, "stepup")
 		c.recordFailedLogin(ctx, user)
 		return fmt.Errorf("invalid code")
@@ -66,6 +53,20 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 	c.writeAuditEvent(ctx, "mfa.stepup_verified", &uid, nil,
 		fmt.Sprintf("user %d completed MFA step-up for restricted secret access", userID))
 	return nil
+}
+
+// verifyMFAStepUpCode checks code against the user's TOTP secret, falling
+// back to a recovery code, mirroring the login second-factor verification.
+func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) bool {
+	if secret, serr := c.loadTOTPSecret(ctx, userID); serr == nil {
+		if step, ok := c.validateTOTPStep(secret, code); ok {
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr == nil && fresh {
+				return true
+			}
+		}
+	}
+	consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
+	return cerr == nil && consumed
 }
 
 // HasActiveMFAStepUp reports whether userID holds a current, unexpired step-up
