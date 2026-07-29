@@ -25,9 +25,10 @@ func TestBulkRenameSecretsHandler(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
-		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.User{},
+		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.User{}, &models.Role{}, &models.UserRole{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, Name: "production", ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.SecretNode{
 		ID: 5, Name: "db-password", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1,

@@ -18,8 +18,9 @@ import (
 func TestGetSecretAccessStatsHandler(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.SecretAccessLog{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.SecretAccessLog{}, &models.Role{}, &models.UserRole{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.SecretNode{
 		ID: 1, Name: "db", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
