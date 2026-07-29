@@ -530,6 +530,16 @@ type UserRole struct {
 // connect.read plus the operator's allowed_refs (backward compatible); once any grant
 // exists for a connector, a read is permitted only if one of the caller's roles holds
 // a matching grant.
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone.
+func (ur *UserRole) BeforeSave(_ *gorm.DB) error {
+	if ur.ExpiresAt != nil {
+		utc := ur.ExpiresAt.UTC()
+		ur.ExpiresAt = &utc
+	}
+	return nil
+}
+
 type ConnectRefGrant struct {
 	ID        uint   `gorm:"primaryKey"`
 	RoleID    uint   `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:1"`
@@ -574,6 +584,16 @@ type GroupRole struct {
 	EnvironmentID uint `gorm:"primaryKey;not null;default:0"`
 	// ExpiresAt makes a group grant time-bound; see UserRole.ExpiresAt.
 	ExpiresAt *time.Time `gorm:"index"`
+}
+
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone.
+func (gr *GroupRole) BeforeSave(_ *gorm.DB) error {
+	if gr.ExpiresAt != nil {
+		utc := gr.ExpiresAt.UTC()
+		gr.ExpiresAt = &utc
+	}
+	return nil
 }
 
 type SecretNode struct {
