@@ -327,6 +327,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/disable", authHandler.DisableMFA)
 		r.Get("/auth/mfa/recovery-codes", authHandler.RecoveryCodesStatus)
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/recovery-codes/regenerate", authHandler.RegenerateRecoveryCodes)
+		// Explicit MFA step-up: re-verify TOTP (or a recovery code) without re-logging
+		// in to open the 15-minute restricted-secret read window. Blocked under
+		// impersonation — an admin acting as a user must not be able to mint a step-up
+		// token on behalf of the target account.
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/stepup", authHandler.MFAStepUp)
 		// WebAuthn / passkey self-service (acts on the authenticated caller's account).
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)
