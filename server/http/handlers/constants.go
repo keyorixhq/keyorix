@@ -3,6 +3,7 @@ package handlers
 const (
 	errAccessDenied = "Access denied"
 	errAlreadyExists = "already exists"
+	errDomainNotAllowed = "not on the allowlist"
 	errFailedCreateUser = "Failed to create user"
 	errFailedGetRole = "Failed to get role"
 	errFailedGetUser = "Failed to get user"

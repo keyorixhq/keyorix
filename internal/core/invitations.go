@@ -92,6 +92,9 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 	if projectID == 0 || email == "" || role == "" {
 		return nil, fmt.Errorf("project ID, email, and role are required")
 	}
+	if !c.domainAllowed(email) {
+		return nil, fmt.Errorf("email domain is not on the allowlist")
+	}
 	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
@@ -165,6 +168,9 @@ func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uin
 func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, error) { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	if email == "" {
 		return nil, fmt.Errorf("email is required")
+	}
+	if !c.domainAllowed(email) {
+		return nil, fmt.Errorf("email domain is not on the allowlist")
 	}
 	sysRole := systemRole
 	if sysRole == "" {

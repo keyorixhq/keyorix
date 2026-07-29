@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -69,6 +70,33 @@ func (c *KeyorixCore) SetMembershipValidationMode(mode string) {
 	case ValidationModeOpen, ValidationModeAllowlist, ValidationModeIDP:
 		c.membershipValidationMode = mode
 	}
+}
+
+// SetMembershipDomainAllowlist restricts InviteToProject/InviteGlobal to these
+// email domains (ADR-022). Empty = no restriction. The server calls this at
+// startup from config.
+func (c *KeyorixCore) SetMembershipDomainAllowlist(domains []string) {
+	c.membershipDomainAllowlist = domains
+}
+
+// domainAllowed reports whether email's domain passes the configured
+// allowlist. An empty allowlist means no restriction (default, backward
+// compatible).
+func (c *KeyorixCore) domainAllowed(email string) bool {
+	if len(c.membershipDomainAllowlist) == 0 {
+		return true
+	}
+	at := strings.LastIndex(email, "@")
+	if at < 0 {
+		return false
+	}
+	domain := strings.ToLower(email[at+1:])
+	for _, d := range c.membershipDomainAllowlist {
+		if strings.ToLower(d) == domain {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *KeyorixCore) validationMode() string {
