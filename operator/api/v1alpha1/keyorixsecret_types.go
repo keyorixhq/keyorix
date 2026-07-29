@@ -17,7 +17,9 @@ type SecretKeySelector struct {
 
 // KeyorixSecretData maps one Keyorix secret reference to a key in the target Secret.
 type KeyorixSecretData struct {
-	// SecretKey is the key to set in the target Kubernetes Secret.
+	// SecretKey is the key to set in the target Kubernetes Secret. Must be a valid
+	// Kubernetes Secret data key: alphanumeric, dash, dot, or underscore (K8SSYNC-001).
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
 	SecretKey string `json:"secretKey"`
 	// Ref is the Keyorix "project/environment/name" reference to read (ADR-059).
 	Ref string `json:"ref"`
@@ -25,7 +27,10 @@ type KeyorixSecretData struct {
 
 // KeyorixSecretTarget describes the Kubernetes Secret to create/maintain.
 type KeyorixSecretTarget struct {
-	// Name of the target Secret. Defaults to the KeyorixSecret's own name.
+	// Name of the target Secret. Defaults to the KeyorixSecret's own name. Must be a
+	// valid Kubernetes RFC1123 DNS subdomain (K8SSYNC-002).
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	Name string `json:"name,omitempty"`
 	// Type of the target Secret. Defaults to Opaque.
