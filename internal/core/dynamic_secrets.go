@@ -34,7 +34,7 @@ const defaultMaxLeaseTTL = 90 * 24 * time.Hour
 // shared carrier-grade NAT (RFC 6598), and IPv6 private/link-local ranges.
 var privateNetworkCIDRs = func() []*net.IPNet {
 	var nets []*net.IPNet
-	for _, cidr := range []string{
+	for _, cidr := range []string{ // NOSONAR -- these are the SSRF-guard blocklist ranges themselves (RFC-1918/1122/6598 + IPv6 equivalents), not a live endpoint; hardcoding them is the point of isPrivateIP
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // RFC-1918
 		"127.0.0.0/8",    // loopback
 		"169.254.0.0/16", // link-local / cloud IMDS
@@ -70,40 +70,54 @@ func isPrivateIP(ip net.IP) bool {
 func parseDSNHost(dsn string) string {
 	// URL-form DSNs (any scheme that carries ://host).
 	if strings.Contains(dsn, "://") {
-		if u, err := url.Parse(dsn); err == nil && u.Host != "" {
-			h, _, _ := net.SplitHostPort(u.Host)
-			if h == "" {
-				return u.Host
-			}
+		if h, ok := parseDSNHostFromURL(dsn); ok {
 			return h
 		}
 	}
 	// MySQL tcp-wrapper: user:pass@tcp(host:port)/db
-	if i := strings.Index(dsn, "@tcp("); i >= 0 {
-		rest := dsn[i+5:]
-		if j := strings.IndexByte(rest, ')'); j >= 0 {
-			h, _, _ := net.SplitHostPort(rest[:j])
-			if h == "" {
-				return rest[:j]
-			}
-			return h
-		}
+	if h, ok := parseDSNHostFromWrapper(dsn, "@tcp("); ok {
+		return h
 	}
 	// MySQL alternative wrapper: user:pass@(host:port)/db
-	if i := strings.Index(dsn, "@("); i >= 0 {
-		rest := dsn[i+2:]
-		if j := strings.IndexByte(rest, ')'); j >= 0 {
-			h, _, _ := net.SplitHostPort(rest[:j])
-			if h == "" {
-				return rest[:j]
-			}
-			return h
-		}
+	if h, ok := parseDSNHostFromWrapper(dsn, "@("); ok {
+		return h
 	}
 	// PostgreSQL key-value: scan for host=<value>
-	for _, part := range strings.Fields(dsn) {
-		if strings.HasPrefix(part, "host=") {
-			return strings.TrimPrefix(part, "host=")
+	return parseDSNHostFromKeyValue(dsn)
+}
+
+func parseDSNHostFromURL(dsn string) (string, bool) {
+	u, err := url.Parse(dsn)
+	if err != nil || u.Host == "" {
+		return "", false
+	}
+	if h, _, _ := net.SplitHostPort(u.Host); h != "" {
+		return h, true
+	}
+	return u.Host, true
+}
+
+// parseDSNHostFromWrapper extracts the host:port between marker and the next
+// ')', used for both the MySQL "@tcp(" and "@(" wrapper forms.
+func parseDSNHostFromWrapper(dsn, marker string) (string, bool) {
+	_, rest, ok := strings.Cut(dsn, marker)
+	if !ok {
+		return "", false
+	}
+	hostport, _, ok := strings.Cut(rest, ")")
+	if !ok {
+		return "", false
+	}
+	if h, _, _ := net.SplitHostPort(hostport); h != "" {
+		return h, true
+	}
+	return hostport, true
+}
+
+func parseDSNHostFromKeyValue(dsn string) string {
+	for part := range strings.FieldsSeq(dsn) {
+		if h, ok := strings.CutPrefix(part, "host="); ok {
+			return h
 		}
 	}
 	return ""
@@ -176,8 +190,8 @@ type IssuedLease struct {
 // CreateDynamicSecretConfig validates the backend, encrypts the admin DSN, and
 // stores the config.
 func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *CreateDynamicSecretConfigRequest) (*models.DynamicSecretConfig, error) {
-	if req.Name == "" || req.ProjectID == 0 || req.AdminDSN == "" {
-		return nil, fmt.Errorf("name, project_id and admin_dsn are required")
+	if err := validateCreateDynamicSecretConfigRequest(req); err != nil {
+		return nil, err
 	}
 	if _, err := c.dynamicEngine(req.BackendType); err != nil {
 		return nil, err
@@ -186,18 +200,8 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	// against it (a DB admin DSN or a cloud-IAM role) — the route only requires
 	// secrets.write at the project/environment scope, which is too weak a gate for
 	// that authority on its own (exact sibling of #90's rotation-backend check).
-	ids, err := c.scopedRoleIDs(ctx, req.ActorID, Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID})
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve actor authority: %w", err)
-	}
-	if !c.roleSetContainsAdmin(ctx, ids) {
-		return nil, fmt.Errorf("binding a dynamic-secret backend requires admin authority on this project")
-	}
-	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
-		return nil, fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
-	}
-	if !IsValidClassification(req.Classification) {
-		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+	if err := c.requireDynamicSecretAdminAuthority(ctx, req.ActorID, req.ProjectID, req.EnvironmentID); err != nil {
+		return nil, err
 	}
 	if err := validateCreationTemplate(req.BackendType, req.CreationTemplate); err != nil {
 		return nil, err
@@ -206,10 +210,8 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	// unless the operator has explicitly opted in (allow_private_network_targets).
 	// Prevents an internal operator from using Keyorix as a proxy to scan/reach
 	// other services at its network position, including cloud IMDS.
-	if !c.dynamicAllowPrivateTargets {
-		if err := validateAdminDSNHost(req.AdminDSN); err != nil {
-			return nil, err
-		}
+	if err := c.enforceDynamicSecretSSRFGuard(req.AdminDSN); err != nil {
+		return nil, err
 	}
 	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
 	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
@@ -217,6 +219,57 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	// persist them in a second write. The gap between the two writes is invisible to
 	// any other caller: cfg.ID isn't returned to the requester until this function
 	// returns, so nothing else can observe or race the momentarily-DSN-less row.
+	cfg, err := c.insertDynamicSecretConfigRow(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
+	}
+	cfg.AdminDSNEnc = dsnEnc
+	cfg.AdminDSNMeta = dsnMeta
+	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+		return nil, fmt.Errorf("failed to persist encrypted admin DSN: %w", err)
+	}
+	pid := cfg.ProjectID
+	c.writeAuditEventFull(ctx, "dynamic_secret.config_created", nil, nil, &pid, "",
+		fmt.Sprintf("dynamic-secret config %q (%s) created in project %d", cfg.Name, cfg.BackendType, cfg.ProjectID))
+	return cfg, nil
+}
+
+func validateCreateDynamicSecretConfigRequest(req *CreateDynamicSecretConfigRequest) error {
+	if req.Name == "" || req.ProjectID == 0 || req.AdminDSN == "" {
+		return fmt.Errorf("name, project_id and admin_dsn are required")
+	}
+	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
+		return fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
+	}
+	if !IsValidClassification(req.Classification) {
+		return fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+	}
+	return nil
+}
+
+func (c *KeyorixCore) requireDynamicSecretAdminAuthority(ctx context.Context, actorID, projectID, environmentID uint) error {
+	ids, err := c.scopedRoleIDs(ctx, actorID, Scope{ProjectID: projectID, EnvironmentID: environmentID})
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !c.roleSetContainsAdmin(ctx, ids) {
+		return fmt.Errorf("binding a dynamic-secret backend requires admin authority on this project")
+	}
+	return nil
+}
+
+func (c *KeyorixCore) enforceDynamicSecretSSRFGuard(adminDSN string) error {
+	if c.dynamicAllowPrivateTargets {
+		return nil
+	}
+	return validateAdminDSNHost(adminDSN)
+}
+
+func (c *KeyorixCore) insertDynamicSecretConfigRow(ctx context.Context, req *CreateDynamicSecretConfigRequest) (*models.DynamicSecretConfig, error) {
 	cfg, err := c.storage.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
 		Name:              req.Name,
 		ProjectID:         req.ProjectID,
@@ -242,18 +295,6 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 		}
 		return nil, err
 	}
-	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
-	}
-	cfg.AdminDSNEnc = dsnEnc
-	cfg.AdminDSNMeta = dsnMeta
-	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
-		return nil, fmt.Errorf("failed to persist encrypted admin DSN: %w", err)
-	}
-	pid := cfg.ProjectID
-	c.writeAuditEventFull(ctx, "dynamic_secret.config_created", nil, nil, &pid, "",
-		fmt.Sprintf("dynamic-secret config %q (%s) created in project %d", cfg.Name, cfg.BackendType, cfg.ProjectID))
 	return cfg, nil
 }
 

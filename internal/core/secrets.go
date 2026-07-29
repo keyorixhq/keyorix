@@ -276,23 +276,8 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-	if req.Type != "" {
-		secret.Type = req.Type
-	}
-	if req.MaxReads != nil {
-		secret.MaxReads = req.MaxReads
-	}
-	if req.ClearExpiration {
-		secret.Expiration = nil
-	} else if req.Expiration != nil {
-		secret.Expiration = req.Expiration
-	}
-	if req.Metadata != nil {
-		metadataJSON, err := json.Marshal(req.Metadata)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorInvalidMetadata", nil), err)
-		}
-		secret.Metadata = metadataJSON
+	if err := applyUpdateSecretFields(secret, req); err != nil {
+		return nil, err
 	}
 	secret.UpdatedAt = time.Now()
 
@@ -314,6 +299,30 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return updatedSecret, nil
+}
+
+// applyUpdateSecretFields patches the non-value fields (max reads, expiration,
+// metadata) from req onto secret in place.
+func applyUpdateSecretFields(secret *models.SecretNode, req *UpdateSecretRequest) error {
+	if req.Type != "" {
+		secret.Type = req.Type
+	}
+	if req.MaxReads != nil {
+		secret.MaxReads = req.MaxReads
+	}
+	if req.ClearExpiration {
+		secret.Expiration = nil
+	} else if req.Expiration != nil {
+		secret.Expiration = req.Expiration
+	}
+	if req.Metadata != nil {
+		metadataJSON, err := json.Marshal(req.Metadata)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorInvalidMetadata", nil), err)
+		}
+		secret.Metadata = metadataJSON
+	}
+	return nil
 }
 
 // UpdateSecretWithPermissionCheck updates a secret with write permission enforcement.
