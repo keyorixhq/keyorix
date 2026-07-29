@@ -289,14 +289,24 @@ type GRPCKeepaliveConfig struct {
 	// so this defaults to false — rejecting streamless pings closes off a cheap
 	// ping-flood vector from a valid credential holder that never opens an RPC.
 	PermitWithoutStream bool `yaml:"permit_without_stream,omitempty"`
+	// MaxConnectionAge is the maximum duration a connection may be kept open before
+	// the server sends a GOAWAY and begins graceful shutdown of that connection.
+	// Forces periodic reconnection so stream-slot-holding attacks (GRPC-008) cannot
+	// pin audit-stream slots indefinitely. Default 1h when unset/unparseable.
+	MaxConnectionAge string `yaml:"max_connection_age,omitempty"`
+	// MaxConnectionAgeGrace is how long after MaxConnectionAge the server waits for
+	// active RPCs to finish before force-closing. Default 30s when unset/unparseable.
+	MaxConnectionAgeGrace string `yaml:"max_connection_age_grace,omitempty"`
 }
 
 // defaultGRPCKeepaliveTime/Timeout/MinTime are the server-side keepalive defaults
 // applied when the operator hasn't configured server.grpc.keepalive.* (#222/#435).
 const (
-	defaultGRPCKeepaliveTime    = 5 * time.Minute
-	defaultGRPCKeepaliveTimeout = 20 * time.Second
-	defaultGRPCKeepaliveMinTime = 5 * time.Minute
+	defaultGRPCKeepaliveTime           = 5 * time.Minute
+	defaultGRPCKeepaliveTimeout        = 20 * time.Second
+	defaultGRPCKeepaliveMinTime        = 5 * time.Minute
+	defaultGRPCMaxConnectionAge        = 1 * time.Hour
+	defaultGRPCMaxConnectionAgeGrace   = 30 * time.Second
 )
 
 // GetTime returns the idle-before-ping interval (default 5m).
@@ -314,6 +324,14 @@ func (c GRPCKeepaliveConfig) GetTimeout() time.Duration {
 // before being treated as abusive (default 5m).
 func (c GRPCKeepaliveConfig) GetMinTime() time.Duration {
 	return parseDurationDefault(c.MinTime, defaultGRPCKeepaliveMinTime)
+}
+
+func (c GRPCKeepaliveConfig) GetMaxConnectionAge() time.Duration {
+	return parseDurationDefault(c.MaxConnectionAge, defaultGRPCMaxConnectionAge)
+}
+
+func (c GRPCKeepaliveConfig) GetMaxConnectionAgeGrace() time.Duration {
+	return parseDurationDefault(c.MaxConnectionAgeGrace, defaultGRPCMaxConnectionAgeGrace)
 }
 
 // defaultMaxRequestBodyBytes is the request-body cap when none is configured.

@@ -63,6 +63,11 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// long-lived), so the stream chain carries no timeout.
 			interceptors.TimeoutInterceptor(grpcUnaryTimeout),
 			interceptors.AuthInterceptor(coreService, cfg.Security.RequireMFA),
+			// Per-principal token-bucket rate limit mirroring the HTTP PrincipalRateLimit
+			// middleware so an authenticated caller cannot bypass the rate limit by
+			// switching transports (GRPC-009). Runs inside Auth so only authenticated
+			// principals are counted; unauthenticated requests are rejected by Auth first.
+			interceptors.GRPCRateLimitInterceptor(cfg.Server.GRPC.RateLimit),
 		),
 		// The stream chain intentionally carries no metrics interceptor: MetricsInterceptor
 		// (and the keyorix_grpc_requests_total / _duration_seconds_total series it feeds)
@@ -122,6 +127,12 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			Time: ka.GetTime(),
 			// Close the connection if the ping isn't ack'd within this long.
 			Timeout: ka.GetTimeout(),
+			// Force periodic reconnection so stale transport-layer auth (e.g. revoked
+			// mTLS cert, rotated machine token) is re-evaluated on the new connection's
+			// handshake (GRPC-008). Without this a token revoked after connection
+			// establishment stays valid for the entire connection lifetime.
+			MaxConnectionAge:      ka.GetMaxConnectionAge(),
+			MaxConnectionAgeGrace: ka.GetMaxConnectionAgeGrace(),
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			// Reject a client that pings more often than this as abusive (GOAWAY
