@@ -696,6 +696,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// refuses to mint from backends whose lease TTL only the sweeper enforces
 	// (MySQL/MongoDB) when it is disabled — otherwise the credential never expires.
 	coreService.SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
+	// SSRF guard for admin DSNs: disabled (private targets allowed) only when the
+	// operator explicitly opts in via dynamic_secrets.allow_private_network_targets.
+	coreService.SetDynamicAllowPrivateTargets(cfg.DynamicSecrets.AllowPrivateNetworkTargets)
 	// Install-wide hard ceiling on any dynamic-secret lease's TTL (#97); enforced on
 	// top of each config's own optional (default-unbounded) MaxTTLSeconds.
 	coreService.SetDynamicMaxLeaseTTL(cfg.DynamicSecrets.GetMaxLeaseTTL())

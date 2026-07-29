@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +28,118 @@ const defaultDynamicTTL = 1 * time.Hour
 // own default so behaviour is identical whether or not the server wired
 // SetDynamicMaxLeaseTTL, e.g. in tests that construct KeyorixCore directly).
 const defaultMaxLeaseTTL = 90 * 24 * time.Hour
+
+// privateNetworkCIDRs is the set of IP ranges rejected by the admin-DSN SSRF guard.
+// Covers RFC-1918, loopback, link-local (including cloud IMDS at 169.254.169.254),
+// shared carrier-grade NAT (RFC 6598), and IPv6 private/link-local ranges.
+var privateNetworkCIDRs = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // RFC-1918
+		"127.0.0.0/8",    // loopback
+		"169.254.0.0/16", // link-local / cloud IMDS
+		"100.64.0.0/10",  // shared address space (RFC 6598)
+		"::1/128",        // IPv6 loopback
+		"fc00::/7",       // IPv6 unique local
+		"fe80::/10",      // IPv6 link-local
+	} {
+		_, n, _ := net.ParseCIDR(cidr)
+		if n != nil {
+			nets = append(nets, n)
+		}
+	}
+	return nets
+}()
+
+func isPrivateIP(ip net.IP) bool {
+	for _, cidr := range privateNetworkCIDRs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseDSNHost extracts the host (without port) from an admin DSN in any of the
+// supported formats:
+//   - URL-form: postgres://user:pass@host:port/db, mysql://…, mongodb://…, redis://…
+//   - PostgreSQL key-value: host=xxx port=yyy user=zzz dbname=www
+//   - MySQL tcp-wrapper: user:pass@tcp(host:port)/db or user:pass@(host:port)/db
+//
+// Returns "" when the format is unrecognised or the host cannot be extracted.
+func parseDSNHost(dsn string) string {
+	// URL-form DSNs (any scheme that carries ://host).
+	if strings.Contains(dsn, "://") {
+		if u, err := url.Parse(dsn); err == nil && u.Host != "" {
+			h, _, _ := net.SplitHostPort(u.Host)
+			if h == "" {
+				return u.Host
+			}
+			return h
+		}
+	}
+	// MySQL tcp-wrapper: user:pass@tcp(host:port)/db
+	if i := strings.Index(dsn, "@tcp("); i >= 0 {
+		rest := dsn[i+5:]
+		if j := strings.IndexByte(rest, ')'); j >= 0 {
+			h, _, _ := net.SplitHostPort(rest[:j])
+			if h == "" {
+				return rest[:j]
+			}
+			return h
+		}
+	}
+	// MySQL alternative wrapper: user:pass@(host:port)/db
+	if i := strings.Index(dsn, "@("); i >= 0 {
+		rest := dsn[i+2:]
+		if j := strings.IndexByte(rest, ')'); j >= 0 {
+			h, _, _ := net.SplitHostPort(rest[:j])
+			if h == "" {
+				return rest[:j]
+			}
+			return h
+		}
+	}
+	// PostgreSQL key-value: scan for host=<value>
+	for _, part := range strings.Fields(dsn) {
+		if strings.HasPrefix(part, "host=") {
+			return strings.TrimPrefix(part, "host=")
+		}
+	}
+	return ""
+}
+
+// validateAdminDSNHost rejects an admin DSN whose host is a private or link-local
+// address. Literal IPs are checked directly; hostnames are resolved and each
+// returned address is checked. If the hostname cannot be resolved (e.g. the target
+// is in a network segment not reachable from Keyorix at config-register time), the
+// check is skipped — the connection will fail at issue time. This prevents an internal
+// operator from using Keyorix as an SSRF proxy against other services on the same
+// private network (including the cloud IMDS endpoint).
+func validateAdminDSNHost(adminDSN string) error {
+	host := parseDSNHost(adminDSN)
+	if host == "" {
+		return nil // unrecognised format — can't extract host
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("admin_dsn host %q is a private or link-local address; "+
+				"set dynamic_secrets.allow_private_network_targets: true to allow private-network backends", host)
+		}
+		return nil
+	}
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		return nil // unresolvable at register time — actual connection fails at issue time
+	}
+	for _, addr := range addrs {
+		if ip := net.ParseIP(addr); ip != nil && isPrivateIP(ip) {
+			return fmt.Errorf("admin_dsn host %q resolves to private or link-local address %s; "+
+				"set dynamic_secrets.allow_private_network_targets: true to allow private-network backends", host, addr)
+		}
+	}
+	return nil
+}
 
 // CreateDynamicSecretConfigRequest registers a dynamic-secrets target.
 type CreateDynamicSecretConfigRequest struct {
@@ -87,6 +201,15 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	}
 	if err := validateCreationTemplate(req.BackendType, req.CreationTemplate); err != nil {
 		return nil, err
+	}
+	// SSRF guard: reject an admin_dsn whose host is a private or link-local address
+	// unless the operator has explicitly opted in (allow_private_network_targets).
+	// Prevents an internal operator from using Keyorix as a proxy to scan/reach
+	// other services at its network position, including cloud IMDS.
+	if !c.dynamicAllowPrivateTargets {
+		if err := validateAdminDSNHost(req.AdminDSN); err != nil {
+			return nil, err
+		}
 	}
 	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
 	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not

@@ -1555,6 +1555,14 @@ type DynamicSecretsConfig struct {
 	// max_ttl_seconds unbounded and mint a credential valid for, say, 100 years). Go
 	// duration string (e.g. "720h"); defaults to 90 days when unset or unparseable.
 	MaxLeaseTTL string `yaml:"max_lease_ttl"`
+	// AllowPrivateNetworkTargets, when true, disables the SSRF guard on admin_dsn so
+	// dynamic-secret backends at RFC-1918, loopback, or link-local addresses can be
+	// registered. False by default: Keyorix otherwise rejects DSNs whose resolved host
+	// is a private address, preventing an internal operator from using the service as
+	// an SSRF proxy against other internal hosts (including cloud IMDS at
+	// 169.254.169.254). Set this only when the dynamic-secret backend legitimately
+	// lives on a private network segment that Keyorix must reach.
+	AllowPrivateNetworkTargets bool `yaml:"allow_private_network_targets"`
 }
 
 // GetSweepInterval returns the auto-revoke sweep cadence, parsing SweepInterval
