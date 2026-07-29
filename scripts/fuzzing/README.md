@@ -70,29 +70,54 @@ one at a time, not concurrently).
    chown fuzzer:fuzzer /opt/keyorix-fuzz
    ```
 
-3. **Get GitHub push access for the `fuzzer` user.** Two options, in order of
-   preference:
-   - **Deploy key** (preferred — repo-scoped by construction): generate one as
-     the `fuzzer` user (`sudo -u fuzzer ssh-keygen -t ed25519 -f
-     /home/fuzzer/.ssh/id_ed25519 -N ""`), add the public key under the repo's
-     **Settings → Deploy keys → Add deploy key** with **"Allow write access"**
-     checked, and clone via SSH (`git@github.com:...`).
-   - **Fine-grained PAT** (use this if deploy keys are disabled at the org
-     level — `gh repo deploy-key add` fails with "Deploy keys are disabled for
-     this repository" if so): create one at **Settings → Developer settings →
-     Personal access tokens → Fine-grained tokens**, scoped to just this repo,
-     with **Contents: Read and write** permission only. Store it in a single
-     restricted file rather than embedding it in `.git/config` or the
-     plaintext `.git-credentials` file a plain `credential.helper=store` would
-     create:
+3. **Get GitHub access for the `fuzzer` user.** Two things need separate
+   authentication: `git push` (corpus commits) and `gh pr create` (crash
+   reports). Set them up together:
+
+   - **Deploy key + PAT (recommended):** Use a deploy key for `git push` and a
+     fine-grained PAT for `gh`:
+     - Generate a deploy key as the `fuzzer` user:
+       ```
+       sudo -u fuzzer ssh-keygen -t ed25519 -f /home/fuzzer/.ssh/id_ed25519 -N ""
+       ```
+       Add the public key under **Settings → Deploy keys → Add deploy key** with
+       **"Allow write access"** checked. Clone via SSH (`git@github.com:...`).
+     - Create a fine-grained PAT at **Settings → Developer settings → Personal
+       access tokens → Fine-grained tokens**, scoped to this repo, with:
+       - **Contents: Read** (to check branch state)
+       - **Pull requests: Read and write** (to open/comment on crash-report PRs)
+
+       Store it and add it to `config.env` (systemd `EnvironmentFile=` does not
+       expand shell syntax, so paste the token value literally):
+       ```
+       echo "github_pat_..." > /etc/keyorix-fuzz-gh-token
+       chown fuzzer:fuzzer /etc/keyorix-fuzz-gh-token
+       chmod 600 /etc/keyorix-fuzz-gh-token
+       ```
+       Then set `GH_TOKEN=<paste token here>` in `/etc/keyorix-fuzz/config.env`
+       (see step 6).
+
+   - **Single PAT (simpler — use if deploy keys are disabled at the org
+     level):** Create one PAT with both scopes and use it for everything:
+     - **Contents: Read and write** (for `git push`)
+     - **Pull requests: Read and write** (for `gh pr create`/`gh pr list`)
+
+     Store it and wire it up for both `git push` and `gh`:
      ```
-     echo "<the token>" > /etc/keyorix-fuzz-github-token
+     echo "github_pat_..." > /etc/keyorix-fuzz-github-token
      chown fuzzer:fuzzer /etc/keyorix-fuzz-github-token
      chmod 600 /etc/keyorix-fuzz-github-token
      sudo -u fuzzer git config --global credential.'https://github.com'.helper \
        '!f() { echo username=x-access-token; echo password=$(cat /etc/keyorix-fuzz-github-token); }; f'
      ```
-     Clone via HTTPS (`https://github.com/...`) with this option, not SSH.
+     Then set `GH_TOKEN=<paste token here>` in `/etc/keyorix-fuzz/config.env`
+     (see step 6). Clone via HTTPS (`https://github.com/...`).
+
+   > **Why two separate auth paths?** `git push` uses the git credential helper;
+   > `gh pr create` uses the `gh` CLI which reads `GH_TOKEN` (or `GITHUB_TOKEN`)
+   > from the environment — not from git's credential store. Without `GH_TOKEN`
+   > in `config.env`, the systemd service cannot authenticate `gh` and crash
+   > reports are silently lost.
 
 4. **Clone the repo twice** as the `fuzzer` user — once for fuzzing (stays on
    `main`), once as a worktree for the corpus branch. Use whichever URL scheme
@@ -121,10 +146,11 @@ one at a time, not concurrently).
 
 6. **Write the config file.** Systemd's `EnvironmentFile=` does NOT source
    `/etc/profile.d/`, so `PATH` needs `/usr/local/go/bin` added explicitly or
-   the service will fail with "go: command not found":
+   the service will fail with "go: command not found". Also set `GH_TOKEN` here
+   (the `gh` CLI reads it; without it crash-report PRs fail silently):
    ```
    cp scripts/fuzzing/config.env.example /etc/keyorix-fuzz/config.env
-   $EDITOR /etc/keyorix-fuzz/config.env   # fill in NTFY_TOPIC at minimum
+   $EDITOR /etc/keyorix-fuzz/config.env   # set GH_TOKEN and optionally NTFY_TOPIC
    echo 'PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
      >> /etc/keyorix-fuzz/config.env
    chmod 600 /etc/keyorix-fuzz/config.env
@@ -175,6 +201,17 @@ one at a time, not concurrently).
   `go test -run=<FuzzName>/<hash> ./<package>` once you've pulled that branch.
 - **No heartbeat today** → the service or the box is down; check
   `systemctl status keyorix-fuzz.service` / whether the LXC itself is up.
+- **`gh` notification failed** → check `journalctl -u keyorix-fuzz.service -n 50`
+  for "GitHub notification failed" lines, then read the corresponding
+  `gh-error-<func>-<hash>.log` in `$NOTIFIED_STATE_DIR` for the actual error
+  (auth failure, missing PAT scope, branch not pushed yet, etc.). Fix `GH_TOKEN`
+  in `/etc/keyorix-fuzz/config.env`, then clear the stale dedup markers so the
+  next rotation retries:
+  ```
+  ls /opt/keyorix-fuzz/state/notified-*   # see which crashes were never reported
+  rm /opt/keyorix-fuzz/state/notified-<FuzzName>-<hash>
+  systemctl restart keyorix-fuzz.service
+  ```
 - **Widening coverage** → add a line to `targets.conf`; no script changes
   needed. The service picks it up on its next full rotation cycle restart
   (`systemctl restart keyorix-fuzz.service` to pick it up immediately).
