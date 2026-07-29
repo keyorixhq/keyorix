@@ -199,6 +199,20 @@ func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, proje
 	return &result, nil
 }
 
+// ClearProjectSecretOwnership proxies onto POST
+// /api/v1/system/rbac/clear-project-secret-ownership (RBAC-002).
+func (rs *RemoteStorage) ClearProjectSecretOwnership(ctx context.Context, userID, projectID uint) error {
+	payload := map[string]uint{"user_id": userID, "project_id": projectID}
+	resp, err := rs.client.Post(ctx, "/api/v1/system/rbac/clear-project-secret-ownership", payload)
+	if err != nil {
+		return fmt.Errorf("failed to clear project secret ownership: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("clear project secret ownership failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
 // UpdateSecret updates an existing secret via remote API.
 func (rs *RemoteStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
 	path := fmt.Sprintf("/api/v1/secrets/%d", secret.ID)

@@ -108,6 +108,13 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 	if err := c.storage.RemoveAllProjectRoleGrants(ctx, userID, projectID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Clear owner_id on secrets this user owned in the project (RBAC-002): without
+	// this the stale owner tag would grant them owner-level access via
+	// CheckSecretPermission's owner short-circuit even after all role grants are gone.
+	// Best-effort: a failure here is logged at the storage layer but does not roll back
+	// the role removal, because the RBAC-001 membership check in CheckSecretPermission
+	// already blocks access — this is defense-in-depth, not a hard gate.
+	_ = c.storage.ClearProjectSecretOwnership(ctx, userID, projectID)
 	for _, a := range assignments {
 		if a.PrincipalType != "user" || a.PrincipalID != userID {
 			continue

@@ -161,6 +161,33 @@ func (h *RBACHandler) RemoveAllProjectRoleGrantsProxy(w http.ResponseWriter, r *
 	writeRemoteAPISuccess(w, map[string]bool{"removed": true})
 }
 
+// clearProjectSecretOwnershipWire is the request body for
+// ClearProjectSecretOwnershipProxy.
+type clearProjectSecretOwnershipWire struct {
+	UserID    uint `json:"user_id"`
+	ProjectID uint `json:"project_id"`
+}
+
+// ClearProjectSecretOwnershipProxy handles POST
+// /api/v1/system/rbac/clear-project-secret-ownership (RBAC-002).
+func (h *RBACHandler) ClearProjectSecretOwnershipProxy(w http.ResponseWriter, r *http.Request) {
+	var body clearProjectSecretOwnershipWire
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
+		return
+	}
+	if body.UserID == 0 || body.ProjectID == 0 {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and project_id are required")
+		return
+	}
+	if err := h.coreService.Storage().ClearProjectSecretOwnership(r.Context(), body.UserID, body.ProjectID); err != nil {
+		log.Printf("rbac proxy: clear project secret ownership failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]bool{"cleared": true})
+}
+
 // ListGroupRoleAssignmentsProxy handles GET
 // /api/v1/system/rbac/groups/{groupID}/role-assignments.
 func (h *RBACHandler) ListGroupRoleAssignmentsProxy(w http.ResponseWriter, r *http.Request) {
