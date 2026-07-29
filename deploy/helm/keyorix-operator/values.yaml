@@ -32,11 +32,11 @@ healthPort: 8081
 watchNamespaces: []
 
 rbac:
-  # clusterScoped: when false (the default), the operator is bound via a RoleBinding
-  # scoped to watchNamespaces (if set) or the release namespace — least privilege.
-  # Set to true only when the operator must watch CRs across ALL namespaces and a
-  # ClusterRoleBinding is genuinely required.
-  clusterScoped: false
+  # clusterScoped: ignored when watchNamespaces is set (that path always uses per-namespace
+  # RoleBindings). When watchNamespaces is empty, true (the default) preserves the original
+  # cluster-wide ClusterRoleBinding; set to false to instead use a RoleBinding scoped to the
+  # release namespace only — least-privilege for single-namespace deployments.
+  clusterScoped: true
 
 serviceAccount:
   create: true
