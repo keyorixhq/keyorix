@@ -47,6 +47,9 @@ type CreateSecretRequest struct {
 type UpdateSecretRequest struct {
 	ID         uint       `json:"id" validate:"required"`
 	Value      []byte     `json:"value,omitempty"`
+	// Type, when non-empty, replaces the secret's type (e.g. "password", "api_key",
+	// "certificate", "generic"). An empty string means "leave unchanged".
+	Type       string     `json:"type,omitempty"`
 	MaxReads   *int       `json:"max_reads,omitempty" validate:"omitempty,min=1"`
 	Expiration *time.Time `json:"expiration,omitempty"`
 	// ClearExpiration removes an existing expiration. It is distinct from leaving
@@ -272,6 +275,9 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	secret, err := c.storage.GetSecret(ctx, req.ID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+	}
+	if req.Type != "" {
+		secret.Type = req.Type
 	}
 	if req.MaxReads != nil {
 		secret.MaxReads = req.MaxReads

@@ -124,8 +124,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 // runUpdateRemote updates the secret through the server (PUT /api/v1/secrets/{id})
 // so it operates on the same store the dashboard/API use. Supports value,
-// max-reads, and expiration (set or clear); --type is not supported by the
-// endpoint (and is ignored in embedded mode too).
+// type, max-reads, and expiration (set or clear).
 func runUpdateRemote(rc *common.RemoteClient) error {
 	ctx := context.Background()
 
@@ -161,6 +160,9 @@ func runUpdateRemote(rc *common.RemoteClient) error {
 	body := map[string]interface{}{}
 	if len(req.Value) > 0 {
 		body["value"] = string(req.Value)
+	}
+	if req.Type != "" {
+		body["type"] = req.Type
 	}
 	if req.MaxReads != nil {
 		body["max_reads"] = *req.MaxReads
@@ -213,9 +215,8 @@ func buildUpdateRequest() (*core.UpdateSecretRequest, error) { // NOSONAR -- cog
 		req.Value = []byte(updateValue)
 	}
 
-	// Note: Type updates are not supported in the current core implementation
 	if updateType != "" {
-		fmt.Printf("Warning: Type updates are not currently supported, ignoring --type flag\n")
+		req.Type = updateType
 	}
 
 	if updateMaxReads >= 0 {
@@ -285,7 +286,7 @@ func interactiveUpdate(current *models.SecretNode) (*core.UpdateSecretRequest, e
 
 	newType := ask("Secret type", current.Type)
 	if newType != "" && newType != current.Type {
-		fmt.Printf("Warning: Type updates are not currently supported, ignoring type change\n")
+		req.Type = newType
 	}
 
 	currentMaxReads := "unlimited"
