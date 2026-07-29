@@ -136,6 +136,12 @@ func TestNotFound_BackendRoutePrefixesReturn404(t *testing.T) {
 		"/status/typo",
 		"/swagger/typo",
 		"/openapi.yaml.bak",
+		// Bare paths without trailing slash — ZAP/100001: these must also 404 rather
+		// than fall through to the SPA and return HTML (DAST #1210).
+		"/api",
+		"/auth",
+		"/scim",
+		"/swagger",
 		// /api/v1/does-not-exist is NOT asserted here: an unmatched path inside the
 		// /api/v1 subrouter never reaches this NotFound handler at all — it's caught
 		// by the subrouter's own auth middleware first (401, see

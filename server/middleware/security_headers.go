@@ -45,6 +45,7 @@ func SecurityHeaders(tlsEnabled bool) func(http.Handler) http.Handler {
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("Referrer-Policy", "no-referrer")
 			h.Set("Content-Security-Policy", contentSecurityPolicy)
+			h.Set("Cross-Origin-Resource-Policy", "same-origin")
 			h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
 			if tlsEnabled {
 				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
