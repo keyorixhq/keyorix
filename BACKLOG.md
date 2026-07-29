@@ -10,6 +10,11 @@ _(nothing claimed)_
 
 ## Done
 
+- **OpenAPI sync (RBAC scope fields)** — `project_id` / `environment_id` are
+  documented on `POST /user-roles`, `PUT /users/{id}/roles`, and
+  `POST /groups/{id}/roles` in `server/http/handlers/openapi.yaml`. Shipped in
+  PR #1152, before this item was added to the backlog below — stale entry
+  removed.
 - **FinOps / billing report** — `GET /api/v1/admin/billing/report?from=&to=` and
   `keyorix billing report --from --to` CLI command. Date-range per-project
   breakdown: secret counts, reads, writes, rotations, unique human users, machine
@@ -74,11 +79,6 @@ _(nothing claimed)_
   rotation-policy CRUD, user-role assignment.
 
 ## Backlog
-
-### RBAC follow-ups (from Phase 2)
-- **OpenAPI sync** — document the new optional `project_id` / `environment_id`
-  fields on `POST /user-roles`, `PUT /users/{id}/roles`, and
-  `POST /groups/{id}/roles`.
 
 ### Other
 - **ADR-020** — project detail page (frontend, `keyorix-web`), still Proposed.
