@@ -55,6 +55,12 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		require.NoError(t, db.Create(&models.User{ID: uint(i), Username: fmt.Sprintf("user%d", i), Email: fmt.Sprintf("user%d@test.com", i)}).Error)
 	}
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
+	// IsProjectMember check (added in #1185): user shares require the recipient to be a
+	// project member. Grant a role in project 1 for user 2 and users 10-14 (concurrent test).
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
+	for i := 10; i <= 14; i++ {
+		require.NoError(t, db.Create(&models.UserRole{UserID: uint(i), RoleID: 1, ProjectID: 1}).Error)
+	}
 
 	// Initialize storage
 	storage := store.NewLocalStorage(db)

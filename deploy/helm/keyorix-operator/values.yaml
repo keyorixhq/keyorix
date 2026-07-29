@@ -31,6 +31,13 @@ healthPort: 8081
 #   watchNamespaces: [team-a, team-b]
 watchNamespaces: []
 
+rbac:
+  # clusterScoped: when false (the default), the operator is bound via a RoleBinding
+  # scoped to watchNamespaces (if set) or the release namespace — least privilege.
+  # Set to true only when the operator must watch CRs across ALL namespaces and a
+  # ClusterRoleBinding is genuinely required.
+  clusterScoped: false
+
 serviceAccount:
   create: true
   # name overrides the generated ServiceAccount name.

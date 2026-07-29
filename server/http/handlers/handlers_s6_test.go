@@ -349,7 +349,7 @@ func TestAuthHandler_CompleteSSO_UnknownProvider_S6(t *testing.T) {
 func TestIsSafeSSOError_S6(t *testing.T) {
 	assert.True(t, isSafeSSOError("unknown SSO provider"))
 	assert.True(t, isSafeSSOError("invalid or expired login state"))
-	assert.True(t, isSafeSSOError("account suspended"))
+	assert.False(t, isSafeSSOError("account suspended"))
 	assert.False(t, isSafeSSOError("some random internal error"))
 	assert.False(t, isSafeSSOError(""))
 }

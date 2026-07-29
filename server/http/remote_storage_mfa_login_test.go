@@ -125,7 +125,10 @@ func TestLogin_RemoteStorage_ProxiesMFACredentialCheck(t *testing.T) {
 	// one was consumed above.
 	challenge2, err := downstreamCore.CreateMFAChallenge(ctx, loginUser.ID)
 	require.NoError(t, err)
-	correctCode, err := totp.GenerateCode(totpSecret, time.Now())
+	// Generate the code for the NEXT 30-second TOTP window so it does not collide
+	// with actCode's window, which ActivateMFA marked as used (anti-replay).
+	nextWindow := time.Unix((time.Now().Unix()/30+1)*30+1, 0)
+	correctCode, err := totp.GenerateCode(totpSecret, nextWindow)
 	require.NoError(t, err)
 	_, _, err = downstreamCore.VerifyMFALogin(ctx, challenge2, correctCode, "test-agent", "203.0.113.1")
 	require.Error(t, err, "session persistence is a separate, unimplemented gap (#508) — "+

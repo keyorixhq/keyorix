@@ -65,9 +65,11 @@ func TestRenderSecretTemplate(t *testing.T) {
 	})
 
 	t.Run("unknown environment fails", func(t *testing.T) {
+		// TMPL-002: unknown environment uses ErrSecretRefNotFound so the HTTP handler
+		// doesn't reflect the environment name to the caller.
 		_, err := c.RenderSecretTemplate(ctx, "${secret:staging/db-password}", projectID, 1, "owner", "10.0.0.1", "ua")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "environment")
+		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("unknown secret fails", func(t *testing.T) {

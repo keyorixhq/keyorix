@@ -192,8 +192,33 @@ func (rs *RemoteStorage) ActivateMFASecret(ctx context.Context, userID uint) err
 	return nil
 }
 
-func (rs *RemoteStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
-	return false, remoteUnsupported("MarkTOTPStepUsed")
+// markTOTPStepUsedWire mirrors MarkTOTPStepUsedProxy's request body.
+type markTOTPStepUsedWire struct {
+	UserID uint  `json:"user_id"`
+	Step   int64 `json:"step"`
+}
+
+// markTOTPStepUsedResponse mirrors MarkTOTPStepUsedProxy's data envelope.
+type markTOTPStepUsedResponse struct {
+	Fresh bool `json:"fresh"`
+}
+
+// MarkTOTPStepUsed atomically advances the per-user last-used TOTP step via
+// POST /api/v1/system/mfa/totp-step-used, so requireReauth and
+// VerifyMFACredentials anti-replay work correctly under storage.type: remote.
+func (rs *RemoteStorage) MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/system/mfa/totp-step-used", markTOTPStepUsedWire{UserID: userID, Step: step})
+	if err != nil {
+		return false, fmt.Errorf("failed to mark TOTP step used: %w", err)
+	}
+	if !resp.Success {
+		return false, fmt.Errorf("mark TOTP step used failed: %s", resp.Error.Error())
+	}
+	var result markTOTPStepUsedResponse
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return false, fmt.Errorf("failed to parse mark TOTP step used response: %w", err)
+	}
+	return result.Fresh, nil
 }
 
 // DeleteMFAForUser clears a user's secret and all recovery codes via DELETE

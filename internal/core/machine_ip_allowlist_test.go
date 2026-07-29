@@ -19,6 +19,8 @@ func TestIssueMachineToken_StoresCIDRs(t *testing.T) {
 
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).
 		Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
+	// requireMachinePrivilegeCeiling (added in #1187) checks the machine's roles.
+	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
 	store.On("CreateMachineIdentityCredential", mock.Anything, mock.AnythingOfType("*models.MachineIdentityCredential")).
 		Return(&models.MachineIdentityCredential{ID: 7}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -49,6 +51,8 @@ func TestIssueMachineToken_NilCIDRsOmitted(t *testing.T) {
 
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).
 		Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
+	// requireMachinePrivilegeCeiling (added in #1187) checks the machine's roles.
+	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
 	store.On("CreateMachineIdentityCredential", mock.Anything, mock.AnythingOfType("*models.MachineIdentityCredential")).
 		Return(&models.MachineIdentityCredential{ID: 8}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -111,9 +115,14 @@ func TestMachineRestrictionFrom(t *testing.T) {
 		assert.Equal(t, []string{"10.0.0.0/8"}, r.AllowedCIDRs)
 	})
 
-	t.Run("invalid JSON returns nil", func(t *testing.T) {
+	t.Run("invalid JSON returns corrupted sentinel (fail-closed)", func(t *testing.T) {
+		// PAT-001 (#1185): corrupt JSON returns a blocking sentinel, not nil.
+		// Returning nil was fail-open: a token with broken CIDR data would gain
+		// unrestricted network access instead of being blocked entirely.
 		cred := &models.MachineIdentityCredential{AllowedCIDRs: `not json`}
-		assert.Nil(t, machineRestrictionFrom(cred))
+		r := machineRestrictionFrom(cred)
+		require.NotNil(t, r)
+		assert.Equal(t, []string{"<corrupted>"}, r.AllowedCIDRs)
 	})
 
 	t.Run("JSON empty array returns nil", func(t *testing.T) {

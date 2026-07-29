@@ -439,7 +439,7 @@ func TestIsSafeSSOError_AdditionalStrings_S13(t *testing.T) {
 		{"the token response carried no id_token", true},
 		{"the assertion carried no subject or email", true},
 		{"no Keyorix account matches this SSO identity", true},
-		{"account suspended", true},
+		{"account suspended", false},
 		{"the IdP returned no email; cannot auto-provision an account", true},
 		{"some totally unrelated internal error details", false},
 		{"", false},

@@ -48,7 +48,23 @@ rules:
     resources: ["keyorixsecrets/finalizers"]
     verbs: ["update"]
 ---
-{{- if .Values.watchNamespaces }}
+{{- if .Values.rbac.clusterScoped }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kxop.fullname" . }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kxop.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kxop.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+{{- else if .Values.watchNamespaces }}
 {{- $root := . }}
 {{- range .Values.watchNamespaces }}
 apiVersion: rbac.authorization.k8s.io/v1
@@ -70,9 +86,10 @@ subjects:
 {{- end }}
 {{- else }}
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: {{ include "kxop.fullname" . }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "kxop.labels" . | nindent 4 }}
 roleRef:

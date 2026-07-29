@@ -86,9 +86,10 @@ func TestBulkApproveAccessRequests_ApproveError(t *testing.T) {
 	req := pendingReq(5)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{5}).
 		Return([]*models.AccessRequest{req}, nil)
-	// GetAccessRequest is called inside ApproveAccessRequest.
-	m.On("GetAccessRequest", mock.Anything, uint(5)).
-		Return(nil, errors.New("record not found"))
+	// The per-project Authorize check (added in #1185) calls scopedRoleIDs which
+	// reads these two tables; return empty → no permission → "permission denied" in Failed.
+	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
 	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{5}, 2)
 	require.NoError(t, err)
@@ -105,17 +106,14 @@ func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
 	req1 := pendingReq(1)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{1, 99}).
 		Return([]*models.AccessRequest{req1}, nil) // only req1 returned
-
-	// For ID 1: ApproveAccessRequest → GetAccessRequest (returns error to
-	// trigger the "failed" path without having to mock the entire RBAC chain).
-	m.On("GetAccessRequest", mock.Anything, uint(1)).
-		Return(nil, errors.New("something broke"))
+	// Authorize check added in #1185: return empty roles → denied → "permission denied" in Failed.
+	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
 	result, err := k.BulkApproveAccessRequests(context.Background(), []uint{1, 99}, 2)
 	require.NoError(t, err)
 
-	// ID 1: failed (GetAccessRequest error inside ApproveAccessRequest)
-	// ID 99: failed (not in pre-fetch result)
+	// ID 1: failed (permission denied by Authorize); ID 99: failed (not in pre-fetch).
 	assert.Empty(t, result.Approved)
 	assert.Len(t, result.Failed, 2)
 }
@@ -175,9 +173,9 @@ func TestBulkRejectAccessRequests_RejectError(t *testing.T) {
 	req := pendingReq(7)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{7}).
 		Return([]*models.AccessRequest{req}, nil)
-	// GetAccessRequest is called inside RejectAccessRequest.
-	m.On("GetAccessRequest", mock.Anything, uint(7)).
-		Return(nil, errors.New("record not found"))
+	// Authorize check added in #1185: empty roles → denied → "permission denied" in Failed.
+	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
 	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{7}, 2, "denied")
 	require.NoError(t, err)
@@ -198,6 +196,10 @@ func TestBulkRejectAccessRequests_RejectNonPending(t *testing.T) {
 	}
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{8}).
 		Return([]*models.AccessRequest{already}, nil)
+	// Authorize check added in #1185: grant admin role so code reaches RejectAccessRequest.
+	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{1}, nil)
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	m.On("GetRoleByName", mock.Anything, mock.Anything).Return(&models.Role{ID: 1, Name: "admin"}, nil)
 	m.On("GetAccessRequest", mock.Anything, uint(8)).
 		Return(already, nil)
 
@@ -216,9 +218,9 @@ func TestBulkRejectAccessRequests_MixedResults(t *testing.T) {
 	req3 := pendingReq(3)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{3, 77}).
 		Return([]*models.AccessRequest{req3}, nil) // only req3 returned
-
-	m.On("GetAccessRequest", mock.Anything, uint(3)).
-		Return(nil, errors.New("storage error"))
+	// Authorize check added in #1185: empty roles → denied → "permission denied" for ID 3.
+	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
 	result, err := k.BulkRejectAccessRequests(context.Background(), []uint{3, 77}, 2, "no")
 	require.NoError(t, err)

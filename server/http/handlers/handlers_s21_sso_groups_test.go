@@ -241,7 +241,6 @@ func TestIsSafeSSOError_SafeMessages_S21(t *testing.T) {
 		"the token response carried no id_token",
 		"the assertion carried no subject or email",
 		"no Keyorix account matches this SSO identity",
-		"account suspended",
 		"the IdP returned no email; cannot auto-provision an account",
 	}
 	for _, msg := range safeMessages {

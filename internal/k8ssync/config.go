@@ -2,7 +2,6 @@ package k8ssync
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -83,9 +82,9 @@ func requireHTTPSURL(raw string) error {
 		if host == "localhost" {
 			return nil
 		}
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			return nil
-		}
+		// K8SSYNC-007: only the hostname "localhost" is allowed over http, not any
+		// loopback IP — an attacker who controls DNS can map a loopback IP to a
+		// hostname of their choosing, so accepting raw IPs widens the bypass surface.
 		return fmt.Errorf("keyorix_url %q must use https (http is allowed only for localhost); sending the bearer token over plaintext would expose it", raw)
 	default:
 		return fmt.Errorf("keyorix_url %q must use https", raw)

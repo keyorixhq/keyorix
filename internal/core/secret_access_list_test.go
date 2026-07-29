@@ -24,7 +24,7 @@ func TestListSecretAccessors(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
-		&models.Group{}, &models.UserGroup{},
+		&models.Group{}, &models.UserGroup{}, &models.UserRole{},
 	))
 	// Users: 1 owner, 2 direct recipient, 3 & 4 group members, 5 expired-share recipient.
 	for _, u := range []models.User{
@@ -39,6 +39,8 @@ func TestListSecretAccessors(t *testing.T) {
 	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 3, GroupID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 4, GroupID: 10}).Error)
+	// IsProjectMember check (added in #1185): alice (user 2) must be a project member.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 
 	now := time.Now()
 	st := store.NewLocalStorage(db)
@@ -91,12 +93,14 @@ func TestListSecretAccessors_StrongestGrantWins(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
-		&models.Group{}, &models.UserGroup{},
+		&models.Group{}, &models.UserGroup{}, &models.UserRole{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "alice", Email: "a@t.com"}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "g"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 10}).Error)
+	// IsProjectMember check (added in #1185): alice (user 2) must be a project member.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 
 	now := time.Now()
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
