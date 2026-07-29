@@ -2,8 +2,9 @@ import React from 'react';
 import { ArrowsRightLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { useProjectDrift } from '../../features/projects/api';
 import type { DriftKey } from '../../services/projects';
+import { SummaryStat } from './SummaryStat';
 
-interface ProjectDriftTabProps {
+interface SecretsDriftPanelProps {
     projectId: number;
 }
 
@@ -16,26 +17,14 @@ const STATUS_BADGE: Record<string, Badge> = {
     metadata_drift: FALLBACK_BADGE,
 };
 
-const SummaryStat: React.FC<{ label: string; value: number; tone?: string | undefined }> = ({ label, value, tone }) => (
-    <div
-        className="rounded-lg border px-4 py-3"
-        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-    >
-        <div className="text-2xl font-semibold" style={{ color: tone ?? 'var(--text-primary)' }}>
-            {value}
-        </div>
-        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {label}
-        </div>
-    </div>
-);
-
 /**
- * Cross-environment drift tab (M2). Shows which secret keys are missing from
- * some environments or carry diverging settings across the project's
- * environments. A key × environment presence matrix makes the gaps visible.
+ * Cross-environment drift report (ADR-020: a Secrets-tab action, not its own
+ * tab — drift is a sub-action of the Secrets mental mode). Shows which secret
+ * keys are missing from some environments or carry diverging settings across
+ * the project's environments. A key × environment presence matrix makes the
+ * gaps visible.
  */
-export const ProjectDriftTab: React.FC<ProjectDriftTabProps> = ({ projectId }) => {
+export const SecretsDriftPanel: React.FC<SecretsDriftPanelProps> = ({ projectId }) => {
     const { data, isLoading, isError } = useProjectDrift(projectId);
 
     const envs = data?.environments ?? [];

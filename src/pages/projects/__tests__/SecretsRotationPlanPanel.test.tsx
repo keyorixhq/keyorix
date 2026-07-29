@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '../../../test/test-utils';
-import { ProjectRotationPlanTab } from '../ProjectRotationPlanTab';
+import { SecretsRotationPlanPanel } from '../SecretsRotationPlanPanel';
 
 const mockUseRotationPlan = vi.fn();
 
@@ -8,7 +8,7 @@ vi.mock('../../../features/projects/api', () => ({
     useProjectRotationPlan: (projectId: number) => mockUseRotationPlan(projectId),
 }));
 
-describe('ProjectRotationPlanTab', () => {
+describe('SecretsRotationPlanPanel', () => {
     it('renders waves, urgency badges, reasons, and the summary', () => {
         mockUseRotationPlan.mockReturnValue({
             isLoading: false,
@@ -69,7 +69,7 @@ describe('ProjectRotationPlanTab', () => {
             },
         });
 
-        render(<ProjectRotationPlanTab projectId={1} />);
+        render(<SecretsRotationPlanPanel projectId={1} />);
 
         // Summary stats.
         expect(screen.getByText('To rotate')).toBeInTheDocument();
@@ -93,13 +93,13 @@ describe('ProjectRotationPlanTab', () => {
             data: { projectId: 1, totalSecrets: 0, overdueCount: 0, dueSoonCount: 0, waves: [] },
         });
 
-        render(<ProjectRotationPlanTab projectId={1} />);
+        render(<SecretsRotationPlanPanel projectId={1} />);
         expect(screen.getByText(/Nothing to rotate/i)).toBeInTheDocument();
     });
 
     it('renders an error state', () => {
         mockUseRotationPlan.mockReturnValue({ isLoading: false, isError: true, data: undefined });
-        render(<ProjectRotationPlanTab projectId={1} />);
+        render(<SecretsRotationPlanPanel projectId={1} />);
         expect(screen.getByText(/Failed to load the rotation plan/i)).toBeInTheDocument();
     });
 });

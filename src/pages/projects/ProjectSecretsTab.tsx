@@ -6,6 +6,8 @@ import {
     ChevronLeftIcon,
     ChevronRightIcon,
     FunnelIcon,
+    ArrowsRightLeftIcon,
+    ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { SecretType } from '../../types';
 import { Modal } from '../../components/ui/Modal';
@@ -20,6 +22,8 @@ import { EnvironmentPills } from '../../features/projects/EnvironmentPills';
 import { useProjectEnvironments } from '../../features/projects/api';
 import { generateSecret } from '../../utils';
 import { SECRET_TYPES } from '../../features/secrets/listConstants';
+import { SecretsDriftPanel } from './SecretsDriftPanel';
+import { SecretsRotationPlanPanel } from './SecretsRotationPlanPanel';
 
 const PAGE_SIZE_OPTIONS = [
     { value: '10', label: '10 / page' },
@@ -85,6 +89,8 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
     const [editType, setEditType] = React.useState<SecretType>('text');
     const [editValue, setEditValue] = React.useState('');
     const [rotateValue, setRotateValue] = React.useState('');
+    const [driftOpen, setDriftOpen] = React.useState(false);
+    const [rotationPlanOpen, setRotationPlanOpen] = React.useState(false);
 
     React.useEffect(() => {
         if (list.activeModal === 'edit-secret' && list.modalData?.secret) {
@@ -323,6 +329,16 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         </Button>
                     </div>
                 )}
+
+                {/* Drift & rotation reports (ADR-020: sub-actions of the Secrets mode, not their own tabs) */}
+                <Button variant="outline" size="sm" onClick={() => setDriftOpen(true)} className="flex items-center">
+                    <ArrowsRightLeftIcon className="h-4 w-4 mr-1" />
+                    Check Drift
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setRotationPlanOpen(true)} className="flex items-center">
+                    <ArrowPathIcon className="h-4 w-4 mr-1" />
+                    Rotation Plan
+                </Button>
 
                 {/* New Secret */}
                 <Button onClick={() => list.openModal('create-secret')} className="flex items-center ml-auto">
@@ -723,6 +739,16 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         </Button>
                     </div>
                 </form>
+            </Modal>
+
+            {/* Drift report */}
+            <Modal isOpen={driftOpen} onClose={() => setDriftOpen(false)} size="xl">
+                <SecretsDriftPanel projectId={projectId} />
+            </Modal>
+
+            {/* Rotation plan */}
+            <Modal isOpen={rotationPlanOpen} onClose={() => setRotationPlanOpen(false)} size="xl">
+                <SecretsRotationPlanPanel projectId={projectId} />
             </Modal>
         </div>
     );

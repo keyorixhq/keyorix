@@ -2,11 +2,8 @@ import React from 'react';
 import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { useProject } from '../../features/projects/api';
-import { ProjectOverviewTab } from './ProjectOverviewTab';
 import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
-import { ProjectDriftTab } from './ProjectDriftTab';
-import { ProjectRotationPlanTab } from './ProjectRotationPlanTab';
 import { ProjectActivityTab } from './ProjectActivityTab';
 import { ProjectAccessReviewTab } from './ProjectAccessReviewTab';
 import { ProjectSettingsTab } from './ProjectSettingsTab';
@@ -22,11 +19,8 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-    { id: 'overview', label: 'Overview', path: '' },
     { id: 'secrets', label: 'Secrets', path: '/secrets' },
     { id: 'members', label: 'Members', path: '/members' },
-    { id: 'drift', label: 'Drift', path: '/drift' },
-    { id: 'rotation-plan', label: 'Rotation Plan', path: '/rotation-plan' },
     { id: 'activity', label: 'Activity', path: '/activity' },
     { id: 'access-review', label: 'Access Review', path: '/access-review' },
     { id: 'settings', label: 'Settings', path: '/settings' },
@@ -50,10 +44,7 @@ const TabNav: React.FC<{ projectId: number }> = ({ projectId }) => {
     const location = useLocation();
     const base = `/projects/${projectId}`;
 
-    const isActive = (tab: Tab) => {
-        if (tab.path === '') return location.pathname === base || location.pathname === `${base}/`;
-        return location.pathname.startsWith(`${base}${tab.path}`);
-    };
+    const isActive = (tab: Tab) => location.pathname.startsWith(`${base}${tab.path}`);
 
     return (
         <div className="flex gap-1 border-b mb-6" style={{ borderColor: 'var(--border)' }}>
@@ -146,11 +137,9 @@ export const ProjectDetailPage: React.FC = () => {
             <TabNav projectId={projectId} />
 
             <Routes>
-                <Route index element={<ProjectOverviewTab projectId={projectId} />} />
+                <Route index element={<Navigate to="secrets" replace />} />
                 <Route path="secrets" element={<ProjectSecretsTab projectId={projectId} />} />
                 <Route path="members" element={<ProjectMembersTab projectId={projectId} />} />
-                <Route path="drift" element={<ProjectDriftTab projectId={projectId} />} />
-                <Route path="rotation-plan" element={<ProjectRotationPlanTab projectId={projectId} />} />
                 <Route path="activity" element={<ProjectActivityTab projectId={projectId} />} />
                 <Route path="access-review" element={<ProjectAccessReviewTab projectId={projectId} />} />
                 <Route path="settings" element={<ProjectSettingsTab projectId={projectId} />} />

@@ -2,24 +2,11 @@ import React from 'react';
 import { CheckCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { useProjectRotationPlan } from '../../features/projects/api';
 import type { PlannedRotation } from '../../services/projects';
+import { SummaryStat } from './SummaryStat';
 
-interface ProjectRotationPlanTabProps {
+interface SecretsRotationPlanPanelProps {
     projectId: number;
 }
-
-const SummaryStat: React.FC<{ label: string; value: number; tone?: string | undefined }> = ({ label, value, tone }) => (
-    <div
-        className="rounded-lg border px-4 py-3"
-        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-    >
-        <div className="text-2xl font-semibold" style={{ color: tone ?? 'var(--text-primary)' }}>
-            {value}
-        </div>
-        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {label}
-        </div>
-    </div>
-);
 
 const statusBadge = (s: PlannedRotation): { bg: string; text: string; label: string } => {
     if (s.status === 'overdue') {
@@ -40,13 +27,15 @@ const riskTone = (band: string): string => {
 };
 
 /**
- * Automated rotation planning (ADR-053). Shows the project's overdue / due-soon
- * secrets as an ordered, dependency-respecting plan: each "wave" is a set of secrets
- * safe to rotate together, and a secret in a later wave rotates after anything it
- * depends on. Within a wave, the most urgent secrets come first. Metadata only — no
+ * Automated rotation planning (ADR-053), surfaced as a Secrets-tab action
+ * (ADR-020: rotation is a sub-action of the Secrets mental mode, not its own
+ * tab). Shows the project's overdue / due-soon secrets as an ordered,
+ * dependency-respecting plan: each "wave" is a set of secrets safe to rotate
+ * together, and a secret in a later wave rotates after anything it depends
+ * on. Within a wave, the most urgent secrets come first. Metadata only — no
  * secret values are read.
  */
-export const ProjectRotationPlanTab: React.FC<ProjectRotationPlanTabProps> = ({ projectId }) => {
+export const SecretsRotationPlanPanel: React.FC<SecretsRotationPlanPanelProps> = ({ projectId }) => {
     const { data, isLoading, isError } = useProjectRotationPlan(projectId);
 
     const waves = data?.waves ?? [];

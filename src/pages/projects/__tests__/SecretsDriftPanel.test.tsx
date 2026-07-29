@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '../../../test/test-utils';
-import { ProjectDriftTab } from '../ProjectDriftTab';
+import { SecretsDriftPanel } from '../SecretsDriftPanel';
 
 const mockUseProjectDrift = vi.fn();
 
@@ -14,7 +14,7 @@ const threeEnvs = [
     { id: 3, name: 'production' },
 ];
 
-describe('ProjectDriftTab', () => {
+describe('SecretsDriftPanel', () => {
     it('renders the summary and the drifted keys matrix', () => {
         mockUseProjectDrift.mockReturnValue({
             isLoading: false,
@@ -42,7 +42,7 @@ describe('ProjectDriftTab', () => {
             },
         });
 
-        render(<ProjectDriftTab projectId={1} />);
+        render(<SecretsDriftPanel projectId={1} />);
 
         expect(screen.getByText('STRIPE_KEY')).toBeInTheDocument();
         expect(screen.getByText('JWT_SECRET')).toBeInTheDocument();
@@ -67,7 +67,7 @@ describe('ProjectDriftTab', () => {
             },
         });
 
-        render(<ProjectDriftTab projectId={1} />);
+        render(<SecretsDriftPanel projectId={1} />);
         expect(screen.getByText(/No drift detected/i)).toBeInTheDocument();
     });
 
@@ -83,7 +83,7 @@ describe('ProjectDriftTab', () => {
             },
         });
 
-        render(<ProjectDriftTab projectId={1} />);
+        render(<SecretsDriftPanel projectId={1} />);
         expect(screen.getByText(/Need at least two environments/i)).toBeInTheDocument();
     });
 });
