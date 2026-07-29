@@ -40,7 +40,7 @@ func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classif
 	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
 	// IsProjectMember (RBAC-001): requester must be a project member or the owner
 	// gate short-circuits before returning PermissionOwner.
-	viewerRole, err := st.GetRoleByName(ctx, "project_viewer")
+	viewerRole, err = st.GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, requester.ID, viewerRole.ID, storage.Scope{ProjectID: proj.ID}))
 
