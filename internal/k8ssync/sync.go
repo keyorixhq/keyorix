@@ -25,10 +25,17 @@ import (
 var (
 	dns1123Label     = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	dns1123Subdomain = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+	// k8sSecretKey is the set of characters valid in a Kubernetes Secret data key
+	// (validated by the API server as "must be a valid filename": printable ASCII,
+	// no path separators — K8SSYNC-001). Without this, a mapping whose Key contains
+	// path metacharacters (/, ..) could reach the Kubernetes API with an invalid key
+	// name and trigger an opaque server-side rejection rather than a clear local error.
+	k8sSecretKey = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
 )
 
 func isDNS1123Label(s string) bool     { return len(s) <= 63 && dns1123Label.MatchString(s) }
 func isDNS1123Subdomain(s string) bool { return len(s) <= 253 && dns1123Subdomain.MatchString(s) }
+func isK8sSecretKey(s string) bool     { return k8sSecretKey.MatchString(s) }
 
 // SecretMapping maps one Keyorix secret reference to a key inside a target
 // Kubernetes Secret. Several mappings may target the same Secret with different keys.
@@ -308,6 +315,8 @@ func validateMapping(m SecretMapping) error {
 		return fmt.Errorf("name is required")
 	case strings.TrimSpace(m.Key) == "":
 		return fmt.Errorf("key is required")
+	case !isK8sSecretKey(m.Key):
+		return fmt.Errorf("key %q is not a valid Kubernetes Secret data key (must match [-._a-zA-Z0-9]+)", m.Key)
 	case !isDNS1123Label(m.Namespace):
 		return fmt.Errorf("namespace %q is not a valid RFC1123 label", m.Namespace)
 	case !isDNS1123Subdomain(m.Name):
