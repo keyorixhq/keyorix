@@ -245,6 +245,9 @@ type KeyorixCore struct {
 	// membershipValidationMode is the ADR-022 install-level onboarding mode;
 	// "" = allowlist default. Set via SetMembershipValidationMode.
 	membershipValidationMode string
+	// membershipDomainAllowlist restricts invited emails to these domains
+	// (ADR-022). Empty = no restriction. Set via SetMembershipDomainAllowlist.
+	membershipDomainAllowlist []string
 	// setupTokenTTL is the lifetime of a credential-delivery setup token (ADR-028);
 	// 0 = DefaultSetupTokenTTL. Set from config via SetSetupTokenTTL.
 	setupTokenTTL time.Duration

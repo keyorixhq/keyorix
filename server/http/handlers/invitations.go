@@ -65,9 +65,12 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		if inv == nil {
 			status := http.StatusInternalServerError
 			msg := err.Error()
-			if strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required") {
+			switch {
+			case strings.Contains(msg, errDomainNotAllowed):
+				status = http.StatusForbidden
+			case strings.Contains(msg, errUnknownRole) || strings.Contains(msg, "required"):
 				status = http.StatusBadRequest
-			} else {
+			default:
 				log.Printf("Error inviting %q to project %d: %v", body.Email, id, err)
 				msg = clientSafe(err)
 			}
@@ -136,9 +139,12 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		if inv == nil {
 			status := http.StatusInternalServerError
 			msg := err.Error()
-			if strings.Contains(msg, "unknown") || strings.Contains(msg, "required") || strings.Contains(msg, "needs a") {
+			switch {
+			case strings.Contains(msg, errDomainNotAllowed):
+				status = http.StatusForbidden
+			case strings.Contains(msg, "unknown") || strings.Contains(msg, "required") || strings.Contains(msg, "needs a"):
 				status = http.StatusBadRequest
-			} else {
+			default:
 				log.Printf("Error creating global invitation for %q: %v", body.Email, err)
 				msg = clientSafe(err)
 			}

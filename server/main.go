@@ -682,6 +682,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	if vm := cfg.Membership.ValidationMode; vm != "" {
 		coreService.SetMembershipValidationMode(vm)
 	}
+	// Apply the invitation domain allowlist (ADR-022). Empty = no restriction.
+	if len(cfg.Membership.DomainAllowlist) > 0 {
+		coreService.SetMembershipDomainAllowlist(cfg.Membership.DomainAllowlist)
+	}
 
 	// Apply the credential-delivery setup-token TTL (ADR-028). GetSetupTokenTTL
 	// falls back to 24h when the block is absent or invalid.

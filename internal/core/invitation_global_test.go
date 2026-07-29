@@ -66,6 +66,21 @@ func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
 	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
 }
 
+// ADR-022: domain allowlist applies to global invites the same way it does to
+// project-scoped invites (TestInviteToProject_RejectsDisallowedDomain).
+func TestInviteGlobal_RejectsDisallowedDomain(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetMembershipDomainAllowlist([]string{"acme.com"})
+	ctx := context.Background()
+
+	_, err := c.InviteGlobal(ctx, "carol@evil.example", "", nil, 9)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not on the allowlist")
+	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
+}
+
 func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)

@@ -91,6 +91,26 @@ func TestCreateGlobalInvitation(t *testing.T) {
 	})
 }
 
+// ADR-022: a configured domain allowlist rejects an invite to a disallowed
+// domain with 403, and creates no invitation row.
+func TestCreateGlobalInvitation_RejectsDisallowedDomain(t *testing.T) {
+	h, db := setupGlobalInvitationTest(t)
+	h.coreService.SetMembershipDomainAllowlist([]string{"acme.io"})
+
+	t.Run("disallowed domain rejects with 403", func(t *testing.T) {
+		w := postGlobalInvite(t, h, `{"email":"carol@evil.example"}`)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		var n int64
+		require.NoError(t, db.Model(&models.ProjectInvitation{}).Where("email = ?", "carol@evil.example").Count(&n).Error)
+		assert.Equal(t, int64(0), n)
+	})
+
+	t.Run("allowlisted domain still succeeds", func(t *testing.T) {
+		w := postGlobalInvite(t, h, `{"email":"dave@acme.io"}`)
+		assert.Equal(t, http.StatusCreated, w.Code)
+	})
+}
+
 // The invite privilege ceiling: a non-admin actor (holds users.write via the route gate
 // but NOT roles.assign) cannot invite with a system role or a project role — otherwise
 // an onboarding manager could invite themselves as system_admin and own the install.

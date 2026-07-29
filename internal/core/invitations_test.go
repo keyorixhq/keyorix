@@ -37,6 +37,43 @@ func TestInviteToProject(t *testing.T) {
 	store.AssertExpectations(t)
 }
 
+// ADR-022: domain allowlist. Default (no allowlist configured) imposes no
+// restriction — covered implicitly by TestInviteToProject above, which
+// succeeds with no allowlist set.
+
+func TestInviteToProject_RejectsDisallowedDomain(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetMembershipDomainAllowlist([]string{"acme.com"})
+	ctx := context.Background()
+
+	_, err := c.InviteToProject(ctx, 1, "a@evil.example", "project_developer", 9)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not on the allowlist")
+	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
+}
+
+func TestInviteToProject_AllowsAllowlistedDomain(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetMembershipDomainAllowlist([]string{"acme.com"})
+	ctx := context.Background()
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
+		return inv.State == InvitationPending && inv.Email == "a@acme.com"
+	})).Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == "invitation.created"
+	})).Return(nil)
+
+	inv, err := c.InviteToProject(ctx, 1, "a@acme.com", "project_developer", 9)
+
+	require.NoError(t, err)
+	assert.Equal(t, InvitationPending, inv.State)
+	store.AssertExpectations(t)
+}
+
 func TestRevokeInvitation_RejectsNonPending(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)
