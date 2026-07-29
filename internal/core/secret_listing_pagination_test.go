@@ -36,7 +36,7 @@ func TestListSecretsInScope_PaginationSurvivesPostFetchTagFilter(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}, &models.Tag{}, &models.SecretTag{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}, &models.Tag{}, &models.SecretTag{}, &models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -45,6 +45,7 @@ func TestListSecretsInScope_PaginationSurvivesPostFetchTagFilter(t *testing.T) {
 	require.NoError(t, err)
 	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
 
 	mk := func(name string, keep bool) {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{

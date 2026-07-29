@@ -64,3 +64,16 @@ func (ls *LocalStorage) DeleteSecretACL(ctx context.Context, id uint) error {
 	}
 	return nil
 }
+
+// DeleteSecretACLsByUserAndProject removes all ACL grants for userID on secrets
+// that belong to projectID. Used by RemoveProjectMember to prevent stale
+// per-secret ACL grants from persisting after a user is offboarded (CWE-284).
+func (ls *LocalStorage) DeleteSecretACLsByUserAndProject(ctx context.Context, userID, projectID uint) error {
+	result := ls.db.WithContext(ctx).
+		Where("user_id = ? AND secret_id IN (SELECT id FROM secret_nodes WHERE project_id = ?)", userID, projectID).
+		Delete(&models.SecretACL{})
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	return nil
+}

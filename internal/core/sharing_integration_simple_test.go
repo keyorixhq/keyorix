@@ -54,6 +54,12 @@ func TestSharingIntegrationSimple(t *testing.T) {
 	for i := 10; i <= 20; i++ {
 		require.NoError(t, db.Create(&models.User{ID: uint(i), Username: fmt.Sprintf("user%d", i), Email: fmt.Sprintf("user%d@test.com", i)}).Error)
 	}
+	// ShareSecret verifies recipient is a project member (RBAC-001); seed all test users in project 1.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
+	for i := 10; i <= 20; i++ {
+		require.NoError(t, db.Create(&models.UserRole{UserID: uint(i), RoleID: 1, ProjectID: 1}).Error)
+	}
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
 
 	// Initialize storage

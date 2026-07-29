@@ -30,6 +30,11 @@ func seedClassificationGateFixture(t *testing.T, st *store.LocalStorage, classif
 	adminRole, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
 	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
+	// IsProjectMember (RBAC-001): requester must be a project member or the owner
+	// gate short-circuits before returning PermissionOwner.
+	viewerRole, err := st.GetRoleByName(ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, requester.ID, viewerRole.ID, storage.Scope{ProjectID: proj.ID}))
 
 	secret, err := st.CreateSecret(ctx, &models.SecretNode{
 		Name: "db-password", ProjectID: proj.ID, EnvironmentID: 1, Type: "password",

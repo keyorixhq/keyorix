@@ -88,7 +88,7 @@ func TestCompleteSAML_ExistingUser(t *testing.T) {
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-1").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ReturnTo: "/home", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return(&models.User{ID: 7}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return(&models.User{ID: 7, IsActive: true}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 7, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(7), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -205,7 +205,7 @@ func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|99", Email: "exp@x.io", Name: "Expired"}}
 	c, store := samlTestCore(stub)
 	c.passwordPolicy = PasswordPolicy{MaxAgeDays: 1}
-	expiredUser := &models.User{ID: 99, AccountState: "active", CreatedAt: time.Now().Add(-48 * time.Hour)}
+	expiredUser := &models.User{ID: 99, IsActive: true, AccountState: "active", CreatedAt: time.Now().Add(-48 * time.Hour)}
 
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-exp").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
@@ -233,10 +233,10 @@ func TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount(t *testing.T) 
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-7").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
 	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return((*models.User)(nil), userNotFound())
-	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
+	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, IsActive: true, ExternalID: ""}, nil)
 	store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.ID == 9 && u.ExternalID == "sso:corp:corp|123"
-	})).Return(&models.User{ID: 9, ExternalID: "sso:corp:corp|123"}, nil)
+	})).Return(&models.User{ID: 9, IsActive: true, ExternalID: "sso:corp:corp|123"}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 9, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(9), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

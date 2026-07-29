@@ -251,6 +251,54 @@ func TestRemoveProjectMember_AllowsNonLastAdmin(t *testing.T) {
 	assert.Contains(t, err.Error(), "last administrator")
 }
 
+// CWE-284: removing a project member must revoke any per-secret ACL grants the
+// user holds on secrets in that project. Without this, a removed member retains
+// access because AuthorizeSecret checks ACL grants before project-scope RBAC
+// and short-circuits on the first match.
+func TestRemoveProjectMember_RevokesSecretACLGrants(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(5)
+	const env = uint(5)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	// Seed the project and environment so the secret can be created.
+	require.NoError(t, st.DB().Create(&models.Project{ID: proj, Name: "acl-project"}).Error)
+	require.NoError(t, st.DB().Create(&models.Environment{ID: env, ProjectID: proj, Name: "env"}).Error)
+
+	// Create a secret in the project.
+	sec := &models.SecretNode{ProjectID: proj, EnvironmentID: env, Name: "db-password", IsSecret: true, Status: "active"}
+	require.NoError(t, st.DB().Create(sec).Error)
+
+	// Create a user and add them to the project.
+	u, err := st.CreateUser(ctx, &models.User{Username: "ivy", Email: "ivy@example.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+
+	// Grant the user a per-secret ACL on the secret.
+	require.NoError(t, c.GrantSecretACL(ctx, actor, sec.ID, u.ID, []string{"secrets.read"}))
+
+	// Sanity: the ACL is live before removal.
+	acls, err := c.ListSecretACLs(ctx, sec.ID)
+	require.NoError(t, err)
+	require.Len(t, acls, 1, "ACL grant must exist before member removal")
+
+	// Remove the user from the project.
+	require.NoError(t, c.RemoveProjectMember(ctx, actor, proj, u.ID))
+
+	// ACL grant must be gone after offboarding.
+	acls, err = c.ListSecretACLs(ctx, sec.ID)
+	require.NoError(t, err)
+	assert.Empty(t, acls, "SecretACL grant must be revoked when the user is removed from the project")
+
+	// AuthorizeSecret must also deny: HasSecretACL returns false, and the
+	// project-scope RBAC fallback denies a user with no remaining role.
+	allowed, err := c.AuthorizeSecret(ctx, u.ID, sec.ID, "secrets.read")
+	require.NoError(t, err)
+	assert.False(t, allowed, "removed member must not retain access via stale ACL grant")
+}
+
 // #236 (negative case): a non-admin member (no roles.assign) can always be freely
 // removed — the guard only fires for the LAST roles.assign holder.
 func TestRemoveProjectMember_NonAdminAlwaysRemovable(t *testing.T) {

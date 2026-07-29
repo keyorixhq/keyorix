@@ -2182,6 +2182,10 @@ func (m *MockStorage) DeleteSecretACL(_ context.Context, _ uint) error {
 	return nil
 }
 
+func (m *MockStorage) DeleteSecretACLsByUserAndProject(_ context.Context, _, _ uint) error {
+	return nil
+}
+
 func (m *MockStorage) GetSecretAncestors(ctx context.Context, nodeID uint) ([]uint, error) {
 	args := m.Called(ctx, nodeID)
 	if args.Get(0) == nil {

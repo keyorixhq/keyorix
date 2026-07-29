@@ -174,9 +174,9 @@ func (f *fakeUpstreamLoginLockout) server(t *testing.T) *httptest.Server {
 		_, _ = fmt.Fprint(w, `{"success":true,"data":{"updated":true}}`)
 	})
 
-	// POST /api/v1/audit/events — backs LogAuditEvent, so UnlockUser's audit write
+	// POST /api/v1/system/audit/event — backs LogAuditEvent, so UnlockUser's audit write
 	// (EventAccountUnlocked) genuinely round-trips too, not just the counter reset.
-	mux.HandleFunc("/api/v1/audit/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/system/audit/event", func(w http.ResponseWriter, r *http.Request) {
 		var event models.AuditEvent
 		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
