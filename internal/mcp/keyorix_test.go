@@ -69,15 +69,16 @@ func TestKeyorixClient_ListSecretsBuildsRefsAndFilters(t *testing.T) {
 
 	// No filter: the two complete entries map to refs; the entry missing an environment
 	// is dropped (can't form an unambiguous ref).
-	all, err := mustClient(t, srv.URL, "tok").ListSecrets(context.Background(), "")
+	all, truncated, err := mustClient(t, srv.URL, "tok").ListSecrets(context.Background(), "")
 	require.NoError(t, err)
+	assert.False(t, truncated) // only 3 items returned — well below 100
 	require.Len(t, all, 2)
 	assert.Equal(t, "app/production/db", all[0].Ref)
 	assert.Equal(t, "password", all[0].Type)
 	assert.Equal(t, "app/staging/api", all[1].Ref)
 
 	// Environment filter (case-insensitive) narrows to one.
-	prod, err := mustClient(t, srv.URL, "tok").ListSecrets(context.Background(), "Production")
+	prod, _, err := mustClient(t, srv.URL, "tok").ListSecrets(context.Background(), "Production")
 	require.NoError(t, err)
 	require.Len(t, prod, 1)
 	assert.Equal(t, "app/production/db", prod[0].Ref)

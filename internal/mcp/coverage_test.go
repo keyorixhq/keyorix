@@ -194,7 +194,144 @@ func TestListSecrets_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	c := mustClient(t, srv.URL, "tok")
-	_, err := c.ListSecrets(context.Background(), "")
+	_, _, err := c.ListSecrets(context.Background(), "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 500")
+}
+
+// -- MCP-002: response body size cap -----------------------------------------
+
+// TestGetJSON_LargeBodyCapped verifies that getJSON refuses to decode a response
+// body exceeding 10 MiB, preventing memory exhaustion from a hostile or broken
+// server sending an enormous payload.
+func TestGetJSON_LargeBodyCapped(t *testing.T) {
+	// Build a response that exceeds the 10 MiB cap: valid JSON envelope followed
+	// by 11 MiB of whitespace inside the "data" object — the decoder will hit the
+	// limit before finishing the read and return a decode error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Write a valid prefix, then fill well past 10 MiB so LimitReader truncates.
+		_, _ = w.Write([]byte(`{"data":{"value":"`))
+		pad := make([]byte, 11<<20) // 11 MiB of 'A'
+		for i := range pad {
+			pad[i] = 'A'
+		}
+		_, _ = w.Write(pad)
+		_, _ = w.Write([]byte(`"}}`))
+	}))
+	defer srv.Close()
+
+	c := mustClient(t, srv.URL, "tok")
+	_, err := c.GetSecret(context.Background(), "app/prod/db")
+	// Either a decode error (truncated JSON) or an oversized value — either way, must fail.
+	require.Error(t, err)
+}
+
+// -- MCP-003: ref format validation ------------------------------------------
+
+// TestToolGetSecret_RefTooLong verifies that a ref exceeding 512 characters is
+// rejected before reaching the network.
+func TestToolGetSecret_RefTooLong(t *testing.T) {
+	long := "a/b/" + strings.Repeat("x", 510) // > 512 total
+	resps := run(t, NewServer(&fakeReader{value: "v"}, ""),
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"`+long+`"}}}`)
+	require.Len(t, resps, 1)
+	res := resultMap(t, resps[0])
+	assert.Equal(t, true, res["isError"])
+	assert.Contains(t, res["content"].([]any)[0].(map[string]any)["text"], "project/environment/name")
+}
+
+// TestToolGetSecret_RefWrongSegments verifies that a ref without exactly three
+// slash-separated segments is rejected.
+func TestToolGetSecret_RefWrongSegments(t *testing.T) {
+	cases := []string{
+		"no-slashes",
+		"only/two",
+		"too/many/slashes/here",
+	}
+	for _, ref := range cases {
+		resps := run(t, NewServer(&fakeReader{value: "v"}, ""),
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"`+ref+`"}}}`)
+		require.Len(t, resps, 1)
+		res := resultMap(t, resps[0])
+		assert.Equal(t, true, res["isError"], "ref %q should be rejected", ref)
+	}
+}
+
+// TestToolGetSecret_RefEmptySegment verifies that a ref with an empty segment
+// (e.g. "/env/name" or "proj//name") is rejected.
+func TestToolGetSecret_RefEmptySegment(t *testing.T) {
+	cases := []string{"/env/name", "proj//name", "proj/env/"}
+	for _, ref := range cases {
+		resps := run(t, NewServer(&fakeReader{value: "v"}, ""),
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"`+ref+`"}}}`)
+		require.Len(t, resps, 1)
+		res := resultMap(t, resps[0])
+		assert.Equal(t, true, res["isError"], "ref %q should be rejected", ref)
+	}
+}
+
+// -- MCP-005: pagination truncation warning ----------------------------------
+
+// TestListSecrets_Truncated verifies that when the upstream returns a full page
+// (≥100 secrets), toolListSecrets appends a truncation notice to the result so
+// the agent knows to re-query with an environment filter.
+func TestListSecrets_Truncated(t *testing.T) {
+	// Build exactly 100 secrets so the fakeReader signals truncated=true.
+	infos := make([]SecretInfo, 100)
+	for i := range infos {
+		infos[i] = SecretInfo{Ref: "app/prod/db"}
+	}
+	fr := &fakeReader{list: infos, listTruncated: true}
+	resps := run(t, NewServer(fr, ""),
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_list_secrets","arguments":{}}}`)
+	require.Len(t, resps, 1)
+	res := resultMap(t, resps[0])
+	assert.NotEqual(t, true, res["isError"])
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
+	assert.Contains(t, text, "results may be incomplete")
+	assert.Contains(t, text, "environment filter")
+}
+
+// TestListSecrets_NotTruncated verifies that when the upstream returns fewer
+// than 100 secrets, no truncation notice appears.
+func TestListSecrets_NotTruncated(t *testing.T) {
+	fr := &fakeReader{list: []SecretInfo{{Ref: "app/prod/db"}}, listTruncated: false}
+	resps := run(t, NewServer(fr, ""),
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_list_secrets","arguments":{}}}`)
+	require.Len(t, resps, 1)
+	res := resultMap(t, resps[0])
+	assert.NotEqual(t, true, res["isError"])
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
+	assert.NotContains(t, text, "incomplete")
+}
+
+// TestKeyorixClient_ListSecretsTruncated verifies that the KeyorixClient sets
+// the truncated flag when the server returns exactly 100 secrets.
+func TestKeyorixClient_ListSecretsTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Build a response with exactly 100 secrets.
+		type sec struct {
+			Name            string `json:"Name"`
+			Type            string `json:"Type"`
+			ProjectName     string `json:"project_name"`
+			EnvironmentName string `json:"environment_name"`
+		}
+		type resp struct {
+			Secrets []sec `json:"secrets"`
+		}
+		secrets := make([]sec, 100)
+		for i := range secrets {
+			secrets[i] = sec{Name: "s", ProjectName: "p", EnvironmentName: "e", Type: "password"}
+		}
+		b, _ := json.Marshal(map[string]any{"data": resp{Secrets: secrets}})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	c := mustClient(t, srv.URL, "tok")
+	_, truncated, err := c.ListSecrets(context.Background(), "")
+	require.NoError(t, err)
+	assert.True(t, truncated, "100 secrets returned → truncated must be true")
 }
