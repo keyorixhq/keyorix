@@ -15,7 +15,11 @@ import "net/http"
 // (ws:/wss: to the same host) in all modern browsers. The bare ws: and wss: scheme
 // values that were here previously allowed WebSocket connections to ANY host, which
 // is a CSP bypass for data exfiltration via WebSocket.
-const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self';"
+//
+// form-action, base-uri, frame-ancestors do NOT inherit from default-src; they must be
+// explicit. object-src 'none' blocks Flash/Java plugins. img-src omits the https: scheme
+// wildcard (#1212) — all images are same-origin or inline data URIs.
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none';"
 
 // SecurityHeaders sets standard hardening response headers on every response. For a
 // secrets manager these matter beyond the usual:
@@ -30,6 +34,12 @@ const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 
 //     nginx frontend did), so the strongest practical mitigation against an XSS reading
 //     the SSO/SAML session-token URL fragment or localStorage was entirely absent in
 //     that mode. Now sent unconditionally, matching the nginx config's policy.
+//   - Cross-Origin-Resource-Policy: same-origin — opt-in Spectre mitigation; prevents
+//     cross-origin reads of responses via speculative execution side channels.
+//   - Cross-Origin-Embedder-Policy: require-corp — all subresources must carry CORP or
+//     CORS; together with COOP this enables cross-origin isolation in the browser.
+//   - Cross-Origin-Opener-Policy: same-origin — isolates the browsing context group so
+//     cross-origin documents cannot share the same context (closes window.opener leaks).
 //
 // HSTS is sent only when this process terminates TLS (tlsEnabled); deployments that
 // terminate TLS at a proxy add HSTS there, and sending it over plain HTTP is wrong.
@@ -46,6 +56,8 @@ func SecurityHeaders(tlsEnabled bool) func(http.Handler) http.Handler {
 			h.Set("Referrer-Policy", "no-referrer")
 			h.Set("Content-Security-Policy", contentSecurityPolicy)
 			h.Set("Cross-Origin-Resource-Policy", "same-origin")
+			h.Set("Cross-Origin-Embedder-Policy", "require-corp")
+			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
 			if tlsEnabled {
 				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")

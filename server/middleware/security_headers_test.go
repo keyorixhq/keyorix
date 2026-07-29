@@ -35,6 +35,14 @@ func TestSecurityHeaders_CSPAlwaysSet(t *testing.T) {
 	assert.Contains(t, csp, "default-src 'self'")
 	assert.Contains(t, csp, "script-src 'self'", "no unsafe-inline/unsafe-eval on scripts — the primary XSS vector")
 	assert.NotContains(t, csp, "script-src 'self' 'unsafe-inline'")
+	// DAST #1211: directives that don't fall back to default-src must be explicit.
+	assert.Contains(t, csp, "form-action 'self'")
+	assert.Contains(t, csp, "base-uri 'self'")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+	assert.Contains(t, csp, "object-src 'none'")
+	// DAST #1212: no https: scheme wildcard in img-src.
+	assert.NotContains(t, csp, "img-src 'self' data: https:")
+	assert.Contains(t, csp, "img-src 'self' data:")
 }
 
 func TestSecurityHeaders_HSTSOnlyWithTLS(t *testing.T) {
@@ -47,4 +55,12 @@ func TestSecurityHeaders_HSTSOnlyWithTLS(t *testing.T) {
 func TestSecurityHeaders_CORPAlwaysSet(t *testing.T) {
 	hdr := serve(t, false)
 	assert.Equal(t, "same-origin", hdr.Get("Cross-Origin-Resource-Policy"))
+}
+
+// DAST #1209 / #1214 / #1215: all three Cross-Origin-* headers must be present.
+func TestSecurityHeaders_CrossOriginHeadersAlwaysSet(t *testing.T) {
+	hdr := serve(t, false)
+	assert.Equal(t, "same-origin", hdr.Get("Cross-Origin-Resource-Policy"))
+	assert.Equal(t, "require-corp", hdr.Get("Cross-Origin-Embedder-Policy"))
+	assert.Equal(t, "same-origin", hdr.Get("Cross-Origin-Opener-Policy"))
 }
