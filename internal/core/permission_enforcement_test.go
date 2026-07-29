@@ -722,3 +722,54 @@ func TestCheckSecretPermission_RBACFallback_GrantsAccess(t *testing.T) {
 	assert.Equal(t, PermissionRead, permCtx.Permission)
 	mockStorage.AssertExpectations(t)
 }
+
+// TestShareActive directly exercises the shareActive predicate at every expiry
+// boundary case. This is a security-critical helper: a nil ExpiresAt is permanent
+// (never expires), a non-nil ExpiresAt denies access the instant the clock reaches
+// or passes it (using strict Before - equal means expired).
+func TestShareActive(t *testing.T) {
+	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	justBefore := now.Add(-time.Nanosecond)
+	justAfter := now.Add(time.Nanosecond)
+
+	cases := []struct {
+		name      string
+		expiresAt *time.Time
+		now       time.Time
+		want      bool
+	}{
+		{
+			name:      "nil ExpiresAt is permanent",
+			expiresAt: nil,
+			now:       now,
+			want:      true,
+		},
+		{
+			name:      "future expiry is active",
+			expiresAt: &justAfter,
+			now:       now,
+			want:      true,
+		},
+		{
+			name:      "expiry exactly at now is expired (strict Before)",
+			expiresAt: &now,
+			now:       now,
+			want:      false,
+		},
+		{
+			name:      "expiry just before now is expired",
+			expiresAt: &justBefore,
+			now:       now,
+			want:      false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			share := &models.ShareRecord{ExpiresAt: tc.expiresAt}
+			got := shareActive(share, tc.now)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
