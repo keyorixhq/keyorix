@@ -45,7 +45,9 @@ func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string,
 		}
 		envID, ok := envByName[envName]
 		if !ok {
-			return "", fmt.Errorf("environment %q not found in this project", envName)
+			// TMPL-002: use the same sentinel as "secret not found" to avoid leaking
+			// the environment name in the HTTP response via sendRenderTemplateError.
+			return "", ErrSecretRefNotFound
 		}
 		secret, err := c.storage.GetSecretByName(ctx, secretName, projectID, envID)
 		if err != nil || secret == nil {

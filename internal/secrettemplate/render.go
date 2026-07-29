@@ -23,6 +23,12 @@ const marker = "${secret:"
 // rendering use cases.
 const MaxDistinctReferences = 100
 
+// MaxOutputBytes caps the total size of a single rendered output. 1 MiB is
+// generous for .env / config files; an attacker injecting many large secret
+// values cannot use Render as an amplifier to produce a response that exhausts
+// downstream memory.
+const MaxOutputBytes = 1 << 20 // 1 MiB
+
 // Resolver maps a secret reference (the text between "${secret:" and "}") to its
 // value. It returns an error when the reference is unknown or inaccessible.
 type Resolver func(ref string) (string, error)
@@ -143,9 +149,12 @@ func Render(tmpl string, resolve Resolver) (string, error) {
 	for _, seg := range segments {
 		if seg.ref == "" {
 			b.WriteString(seg.literal)
-			continue
+		} else {
+			b.WriteString(resolved[seg.ref])
 		}
-		b.WriteString(resolved[seg.ref])
+		if b.Len() > MaxOutputBytes {
+			return "", fmt.Errorf("rendered output exceeds the %d-byte limit", MaxOutputBytes)
+		}
 	}
 	return b.String(), nil
 }

@@ -32,7 +32,7 @@ func TestDetectSoDViolations_DegradedOnUserPermissionsError(t *testing.T) {
 		{ID: 11, Username: "bob", IsActive: true},
 	}, int64(2), nil)
 
-	// Neither user holds an admin permission-bypass role.
+	// Neither user holds an admin permission-bypass role (direct or via group — #1185 added group check).
 	store.On("GetUserRoles", ctx, uint(10)).Return([]*models.Role{}, nil)
 	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil)
 	store.On("GetUserRoles", ctx, uint(11)).Return([]*models.Role{}, nil)

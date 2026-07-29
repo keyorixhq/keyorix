@@ -4573,7 +4573,7 @@ func newSecretHandlerS4(t *testing.T) *SecretHandler {
 func TestIsSafeSSOError_Known(t *testing.T) {
 	assert.True(t, isSafeSSOError("unknown SSO provider"))
 	assert.True(t, isSafeSSOError("invalid or expired login state"))
-	assert.True(t, isSafeSSOError("account suspended"))
+	assert.False(t, isSafeSSOError("account suspended"))
 	assert.True(t, isSafeSSOError("no Keyorix account matches this SSO identity"))
 }
 
@@ -10212,7 +10212,7 @@ func TestIsSafeSSOError_KnownMessages(t *testing.T) {
 	assert.True(t, isSafeSSOError("the token response carried no id_token"))
 	assert.True(t, isSafeSSOError("the assertion carried no subject or email"))
 	assert.True(t, isSafeSSOError("no Keyorix account matches this SSO identity"))
-	assert.True(t, isSafeSSOError("account suspended"))
+	assert.False(t, isSafeSSOError("account suspended"))
 	assert.True(t, isSafeSSOError("the IdP returned no email; cannot auto-provision an account"))
 	assert.False(t, isSafeSSOError("some internal error"))
 	assert.False(t, isSafeSSOError(""))

@@ -55,7 +55,7 @@ func TestGetInterval_S21(t *testing.T) {
 }
 
 // TestRequireHTTPSURL_S21 covers requireHTTPSURL directly for all branches:
-// https (allowed), http+localhost (allowed), http+loopback IP (allowed),
+// https (allowed), http+localhost (allowed), http+loopback IP (rejected — K8SSYNC-007),
 // http+non-loopback (rejected), invalid URL (rejected), non-http/https (rejected).
 func TestRequireHTTPSURL_S21(t *testing.T) {
 	cases := []struct {
@@ -66,8 +66,8 @@ func TestRequireHTTPSURL_S21(t *testing.T) {
 		{"https allowed", "https://keyorix.example.com", false},
 		{"https with port allowed", "https://keyorix.example.com:8443", false},
 		{"http localhost allowed", "http://localhost:8080", false},
-		{"http 127.0.0.1 allowed", "http://127.0.0.1:8080", false},
-		{"http ::1 allowed", "http://[::1]:8080", false},
+		{"http 127.0.0.1 rejected", "http://127.0.0.1:8080", true},
+		{"http ::1 rejected", "http://[::1]:8080", true},
 		{"http non-loopback rejected", "http://10.0.0.1:8080", true},
 		{"http public host rejected", "http://keyorix.example.com", true},
 		{"ftp scheme rejected", "ftp://keyorix.example.com", true},

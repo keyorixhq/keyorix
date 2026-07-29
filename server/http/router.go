@@ -1735,6 +1735,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/mfa/recovery-codes/count", authHandler.CountUnusedMFARecoveryCodesProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/recovery-codes", authHandler.CreateMFARecoveryCodesProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/totp-step-used", authHandler.MarkTOTPStepUsedProxy)
 
 			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
 			// Lets a downstream Keyorix server booted with storage.type: remote

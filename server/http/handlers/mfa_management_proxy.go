@@ -263,6 +263,35 @@ func (h *AuthHandler) CountUnusedMFARecoveryCodesProxy(w http.ResponseWriter, r 
 	writeRemoteAPISuccess(w, map[string]int{"count": n})
 }
 
+// markTOTPStepUsedWire is the request body for MarkTOTPStepUsedProxy.
+type markTOTPStepUsedWire struct {
+	UserID uint  `json:"user_id"`
+	Step   int64 `json:"step"`
+}
+
+// MarkTOTPStepUsedProxy handles POST /api/v1/system/mfa/totp-step-used.
+// Atomically advances the per-user last-used TOTP step so the downstream
+// core's requireReauth/VerifyMFACredentials anti-replay guard works correctly
+// under storage.type: remote (finding in PR that follows #524).
+func (h *AuthHandler) MarkTOTPStepUsedProxy(w http.ResponseWriter, r *http.Request) {
+	var body markTOTPStepUsedWire
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if body.UserID == 0 {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
+		return
+	}
+	fresh, err := h.coreService.Storage().MarkTOTPStepUsed(r.Context(), body.UserID, body.Step)
+	if err != nil {
+		log.Printf("mfa proxy: mark TOTP step used failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]bool{"fresh": fresh})
+}
+
 // DeleteMFARecoveryCodesProxy handles DELETE
 // /api/v1/system/mfa/recovery-codes/{userId}.
 func (h *AuthHandler) DeleteMFARecoveryCodesProxy(w http.ResponseWriter, r *http.Request) {

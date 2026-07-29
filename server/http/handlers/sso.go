@@ -61,7 +61,6 @@ func isSafeSSOError(msg string) bool {
 		"the token response carried no id_token",
 		"the assertion carried no subject or email",
 		"no Keyorix account matches this SSO identity",
-		"account suspended",
 		"the IdP returned no email; cannot auto-provision an account",
 	} {
 		if strings.Contains(msg, safe) {

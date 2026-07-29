@@ -73,10 +73,14 @@ func TestAuthzParity_HTTPvsGRPC_ShareCreate(t *testing.T) {
 	writerToken := login("writer", "Qr7#Kp2$Lm5@Vn9!")
 
 	// Recipients just need to exist. Distinct ones for the allow case so the HTTP and
-	// gRPC shares don't collide as duplicates.
+	// gRPC shares don't collide as duplicates. Each must be a project member (#1185
+	// added an IsProjectMember gate in ShareSecret).
 	require.NoError(t, db.Create(&models.User{ID: 500, Username: "rcpt-http", Email: "rh@example.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 501, Username: "rcpt-grpc", Email: "rg@example.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 502, Username: "rcpt-deny", Email: "rd@example.com"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 500, RoleID: editorRole.ID, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 501, RoleID: editorRole.ID, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 502, RoleID: editorRole.ID, ProjectID: 1}).Error)
 
 	// The secret, owned by owner in project 1.
 	sec, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
@@ -198,6 +202,8 @@ func TestAuthzParity_HTTPvsGRPC_ShareList(t *testing.T) {
 
 	recipient, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "recipient2", Email: "recipient2@example.com", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
+	// IsProjectMember gate (#1185): recipient must be a project member to receive a share.
+	require.NoError(t, db.Create(&models.UserRole{UserID: recipient.ID, RoleID: editorRole.ID, ProjectID: 1}).Error)
 
 	// The secret, owned by owner in project 1, shared once with recipient so the list
 	// isn't trivially empty.

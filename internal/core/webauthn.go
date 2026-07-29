@@ -272,7 +272,12 @@ func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) 
 	if len(wu.creds) == 0 {
 		return nil, "", fmt.Errorf("no passkeys registered")
 	}
-	assertion, sd, err := c.webauthnRP.BeginLogin(wu)
+	// WAUN-001: require user-verification (PIN or biometric) for the MFA assertion,
+	// not just key presence — prevents a stolen/found hardware key from satisfying the
+	// second factor without the user's knowledge.
+	assertion, sd, err := c.webauthnRP.BeginLogin(wu,
+		webauthn.WithUserVerification(protocol.VerificationRequired),
+	)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to begin login: %w", err)
 	}

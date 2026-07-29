@@ -107,8 +107,8 @@ mappings:
 		"https allowed":            {"https://keyorix.internal", false},
 		"http non-loopback denied": {"http://keyorix.internal", true},
 		"http localhost allowed":   {"http://localhost:8080", false},
-		"http 127.0.0.1 allowed":   {"http://127.0.0.1:8080", false},
-		"http ::1 allowed":         {"http://[::1]:8080", false},
+		"http 127.0.0.1 rejected":  {"http://127.0.0.1:8080", true},
+		"http ::1 rejected":        {"http://[::1]:8080", true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

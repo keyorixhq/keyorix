@@ -228,7 +228,19 @@ func (c *KeyorixCore) principalHasScopedPermission(ctx context.Context, userID u
 // falls back to project-scope RBAC (Authorize at the secret's own project/environment
 // scope). Fails closed: any resolution error returns (false, err).
 func (c *KeyorixCore) AuthorizeSecret(ctx context.Context, userID, secretID uint, perm string) (bool, error) {
-	// Check per-secret ACL first (additive grant).
+	// Resolve the secret first so we know its scope for the PAT check below.
+	secret, err := c.storage.GetSecret(ctx, secretID)
+	if err != nil {
+		return false, err
+	}
+	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+	// PAT-SCOPE-002: a per-secret ACL grant must not let a project-scoped PAT read
+	// secrets outside the token's own project/environment — check the restriction
+	// against the secret's actual scope before honouring an ACL grant.
+	if !patRestrictionFromContext(ctx).Allows(perm, scope) {
+		return false, nil
+	}
+	// Check per-secret ACL (additive grant).
 	hasACL, err := c.HasSecretACL(ctx, userID, secretID, perm)
 	if err != nil {
 		return false, err
@@ -237,11 +249,7 @@ func (c *KeyorixCore) AuthorizeSecret(ctx context.Context, userID, secretID uint
 		return true, nil
 	}
 	// Fall back to project-scope RBAC.
-	secret, err := c.storage.GetSecret(ctx, secretID)
-	if err != nil {
-		return false, err
-	}
-	return c.Authorize(ctx, userID, perm, Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID})
+	return c.Authorize(ctx, userID, perm, scope)
 }
 
 // IsGlobalAdmin reports whether userID holds an admin role assigned globally

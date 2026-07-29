@@ -38,8 +38,6 @@ func init() {
 
 		"CreateMFAChallenge": {statusIntentional,
 			"round 119 audit: core.CreateMFAChallenge checks the RemoteMFAVerifier interface before ever calling storage.CreateMFAChallenge — under storage.type: remote this raw stub is never reached regardless of which second factor (TOTP or WebAuthn) follows; confirmed by TestLogin_RemoteStorage_ProxiesMFACredentialCheck"},
-		"MarkTOTPStepUsed": {statusIntentional,
-			"round 119 audit: sole caller is VerifyMFACredentials, only invoked from VerifyMFALogin's branch that's bypassed entirely when RemoteMFAVerifier is present"},
 		"ConsumeMFARecoveryCode": {statusIntentional,
 			"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 

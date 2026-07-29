@@ -42,6 +42,8 @@ func TestListSecretAccessors(t *testing.T) {
 	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 3, GroupID: 10}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 4, GroupID: 10}).Error)
+	// IsProjectMember check (added in #1185): alice (user 2) must be a project member.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 
 	now := time.Now()
 	st := store.NewLocalStorage(db)
@@ -102,6 +104,8 @@ func TestListSecretAccessors_StrongestGrantWins(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "g"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 10}).Error)
+	// IsProjectMember check (added in #1185): alice (user 2) must be a project member.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 
 	now := time.Now()
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}

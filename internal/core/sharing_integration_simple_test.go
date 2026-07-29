@@ -323,7 +323,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		const numConcurrentShares = 5
 		results := make(chan error, numConcurrentShares)
 
-		for i := 0; i < numConcurrentShares; i++ {
+		for i := range numConcurrentShares {
 			go func(recipientID uint) {
 				shareReq := &ShareSecretRequest{
 					SecretID:    createdSecret.ID,
@@ -339,7 +339,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 
 		// Collect results
 		successCount := 0
-		for i := 0; i < numConcurrentShares; i++ {
+		for range numConcurrentShares {
 			select {
 			case err := <-results:
 				if err == nil {
