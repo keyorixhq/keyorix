@@ -115,6 +115,11 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 	// the role removal, because the RBAC-001 membership check in CheckSecretPermission
 	// already blocks access — this is defense-in-depth, not a hard gate.
 	_ = c.storage.ClearProjectSecretOwnership(ctx, userID, projectID)
+	// Revoke per-secret ACL grants in this project (CWE-284): without this a removed
+	// member retains access to any secret they held a SecretACL grant for, because
+	// AuthorizeSecret checks ACL grants before project-scope RBAC and short-circuits
+	// on the first match — the role removal above provides no protection against stale ACLs.
+	_ = c.storage.DeleteSecretACLsByUserAndProject(ctx, userID, projectID)
 	for _, a := range assignments {
 		if a.PrincipalType != "user" || a.PrincipalID != userID {
 			continue

@@ -20,7 +20,7 @@ func TestCopySecret(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -30,6 +30,8 @@ func TestCopySecret(t *testing.T) {
 	prod, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p1.ID})
 	p2, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p2"})
 	otherEnv, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p2.ID})
+	// IsProjectMember gates CheckSecretPermission (RBAC-001); owner must be a member of p1.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
 
 	src, err := c.CreateSecret(ctx, &CreateSecretRequest{
 		Name: "db-url", Value: []byte("postgres://secret"), ProjectID: p1.ID, EnvironmentID: staging.ID,

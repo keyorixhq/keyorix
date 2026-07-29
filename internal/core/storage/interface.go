@@ -343,6 +343,10 @@ type Storage interface {
 	ListSecretACLsByUser(ctx context.Context, userID uint) ([]*models.SecretACL, error)
 	GetSecretACL(ctx context.Context, secretID, userID uint) (*models.SecretACL, error)
 	DeleteSecretACL(ctx context.Context, id uint) error
+	// DeleteSecretACLsByUserAndProject removes all ACL grants for userID on secrets
+	// that belong to projectID. Called during project member removal so that a
+	// revoked member's per-secret ACL grants do not survive offboarding (CWE-284).
+	DeleteSecretACLsByUserAndProject(ctx context.Context, userID, projectID uint) error
 	// GetSecretAncestors returns the ancestor SecretNode IDs for nodeID,
 	// ordered from immediate parent to root (breadth-first up the ParentID
 	// chain). Used by HasSecretACL to walk the folder ACL inheritance path.

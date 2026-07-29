@@ -319,6 +319,7 @@ func TestCanUserModifySecret(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 1, "test-secret")
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+				ms.On("IsProjectMember", mock.Anything, uint(1), uint(0)).Return(true, nil)
 			},
 			expected: true,
 		},
@@ -410,6 +411,8 @@ func TestCanUserShareSecret(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 1, "test-secret")
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+				// CheckSecretPermission gates the owner path on IsProjectMember (RBAC-001).
+				ms.On("IsProjectMember", mock.Anything, uint(1), uint(0)).Return(true, nil)
 			},
 			expected: true,
 		},
@@ -490,6 +493,7 @@ func TestGetEffectivePermission(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 1, "test-secret")
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+				ms.On("IsProjectMember", mock.Anything, uint(1), uint(0)).Return(true, nil)
 			},
 			expectedPermission: PermissionOwner,
 		},

@@ -35,7 +35,12 @@ func newCloneTestCore(t *testing.T) *KeyorixCore {
 		&models.Environment{},
 		&models.AuditEvent{},
 		&models.SecretAccessLog{},
+		&models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
 	))
+	// CopySecret calls GetSecretValueWithPermissionCheck which gates the owner path on
+	// IsProjectMember (RBAC-001). The first project created in each test gets ID=1;
+	// seed actor 1 as a project member so the copy read passes.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	return &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 }
 

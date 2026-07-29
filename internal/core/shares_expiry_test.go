@@ -34,10 +34,15 @@ func newSharesExpiryFixture(t *testing.T) (*KeyorixCore, uint, time.Time, *gorm.
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{},
 		&models.AuditEvent{}, &models.User{}, &models.Group{}, &models.UserGroup{},
+		&models.UserRole{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recip2", Email: "recip2@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 3, Username: "recip3", Email: "recip3@test.com"}).Error)
+	// ShareSecret checks IsProjectMember before creating the share record; seed
+	// project membership for both recipients so that check passes.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: 1}).Error)
 
 	now := time.Now()
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}

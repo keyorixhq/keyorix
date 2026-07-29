@@ -10,12 +10,14 @@ import (
 
 func makeDynConfig(t *testing.T, c *KeyorixCore, name, classification string) uint {
 	t.Helper()
+	// Use db.example.com (unresolvable) instead of localhost so the SSRF guard passes
+	// without needing allowPrivateNetworkTargets — validateAdminDSNHost allows unresolvable hosts.
 	cfg, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 		Name:           name,
 		ProjectID:      1,
 		EnvironmentID:  1,
 		BackendType:    "postgres",
-		AdminDSN:       "postgres://admin:pw@localhost/db",
+		AdminDSN:       "postgres://admin:pw@db.example.com/db",
 		Classification: classification,
 		CreatedBy:      "admin",
 		ActorID:        testAdminActorID,
