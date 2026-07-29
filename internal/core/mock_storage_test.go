@@ -1591,6 +1591,14 @@ func (m *MockStorage) GetProjectUsageStats(ctx context.Context, projectIDs []uin
 	return args.Get(0).([]storage.ProjectUsageStat), args.Error(1)
 }
 
+func (m *MockStorage) GetBillingReport(ctx context.Context, from, to time.Time, projectIDs []uint) (*storage.BillingReport, error) {
+	args := m.Called(ctx, from, to, projectIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*storage.BillingReport), args.Error(1)
+}
+
 func (m *MockStorage) SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error {
 	args := m.Called(ctx, snapshot)
 	return args.Error(0)
