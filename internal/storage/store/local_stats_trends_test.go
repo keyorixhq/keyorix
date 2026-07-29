@@ -19,9 +19,13 @@ func TestSaveAndGetPreviousDeploymentStatsSnapshot(t *testing.T) {
 	// Save a snapshot 2 days ago (well outside the 20-hour cutoff).
 	twoDaysAgo := time.Now().UTC().Add(-48 * time.Hour)
 	snap := &models.DeploymentStatsSnapshot{
-		ActiveUsers:    10,
-		AuditEvents30d: 200,
-		SnapshotDate:   twoDaysAgo,
+		ActiveUsers:           10,
+		AuditEvents30d:        200,
+		AuditLogins30d:        50,
+		AuditSecretReads30d:   150,
+		FailedAuthAttempts24h: 5,
+		InactiveUsers:         2,
+		SnapshotDate:          twoDaysAgo,
 	}
 	require.NoError(t, ls.SaveDeploymentStatsSnapshot(ctx, snap))
 
@@ -39,9 +43,13 @@ func TestGetPreviousDeploymentStatsSnapshot_RecentSnapshotExcluded(t *testing.T)
 	// Save a snapshot 10 hours ago — inside the 20-hour cutoff, should be excluded.
 	tenHoursAgo := time.Now().UTC().Add(-10 * time.Hour)
 	snap := &models.DeploymentStatsSnapshot{
-		ActiveUsers:    5,
-		AuditEvents30d: 100,
-		SnapshotDate:   tenHoursAgo,
+		ActiveUsers:           5,
+		AuditEvents30d:        100,
+		AuditLogins30d:        25,
+		AuditSecretReads30d:   75,
+		FailedAuthAttempts24h: 2,
+		InactiveUsers:         1,
+		SnapshotDate:          tenHoursAgo,
 	}
 	require.NoError(t, ls.SaveDeploymentStatsSnapshot(ctx, snap))
 
@@ -69,14 +77,22 @@ func TestGetPreviousDeploymentStatsSnapshot_ReturnsLatestOlderThan20h(t *testing
 	fiveDaysAgo := time.Now().UTC().Add(-5 * 24 * time.Hour)
 
 	require.NoError(t, ls.SaveDeploymentStatsSnapshot(ctx, &models.DeploymentStatsSnapshot{
-		ActiveUsers:    3,
-		AuditEvents30d: 50,
-		SnapshotDate:   fiveDaysAgo,
+		ActiveUsers:           3,
+		AuditEvents30d:        50,
+		AuditLogins30d:        15,
+		AuditSecretReads30d:   35,
+		FailedAuthAttempts24h: 1,
+		InactiveUsers:         1,
+		SnapshotDate:          fiveDaysAgo,
 	}))
 	require.NoError(t, ls.SaveDeploymentStatsSnapshot(ctx, &models.DeploymentStatsSnapshot{
-		ActiveUsers:    8,
-		AuditEvents30d: 150,
-		SnapshotDate:   twoDaysAgo,
+		ActiveUsers:           8,
+		AuditEvents30d:        150,
+		AuditLogins30d:        45,
+		AuditSecretReads30d:   105,
+		FailedAuthAttempts24h: 3,
+		InactiveUsers:         2,
+		SnapshotDate:          twoDaysAgo,
 	}))
 
 	got, err := ls.GetPreviousDeploymentStatsSnapshot(ctx)

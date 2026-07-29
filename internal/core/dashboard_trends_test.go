@@ -24,6 +24,10 @@ func TestDashboardTrends_NoPreviousSnapshot_NoTrend(t *testing.T) {
 
 	assert.Nil(t, stats.ActiveUsersTrend, "no previous snapshot → ActiveUsersTrend must be nil")
 	assert.Nil(t, stats.AuditEvents30dTrend, "no previous snapshot → AuditEvents30dTrend must be nil")
+	assert.Nil(t, stats.AuditLogins30dTrend, "no previous snapshot → AuditLogins30dTrend must be nil")
+	assert.Nil(t, stats.AuditSecretReads30dTrend, "no previous snapshot → AuditSecretReads30dTrend must be nil")
+	assert.Nil(t, stats.FailedAuthAttempts24hTrend, "no previous snapshot → FailedAuthAttempts24hTrend must be nil")
+	assert.Nil(t, stats.InactiveUsersTrend, "no previous snapshot → InactiveUsersTrend must be nil")
 }
 
 // TestDashboardTrends_WithPreviousSnapshot_ComputesTrend verifies that when a
@@ -36,9 +40,13 @@ func TestDashboardTrends_WithPreviousSnapshot_ComputesTrend(t *testing.T) {
 	// fewer active users and fewer audit events than there will be now.
 	twoDaysAgo := time.Now().UTC().Add(-48 * time.Hour)
 	err := st.SaveDeploymentStatsSnapshot(context.Background(), &models.DeploymentStatsSnapshot{
-		ActiveUsers:    1, // will grow: BootstrapSystem already created "admin" + we added "trend_auditor2"
-		AuditEvents30d: 0,
-		SnapshotDate:   twoDaysAgo,
+		ActiveUsers:           1, // will grow: BootstrapSystem already created "admin" + we added "trend_auditor2"
+		AuditEvents30d:        0,
+		AuditLogins30d:        0,
+		AuditSecretReads30d:   0,
+		FailedAuthAttempts24h: 0,
+		InactiveUsers:         0,
+		SnapshotDate:          twoDaysAgo,
 	})
 	require.NoError(t, err)
 
@@ -57,6 +65,16 @@ func TestDashboardTrends_WithPreviousSnapshot_ComputesTrend(t *testing.T) {
 	}
 	// PrevAuditEvents30d is always set when prevSnap != nil.
 	require.NotNil(t, stats.PrevAuditEvents30d)
+
+	// New fields must also be set when prevSnap != nil.
+	require.NotNil(t, stats.PrevAuditLogins30d, "PrevAuditLogins30d must be set")
+	assert.Equal(t, int64(0), *stats.PrevAuditLogins30d)
+	require.NotNil(t, stats.PrevAuditSecretReads30d, "PrevAuditSecretReads30d must be set")
+	assert.Equal(t, int64(0), *stats.PrevAuditSecretReads30d)
+	require.NotNil(t, stats.PrevFailedAuthAttempts24h, "PrevFailedAuthAttempts24h must be set")
+	assert.Equal(t, int64(0), *stats.PrevFailedAuthAttempts24h)
+	require.NotNil(t, stats.PrevInactiveUsers, "PrevInactiveUsers must be set")
+	assert.Equal(t, int64(0), *stats.PrevInactiveUsers)
 }
 
 // TestDashboardTrends_SnapshotSavedAfterAdminCall verifies that the first call
