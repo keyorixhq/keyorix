@@ -22,7 +22,7 @@ func TestBulkRenameSecrets(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
-		&models.AuditEvent{}, &models.SecretAccessLog{},
+		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.UserRole{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -35,6 +35,9 @@ func TestBulkRenameSecrets(t *testing.T) {
 	require.NoError(t, err)
 	env, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, err)
+	// CheckSecretPermission gates the owner path on IsProjectMember (RBAC-001); seed
+	// user 1 so the owning actor passes the project-membership guard.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
 
 	mk := func(name string, projectID uint, isSecret bool) uint {
 		s, e := c.storage.CreateSecret(ctx, &models.SecretNode{

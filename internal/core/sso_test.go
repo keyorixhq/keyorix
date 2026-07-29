@@ -634,7 +634,7 @@ func TestCompleteSSO_PasswordExpiredGateError(t *testing.T) {
 	c.passwordPolicy = PasswordPolicy{MaxAgeDays: 1}
 
 	const testNonce = "nonce-expiry-err"
-	expiredUser := &models.User{ID: 55, AccountState: "active", IsActive: true, CreatedAt: time.Now().Add(-48 * time.Hour)}
+	expiredUser := &models.User{ID: 55, IsActive: true, AccountState: "active", CreatedAt: time.Now().Add(-48 * time.Hour)}
 
 	idToken := signToken(t, key, "kid-1", jwt.MapClaims{
 		"iss":            "https://idp.test",

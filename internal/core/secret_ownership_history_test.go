@@ -22,6 +22,8 @@ func newOwnershipCore(store *MockStorage) *KeyorixCore {
 func setupOwnerPermission(store *MockStorage, ctx context.Context, secretID, actorID uint) {
 	store.On("GetSecret", ctx, secretID).
 		Return(&models.SecretNode{ID: secretID, OwnerID: actorID}, nil)
+	// CheckSecretPermission gates the owner fast-path on IsProjectMember (RBAC-001).
+	store.On("IsProjectMember", mock.Anything, actorID, uint(0)).Return(true, nil)
 }
 
 func TestGetSecretOwnershipHistory_Empty(t *testing.T) {

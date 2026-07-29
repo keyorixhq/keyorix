@@ -86,8 +86,8 @@ func TestBulkApproveAccessRequests_ApproveError(t *testing.T) {
 	req := pendingReq(5)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{5}).
 		Return([]*models.AccessRequest{req}, nil)
-	// The per-project Authorize check (added in #1185) calls scopedRoleIDs which
-	// reads these two tables; return empty → no permission → "permission denied" in Failed.
+	// The per-project Authorize check calls scopedRoleIDs which reads these two
+	// tables; return empty → no permission → "permission denied" in Failed.
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
@@ -106,7 +106,7 @@ func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
 	req1 := pendingReq(1)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{1, 99}).
 		Return([]*models.AccessRequest{req1}, nil) // only req1 returned
-	// Authorize check added in #1185: return empty roles → denied → "permission denied" in Failed.
+	// Authorize check: empty roles → denied → "permission denied" in Failed.
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
@@ -173,7 +173,7 @@ func TestBulkRejectAccessRequests_RejectError(t *testing.T) {
 	req := pendingReq(7)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{7}).
 		Return([]*models.AccessRequest{req}, nil)
-	// Authorize check added in #1185: empty roles → denied → "permission denied" in Failed.
+	// Authorize check: empty roles → denied → "permission denied" in Failed.
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 
@@ -196,7 +196,7 @@ func TestBulkRejectAccessRequests_RejectNonPending(t *testing.T) {
 	}
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{8}).
 		Return([]*models.AccessRequest{already}, nil)
-	// Authorize check added in #1185: grant admin role so code reaches RejectAccessRequest.
+	// Authorize check: grant admin role so code reaches RejectAccessRequest.
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{1}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetRoleByName", mock.Anything, mock.Anything).Return(&models.Role{ID: 1, Name: "admin"}, nil)
@@ -218,7 +218,7 @@ func TestBulkRejectAccessRequests_MixedResults(t *testing.T) {
 	req3 := pendingReq(3)
 	m.On("ListAccessRequestsByIDs", mock.Anything, []uint{3, 77}).
 		Return([]*models.AccessRequest{req3}, nil) // only req3 returned
-	// Authorize check added in #1185: empty roles → denied → "permission denied" for ID 3.
+	// Authorize check: empty roles → denied → "permission denied" for ID 3.
 	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
 

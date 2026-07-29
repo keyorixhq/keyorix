@@ -101,17 +101,21 @@ func newCertCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{},
+		&models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
+	))
+	// CheckSecretPermission gates the owner path on IsProjectMember (RBAC-001): user 9
+	// (the standard cert-test actor) must be a member of project 1 so the read succeeds.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
 	return &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}, db
 }
 
 // mkCertSecret stores a secret (no encryption → value lives in the version row), owned
-// by user 9 — the actor ID every InspectCertificate call in this file uses — so the
-// EnforceSecretReadPermission check InspectCertificate now performs is satisfied via
-// ownership without needing the shares/groups tables migrated.
+// by user 9 in project 1 — the actor ID every InspectCertificate call in this file uses.
 func mkCertSecret(t *testing.T, db *gorm.DB, id uint, name, status string, value []byte) {
 	t.Helper()
-	require.NoError(t, db.Create(&models.SecretNode{ID: id, Name: name, IsSecret: true, Status: status, Type: "certificate", OwnerID: 9}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: id, Name: name, IsSecret: true, Status: status, Type: "certificate", OwnerID: 9, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: id, VersionNumber: 1, EncryptedValue: value}).Error)
 }
 

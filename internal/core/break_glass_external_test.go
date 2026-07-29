@@ -320,7 +320,7 @@ func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
 	// elapsing). Role resolution filters out expires_at <= now, so the role drops away.
 	require.NoError(t, h.DB.Model(&models.UserRole{}).
 		Where("user_id = ? AND role_id = ?", 10, 3).
-		Update("expires_at", time.Now().Add(-time.Hour)).Error)
+		Update("expires_at", time.Now().UTC().Add(-time.Hour)).Error)
 
 	// The emergency role no longer resolves...
 	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})

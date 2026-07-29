@@ -33,6 +33,10 @@ func (rs *RemoteStorage) DeleteSecretACL(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteSecretACL")
 }
 
+func (rs *RemoteStorage) DeleteSecretACLsByUserAndProject(_ context.Context, _, _ uint) error {
+	return remoteUnsupported("DeleteSecretACLsByUserAndProject")
+}
+
 // GetSecretAncestors is the folder-ACL inheritance walk helper. Folder-ACL
 // enforcement is server-side only; the inheritance walk in HasSecretACL skips
 // this path when ErrUnsupportedByBackend is returned.

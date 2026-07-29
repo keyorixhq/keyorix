@@ -57,7 +57,7 @@ func TestKeyorixCore_ShareSecret(t *testing.T) {
 
 	// Mock expectations
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
-	// IsProjectMember check added in #1185 for user shares.
+	// ShareSecret verifies the recipient is a member of the secret's project.
 	mockStorage.On("IsProjectMember", ctx, uint(2), uint(0)).Return(true, nil)
 	mockStorage.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
@@ -231,7 +231,6 @@ func TestKeyorixCore_ShareSecret_RejectsSelfShare(t *testing.T) {
 	otherSecret := &models.SecretNode{ID: 3, Name: "s2", OwnerID: 1}
 	otherShareRecord := &models.ShareRecord{ID: 4, SecretID: 3, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}
 	mockStorage.On("GetSecret", ctx, uint(3)).Return(otherSecret, nil)
-	// IsProjectMember check added in #1185.
 	mockStorage.On("IsProjectMember", ctx, uint(2), uint(0)).Return(true, nil)
 	mockStorage.On("CreateShareRecord", ctx, mock.MatchedBy(func(s *models.ShareRecord) bool {
 		return s.SecretID == 3 && !s.IsGroup

@@ -39,7 +39,8 @@ func newSharesExpiryFixture(t *testing.T) (*KeyorixCore, uint, time.Time, *gorm.
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recip2", Email: "recip2@test.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 3, Username: "recip3", Email: "recip3@test.com"}).Error)
-	// IsProjectMember check (added in #1185): recipients need a project role to receive shares.
+	// ShareSecret checks IsProjectMember before creating the share record; seed
+	// project membership for both recipients so that check passes.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: 1}).Error)
 

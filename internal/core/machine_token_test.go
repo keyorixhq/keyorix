@@ -30,7 +30,6 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 
 	// Active machine → token minted with the kx_machine_ prefix, hash stored.
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
-	// requireMachinePrivilegeCeiling (added in #1187) checks the machine's roles.
 	store.On("GetMachineRoles", mock.Anything, uint(1)).Return([]*models.Role{}, nil)
 	store.On("CreateMachineIdentityCredential", mock.Anything, mock.AnythingOfType("*models.MachineIdentityCredential")).
 		Return(&models.MachineIdentityCredential{ID: 5}, nil)

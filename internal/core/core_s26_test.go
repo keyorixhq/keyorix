@@ -222,6 +222,7 @@ func TestGetSecretVersionsWithPermissionCheck_Success(t *testing.T) {
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 10, OwnerID: 1}
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(secret, nil)
+	ms.On("IsProjectMember", mock.Anything, uint(1), uint(0)).Return(true, nil)
 	versions := []*models.SecretVersion{{ID: 1, SecretNodeID: 10, VersionNumber: 1}}
 	ms.On("GetSecretVersions", mock.Anything, uint(10)).Return(versions, nil)
 	c := NewKeyorixCore(ms)
@@ -234,6 +235,7 @@ func TestGetSecretVersionWithPermissionCheck_Success(t *testing.T) {
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 10, OwnerID: 1}
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(secret, nil)
+	ms.On("IsProjectMember", mock.Anything, uint(1), uint(0)).Return(true, nil)
 	versions := []*models.SecretVersion{{ID: 1, SecretNodeID: 10, VersionNumber: 2}}
 	ms.On("GetSecretVersions", mock.Anything, uint(10)).Return(versions, nil)
 	c := NewKeyorixCore(ms)
@@ -246,6 +248,7 @@ func TestGetLatestSecretVersionWithPermissionCheck_Success(t *testing.T) {
 	ms := new(MockStorage)
 	secret := &models.SecretNode{ID: 10, OwnerID: 1}
 	ms.On("GetSecret", mock.Anything, uint(10)).Return(secret, nil)
+	ms.On("IsProjectMember", mock.Anything, uint(1), uint(0)).Return(true, nil)
 	// GetLatestSecretVersion calls storage.GetSecretVersions (not GetLatestSecretVersion).
 	latest := []*models.SecretVersion{{ID: 3, SecretNodeID: 10, VersionNumber: 1}}
 	ms.On("GetSecretVersions", mock.Anything, uint(10)).Return(latest, nil)

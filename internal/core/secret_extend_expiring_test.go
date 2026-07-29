@@ -22,7 +22,7 @@ func TestExtendExpiringSecrets(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
-		&models.AuditEvent{}, &models.SecretAccessLog{},
+		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
@@ -30,6 +30,7 @@ func TestExtendExpiringSecrets(t *testing.T) {
 
 	p, err := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
 	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, err)
 

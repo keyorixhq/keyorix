@@ -20,11 +20,12 @@ func TestSecretSearch_NameDescriptionTags(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.Tag{}, &models.SecretTag{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.Tag{}, &models.SecretTag{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
 	p, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	e, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
 
 	mk := func(name, desc string, tags ...string) {
 		s, err := c.CreateSecret(ctx, &CreateSecretRequest{

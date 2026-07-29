@@ -38,10 +38,13 @@ func newMoveFixture(t *testing.T) (c *KeyorixCore, secretID, folderID uint, db *
 		&models.User{},
 		&models.Group{},
 		&models.UserGroup{},
+		&models.UserRole{},
 	))
 
 	// Seed a user so share-lookup JOIN does not hit a missing table.
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@test.com"}).Error)
+	// IsProjectMember gates CheckSecretPermission (RBAC-001); owner must be a member of project 1.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 
 	c = &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()

@@ -54,13 +54,13 @@ func TestSharingIntegrationSimple(t *testing.T) {
 	for i := 10; i <= 20; i++ {
 		require.NoError(t, db.Create(&models.User{ID: uint(i), Username: fmt.Sprintf("user%d", i), Email: fmt.Sprintf("user%d@test.com", i)}).Error)
 	}
-	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
-	// IsProjectMember check (added in #1185): user shares require the recipient to be a
-	// project member. Grant a role in project 1 for user 2 and users 10-14 (concurrent test).
+	// ShareSecret verifies recipient is a project member (RBAC-001); seed all test users in project 1.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
-	for i := 10; i <= 14; i++ {
+	for i := 10; i <= 20; i++ {
 		require.NoError(t, db.Create(&models.UserRole{UserID: uint(i), RoleID: 1, ProjectID: 1}).Error)
 	}
+	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
 
 	// Initialize storage
 	storage := store.NewLocalStorage(db)
@@ -323,7 +323,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		const numConcurrentShares = 5
 		results := make(chan error, numConcurrentShares)
 
-		for i := 0; i < numConcurrentShares; i++ {
+		for i := range numConcurrentShares {
 			go func(recipientID uint) {
 				shareReq := &ShareSecretRequest{
 					SecretID:    createdSecret.ID,
@@ -339,7 +339,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 
 		// Collect results
 		successCount := 0
-		for i := 0; i < numConcurrentShares; i++ {
+		for range numConcurrentShares {
 			select {
 			case err := <-results:
 				if err == nil {

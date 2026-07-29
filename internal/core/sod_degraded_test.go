@@ -34,8 +34,8 @@ func TestDetectSoDViolations_DegradedOnUserPermissionsError(t *testing.T) {
 
 	// Neither user holds an admin permission-bypass role (direct or via group — #1185 added group check).
 	store.On("GetUserRoles", ctx, uint(10)).Return([]*models.Role{}, nil)
-	store.On("GetUserRoles", ctx, uint(11)).Return([]*models.Role{}, nil)
 	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil)
+	store.On("GetUserRoles", ctx, uint(11)).Return([]*models.Role{}, nil)
 	store.On("GetUserGroups", ctx, uint(11)).Return([]*models.Group{}, nil)
 
 	// alice: a real, detectable violation.
@@ -88,7 +88,7 @@ func TestDetectSoDViolations_DegradedOnMachineRolesError(t *testing.T) {
 		{ID: 10, Username: "alice", IsActive: true},
 	}, int64(1), nil)
 	store.On("GetUserRoles", ctx, uint(10)).Return([]*models.Role{}, nil)
-	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil) // #1185 added group admin check
+	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil)
 	store.On("GetUserPermissions", ctx, uint(10)).Return([]*storage.Permission{
 		{Name: "secrets.write"}, {Name: "users.read"},
 	}, nil)
@@ -157,7 +157,7 @@ func TestDetectSoDViolations_NotDegradedOnCleanScan(t *testing.T) {
 		{ID: 10, Username: "alice", IsActive: true},
 	}, int64(1), nil)
 	store.On("GetUserRoles", ctx, uint(10)).Return([]*models.Role{}, nil)
-	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil) // #1185 added group admin check
+	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil)
 	store.On("GetUserPermissions", ctx, uint(10)).Return([]*storage.Permission{
 		{Name: "secrets.read"},
 	}, nil)

@@ -30,7 +30,7 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, *gorm.DB, uint, uint) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
 		&models.Project{}, &models.Environment{}, &models.SecretAccessLog{}, &models.AuditEvent{},
-		&models.ShareRecord{}, &models.SecretACL{},
+		&models.ShareRecord{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@test.com"}).Error)
 
@@ -41,6 +41,8 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, *gorm.DB, uint, uint) {
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "payments"})
 	require.NoError(t, err)
 	env, err := st.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: proj.ID})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: proj.ID}).Error)
 	require.NoError(t, err)
 	secret, err := st.CreateSecret(ctx, &models.SecretNode{
 		Name: "db-password", ProjectID: proj.ID, EnvironmentID: env.ID, Type: "password",
