@@ -11,4 +11,9 @@ const (
 	// import already requires the embedded update-signing key that only release builds
 	// carry, so a plain `go build` cannot import regardless.
 	FeatureAirgapUpdates = "airgap_updates"
+
+	// FeatureBilling gates the FinOps billing report (GET /api/v1/admin/billing/report
+	// and `keyorix billing report`), which returns per-project secret counts, read/write
+	// activity, and machine-vs-human usage breakdowns for a configurable date range.
+	FeatureBilling = "billing"
 )
