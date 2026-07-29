@@ -403,6 +403,26 @@ type MFAStepupToken struct {
 	CreatedAt time.Time
 }
 
+// MFAStepUpGrant records that a user explicitly re-verified their second factor
+// (via VerifyMFAStepUp) to gain a time-limited window for reading
+// restricted-classified secrets. Unlike MFAStepupToken (which is upserted on
+// every MFA login), grants are created per-verification and queried by
+// the classification gate. One active grant per user at any time is enough;
+// expired rows are left in place for audit purposes.
+type MFAStepUpGrant struct {
+	ID        uint      `gorm:"primarykey" json:"id"`
+	UserID    uint      `gorm:"not null;index" json:"user_id"`
+	ExpiresAt time.Time `gorm:"not null" json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are
+// timezone-consistent regardless of the caller's local timezone.
+func (g *MFAStepUpGrant) BeforeSave(_ *gorm.DB) error {
+	g.ExpiresAt = g.ExpiresAt.UTC()
+	return nil
+}
+
 // MFAChallenge is a short-lived, single-use pre-auth token issued when an
 // MFA-enabled user passes the password step; the verify step consumes it. The
 // raw token is never stored — only its SHA-256 hash.

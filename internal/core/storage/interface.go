@@ -1152,6 +1152,15 @@ type Storage interface {
 	// gate and MFA step-up token both live on the same server node.
 	HasActiveMFAStepup(ctx context.Context, userID uint) (bool, error)
 
+	// CreateMFAStepUpGrant persists a new MFA step-up grant for userID.
+	CreateMFAStepUpGrant(ctx context.Context, grant *models.MFAStepUpGrant) error
+	// GetActiveMFAStepUpGrant returns the most recent non-expired MFA step-up
+	// grant for userID as of now, or (nil, nil) when none exists.
+	GetActiveMFAStepUpGrant(ctx context.Context, userID uint, now time.Time) (*models.MFAStepUpGrant, error)
+	// DeleteMFAStepUpGrantsFor removes all step-up grants for userID (used on
+	// session revocation or security-incident response).
+	DeleteMFAStepUpGrantsFor(ctx context.Context, userID uint) error
+
 	// WebAuthn / passkeys (ADR-036).
 	CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
 	ListWebAuthnCredentials(ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
