@@ -234,6 +234,7 @@ func TestGetUserGroupsProxy_EmptyList_S23(t *testing.T) {
 // user with a seeded project+environment creates a config successfully.
 func TestDynamic_CreateConfig_HappyPath_S23(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
+	cs.SetDynamicAllowPrivateTargets(true) // test uses localhost DSN; SSRF guard tested in dynamic_secrets_ssrf_test.go
 	h := NewDynamicSecretHandler(cs)
 
 	proj := &models.Project{Name: "s23-create-cfg-proj"}

@@ -55,6 +55,7 @@ func newDynamicTestRig(t *testing.T) *DynamicSecretGRPCService {
 
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	coreService.SetAuthEncryptor(enc)
+	coreService.SetDynamicAllowPrivateTargets(true) // tests use localhost DSNs; real SSRF guard tested in dynamic_secrets_ssrf_test.go
 	fake := &dynamic.FakeEngine{NativeExpiry: true}
 	coreService.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
 	return NewDynamicSecretService(coreService)

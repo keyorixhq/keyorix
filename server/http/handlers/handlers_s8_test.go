@@ -69,7 +69,9 @@ func freshCoreS8(t *testing.T) *core.KeyorixCore {
 		&models.PasswordHistory{},
 	)
 	require.NoError(t, err)
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs.SetDynamicAllowPrivateTargets(true) // tests use localhost DSNs; SSRF guard tested in dynamic_secrets_ssrf_test.go
+	return cs
 }
 
 // bootstrapS8 boots a fresh core and returns a session token for the admin.

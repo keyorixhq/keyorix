@@ -75,7 +75,9 @@ func freshCoreS11(t *testing.T) *core.KeyorixCore {
 		&models.SecretVersion{},
 	)
 	require.NoError(t, err)
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs.SetDynamicAllowPrivateTargets(true) // tests use localhost DSNs; SSRF guard tested in dynamic_secrets_ssrf_test.go
+	return cs
 }
 
 // bootstrapS11 bootstraps a fresh core and returns the admin's session token.

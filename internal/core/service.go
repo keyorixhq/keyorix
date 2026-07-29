@@ -74,6 +74,11 @@ type KeyorixCore struct {
 	// config's own MaxTTLSeconds, which has no ceiling of its own. Zero = the
 	// package default (90 days) applies. Set via SetDynamicMaxLeaseTTL.
 	dynamicMaxLeaseTTL time.Duration
+	// dynamicAllowPrivateTargets mirrors config
+	// dynamic_secrets.allow_private_network_targets. When false (the default), the
+	// SSRF guard in CreateDynamicSecretConfig rejects admin DSNs whose host resolves
+	// to a private or link-local address. Set via SetDynamicAllowPrivateTargets.
+	dynamicAllowPrivateTargets bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
 	webauthnRP     *webauthn.WebAuthn
@@ -546,6 +551,14 @@ func (c *KeyorixCore) SetDynamicEngineFactory(f func(string) (dynamic.Credential
 // to mint a credential from a backend whose TTL only the sweeper would enforce.
 func (c *KeyorixCore) SetDynamicSweepEnabled(enabled bool) {
 	c.dynamicSweepEnabled = enabled
+}
+
+// SetDynamicAllowPrivateTargets controls whether the admin-DSN SSRF guard is
+// bypassed. When false (the default), CreateDynamicSecretConfig rejects DSNs
+// whose host resolves to a private or link-local address. Set to true only when
+// the dynamic-secret backend legitimately lives on a private segment.
+func (c *KeyorixCore) SetDynamicAllowPrivateTargets(allow bool) {
+	c.dynamicAllowPrivateTargets = allow
 }
 
 // SetDynamicMaxLeaseTTL sets the install-wide dynamic-secret lease TTL ceiling
