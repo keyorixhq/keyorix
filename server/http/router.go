@@ -135,6 +135,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	machineAuditHandler := handlers.NewMachineAuditHandler(coreService)
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
 	adminUsageHandler := handlers.NewAdminUsageHandler(coreService)
+	adminBillingHandler := handlers.NewAdminBillingHandler(coreService)
 	auditHandler := handlers.NewAuditHandler(coreService)
 	licenseHandler := handlers.NewLicenseHandler(coreService)
 	rotationPolicyHandler := handlers.NewRotationPolicyHandler(coreService)
@@ -1935,6 +1936,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Usage report — per-project secret counts + read activity over a time window.
 		// Deployment-wide aggregation, gated by system.read.
 		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/admin/usage", adminUsageHandler.GetUsageReport)
+
+		// Billing report — per-project FinOps usage breakdown for a date range.
+		// Requires the "billing" license feature (gated in core.GenerateBillingReport).
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/admin/billing/report", adminBillingHandler.GetBillingReport)
 
 		// On-demand triggers for the notification/alert jobs that otherwise run only on
 		// their background schedulers — dispatch immediately after an incident or config
