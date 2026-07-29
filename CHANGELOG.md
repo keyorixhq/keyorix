@@ -3,6 +3,56 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **FinOps billing report** — `GET /api/v1/admin/billing/report?from=&to=[&project_id=]`
+  and `keyorix billing report --from --to [--project-id] [--format table|json]`.
+  Per-project breakdown of secret counts, reads, writes, rotations, unique human users,
+  and machine reads for a bounded date range. Gated behind the new `FeatureBilling =
+  "billing"` license feature. Zero-activity projects are excluded from the output.
+  ([#1227])
+- **Dashboard stat-card trends** — the `DeploymentStatsSnapshot` GORM model is
+  extended with four previously-missing metrics: `AuditLogins30d`,
+  `AuditSecretReads30d`, `FailedAuthAttempts24h`, and `InactiveUsers`.
+  `DashboardStats` gains prev+trend fields for all six deployment metrics;
+  `saveDeploymentSnapshot` computes trends via `computeTrend`. GORM AutoMigrate
+  handles the schema update with no migration file required. ([#1226])
+- **Secret type update via CLI** — `keyorix secret update --type <new-type>` now
+  actually changes a secret's type; the field is wired through
+  `UpdateSecretRequest.Type` → core → HTTP handler → audit diff
+  (`before`/`after`). Previously the flag was accepted but silently ignored.
+  ([#1225])
+
+### Fixed
+- **SQLite RBAC grant-expiry timezone mismatch** — GORM formats `time.Time` using
+  the process `Location`; mixed UTC/local `ExpiresAt` values broke SQLite string
+  comparisons so grants appeared expired or perpetual depending on the host
+  timezone. Fixed via `BeforeSave` hooks that normalise all `ExpiresAt` fields to
+  UTC before write, and explicit UTC WHERE clauses for expiry queries. ([#1218])
+- **DAST-identified security gaps** — CSP `frame-ancestors 'self'` on all HTML
+  responses (closes clickjacking), `Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Embedder-Policy: require-corp`, and a `Permissions-Policy` header
+  removing access to camera/microphone/geolocation. ([#1217])
+- **GitHub crash-report notifications on vCD fuzzing VMs** — GH token env-var
+  lookup and `notified-*` marker cleanup so the fuzzing service correctly fires
+  crash notifications on fleet VMs. ([#1222])
+
+### Security
+- **PAT scope enforcement, WebAuthn identity binding, template injection, K8s sync
+  RBAC, TOTP anti-replay on proxy, operator Helm `clusterScoped`** — five
+  security hardening items from the DAST/SAST backlog (PAT-SCOPE-002, WAUN-001,
+  TMPL-002, K8SSYNC-007, and TOTP anti-replay on the remote-storage proxy path)
+  closed in one bundle. ([#1224])
+
+[#1217]: https://github.com/keyorixhq/keyorix/pull/1217
+[#1218]: https://github.com/keyorixhq/keyorix/pull/1218
+[#1222]: https://github.com/keyorixhq/keyorix/pull/1222
+[#1224]: https://github.com/keyorixhq/keyorix/pull/1224
+[#1225]: https://github.com/keyorixhq/keyorix/pull/1225
+[#1226]: https://github.com/keyorixhq/keyorix/pull/1226
+[#1227]: https://github.com/keyorixhq/keyorix/pull/1227
+
 ## v0.87.4 — 2026-07-07
 
 CI-only patch release: pins the release workflow's cosign binary so signed release

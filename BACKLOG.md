@@ -10,6 +10,20 @@ _(nothing claimed)_
 
 ## Done
 
+- **FinOps / billing report** — `GET /api/v1/admin/billing/report?from=&to=` and
+  `keyorix billing report --from --to` CLI command. Date-range per-project
+  breakdown: secret counts, reads, writes, rotations, unique human users, machine
+  reads. Gated behind `FeatureBilling = "billing"` license feature.
+  `internal/core/billing.go`, `internal/storage/store/local_billing.go`,
+  `server/http/handlers/admin_billing.go`, `internal/cli/billing/`.
+  PR [#1227].
+- **Dashboard stat-card trends** — `DeploymentStatsSnapshot` extended with 4 new
+  metrics (audit logins, secret reads, failed auth attempts, inactive users);
+  `DashboardStats` gains 8 prev+trend fields for all 6 deployment metrics.
+  `saveDeploymentSnapshot` wires full trend computation. PR [#1226].
+- **Secret `--type` update via CLI** — `UpdateSecretRequest.Type` wired through
+  core → HTTP handler → CLI `keyorix secret update --type`; audit diff records
+  before/after. PR [#1225].
 - **Password expiry hard gate** — `enforcePasswordExpiryGate` wired into `Login`
   and `VerifyMFALogin`: when `max_age_days` is exceeded for an active user, the
   account state is transitioned to `password_reset_required` before the session is
@@ -68,6 +82,7 @@ _(nothing claimed)_
 
 ### Other
 - **ADR-020** — project detail page (frontend, `keyorix-web`), still Proposed.
-- **FinOps / billing** — no `internal/billing/` or equivalent; no
-  chargeback / usage-by-team reporting. Required for enterprise multi-team
-  deployments.
+
+[#1225]: https://github.com/keyorixhq/keyorix/pull/1225
+[#1226]: https://github.com/keyorixhq/keyorix/pull/1226
+[#1227]: https://github.com/keyorixhq/keyorix/pull/1227

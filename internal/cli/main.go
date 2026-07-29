@@ -8,6 +8,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/anomalies"
 	"github.com/keyorixhq/keyorix/internal/cli/audit"
 	"github.com/keyorixhq/keyorix/internal/cli/auth"
+	billingcli "github.com/keyorixhq/keyorix/internal/cli/billing"
 	"github.com/keyorixhq/keyorix/internal/cli/breakglass"
 	bundlecli "github.com/keyorixhq/keyorix/internal/cli/bundle"
 	"github.com/keyorixhq/keyorix/internal/cli/compliance"
@@ -87,6 +88,7 @@ func init() {
 	rootCmd.AddCommand(bundlecli.BundleCmd)
 	rootCmd.AddCommand(licensecli.LicenseCmd)
 	rootCmd.AddCommand(usage.UsageCmd)
+	rootCmd.AddCommand(billingcli.NewBillingCmd())
 	rootCmd.AddCommand(notification.NotificationCmd)
 }
 
