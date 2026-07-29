@@ -5,6 +5,7 @@ export interface AuditLogEntry {
     id: number;
     event_type: string;
     actor: string;
+    actor_type: string; // 'user' | 'machine_identity' | 'system' (ADR-023)
     description: string;
     timestamp: string;
 }

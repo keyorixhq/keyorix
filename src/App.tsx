@@ -69,6 +69,9 @@ const ServiceAccountsPage = React.lazy(() =>
 const APITokensPage = React.lazy(() =>
     import('./pages/admin/APITokensPage').then((m) => ({ default: m.APITokensPage }))
 );
+const MachineIdentitiesPage = React.lazy(() =>
+    import('./pages/admin/MachineIdentitiesPage').then((m) => ({ default: m.MachineIdentitiesPage }))
+);
 
 const AppearancePage = React.lazy(() =>
     import('./pages/settings/AppearancePage').then((m) => ({ default: m.AppearancePage }))
@@ -182,6 +185,14 @@ function App() {
                                                     element={
                                                         <AdminRoute>
                                                             <APITokensPage />
+                                                        </AdminRoute>
+                                                    }
+                                                />
+                                                <Route
+                                                    path="/admin/machine-identities"
+                                                    element={
+                                                        <AdminRoute>
+                                                            <MachineIdentitiesPage />
                                                         </AdminRoute>
                                                     }
                                                 />

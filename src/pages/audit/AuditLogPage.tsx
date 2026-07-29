@@ -171,11 +171,12 @@ function fmtTime(ts: string): string {
 // ─── CSV export ───────────────────────────────────────────────────────────────
 
 function exportCSV(entries: AuditLogEntry[], filename: string) {
-    const header = ['Timestamp', 'Event', 'Actor', 'Description'];
+    const header = ['Timestamp', 'Event', 'Actor', 'Actor Type', 'Description'];
     const rows = entries.map((e) => [
         new Date(e.timestamp).toISOString(),
         e.event_type,
         e.actor,
+        e.actor_type ?? 'user',
         `"${(e.description ?? '').replaceAll('"', '""')}"`,
     ]);
     const csv = [header, ...rows].map((r) => r.join(',')).join('\n');
@@ -199,16 +200,25 @@ interface FilterBarProps {
     onDateFromChange: (v: string) => void;
     dateTo: string;
     onDateToChange: (v: string) => void;
+    actorTypeFilter: 'all' | 'user' | 'machine_identity';
+    onActorTypeChange: (v: 'all' | 'user' | 'machine_identity') => void;
     availableTypes: string[];
     resultCount: number;
     onExport: () => void;
 }
+
+const ACTOR_TYPE_OPTIONS = [
+    { k: 'all', l: 'All' },
+    { k: 'user', l: 'Human' },
+    { k: 'machine_identity', l: 'Machine' },
+] as const;
 
 const FilterBar: React.FC<FilterBarProps> = ({
     actorFilter, onActorChange,
     eventTypeFilter, onEventTypeChange,
     dateFrom, onDateFromChange,
     dateTo, onDateToChange,
+    actorTypeFilter, onActorTypeChange,
     availableTypes, resultCount,
     onExport,
 }) => (
@@ -234,6 +244,24 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 <option key={t} value={t}>{eventLabel(t)}</option>
             ))}
         </select>
+
+        {/* Actor type (ADR-023: human vs. machine identity) */}
+        <div className="flex gap-1">
+            {ACTOR_TYPE_OPTIONS.map(({ k, l }) => (
+                <button
+                    type="button"
+                    key={k}
+                    onClick={() => onActorTypeChange(k)}
+                    className={`px-2.5 py-1 rounded text-xs font-medium border transition-all duration-100 ${
+                        actorTypeFilter === k
+                            ? 'bg-surface border-base text-base-primary shadow-xs'
+                            : 'border-transparent text-base-muted hover:text-base-secondary'
+                    }`}
+                >
+                    {l}
+                </button>
+            ))}
+        </div>
 
         {/* Date range */}
         <div className="flex items-center gap-1.5">
@@ -329,6 +357,11 @@ const AuditTable: React.FC<AuditTableProps> = ({ entries, isDark, isLoading, emp
                             </td>
                             <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-base-primary">
                                 {entry.actor}
+                                {entry.actor_type === 'machine_identity' && (
+                                    <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
+                                        machine
+                                    </span>
+                                )}
                             </td>
                             <td className="px-5 py-3 text-sm text-base-muted">
                                 {entry.description}
@@ -694,6 +727,7 @@ export const AuditLogPage: React.FC = () => {
     const [eventTypeFilter, setEventTypeFilter] = useState('all');
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
+    const [actorTypeFilter, setActorTypeFilter] = useState<'all' | 'user' | 'machine_identity'>('all');
     const [page, setPage] = useState(1);
 
     const { data, isLoading, error } = useAuditLog({ page, pageSize: 100 });
@@ -718,9 +752,10 @@ export const AuditLogPage: React.FC = () => {
             })
             .filter((e) => !actorFilter || e.actor.toLowerCase().includes(actorFilter.toLowerCase()))
             .filter((e) => eventTypeFilter === 'all' || e.event_type === eventTypeFilter)
+            .filter((e) => actorTypeFilter === 'all' || e.actor_type === actorTypeFilter)
             .filter((e) => !dateFrom || new Date(e.timestamp) >= new Date(dateFrom))
             .filter((e) => !dateTo || new Date(e.timestamp) <= new Date(dateTo + 'T23:59:59'));
-    }, [urlFilter, actorFilter, eventTypeFilter, dateFrom, dateTo]);
+    }, [urlFilter, actorFilter, eventTypeFilter, actorTypeFilter, dateFrom, dateTo]);
 
     const auditEntries = applyFilters(allEntries);
     const rbacEntries = applyFilters(allEntries.filter((e) => e.event_type.startsWith('rbac.')));
@@ -744,6 +779,7 @@ export const AuditLogPage: React.FC = () => {
         setPage(1);
         setActorFilter('');
         setEventTypeFilter('all');
+        setActorTypeFilter('all');
         setDateFrom('');
         setDateTo('');
     };
@@ -828,6 +864,8 @@ export const AuditLogPage: React.FC = () => {
                                 onDateFromChange={setDateFrom}
                                 dateTo={dateTo}
                                 onDateToChange={setDateTo}
+                                actorTypeFilter={actorTypeFilter}
+                                onActorTypeChange={setActorTypeFilter}
                                 availableTypes={activeTypes}
                                 resultCount={auditEntries.length}
                                 onExport={handleExport}
@@ -884,6 +922,8 @@ export const AuditLogPage: React.FC = () => {
                                 onDateFromChange={setDateFrom}
                                 dateTo={dateTo}
                                 onDateToChange={setDateTo}
+                                actorTypeFilter={actorTypeFilter}
+                                onActorTypeChange={setActorTypeFilter}
                                 availableTypes={activeTypes}
                                 resultCount={rbacEntries.length}
                                 onExport={handleExport}

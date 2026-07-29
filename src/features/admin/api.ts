@@ -213,6 +213,49 @@ export interface MachineTokenHygieneToken {
     stale: boolean;
 }
 
+// MachineAuditRow / MachineAuditReport mirror the backend's deployment-wide,
+// read-only machine-identity inventory (ADR-023). There's no cross-project
+// management endpoint (create/suspend/revoke stay project-scoped, on the
+// Members tab) — this is purely a hygiene/inventory view, admin-only
+// (audit.read); a 403 yields an empty report (retry:false).
+export interface MachineAuditRow {
+    machine_id: number;
+    name: string;
+    description: string;
+    credential_count: number;
+    last_used_at?: string | null;
+    is_stale: boolean;
+    is_revoked: boolean;
+    created_at?: string;
+}
+
+export interface MachineAuditReport {
+    generated_at: string;
+    total_count: number;
+    stale_count: number;
+    revoked_count: number;
+    machines: MachineAuditRow[];
+}
+
+const emptyMachineAuditReport: MachineAuditReport = {
+    generated_at: '',
+    total_count: 0,
+    stale_count: 0,
+    revoked_count: 0,
+    machines: [],
+};
+
+export const useMachineIdentitiesAuditReport = () =>
+    useQuery({
+        queryKey: ['machine-identities-audit'],
+        queryFn: async (): Promise<MachineAuditReport> => {
+            const res = await apiClient.get('/api/v1/machine-identities/audit');
+            return res?.data?.data ?? res?.data ?? emptyMachineAuditReport;
+        },
+        retry: false,
+        staleTime: 60 * 1000,
+    });
+
 // useStaleMachineTokens lists deployment-wide stale / expired-but-active machine
 // credentials (#359). admin-only; a 403 yields no rows (retry:false).
 export const useStaleMachineTokens = (days = 90) =>
