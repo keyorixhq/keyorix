@@ -435,6 +435,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 
 	var reqBody struct {
 		Value    string `json:"value,omitempty"`
+		Type     string `json:"type,omitempty"`
 		MaxReads *int   `json:"max_reads,omitempty" validate:"omitempty,min=1"`
 		// Expiration sets a new expiry (RFC3339); ClearExpiration removes an existing
 		// one. They are mutually exclusive.
@@ -456,6 +457,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 
 	req := &core.UpdateSecretRequest{
 		ID:              uint(id),
+		Type:            reqBody.Type,
 		MaxReads:        reqBody.MaxReads,
 		ClearExpiration: reqBody.ClearExpiration,
 		UpdatedBy:       userCtx.Username,

@@ -37,6 +37,9 @@ func BuildSecretUpdateDiff(old *models.SecretNode, req *UpdateSecretRequest, val
 		// Never log the value itself — only that it changed.
 		diff["value"] = fieldChange{Changed: true}
 	}
+	if req.Type != "" && req.Type != old.Type {
+		diff["type"] = fieldChange{Before: old.Type, After: req.Type}
+	}
 	if req.MaxReads != nil && !eqIntPtr(old.MaxReads, req.MaxReads) {
 		diff["max_reads"] = fieldChange{Before: intPtrVal(old.MaxReads), After: intPtrVal(req.MaxReads)}
 	}
