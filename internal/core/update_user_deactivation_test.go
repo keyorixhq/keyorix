@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +16,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// updateUserDeactivationDBSeq makes each in-memory DB unique within the
+// process. Both tests below previously used the exact same literal DSN, so
+// under `go test -count=N` each repeated call attached to the same SQLite
+// shared-cache in-memory database left open by a prior call and collided on
+// the seeded fixture user IDs.
+var updateUserDeactivationDBSeq atomic.Int64
+
 // TestUpdateUser_Deactivation_RevokesSessionsAndPATs verifies that setting
 // IsActive=false via UpdateUser immediately terminates the user's active
 // sessions and PATs and evicts them from the auth cache (#r124-M).
@@ -23,7 +32,8 @@ import (
 func TestUpdateUser_Deactivation_RevokesSessionsAndPATs(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:kx_update_user_deactivation_%d?mode=memory&cache=shared&_journal_mode=WAL&_busy_timeout=5000", updateUserDeactivationDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
@@ -104,7 +114,8 @@ func TestUpdateUser_Deactivation_RevokesSessionsAndPATs(t *testing.T) {
 func TestUpdateUser_NoRevocation_WhenAlreadyInactive(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:kx_update_user_deactivation_%d?mode=memory&cache=shared&_journal_mode=WAL&_busy_timeout=5000", updateUserDeactivationDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
