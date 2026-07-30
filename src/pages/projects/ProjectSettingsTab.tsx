@@ -86,6 +86,72 @@ function envStatusBadge(deleted: boolean | undefined, isDefault: boolean): React
     return null;
 }
 
+interface RenderSecuritySectionProps {
+    mfaMutation: { isPending: boolean; isError: boolean; isSuccess: boolean; error: unknown };
+    requireMfa: boolean;
+    setRequireMfa: (v: boolean) => void;
+    handleSaveMfa: () => void;
+}
+
+function renderSecuritySection({
+    mfaMutation,
+    requireMfa,
+    setRequireMfa,
+    handleSaveMfa,
+}: RenderSecuritySectionProps): React.ReactNode {
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+                Security
+            </h2>
+            <div
+                className="rounded-lg border p-5 space-y-4"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
+                {mfaMutation.isError && (
+                    <Alert
+                        type="error"
+                        title="Failed to update"
+                        message={apiErrMsg(mfaMutation.error, 'Could not save this setting.')}
+                    />
+                )}
+                {mfaMutation.isSuccess && (
+                    <Alert type="success" title="Saved" message="Project security settings updated." />
+                )}
+                <div className="flex items-start gap-3">
+                    <input
+                        id="project-require-mfa"
+                        type="checkbox"
+                        checked={requireMfa}
+                        onChange={(e) => setRequireMfa(e.target.checked)}
+                        aria-describedby="project-require-mfa-description"
+                        className="mt-0.5 h-4 w-4 rounded-sm cursor-pointer"
+                        style={{ accentColor: 'var(--accent)' }}
+                    />
+                    <label htmlFor="project-require-mfa" className="cursor-pointer">
+                        <span className="block text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                            Require MFA for this project
+                        </span>
+                        <span
+                            id="project-require-mfa-description"
+                            className="block text-xs mt-0.5"
+                            style={{ color: 'var(--text-muted)' }}
+                        >
+                            Blocks interactive access to this project's secrets for any session without a
+                            second factor. Changing this requires the Assign Roles permission on this project.
+                        </span>
+                    </label>
+                </div>
+                <div className="flex justify-end">
+                    <Button onClick={handleSaveMfa} disabled={mfaMutation.isPending}>
+                        {mfaMutation.isPending ? 'Saving…' : 'Save'}
+                    </Button>
+                </div>
+            </div>
+        </section>
+    );
+}
+
 interface RenderEnvListProps {
     envsLoading: boolean;
     environments: Env[];
@@ -629,55 +695,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 </div>
             </section>
 
-            {/* ── Security (ADR-037) ── */}
-            <section>
-                <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                    Security
-                </h2>
-                <div
-                    className="rounded-lg border p-5 space-y-4"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    {mfaMutation.isError && (
-                        <Alert
-                            type="error"
-                            title="Failed to update"
-                            message={
-                                (mfaMutation.error as any)?.response?.data?.message ??
-                                (mfaMutation.error as any)?.response?.data?.error ??
-                                'Could not save this setting.'
-                            }
-                        />
-                    )}
-                    {mfaMutation.isSuccess && (
-                        <Alert type="success" title="Saved" message="Project security settings updated." />
-                    )}
-                    <label htmlFor="project-require-mfa" className="flex items-start gap-3 cursor-pointer">
-                        <input
-                            id="project-require-mfa"
-                            type="checkbox"
-                            checked={requireMfa}
-                            onChange={(e) => setRequireMfa(e.target.checked)}
-                            className="mt-0.5 h-4 w-4 rounded-sm"
-                            style={{ accentColor: 'var(--accent)' }}
-                        />
-                        <span>
-                            <span className="block text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                Require MFA for this project
-                            </span>
-                            <span className="block text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                                Blocks interactive access to this project's secrets for any session without a
-                                second factor. Changing this requires the Assign Roles permission on this project.
-                            </span>
-                        </span>
-                    </label>
-                    <div className="flex justify-end">
-                        <Button onClick={handleSaveMfa} disabled={mfaMutation.isPending}>
-                            {mfaMutation.isPending ? 'Saving…' : 'Save'}
-                        </Button>
-                    </div>
-                </div>
-            </section>
+            {renderSecuritySection({ mfaMutation, requireMfa, setRequireMfa, handleSaveMfa })}
 
             {/* ── Environments ── */}
             <section>

@@ -191,6 +191,8 @@ function exportCSV(entries: AuditLogEntry[], filename: string) {
 
 // ─── Filter bar ───────────────────────────────────────────────────────────────
 
+type ActorTypeFilter = 'all' | 'user' | 'machine_identity';
+
 interface FilterBarProps {
     actorFilter: string;
     onActorChange: (v: string) => void;
@@ -200,8 +202,8 @@ interface FilterBarProps {
     onDateFromChange: (v: string) => void;
     dateTo: string;
     onDateToChange: (v: string) => void;
-    actorTypeFilter: 'all' | 'user' | 'machine_identity';
-    onActorTypeChange: (v: 'all' | 'user' | 'machine_identity') => void;
+    actorTypeFilter: ActorTypeFilter;
+    onActorTypeChange: (v: ActorTypeFilter) => void;
     availableTypes: string[];
     resultCount: number;
     onExport: () => void;
@@ -727,7 +729,7 @@ export const AuditLogPage: React.FC = () => {
     const [eventTypeFilter, setEventTypeFilter] = useState('all');
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
-    const [actorTypeFilter, setActorTypeFilter] = useState<'all' | 'user' | 'machine_identity'>('all');
+    const [actorTypeFilter, setActorTypeFilter] = useState<ActorTypeFilter>('all');
     const [page, setPage] = useState(1);
 
     const { data, isLoading, error } = useAuditLog({ page, pageSize: 100 });

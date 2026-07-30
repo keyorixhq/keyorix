@@ -64,6 +64,80 @@ export const MachineIdentitiesPage: React.FC = () => {
         return { bg: 'var(--success-subtle)', text: 'var(--success)' };
     };
 
+    let listContent: React.ReactNode = null;
+    if (isLoading) {
+        listContent = <Loading className="py-20" />;
+    } else if (!isError) {
+        listContent =
+            machines.length === 0 ? (
+                <div className="text-center py-20" style={{ color: 'var(--text-muted)' }}>
+                    <CpuChipIcon className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                    <p className="text-sm">No machine identities yet.</p>
+                </div>
+            ) : (
+                <div
+                    className="rounded-lg border overflow-hidden"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+                >
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
+                            <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                                <tr>
+                                    {['Name', 'Credentials', 'Last used', 'Status', 'Created'].map((h) => (
+                                        <th
+                                            key={h}
+                                            className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
+                                            style={{ color: 'var(--text-muted)' }}
+                                        >
+                                            {h}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                                {machines.map((m) => {
+                                    const tone = statusTone(m);
+                                    return (
+                                        <tr key={m.machine_id}>
+                                            <td className="px-4 py-3 whitespace-nowrap">
+                                                <div>
+                                                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                                        {m.name}
+                                                    </p>
+                                                    {m.description && (
+                                                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                                            {m.description}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                                {m.credential_count}
+                                            </td>
+                                            <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                                {lastUsedLabel(m.last_used_at)}
+                                            </td>
+                                            <td className="px-4 py-3 whitespace-nowrap">
+                                                <span
+                                                    className="px-2 py-0.5 rounded-full text-xs font-medium"
+                                                    style={{ backgroundColor: tone.bg, color: tone.text }}
+                                                >
+                                                    {statusLabel(m)}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
+                                                {m.created_at ? formatDateShort(m.created_at) : '—'}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+    }
+
     return (
         <div className="max-w-6xl mx-auto px-4 py-8">
             <div className="flex items-center justify-between mb-6">
@@ -112,78 +186,7 @@ export const MachineIdentitiesPage: React.FC = () => {
                 </div>
             )}
 
-            {isLoading ? (
-                <Loading className="py-20" />
-            ) : (
-                !isError &&
-                (machines.length === 0 ? (
-                    <div className="text-center py-20" style={{ color: 'var(--text-muted)' }}>
-                        <CpuChipIcon className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                        <p className="text-sm">No machine identities yet.</p>
-                    </div>
-                ) : (
-                    <div
-                        className="rounded-lg border overflow-hidden"
-                        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                    >
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
-                                <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                                    <tr>
-                                        {['Name', 'Credentials', 'Last used', 'Status', 'Created'].map((h) => (
-                                            <th
-                                                key={h}
-                                                className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider"
-                                                style={{ color: 'var(--text-muted)' }}
-                                            >
-                                                {h}
-                                            </th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                                    {machines.map((m) => {
-                                        const tone = statusTone(m);
-                                        return (
-                                            <tr key={m.machine_id}>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <div>
-                                                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                                            {m.name}
-                                                        </p>
-                                                        {m.description && (
-                                                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                                                {m.description}
-                                                            </p>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                                    {m.credential_count}
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                                    {lastUsedLabel(m.last_used_at)}
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <span
-                                                        className="px-2 py-0.5 rounded-full text-xs font-medium"
-                                                        style={{ backgroundColor: tone.bg, color: tone.text }}
-                                                    >
-                                                        {statusLabel(m)}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
-                                                    {m.created_at ? formatDateShort(m.created_at) : '—'}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                ))
-            )}
+            {listContent}
         </div>
     );
 };
