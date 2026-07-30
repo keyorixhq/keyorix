@@ -208,8 +208,8 @@ const ExpiryCardContent: React.FC<ExpiryCardContentProps> = ({ expiry, isDark })
                 }}
             >
                 <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
-                {expiry.expired} secret{expiry.expired !== 1 ? 's have' : ' has'} already
-                expired and may be breaking dependent services.
+                {expiry.expired} secret{expiry.expired !== 1 ? 's have' : ' has'} already expired and may be breaking
+                dependent services.
             </div>
         )}
     </>
@@ -231,8 +231,8 @@ const RotationCardContent: React.FC<RotationCardContentProps> = ({ rotation, isD
                     No rotation policies yet
                 </p>
                 <p className="text-xs max-w-xs" style={{ color: 'var(--text-muted)' }}>
-                    Create a rotation policy to track how current your secrets are. Rotation is
-                    excluded from the health score until at least one policy applies.
+                    Create a rotation policy to track how current your secrets are. Rotation is excluded from the health
+                    score until at least one policy applies.
                 </p>
             </div>
         );
@@ -240,23 +240,11 @@ const RotationCardContent: React.FC<RotationCardContentProps> = ({ rotation, isD
 
     return (
         <>
-            <StatRow
-                label="Overdue"
-                value={rotation.overdue}
-                dot={rotation.overdue > 0 ? 'red' : 'green'}
-            />
-            <StatRow
-                label="Due soon"
-                value={rotation.dueSoon}
-                dot={rotation.dueSoon > 0 ? 'amber' : 'green'}
-            />
+            <StatRow label="Overdue" value={rotation.overdue} dot={rotation.overdue > 0 ? 'red' : 'green'} />
+            <StatRow label="Due soon" value={rotation.dueSoon} dot={rotation.dueSoon > 0 ? 'amber' : 'green'} />
             <StatRow label="Up to date" value={rotation.ok} dot="green" />
             <StatRow label="Secrets under policy" value={rotation.covered} dot="neutral" />
-            <StatRow
-                label="Self-rotating"
-                value={rotation.items.filter((e) => e.auto_rotate).length}
-                dot="neutral"
-            />
+            <StatRow label="Self-rotating" value={rotation.items.filter((e) => e.auto_rotate).length} dot="neutral" />
 
             {rotation.overdue > 0 && (
                 <div className="mt-4 space-y-2">
@@ -269,12 +257,8 @@ const RotationCardContent: React.FC<RotationCardContentProps> = ({ rotation, isD
                                 key={`${e.policy_id}-${e.secret_id}`}
                                 className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border"
                                 style={{
-                                    backgroundColor: isDark
-                                        ? 'rgba(239,68,68,0.06)'
-                                        : '#fff5f5',
-                                    borderColor: isDark
-                                        ? 'rgba(239,68,68,0.20)'
-                                        : '#fca5a5',
+                                    backgroundColor: isDark ? 'rgba(239,68,68,0.06)' : '#fff5f5',
+                                    borderColor: isDark ? 'rgba(239,68,68,0.20)' : '#fca5a5',
                                 }}
                             >
                                 <span
@@ -291,16 +275,12 @@ const RotationCardContent: React.FC<RotationCardContentProps> = ({ rotation, isD
                                             }
                                             className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold"
                                             style={{
-                                                backgroundColor: isDark
-                                                    ? 'rgba(59,130,246,0.18)'
-                                                    : '#dbeafe',
+                                                backgroundColor: isDark ? 'rgba(59,130,246,0.18)' : '#dbeafe',
                                                 color: isDark ? '#93c5fd' : '#1e40af',
                                             }}
                                         >
                                             Auto
-                                            {e.rotation_backend
-                                                ? `: ${e.rotation_backend}`
-                                                : ''}
+                                            {e.rotation_backend ? `: ${e.rotation_backend}` : ''}
                                         </span>
                                     )}
                                 </span>
@@ -313,10 +293,7 @@ const RotationCardContent: React.FC<RotationCardContentProps> = ({ rotation, isD
                             </div>
                         ))}
                     {rotation.overdue > 4 && (
-                        <p
-                            className="text-xs text-center pt-1"
-                            style={{ color: 'var(--text-muted)' }}
-                        >
+                        <p className="text-xs text-center pt-1" style={{ color: 'var(--text-muted)' }}>
                             +{rotation.overdue - 4} more overdue
                         </p>
                     )}
@@ -342,11 +319,7 @@ const AccessCardContent: React.FC<AccessCardContentProps> = ({ access, isDark, o
     return (
         <>
             <StatRow label="Secret reads (last 30d)" value={access.reads30d} dot="neutral" />
-            <StatRow
-                label="Failed auth attempts (24h)"
-                value={access.failedAuth24h}
-                dot={failedAuthDot}
-            />
+            <StatRow label="Failed auth attempts (24h)" value={access.failedAuth24h} dot={failedAuthDot} />
             <StatRow
                 label="Inactive users (no login 30d)"
                 value={access.inactiveUsers}
@@ -365,8 +338,7 @@ const AccessCardContent: React.FC<AccessCardContentProps> = ({ access, isDark, o
                     onClick={onFailedAuthClick}
                 >
                     <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
-                    High number of failed auth attempts. Review audit log for potential brute-force
-                    activity.
+                    High number of failed auth attempts. Review audit log for potential brute-force activity.
                 </button>
             )}
         </>
@@ -421,31 +393,19 @@ const AnomalyCardContent: React.FC<AnomalyCardContentProps> = ({ anomalies, isDa
                             borderColor: isDark ? 'rgba(239,68,68,0.20)' : '#fca5a5',
                         }}
                     >
-                        <div
-                            className="w-2 h-2 rounded-full shrink-0 mt-1.5"
-                            style={{ backgroundColor: '#ef4444' }}
-                        />
+                        <div className="w-2 h-2 rounded-full shrink-0 mt-1.5" style={{ backgroundColor: '#ef4444' }} />
                         <div className="flex-1 min-w-0">
-                            <p
-                                className="text-xs font-semibold"
-                                style={{ color: isDark ? '#f87171' : '#991b1b' }}
-                            >
+                            <p className="text-xs font-semibold" style={{ color: isDark ? '#f87171' : '#991b1b' }}>
                                 {humanizeAlertType(a.AlertType)}
                             </p>
-                            <p
-                                className="text-xs truncate"
-                                style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}
-                            >
+                            <p className="text-xs truncate" style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}>
                                 {a.SecretName} · {a.AccessedBy}
                             </p>
                         </div>
                     </div>
                 ))}
                 {anomalies.count > 4 && (
-                    <p
-                        className="text-xs text-center pt-1"
-                        style={{ color: 'var(--text-muted)' }}
-                    >
+                    <p className="text-xs text-center pt-1" style={{ color: 'var(--text-muted)' }}>
                         +{anomalies.count - 4} more —{' '}
                         <Link
                             to="/audit?tab=anomalies"

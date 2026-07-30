@@ -45,8 +45,9 @@ export const RevokeTokenCell: React.FC<RevokeTokenCellProps> = ({
             style={{ color: revokeColor, backgroundColor: 'transparent' }}
             onMouseEnter={(e) => {
                 if (!inactive)
-                    (e.currentTarget as HTMLElement).style.backgroundColor =
-                        isDark ? 'rgba(239,68,68,0.12)' : '#fee2e2';
+                    (e.currentTarget as HTMLElement).style.backgroundColor = isDark
+                        ? 'rgba(239,68,68,0.12)'
+                        : '#fee2e2';
             }}
             onMouseLeave={(e) => {
                 (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';

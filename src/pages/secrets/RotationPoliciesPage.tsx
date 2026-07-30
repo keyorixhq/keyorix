@@ -363,59 +363,60 @@ export function RotationPoliciesPage() {
 
             {/* ── Policies table ───────────────────────────────────────────── */}
             {(() => {
-                const policiesTableContent = policies.length === 0 ? (
-                    <div className="p-12 text-center">
-                        <ArrowPathIcon className="h-12 w-12 mx-auto mb-4" style={{ color: 'var(--text-muted)' }} />
-                        <h3 className="text-lg font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
-                            No rotation policies yet
-                        </h3>
-                        <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>
-                            Create your first policy to start tracking secret rotation hygiene.
-                        </p>
-                        <Button onClick={openCreate} className="inline-flex items-center">
-                            <PlusIcon className="h-4 w-4 mr-2" />
-                            New Policy
-                        </Button>
-                    </div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
-                            <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                                <tr>
-                                    {[
-                                        'Name',
-                                        'Scope',
-                                        'Interval',
-                                        'Alert Before',
-                                        'Status',
-                                        'Created By',
-                                        'Actions',
-                                    ].map((h, i) => (
-                                        <th
-                                            key={h}
-                                            className={`px-6 py-3 text-xs font-medium uppercase tracking-wider ${i === 6 ? 'text-right' : 'text-left'}`}
-                                            style={{ color: 'var(--text-muted)' }}
-                                        >
-                                            {h}
-                                        </th>
+                const policiesTableContent =
+                    policies.length === 0 ? (
+                        <div className="p-12 text-center">
+                            <ArrowPathIcon className="h-12 w-12 mx-auto mb-4" style={{ color: 'var(--text-muted)' }} />
+                            <h3 className="text-lg font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                                No rotation policies yet
+                            </h3>
+                            <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>
+                                Create your first policy to start tracking secret rotation hygiene.
+                            </p>
+                            <Button onClick={openCreate} className="inline-flex items-center">
+                                <PlusIcon className="h-4 w-4 mr-2" />
+                                New Policy
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
+                                <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                                    <tr>
+                                        {[
+                                            'Name',
+                                            'Scope',
+                                            'Interval',
+                                            'Alert Before',
+                                            'Status',
+                                            'Created By',
+                                            'Actions',
+                                        ].map((h, i) => (
+                                            <th
+                                                key={h}
+                                                className={`px-6 py-3 text-xs font-medium uppercase tracking-wider ${i === 6 ? 'text-right' : 'text-left'}`}
+                                                style={{ color: 'var(--text-muted)' }}
+                                            >
+                                                {h}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                                    {policies.map((policy) => (
+                                        <PolicyRow
+                                            key={policy.id}
+                                            policy={policy}
+                                            envMap={envMap}
+                                            projMap={projMap}
+                                            onEdit={openEdit}
+                                            onDelete={setDeleting}
+                                        />
                                     ))}
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                                {policies.map((policy) => (
-                                    <PolicyRow
-                                        key={policy.id}
-                                        policy={policy}
-                                        envMap={envMap}
-                                        projMap={projMap}
-                                        onEdit={openEdit}
-                                        onDelete={setDeleting}
-                                    />
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                );
+                                </tbody>
+                            </table>
+                        </div>
+                    );
                 return (
                     <div
                         className="rounded-xl border"
@@ -425,7 +426,9 @@ export function RotationPoliciesPage() {
                             <div className="p-8">
                                 <Loading />
                             </div>
-                        ) : policiesTableContent}
+                        ) : (
+                            policiesTableContent
+                        )}
                     </div>
                 );
             })()}
@@ -441,7 +444,11 @@ export function RotationPoliciesPage() {
                     {fError && <Alert type="error" title="Validation error" message={fError} />}
 
                     <div>
-                        <label htmlFor="policy-name-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="policy-name-input"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Name <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <input
@@ -461,7 +468,11 @@ export function RotationPoliciesPage() {
                     </div>
 
                     <div>
-                        <label htmlFor="policy-description-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="policy-description-input"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Description
                         </label>
                         <textarea
@@ -480,7 +491,11 @@ export function RotationPoliciesPage() {
                     </div>
 
                     <div>
-                        <label htmlFor="policy-scope-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="policy-scope-select"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Scope <span style={{ color: '#ef4444' }}>*</span>
                         </label>
                         <Select
@@ -540,7 +555,11 @@ export function RotationPoliciesPage() {
                     )}
 
                     <div>
-                        <label htmlFor="policy-interval-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="policy-interval-select"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Rotation interval
                         </label>
                         <Select
@@ -552,7 +571,11 @@ export function RotationPoliciesPage() {
                     </div>
 
                     <div>
-                        <label htmlFor="policy-alert-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="policy-alert-select"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Alert before breach
                         </label>
                         <Select
@@ -691,16 +714,9 @@ interface PolicyRowProps {
 }
 
 const PolicyRow: React.FC<PolicyRowProps> = ({ policy, envMap, projMap, onEdit, onDelete }) => {
-    const envName = policy.environment_id
-        ? (envMap[policy.environment_id] ?? `#${policy.environment_id}`)
-        : '—';
-    const projName = policy.project_id
-        ? (projMap[policy.project_id] ?? `#${policy.project_id}`)
-        : '—';
-    const scopeLabel =
-        policy.scope === 'environment'
-            ? `Environment: ${envName}`
-            : `Project: ${projName}`;
+    const envName = policy.environment_id ? (envMap[policy.environment_id] ?? `#${policy.environment_id}`) : '—';
+    const projName = policy.project_id ? (projMap[policy.project_id] ?? `#${policy.project_id}`) : '—';
+    const scopeLabel = policy.scope === 'environment' ? `Environment: ${envName}` : `Project: ${projName}`;
 
     return (
         <tr className="hover:bg-subtle transition-colors">

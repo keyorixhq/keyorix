@@ -118,8 +118,7 @@ const PERMISSION_COLORS: Record<string, string> = {
     write: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
 };
 const DEFAULT_PERMISSION_COLOR = 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
-const getPermissionColor = (permission: string): string =>
-    PERMISSION_COLORS[permission] ?? DEFAULT_PERMISSION_COLOR;
+const getPermissionColor = (permission: string): string => PERMISSION_COLORS[permission] ?? DEFAULT_PERMISSION_COLOR;
 
 function buildSecretValueDisplay(
     showValue: boolean,
@@ -154,9 +153,7 @@ function buildSecretValueDisplay(
                     {formatSecretValue(secretValue, secretType)}
                 </pre>
             ) : (
-                <div className="text-sm font-mono text-gray-900 dark:text-white break-all">
-                    {secretValue}
-                </div>
+                <div className="text-sm font-mono text-gray-900 dark:text-white break-all">{secretValue}</div>
             )}
         </div>
     );
@@ -449,9 +446,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                             onClick={handleToggleValue}
                             disabled={showValue && isLoading}
                         >
-                            {showValue && isLoading ? (
-                                <Spinner size="sm" />
-                            ) : revealButtonContent}
+                            {showValue && isLoading ? <Spinner size="sm" /> : revealButtonContent}
                         </Button>
 
                         {showValue && secretValue && (
@@ -572,7 +567,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                     </p>
                     <div className="divide-y divide-gray-200 dark:divide-gray-700">
                         {accessLog.slice(0, 25).map((e) => (
-                            <div key={`${e.AccessedBy}-${e.AccessTime}-${e.Action}`} className="flex items-center justify-between py-2 text-sm">
+                            <div
+                                key={`${e.AccessedBy}-${e.AccessTime}-${e.Action}`}
+                                className="flex items-center justify-between py-2 text-sm"
+                            >
                                 <div className="flex items-center gap-2 min-w-0">
                                     <UserIcon className="h-4 w-4 text-gray-400 shrink-0" />
                                     <span className="font-medium text-gray-900 dark:text-white">

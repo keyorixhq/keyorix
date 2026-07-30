@@ -223,7 +223,8 @@
 
 @utility divide-base {
     /* divide-base: use for table/list row dividers */
-    & > :not([hidden]) ~ :not([hidden]) { /* NOSONAR[css:S8776] */
+    & > :not([hidden]) ~ :not([hidden]) {
+        /* NOSONAR[css:S8776] */
         border-color: var(--border);
     }
 }
@@ -235,7 +236,8 @@
 
 @utility placeholder-base-muted {
     /* placeholder */
-    &::placeholder { /* NOSONAR[css:S8776] */
+    &::placeholder {
+        /* NOSONAR[css:S8776] */
         color: var(--text-muted);
     }
 }

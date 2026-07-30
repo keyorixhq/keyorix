@@ -124,107 +124,115 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                     className="pointer-events-auto w-full max-w-xl rounded-xl shadow-2xl overflow-hidden"
                     style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)' }}
                 >
-                {/* Input */}
-                <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
-                    <MagnifyingGlassIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--text-muted)' }} />
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="Search projects and secrets…"
-                        className="flex-1 bg-transparent outline-hidden text-sm"
-                        style={{ color: 'var(--text-primary)' }}
-                    />
-                    {isSearching && (
-                        <div className="animate-spin rounded-full h-3.5 w-3.5 border-b border-blue-500 shrink-0" />
-                    )}
-                    <kbd
-                        className="text-xs px-1.5 py-0.5 rounded-sm"
-                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
+                    {/* Input */}
+                    <div
+                        className="flex items-center gap-3 px-4 py-3 border-b"
+                        style={{ borderColor: 'var(--border)' }}
                     >
-                        esc
-                    </kbd>
-                </div>
-
-                {/* Results */}
-                {query.trim() && (
-                    <ul className="max-h-72 overflow-y-auto py-1">
-                        {results.length === 0 && !isSearching && (
-                            <li className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                                No results for <strong>"{query}"</strong>
-                            </li>
+                        <MagnifyingGlassIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--text-muted)' }} />
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Search projects and secrets…"
+                            className="flex-1 bg-transparent outline-hidden text-sm"
+                            style={{ color: 'var(--text-primary)' }}
+                        />
+                        {isSearching && (
+                            <div className="animate-spin rounded-full h-3.5 w-3.5 border-b border-blue-500 shrink-0" />
                         )}
-                        {results.map((result, i) => (
-                            <li key={`${result.type}-${result.id}`}>
-                                <button
-                                    type="button"
-                                    onClick={() => handleSelect(result)}
-                                    onMouseEnter={() => setActiveIndex(i)}
-                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
-                                    style={{
-                                        backgroundColor: i === activeIndex ? 'var(--accent-subtle)' : 'transparent',
-                                    }}
-                                >
-                                    <div
-                                        className="shrink-0 h-7 w-7 rounded-sm flex items-center justify-center"
+                        <kbd
+                            className="text-xs px-1.5 py-0.5 rounded-sm"
+                            style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
+                        >
+                            esc
+                        </kbd>
+                    </div>
+
+                    {/* Results */}
+                    {query.trim() && (
+                        <ul className="max-h-72 overflow-y-auto py-1">
+                            {results.length === 0 && !isSearching && (
+                                <li className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                                    No results for <strong>"{query}"</strong>
+                                </li>
+                            )}
+                            {results.map((result, i) => (
+                                <li key={`${result.type}-${result.id}`}>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSelect(result)}
+                                        onMouseEnter={() => setActiveIndex(i)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
                                         style={{
-                                            backgroundColor:
-                                                result.type === 'project' ? 'var(--accent-subtle)' : 'var(--bg-muted)',
+                                            backgroundColor: i === activeIndex ? 'var(--accent-subtle)' : 'transparent',
                                         }}
                                     >
-                                        {result.type === 'project' ? (
-                                            <FolderIcon className="h-4 w-4" style={{ color: 'var(--accent)' }} />
-                                        ) : (
-                                            <KeyIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
-                                        )}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <p
-                                            className="text-sm font-medium truncate"
-                                            style={{ color: 'var(--text-primary)' }}
+                                        <div
+                                            className="shrink-0 h-7 w-7 rounded-sm flex items-center justify-center"
+                                            style={{
+                                                backgroundColor:
+                                                    result.type === 'project'
+                                                        ? 'var(--accent-subtle)'
+                                                        : 'var(--bg-muted)',
+                                            }}
                                         >
-                                            {result.label}
-                                        </p>
-                                        {result.sub && (
-                                            <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                                {result.sub}
+                                            {result.type === 'project' ? (
+                                                <FolderIcon className="h-4 w-4" style={{ color: 'var(--accent)' }} />
+                                            ) : (
+                                                <KeyIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
+                                            )}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p
+                                                className="text-sm font-medium truncate"
+                                                style={{ color: 'var(--text-primary)' }}
+                                            >
+                                                {result.label}
                                             </p>
-                                        )}
-                                    </div>
-                                    <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                        {result.type}
-                                    </span>
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                                            {result.sub && (
+                                                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                                    {result.sub}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                            {result.type}
+                                        </span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
 
-                {/* Footer hints */}
-                {!query.trim() && (
-                    <div className="px-4 py-3 flex items-center gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <span>
-                            <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
-                                ↑↓
-                            </kbd>{' '}
-                            navigate
-                        </span>
-                        <span>
-                            <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
-                                ↵
-                            </kbd>{' '}
-                            open
-                        </span>
-                        <span>
-                            <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
-                                esc
-                            </kbd>{' '}
-                            close
-                        </span>
-                    </div>
-                )}
+                    {/* Footer hints */}
+                    {!query.trim() && (
+                        <div
+                            className="px-4 py-3 flex items-center gap-4 text-xs"
+                            style={{ color: 'var(--text-muted)' }}
+                        >
+                            <span>
+                                <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                                    ↑↓
+                                </kbd>{' '}
+                                navigate
+                            </span>
+                            <span>
+                                <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                                    ↵
+                                </kbd>{' '}
+                                open
+                            </span>
+                            <span>
+                                <kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                                    esc
+                                </kbd>{' '}
+                                close
+                            </span>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

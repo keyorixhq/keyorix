@@ -93,8 +93,10 @@ describe('MachineIdentitiesPage', () => {
         render(<MachineIdentitiesPage />);
         fireEvent.click(screen.getByRole('button', { name: /export csv/i }));
 
-        await waitFor(() => expect(getMock).toHaveBeenCalledWith('/api/v1/machine-identities/audit.csv', {
-            responseType: 'blob',
-        }));
+        await waitFor(() =>
+            expect(getMock).toHaveBeenCalledWith('/api/v1/machine-identities/audit.csv', {
+                responseType: 'blob',
+            })
+        );
     });
 });

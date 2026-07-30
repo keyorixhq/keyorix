@@ -52,16 +52,12 @@ describe('Input a11y', () => {
     });
 
     it('error state exposes aria-invalid and describedby without violations', async () => {
-        const { container } = render(
-            <Input label="Email address" type="email" error="Enter a valid email" />
-        );
+        const { container } = render(<Input label="Email address" type="email" error="Enter a valid email" />);
         expect(await a11y(container)).toHaveNoViolations();
     });
 
     it('helper-text state has no violations', async () => {
-        const { container } = render(
-            <Input label="Password" type="password" helperText="At least 8 characters" />
-        );
+        const { container } = render(<Input label="Password" type="password" helperText="At least 8 characters" />);
         expect(await a11y(container)).toHaveNoViolations();
     });
 

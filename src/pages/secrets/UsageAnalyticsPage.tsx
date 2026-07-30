@@ -56,90 +56,78 @@ export function UsageAnalyticsPage() {
 
     const maxReads = mostAccessed.reduce((m, s) => Math.max(m, s.read_count), 0);
 
-    const mostAccessedContent = mostAccessed.length === 0 ? (
-        <EmptyState message="No secret reads recorded in this window." />
-    ) : (
-        <div className="space-y-3">
-            {mostAccessed.map((s, i) => (
-                <div key={s.secret_id} className="space-y-1">
-                    <div className="flex items-center justify-between text-sm">
-                        <span className="flex items-center gap-2 min-w-0">
-                            <span
-                                className="tabular-nums text-xs w-5 shrink-0"
-                                style={{ color: 'var(--text-muted)' }}
-                            >
-                                {i + 1}.
+    const mostAccessedContent =
+        mostAccessed.length === 0 ? (
+            <EmptyState message="No secret reads recorded in this window." />
+        ) : (
+            <div className="space-y-3">
+                {mostAccessed.map((s, i) => (
+                    <div key={s.secret_id} className="space-y-1">
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2 min-w-0">
+                                <span
+                                    className="tabular-nums text-xs w-5 shrink-0"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
+                                    {i + 1}.
+                                </span>
+                                <span className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    {s.secret_name}
+                                </span>
                             </span>
-                            <span
-                                className="truncate font-medium"
-                                style={{ color: 'var(--text-primary)' }}
-                            >
-                                {s.secret_name}
+                            <span className="tabular-nums shrink-0 ml-3" style={{ color: 'var(--text-secondary)' }}>
+                                {fmt(s.read_count)} {s.read_count === 1 ? 'read' : 'reads'}
                             </span>
-                        </span>
-                        <span
-                            className="tabular-nums shrink-0 ml-3"
-                            style={{ color: 'var(--text-secondary)' }}
-                        >
-                            {fmt(s.read_count)} {s.read_count === 1 ? 'read' : 'reads'}
-                        </span>
-                    </div>
-                    <div
-                        className="h-1.5 rounded-full overflow-hidden"
-                        style={{ backgroundColor: 'var(--bg-subtle)' }}
-                    >
+                        </div>
                         <div
-                            className="h-full rounded-full transition-all duration-700"
-                            style={{
-                                width:
-                                    maxReads > 0
-                                        ? `${Math.round((s.read_count / maxReads) * 100)}%`
-                                        : '0%',
-                                backgroundColor: '#f59e0b',
-                            }}
-                        />
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
-
-    const unusedContent = unused.length === 0 ? (
-        <EmptyState message="Every secret has been read recently — nothing stale." />
-    ) : (
-        <>
-            <div className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-                {fmt(unused.length)} secret{unused.length !== 1 ? 's' : ''} candidate
-                {unused.length !== 1 ? 's' : ''} for review or retirement
-            </div>
-            <div className="space-y-1.5 max-h-96 overflow-y-auto">
-                {unused.map((s) => (
-                    <div
-                        key={s.secret_id}
-                        className="flex items-center justify-between py-2 px-3 rounded-lg border border-base"
-                    >
-                        <span
-                            className="truncate text-sm font-medium"
-                            style={{ color: 'var(--text-primary)' }}
+                            className="h-1.5 rounded-full overflow-hidden"
+                            style={{ backgroundColor: 'var(--bg-subtle)' }}
                         >
-                            {s.secret_name}
-                        </span>
-                        <span
-                            className="text-xs shrink-0 ml-3 px-2 py-0.5 rounded-full"
-                            style={{
-                                color: s.last_read ? 'var(--text-muted)' : '#ef4444',
-                                backgroundColor: 'var(--bg-subtle)',
-                            }}
-                        >
-                            {s.last_read
-                                ? `last read ${relativeFromNow(s.last_read)}`
-                                : 'never read'}
-                        </span>
+                            <div
+                                className="h-full rounded-full transition-all duration-700"
+                                style={{
+                                    width: maxReads > 0 ? `${Math.round((s.read_count / maxReads) * 100)}%` : '0%',
+                                    backgroundColor: '#f59e0b',
+                                }}
+                            />
+                        </div>
                     </div>
                 ))}
             </div>
-        </>
-    );
+        );
+
+    const unusedContent =
+        unused.length === 0 ? (
+            <EmptyState message="Every secret has been read recently — nothing stale." />
+        ) : (
+            <>
+                <div className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {fmt(unused.length)} secret{unused.length !== 1 ? 's' : ''} candidate
+                    {unused.length !== 1 ? 's' : ''} for review or retirement
+                </div>
+                <div className="space-y-1.5 max-h-96 overflow-y-auto">
+                    {unused.map((s) => (
+                        <div
+                            key={s.secret_id}
+                            className="flex items-center justify-between py-2 px-3 rounded-lg border border-base"
+                        >
+                            <span className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                {s.secret_name}
+                            </span>
+                            <span
+                                className="text-xs shrink-0 ml-3 px-2 py-0.5 rounded-full"
+                                style={{
+                                    color: s.last_read ? 'var(--text-muted)' : '#ef4444',
+                                    backgroundColor: 'var(--bg-subtle)',
+                                }}
+                            >
+                                {s.last_read ? `last read ${relativeFromNow(s.last_read)}` : 'never read'}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            </>
+        );
 
     return (
         <div className="min-h-screen bg-app">

@@ -71,140 +71,134 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
         });
     };
 
-    const emptyOrList = entries.length === 0 ? (
-        <div className="p-10 text-center">
-            <ShieldCheckIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                No one has access to this project&rsquo;s secrets.
-            </p>
-        </div>
-    ) : (
-        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-            {entries.map((e) => {
-                const key = entryKey(e);
-                const attested = attestedKeys.has(key);
-                const confirming = confirmKey === key;
-                const principal =
-                    e.principalType === 'user' && e.email
-                        ? `${e.principalName} (${e.email})`
-                        : e.principalName;
-                const revocable = e.source !== 'owner';
-                return (
-                    <li key={key} className="flex items-center gap-3 px-4 py-3">
-                        <span
-                            className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
-                            style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' }}
-                        >
-                            {SOURCE_LABEL[e.source] ?? e.source}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                            <p
-                                className="text-sm font-medium truncate"
-                                style={{ color: 'var(--text-primary)' }}
+    const emptyOrList =
+        entries.length === 0 ? (
+            <div className="p-10 text-center">
+                <ShieldCheckIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    No one has access to this project&rsquo;s secrets.
+                </p>
+            </div>
+        ) : (
+            <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {entries.map((e) => {
+                    const key = entryKey(e);
+                    const attested = attestedKeys.has(key);
+                    const confirming = confirmKey === key;
+                    const principal =
+                        e.principalType === 'user' && e.email ? `${e.principalName} (${e.email})` : e.principalName;
+                    const revocable = e.source !== 'owner';
+                    return (
+                        <li key={key} className="flex items-center gap-3 px-4 py-3">
+                            <span
+                                className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
+                                style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' }}
                             >
-                                {principal || `${e.principalType} ${e.principalId}`}
-                            </p>
-                            <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                {sourceDetail(e)}
-                            </p>
-                        </div>
-                        {e.principalType === 'user' &&
-                            (() => {
-                                const { label, dormant } = lastUsedInfo(e);
-                                return (
-                                    <span
-                                        className="text-xs shrink-0 px-2 py-1 rounded-md hidden sm:inline"
-                                        style={{
-                                            backgroundColor: dormant
-                                                ? 'var(--warning-subtle)'
-                                                : 'var(--bg-muted)',
-                                            color: dormant ? 'var(--warning)' : 'var(--text-muted)',
-                                        }}
-                                        title={
-                                            dormant
-                                                ? 'Dormant — review whether this standing access is still needed'
-                                                : 'Last secret access in this project'
-                                        }
-                                    >
-                                        {label}
-                                    </span>
-                                );
-                            })()}
-                        <span
-                            className="text-xs shrink-0 px-2 py-1 rounded-md"
-                            style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
-                            title="Access level"
-                        >
-                            {e.accessLevel || '—'}
-                        </span>
+                                {SOURCE_LABEL[e.source] ?? e.source}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                    {principal || `${e.principalType} ${e.principalId}`}
+                                </p>
+                                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                                    {sourceDetail(e)}
+                                </p>
+                            </div>
+                            {e.principalType === 'user' &&
+                                (() => {
+                                    const { label, dormant } = lastUsedInfo(e);
+                                    return (
+                                        <span
+                                            className="text-xs shrink-0 px-2 py-1 rounded-md hidden sm:inline"
+                                            style={{
+                                                backgroundColor: dormant ? 'var(--warning-subtle)' : 'var(--bg-muted)',
+                                                color: dormant ? 'var(--warning)' : 'var(--text-muted)',
+                                            }}
+                                            title={
+                                                dormant
+                                                    ? 'Dormant — review whether this standing access is still needed'
+                                                    : 'Last secret access in this project'
+                                            }
+                                        >
+                                            {label}
+                                        </span>
+                                    );
+                                })()}
+                            <span
+                                className="text-xs shrink-0 px-2 py-1 rounded-md"
+                                style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
+                                title="Access level"
+                            >
+                                {e.accessLevel || '—'}
+                            </span>
 
-                        {/* Recertification actions */}
-                        <div className="flex items-center gap-2 shrink-0">
-                            {attested ? (
-                                <span
-                                    className="inline-flex items-center gap-1 text-xs"
-                                    style={{ color: 'var(--success)' }}
-                                >
-                                    <CheckIcon className="h-3.5 w-3.5" />
-                                    Attested
-                                </span>
-                            ) : (
-                                <button
-                                    type="button"
-                                    onClick={() => handleAttest(e)}
-                                    disabled={attest.isPending}
-                                    className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
-                                    style={{
-                                        border: '1px solid var(--border)',
-                                        color: 'var(--text-secondary)',
-                                    }}
-                                    title="Certify this access was reviewed and kept"
-                                >
-                                    Attest
-                                </button>
-                            )}
-                            {revocable &&
-                                (confirming ? (
-                                    <span className="inline-flex items-center gap-1">
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRevoke(e)}
-                                            disabled={revoke.isPending}
-                                            className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
-                                            style={{ backgroundColor: 'var(--error)', color: '#fff' }}
-                                        >
-                                            Confirm
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setConfirmKey(null)}
-                                            className="px-2 py-1 rounded-lg text-xs"
-                                            style={{ color: 'var(--text-muted)' }}
-                                        >
-                                            Cancel
-                                        </button>
+                            {/* Recertification actions */}
+                            <div className="flex items-center gap-2 shrink-0">
+                                {attested ? (
+                                    <span
+                                        className="inline-flex items-center gap-1 text-xs"
+                                        style={{ color: 'var(--success)' }}
+                                    >
+                                        <CheckIcon className="h-3.5 w-3.5" />
+                                        Attested
                                     </span>
                                 ) : (
                                     <button
                                         type="button"
-                                        onClick={() => setConfirmKey(key)}
-                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
+                                        onClick={() => handleAttest(e)}
+                                        disabled={attest.isPending}
+                                        className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
                                         style={{
-                                            backgroundColor: 'var(--error-subtle)',
-                                            color: 'var(--error)',
+                                            border: '1px solid var(--border)',
+                                            color: 'var(--text-secondary)',
                                         }}
-                                        title="Remove this access"
+                                        title="Certify this access was reviewed and kept"
                                     >
-                                        <NoSymbolIcon className="h-3.5 w-3.5" />
-                                        Revoke
+                                        Attest
                                     </button>
-                                ))}
-                        </div>
-                    </li>
-                );
-            })}
-        </ul>
-    );
+                                )}
+                                {revocable &&
+                                    (confirming ? (
+                                        <span className="inline-flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRevoke(e)}
+                                                disabled={revoke.isPending}
+                                                className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
+                                                style={{ backgroundColor: 'var(--error)', color: '#fff' }}
+                                            >
+                                                Confirm
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setConfirmKey(null)}
+                                                className="px-2 py-1 rounded-lg text-xs"
+                                                style={{ color: 'var(--text-muted)' }}
+                                            >
+                                                Cancel
+                                            </button>
+                                        </span>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => setConfirmKey(key)}
+                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium"
+                                            style={{
+                                                backgroundColor: 'var(--error-subtle)',
+                                                color: 'var(--error)',
+                                            }}
+                                            title="Remove this access"
+                                        >
+                                            <NoSymbolIcon className="h-3.5 w-3.5" />
+                                            Revoke
+                                        </button>
+                                    ))}
+                            </div>
+                        </li>
+                    );
+                })}
+            </ul>
+        );
 
     const errorOrContent = isError ? (
         <div className="p-6 text-center">
@@ -212,7 +206,9 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                 Failed to load the access review.
             </p>
         </div>
-    ) : emptyOrList;
+    ) : (
+        emptyOrList
+    );
 
     return (
         <div>
@@ -257,7 +253,9 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                             </div>
                         ))}
                     </div>
-                ) : errorOrContent}
+                ) : (
+                    errorOrContent
+                )}
             </div>
 
             <ProjectAccessReviewCampaigns projectId={projectId} />

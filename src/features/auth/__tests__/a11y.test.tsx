@@ -17,9 +17,7 @@ describe('LoginForm a11y', () => {
     });
 
     it('server-side error state has no violations', async () => {
-        const { container } = render(
-            <LoginForm onSubmit={vi.fn()} error="Invalid username or password" />
-        );
+        const { container } = render(<LoginForm onSubmit={vi.fn()} error="Invalid username or password" />);
         expect(await a11y(container)).toHaveNoViolations();
     });
 
@@ -29,9 +27,7 @@ describe('LoginForm a11y', () => {
     });
 
     it('with forgot-password callback has no violations', async () => {
-        const { container } = render(
-            <LoginForm onSubmit={vi.fn()} onForgotPassword={vi.fn()} />
-        );
+        const { container } = render(<LoginForm onSubmit={vi.fn()} onForgotPassword={vi.fn()} />);
         expect(await a11y(container)).toHaveNoViolations();
     });
 });
@@ -52,9 +48,7 @@ describe('PasswordResetForm a11y', () => {
     });
 
     it('success state has no violations', async () => {
-        const { container } = render(
-            <PasswordResetForm onSubmit={vi.fn()} onBack={vi.fn()} success />
-        );
+        const { container } = render(<PasswordResetForm onSubmit={vi.fn()} onBack={vi.fn()} success />);
         expect(await a11y(container)).toHaveNoViolations();
     });
 });
@@ -68,9 +62,7 @@ describe('SetupForm a11y', () => {
     });
 
     it('server-side error state has no violations', async () => {
-        const { container } = render(
-            <SetupForm onSubmit={vi.fn()} error="Token has expired" />
-        );
+        const { container } = render(<SetupForm onSubmit={vi.fn()} error="Token has expired" />);
         expect(await a11y(container)).toHaveNoViolations();
     });
 

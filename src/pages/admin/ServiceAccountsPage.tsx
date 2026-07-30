@@ -29,7 +29,6 @@ const SCOPES = [
     { value: 'audit:read', description: 'Read audit logs' },
 ] as const;
 
-
 type ActiveModal =
     | null
     | { type: 'create' }
@@ -103,17 +102,13 @@ function renderAccountsContent(
                                     <div>
                                         <p className="text-sm font-medium text-base-primary">{sa.name}</p>
                                         {sa.description && (
-                                            <p className="text-xs text-base-muted mt-0.5">
-                                                {sa.description}
-                                            </p>
+                                            <p className="text-xs text-base-muted mt-0.5">{sa.description}</p>
                                         )}
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     <span className="font-mono text-sm text-base-secondary">
-                                        {sa.client_id.length > 12
-                                            ? sa.client_id.slice(0, 12) + '…'
-                                            : sa.client_id}
+                                        {sa.client_id.length > 12 ? sa.client_id.slice(0, 12) + '…' : sa.client_id}
                                     </span>
                                 </td>
                                 <td className="px-6 py-4">
@@ -127,9 +122,7 @@ function renderAccountsContent(
                                                     key={scope}
                                                     className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
                                                     style={{
-                                                        backgroundColor: isDark
-                                                            ? 'rgba(59,130,246,0.15)'
-                                                            : '#eff6ff',
+                                                        backgroundColor: isDark ? 'rgba(59,130,246,0.15)' : '#eff6ff',
                                                         color: isDark ? '#93c5fd' : '#1d4ed8',
                                                     }}
                                                 >
@@ -144,15 +137,11 @@ function renderAccountsContent(
                                         style={
                                             sa.is_active
                                                 ? {
-                                                      backgroundColor: isDark
-                                                          ? 'rgba(16,185,129,0.15)'
-                                                          : '#dcfce7',
+                                                      backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7',
                                                       color: isDark ? '#34d399' : '#166534',
                                                   }
                                                 : {
-                                                      backgroundColor: isDark
-                                                          ? 'rgba(148,163,184,0.15)'
-                                                          : '#f1f5f9',
+                                                      backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9',
                                                       color: isDark ? '#94a3b8' : '#475569',
                                                   }
                                         }
@@ -445,60 +434,61 @@ export const ServiceAccountsPage: React.FC = () => {
 
     const tokensModalTitle = activeModal?.type === 'tokens' ? `Tokens — ${activeModal.sa.name}` : 'Tokens';
 
-    const tokensListInner = tokens.length === 0 ? (
-        <p className="text-sm text-base-muted text-center py-6">No tokens yet. Create one above.</p>
-    ) : (
-        <div className="border border-base rounded-lg overflow-hidden">
-            <table className="min-w-full divide-y divide-base">
-                <thead>
-                    <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                            Created
-                        </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                            Expires
-                        </th>
-                        <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
-                            Status
-                        </th>
-                        <th className="px-4 py-2.5 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
-                            Actions
-                        </th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-base">
-                    {tokens.map((token) => {
-                        const status = getTokenStatus(token);
-                        const isPending = pendingRevokeTokenId === token.id;
-                        return (
-                            <tr key={token.id} className="hover:bg-subtle transition-colors">
-                                <td className="px-4 py-3 text-sm text-base-secondary">
-                                    {formatDateShort(token.created_at)}
-                                </td>
-                                <td className="px-4 py-3 text-sm text-base-secondary">
-                                    {token.expires_at ? formatDateShort(token.expires_at) : '—'}
-                                </td>
-                                <td className="px-4 py-3">
-                                    <TokenStatusBadge status={status} isDark={isDark} />
-                                </td>
-                                <td className="px-4 py-3 text-right">
-                                    <RevokeTokenCell
-                                        isPending={isPending}
-                                        isMutating={revokeTokenMutation.isPending}
-                                        inactive={status === 'revoked' || status === 'expired'}
-                                        isDark={isDark}
-                                        onRevoke={() => handleRevokeToken(token.id)}
-                                        onCancel={() => setPendingRevokeTokenId(null)}
-                                        onSetPending={() => setPendingRevokeTokenId(token.id)}
-                                    />
-                                </td>
-                            </tr>
-                        );
-                    })}
-                </tbody>
-            </table>
-        </div>
-    );
+    const tokensListInner =
+        tokens.length === 0 ? (
+            <p className="text-sm text-base-muted text-center py-6">No tokens yet. Create one above.</p>
+        ) : (
+            <div className="border border-base rounded-lg overflow-hidden">
+                <table className="min-w-full divide-y divide-base">
+                    <thead>
+                        <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                            <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Created
+                            </th>
+                            <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Expires
+                            </th>
+                            <th className="px-4 py-2.5 text-left text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Status
+                            </th>
+                            <th className="px-4 py-2.5 text-right text-xs font-medium text-base-muted uppercase tracking-wider">
+                                Actions
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-base">
+                        {tokens.map((token) => {
+                            const status = getTokenStatus(token);
+                            const isPending = pendingRevokeTokenId === token.id;
+                            return (
+                                <tr key={token.id} className="hover:bg-subtle transition-colors">
+                                    <td className="px-4 py-3 text-sm text-base-secondary">
+                                        {formatDateShort(token.created_at)}
+                                    </td>
+                                    <td className="px-4 py-3 text-sm text-base-secondary">
+                                        {token.expires_at ? formatDateShort(token.expires_at) : '—'}
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <TokenStatusBadge status={status} isDark={isDark} />
+                                    </td>
+                                    <td className="px-4 py-3 text-right">
+                                        <RevokeTokenCell
+                                            isPending={isPending}
+                                            isMutating={revokeTokenMutation.isPending}
+                                            inactive={status === 'revoked' || status === 'expired'}
+                                            isDark={isDark}
+                                            onRevoke={() => handleRevokeToken(token.id)}
+                                            onCancel={() => setPendingRevokeTokenId(null)}
+                                            onSetPending={() => setPendingRevokeTokenId(token.id)}
+                                        />
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        );
     const tokensListContent = tokensLoading ? <Loading /> : tokensListInner;
 
     return (
@@ -537,9 +527,7 @@ export const ServiceAccountsPage: React.FC = () => {
                     ))}
                 </div>
 
-                {activeTab === 'oidc' && (
-                    <OIDCFederationSection serviceAccounts={serviceAccounts} />
-                )}
+                {activeTab === 'oidc' && <OIDCFederationSection serviceAccounts={serviceAccounts} />}
 
                 {activeTab === 'accounts' && pageError && (
                     <Alert
@@ -551,15 +539,16 @@ export const ServiceAccountsPage: React.FC = () => {
                     />
                 )}
 
-                {activeTab === 'accounts' && renderAccountsContent(
-                    isLoading,
-                    isError,
-                    serviceAccounts,
-                    isDark,
-                    openTokens,
-                    openEdit,
-                    setActiveModal
-                )}
+                {activeTab === 'accounts' &&
+                    renderAccountsContent(
+                        isLoading,
+                        isError,
+                        serviceAccounts,
+                        isDark,
+                        openTokens,
+                        openEdit,
+                        setActiveModal
+                    )}
             </div>
 
             {/* ── Create modal ─────────────────────────────────────────────────── */}
@@ -585,7 +574,12 @@ export const ServiceAccountsPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label htmlFor="create-sa-description" className="block text-sm font-medium text-base-secondary mb-1">Description</label>
+                        <label
+                            htmlFor="create-sa-description"
+                            className="block text-sm font-medium text-base-secondary mb-1"
+                        >
+                            Description
+                        </label>
                         <input
                             id="create-sa-description"
                             type="text"
@@ -634,7 +628,12 @@ export const ServiceAccountsPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label htmlFor="edit-sa-description" className="block text-sm font-medium text-base-secondary mb-1">Description</label>
+                        <label
+                            htmlFor="edit-sa-description"
+                            className="block text-sm font-medium text-base-secondary mb-1"
+                        >
+                            Description
+                        </label>
                         <input
                             id="edit-sa-description"
                             type="text"
@@ -706,7 +705,10 @@ export const ServiceAccountsPage: React.FC = () => {
                         </div>
 
                         <div>
-                            <label htmlFor="creds-client-id" className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
+                            <label
+                                htmlFor="creds-client-id"
+                                className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide"
+                            >
                                 Client ID
                             </label>
                             <div className="flex items-center gap-2">
@@ -731,7 +733,10 @@ export const ServiceAccountsPage: React.FC = () => {
                         </div>
 
                         <div>
-                            <label htmlFor="creds-client-secret" className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
+                            <label
+                                htmlFor="creds-client-secret"
+                                className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide"
+                            >
                                 Client Secret
                             </label>
                             <div className="flex items-center gap-2">
@@ -771,12 +776,7 @@ export const ServiceAccountsPage: React.FC = () => {
             )}
 
             {/* ── Tokens modal ─────────────────────────────────────────────────── */}
-            <Modal
-                isOpen={activeModal?.type === 'tokens'}
-                onClose={closeModal}
-                title={tokensModalTitle}
-                size="lg"
-            >
+            <Modal isOpen={activeModal?.type === 'tokens'} onClose={closeModal} title={tokensModalTitle} size="lg">
                 <div className="space-y-4">
                     {/* One-time access token display */}
                     {createdAccessToken && (
@@ -791,7 +791,10 @@ export const ServiceAccountsPage: React.FC = () => {
                                 Save this token — it won't be shown again
                             </p>
                             <div>
-                                <label htmlFor="new-access-token" className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide">
+                                <label
+                                    htmlFor="new-access-token"
+                                    className="block text-xs font-medium text-base-muted mb-1 uppercase tracking-wide"
+                                >
                                     Token
                                 </label>
                                 <div className="flex items-center gap-2">
@@ -854,7 +857,10 @@ export const ServiceAccountsPage: React.FC = () => {
                                 >
                                     {tokenFormError && <Alert type="error" message={tokenFormError} />}
                                     <div>
-                                        <label htmlFor="token-description" className="block text-sm font-medium text-base-secondary mb-1">
+                                        <label
+                                            htmlFor="token-description"
+                                            className="block text-sm font-medium text-base-secondary mb-1"
+                                        >
                                             Description
                                         </label>
                                         <input
@@ -872,7 +878,10 @@ export const ServiceAccountsPage: React.FC = () => {
                                         />
                                     </div>
                                     <div>
-                                        <label htmlFor="token-expires-at" className="block text-sm font-medium text-base-secondary mb-1">
+                                        <label
+                                            htmlFor="token-expires-at"
+                                            className="block text-sm font-medium text-base-secondary mb-1"
+                                        >
                                             Expires At <span className="text-base-muted font-normal">(optional)</span>
                                         </label>
                                         <input
@@ -921,4 +930,3 @@ export const ServiceAccountsPage: React.FC = () => {
         </>
     );
 };
-

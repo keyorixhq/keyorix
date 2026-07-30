@@ -52,7 +52,10 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     ];
 
     const userMenuTrigger = (
-        <button type="button" className="flex items-center space-x-2 text-sm rounded-full focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1">
+        <button
+            type="button"
+            className="flex items-center space-x-2 text-sm rounded-full focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1"
+        >
             <div
                 className="h-8 w-8 rounded-full flex items-center justify-center"
                 style={{ backgroundColor: 'var(--bg-muted)' }}

@@ -95,8 +95,8 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                 message={`Invitation created for ${sentEmail}, but the setup link couldn't be delivered: ${deliveryError}`}
             />
             <p className="text-sm text-base-secondary">
-                Fix the credential-delivery configuration (e.g. the server base URL), then resend the link from
-                the user's detail page.
+                Fix the credential-delivery configuration (e.g. the server base URL), then resend the link from the
+                user's detail page.
             </p>
             <div className="flex justify-end pt-2">
                 <Button variant="default" onClick={handleClose}>
@@ -107,14 +107,16 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
     ) : (
         <div className="space-y-4">
             <p className="text-sm text-base-muted">
-                Invite someone by email. They don't need an account yet — it's created when they accept the
-                single-use setup link, with the system role and project assignments below applied in one step.
+                Invite someone by email. They don't need an account yet — it's created when they accept the single-use
+                setup link, with the system role and project assignments below applied in one step.
             </p>
 
             {error && <Alert type="error" message={error} />}
 
             <div>
-                <label htmlFor="invite-email-input" className="block text-sm font-medium text-base-secondary mb-1">Email</label>
+                <label htmlFor="invite-email-input" className="block text-sm font-medium text-base-secondary mb-1">
+                    Email
+                </label>
                 <input
                     id="invite-email-input"
                     type="email"
@@ -127,7 +129,10 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
             </div>
 
             <div>
-                <label htmlFor="invite-system-role-select" className="block text-sm font-medium text-base-secondary mb-1">
+                <label
+                    htmlFor="invite-system-role-select"
+                    className="block text-sm font-medium text-base-secondary mb-1"
+                >
                     System role <span className="font-normal text-base-muted">(optional)</span>
                 </label>
                 <select
@@ -145,11 +150,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                 </select>
             </div>
 
-            <ProjectAssignmentsPicker
-                assignments={assignments}
-                onChange={setAssignments}
-                disabled={invite.isPending}
-            />
+            <ProjectAssignmentsPicker assignments={assignments} onChange={setAssignments} disabled={invite.isPending} />
 
             <div className="flex justify-end gap-3 pt-2">
                 <Button variant="ghost" onClick={handleClose} disabled={invite.isPending}>
@@ -195,7 +196,9 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         </Button>
                     </div>
                 </div>
-            ) : fallbackContent}
+            ) : (
+                fallbackContent
+            )}
         </Modal>
     );
 };

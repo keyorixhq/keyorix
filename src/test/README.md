@@ -104,8 +104,8 @@ test('should render component without router', () => {
 import { mockUser, mockSecrets, mockShares } from '@/test/mocks';
 
 test('should use mock data', () => {
-  expect(mockUser.username).toBe('testuser');
-  expect(mockSecrets).toHaveLength(3);
+    expect(mockUser.username).toBe('testuser');
+    expect(mockSecrets).toHaveLength(3);
 });
 ```
 
@@ -115,11 +115,11 @@ test('should use mock data', () => {
 import { setupMocks, cleanupMocks } from '@/test/mocks';
 
 beforeEach(() => {
-  setupMocks();
+    setupMocks();
 });
 
 afterEach(() => {
-  cleanupMocks();
+    cleanupMocks();
 });
 ```
 
@@ -132,7 +132,7 @@ import { formHelpers } from '@/test/form-helpers';
 
 test('should fill and submit form', async () => {
   render(<LoginForm />);
-  
+
   await formHelpers.fillInput('Email', 'test@example.com');
   await formHelpers.fillInput('Password', 'password123');
   await formHelpers.submitForm('Login');
@@ -146,14 +146,14 @@ import { formHelpers, asyncFormHelpers } from '@/test/form-helpers';
 
 test('should handle form validation', async () => {
   render(<SecretForm />);
-  
+
   await formHelpers.fillSecretForm({
     name: 'test-secret',
     value: 'secret-value',
     type: 'password',
     namespace: 'production'
   });
-  
+
   await asyncFormHelpers.submitAndWaitForSuccess();
 });
 ```
@@ -165,7 +165,7 @@ import { accessibilityHelpers } from '@/test/form-helpers';
 
 test('should have proper accessibility', () => {
   render(<MyForm />);
-  
+
   accessibilityHelpers.expectProperLabels(['Email', 'Password']);
   accessibilityHelpers.expectProperAria('Email');
 });
@@ -199,13 +199,13 @@ Prefer semantic queries that reflect how users interact with your app:
 
 ```typescript
 // Good
-screen.getByRole('button', { name: 'Submit' })
-screen.getByLabelText('Email')
-screen.getByText('Welcome')
+screen.getByRole('button', { name: 'Submit' });
+screen.getByLabelText('Email');
+screen.getByText('Welcome');
 
 // Avoid
-screen.getByTestId('submit-btn')
-screen.getByClassName('email-input')
+screen.getByTestId('submit-btn');
+screen.getByClassName('email-input');
 ```
 
 ### 5. Test Error States
@@ -216,10 +216,10 @@ Always test both success and error scenarios:
 test('should handle form submission error', async () => {
   // Mock API to return error
   mockApiClient.post.mockRejectedValue(new Error('Network error'));
-  
+
   render(<MyForm />);
   await formHelpers.submitForm();
-  
+
   expect(screen.getByText('Network error')).toBeInTheDocument();
 });
 ```
@@ -230,7 +230,7 @@ The setup automatically handles cleanup, but for custom mocks:
 
 ```typescript
 afterEach(() => {
-  vi.clearAllMocks();
+    vi.clearAllMocks();
 });
 ```
 

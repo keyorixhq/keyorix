@@ -164,8 +164,7 @@ const Leaf: React.FC<LeafProps> = ({ item, indent, isActive, onClose }) => {
                 color,
             }}
             onMouseEnter={(e) => {
-                if (!active && !item.soon)
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)';
+                if (!active && !item.soon) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)';
             }}
             onMouseLeave={(e) => {
                 if (!active) (e.currentTarget as HTMLElement).style.backgroundColor = '';
@@ -202,7 +201,14 @@ interface GroupProps {
     onClose: () => void;
 }
 
-const Group: React.FC<GroupProps> = ({ item, isActive, isGroupActive, toggleSidebarGroup, sidebarExpanded, onClose }) => {
+const Group: React.FC<GroupProps> = ({
+    item,
+    isActive,
+    isGroupActive,
+    toggleSidebarGroup,
+    sidebarExpanded,
+    onClose,
+}) => {
     const expanded = sidebarExpanded[item.id] ?? false;
     const active = isGroupActive(item);
     return (
@@ -226,10 +232,7 @@ const Group: React.FC<GroupProps> = ({ item, isActive, isGroupActive, toggleSide
                     {item.name}
                 </span>
                 <ChevronDownIcon
-                    className={clsx(
-                        'h-3.5 w-3.5 shrink-0 transition-transform duration-200',
-                        expanded && 'rotate-180'
-                    )}
+                    className={clsx('h-3.5 w-3.5 shrink-0 transition-transform duration-200', expanded && 'rotate-180')}
                     style={{ color: 'var(--text-muted)' }}
                 />
             </button>

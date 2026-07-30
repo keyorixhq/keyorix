@@ -65,7 +65,10 @@ apiClient.interceptors.request.use(
     }
 );
 
-const handle401 = async (error: AxiosError, authStore: ReturnType<typeof useAuthStore.getState>): Promise<AxiosResponse | void> => {
+const handle401 = async (
+    error: AxiosError,
+    authStore: ReturnType<typeof useAuthStore.getState>
+): Promise<AxiosResponse | void> => {
     if (!authStore.isAuthenticated) {
         return;
     }
@@ -101,7 +104,10 @@ const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.
     }
 };
 
-const handleErrorByStatus = async (error: AxiosError, authStore: ReturnType<typeof useAuthStore.getState>): Promise<AxiosResponse | void> => {
+const handleErrorByStatus = async (
+    error: AxiosError,
+    authStore: ReturnType<typeof useAuthStore.getState>
+): Promise<AxiosResponse | void> => {
     const status = error.response?.status;
     if (status === 401) {
         return handle401(error, authStore);

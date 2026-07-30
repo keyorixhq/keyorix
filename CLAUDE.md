@@ -15,8 +15,9 @@ Package manager is **pnpm** (Node 22). The lockfile is committed; use `--frozen-
   - Single test by name: `pnpm test --run -t "login success"`
   - Coverage: `pnpm test:coverage`
 - `pnpm test:e2e` — Playwright. **Currently stale** (see BACKLOG.md) — not wired into CI.
+- `pnpm format` / `pnpm format:check` — Prettier (`.prettierrc`: 4-space, single-quote, `printWidth: 120`). `format:check` is enforced in CI.
 
-**The green gate** — `type-check`, `lint`, `build`, `test` must all pass. It is enforced by `.github/workflows/ci.yml` on every push/PR. Keep it green for any change.
+**The green gate** — `type-check`, `lint`, `build`, `test`, `format:check` must all pass. It is enforced by `.github/workflows/ci.yml` on every push/PR. Keep it green for any change.
 
 ## Git / PR conventions
 
@@ -24,12 +25,12 @@ Package manager is **pnpm** (Node 22). The lockfile is committed; use `--frozen-
 
 ## Conventions / gotchas
 
-- **House style is 4-space indent + single quotes, with no `.prettierrc`.** Prettier's defaults differ (2-space, double quotes), so **do not run `pnpm format`** — it would rewrite all ~131 files. See BACKLOG.md before touching formatting.
+- **House style is 4-space indent + single quotes**, codified in `.prettierrc` and enforced in CI via `pnpm format:check`. Run `pnpm format` freely — it only touches files that have drifted from the checked-in config.
 - **Test files are excluded from `tsc` type-check** (see `tsconfig.json` `exclude`: `*.test.*`, `__tests__/`, `src/test/`). They only run under Vitest, so a type error inside a test won't surface in `type-check`.
 - Vitest is configured in `vitest.config.ts` (jsdom, `globals: true`, setup in `src/test/setup.ts` which installs global DOM/storage mocks). The `@` → `src` path alias is defined in **both** `vite.config.ts` and `tsconfig.json` (`paths`).
 - **Tailwind is v4** — there is no `tailwind.config.js`; config is CSS-first via `@tailwindcss/postcss` (`postcss.config.js`) and `src/index.css`.
 - **`README.md` is outdated** (claims React 18, Jest, Router v6, i18n/WCAG). The repo is on React 19 / Router 7 / Vitest, and the i18n layer was removed. Trust the code, not the README.
-- **BACKLOG.md** tracks deferred *engineering* work and the reasoning behind key decisions (the shadcn/ui rewrite umbrella, why Prettier isn't enforced, the stale e2e suite). The *product* roadmap is a separate user-facing UI page (`src/pages/roadmap/RoadmapPage.tsx`) — don't conflate them.
+- **BACKLOG.md** tracks deferred *engineering* work and the reasoning behind key decisions (the shadcn/ui rewrite umbrella, the stale e2e suite). The *product* roadmap is a separate user-facing UI page (`src/pages/roadmap/RoadmapPage.tsx`) — don't conflate them.
 
 ## Architecture
 

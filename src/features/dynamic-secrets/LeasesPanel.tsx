@@ -85,49 +85,50 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
 
     const activeCount = leases.filter((l) => l.status === 'active').length;
 
-    const leasesContent = leases.length === 0 ? (
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            No leases issued yet.
-        </p>
-    ) : (
-        <ul className="space-y-1">
-            {leases.map((l) => (
-                <li key={l.leaseId} className="flex items-center gap-2 text-xs">
-                    <span
-                        className="px-2 py-0.5 rounded-full font-medium capitalize shrink-0"
-                        style={leaseStatusStyle(l.status)}
-                    >
-                        {l.status.replaceAll('_', ' ')}
-                    </span>
-                    <span className="font-mono truncate" style={{ color: 'var(--text-primary)' }}>
-                        {l.roleName || l.leaseId}
-                    </span>
-                    {l.expiresAt && (
-                        <span style={{ color: 'var(--text-muted)' }}>
-                            · expires {new Date(l.expiresAt).toLocaleString()}
-                        </span>
-                    )}
-                    {canManage && l.status === 'active' && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setError('');
-                                revoke.mutate(l.leaseId, {
-                                    onError: (err) => surface(err, 'Failed to revoke lease.'),
-                                });
-                            }}
-                            disabled={revoke.isPending}
-                            className="ml-auto p-1 rounded-sm disabled:opacity-50"
-                            style={{ color: 'var(--error)' }}
-                            title="Revoke lease"
+    const leasesContent =
+        leases.length === 0 ? (
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                No leases issued yet.
+            </p>
+        ) : (
+            <ul className="space-y-1">
+                {leases.map((l) => (
+                    <li key={l.leaseId} className="flex items-center gap-2 text-xs">
+                        <span
+                            className="px-2 py-0.5 rounded-full font-medium capitalize shrink-0"
+                            style={leaseStatusStyle(l.status)}
                         >
-                            <NoSymbolIcon className="h-4 w-4" />
-                        </button>
-                    )}
-                </li>
-            ))}
-        </ul>
-    );
+                            {l.status.replaceAll('_', ' ')}
+                        </span>
+                        <span className="font-mono truncate" style={{ color: 'var(--text-primary)' }}>
+                            {l.roleName || l.leaseId}
+                        </span>
+                        {l.expiresAt && (
+                            <span style={{ color: 'var(--text-muted)' }}>
+                                · expires {new Date(l.expiresAt).toLocaleString()}
+                            </span>
+                        )}
+                        {canManage && l.status === 'active' && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setError('');
+                                    revoke.mutate(l.leaseId, {
+                                        onError: (err) => surface(err, 'Failed to revoke lease.'),
+                                    });
+                                }}
+                                disabled={revoke.isPending}
+                                className="ml-auto p-1 rounded-sm disabled:opacity-50"
+                                style={{ color: 'var(--error)' }}
+                                title="Revoke lease"
+                            >
+                                <NoSymbolIcon className="h-4 w-4" />
+                            </button>
+                        )}
+                    </li>
+                ))}
+            </ul>
+        );
 
     return (
         <div className="px-4 py-3" style={{ backgroundColor: 'var(--bg-app)' }}>
@@ -161,7 +162,9 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                     Loading leases…
                 </p>
-            ) : leasesContent}
+            ) : (
+                leasesContent
+            )}
 
             {/* The issued credential is shown ONCE — it is never retrievable again. */}
             <Modal isOpen={!!credential} onClose={() => setCredential(null)} title="Credential issued" size="md">

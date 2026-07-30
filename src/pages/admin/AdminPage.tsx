@@ -70,7 +70,6 @@ type ActiveModal =
     | { type: 'restore'; user: APIUser }
     | { type: 'roles'; user: APIUser };
 
-
 function generatePassword(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*';
     const arr = new Uint8Array(16);
@@ -114,27 +113,44 @@ interface CreateModalProps {
 
 function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
     const {
-        setupResult, otpResult, createEmail, formError,
-        createUsername, createDisplayName, createMode, createPassword,
-        showPassword, createSystemRole, createAssignments, createButtonLabel,
-        linkCopied, otpCopied, isPending,
-        setCreateUsername, setCreateEmail, setCreateDisplayName, setCreateMode,
-        setCreatePassword, setShowPassword, setCreateSystemRole, setCreateAssignments,
-        handleCreate, handleCopyLink, handleCopyOtp, closeModal,
+        setupResult,
+        otpResult,
+        createEmail,
+        formError,
+        createUsername,
+        createDisplayName,
+        createMode,
+        createPassword,
+        showPassword,
+        createSystemRole,
+        createAssignments,
+        createButtonLabel,
+        linkCopied,
+        otpCopied,
+        isPending,
+        setCreateUsername,
+        setCreateEmail,
+        setCreateDisplayName,
+        setCreateMode,
+        setCreatePassword,
+        setShowPassword,
+        setCreateSystemRole,
+        setCreateAssignments,
+        handleCreate,
+        handleCopyLink,
+        handleCopyOtp,
+        closeModal,
     } = props;
 
     if (setupResult) {
         return (
             <div className="space-y-4">
-                <Alert
-                    type="success"
-                    message={`Account created for ${createEmail.trim() || setupResult.email}.`}
-                />
+                <Alert type="success" message={`Account created for ${createEmail.trim() || setupResult.email}.`} />
                 {setupResult.link_for_admin ? (
                     <div className="space-y-2">
                         <p className="text-sm text-base-secondary">
-                            Relay this single-use setup link to the user securely — it expires and can only be
-                            used once.
+                            Relay this single-use setup link to the user securely — it expires and can only be used
+                            once.
                         </p>
                         <div className="flex items-stretch gap-2">
                             <code className="flex-1 min-w-0 px-3 py-2 text-xs font-mono break-all rounded-lg border border-base bg-subtle text-base-secondary">
@@ -148,8 +164,8 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                 ) : (
                     <p className="text-sm text-base-secondary">
                         A setup link was sent to <span className="font-medium">{setupResult.email}</span>
-                        {setupResult.channel ? <> via {setupResult.channel}</> : null}. They'll set their own
-                        password on first use.
+                        {setupResult.channel ? <> via {setupResult.channel}</> : null}. They'll set their own password
+                        on first use.
                     </p>
                 )}
                 <div className="flex justify-end pt-2">
@@ -166,8 +182,8 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
             <div className="space-y-4">
                 <Alert type="success" message={`Account created for ${createEmail.trim()}.`} />
                 <p className="text-sm text-base-secondary">
-                    Relay this one-time password to the user securely — it's shown once and never stored in
-                    clear. They'll be required to change it at first login.
+                    Relay this one-time password to the user securely — it's shown once and never stored in clear.
+                    They'll be required to change it at first login.
                 </p>
                 <div className="flex items-stretch gap-2">
                     <code className="flex-1 min-w-0 px-3 py-2 text-sm font-mono break-all rounded-lg border border-base bg-subtle text-base-secondary">
@@ -190,7 +206,9 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
         <div className="space-y-4">
             {formError && <Alert type="error" message={formError} />}
             <div>
-                <label htmlFor="create-username" className="block text-sm font-medium text-base-secondary mb-1">Username</label>
+                <label htmlFor="create-username" className="block text-sm font-medium text-base-secondary mb-1">
+                    Username
+                </label>
                 <input
                     id="create-username"
                     type="text"
@@ -201,7 +219,9 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                 />
             </div>
             <div>
-                <label htmlFor="create-display-name" className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
+                <label htmlFor="create-display-name" className="block text-sm font-medium text-base-secondary mb-1">
+                    Display Name
+                </label>
                 <input
                     id="create-display-name"
                     type="text"
@@ -212,7 +232,9 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                 />
             </div>
             <div>
-                <label htmlFor="create-email" className="block text-sm font-medium text-base-secondary mb-1">Email</label>
+                <label htmlFor="create-email" className="block text-sm font-medium text-base-secondary mb-1">
+                    Email
+                </label>
                 <input
                     id="create-email"
                     type="email"
@@ -223,9 +245,7 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                 />
             </div>
             <div className="rounded-lg border border-base p-3 space-y-2">
-                <span className="block text-sm font-medium text-base-secondary mb-1">
-                    Initial credential
-                </span>
+                <span className="block text-sm font-medium text-base-secondary mb-1">Initial credential</span>
                 {(
                     [
                         {
@@ -245,7 +265,12 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                         },
                     ] as const
                 ).map((opt) => (
-                    <label key={opt.mode} htmlFor={`create-mode-${opt.mode}`} aria-label={opt.title} className="flex items-start gap-2 cursor-pointer">
+                    <label
+                        key={opt.mode}
+                        htmlFor={`create-mode-${opt.mode}`}
+                        aria-label={opt.title}
+                        className="flex items-start gap-2 cursor-pointer"
+                    >
                         <input
                             id={`create-mode-${opt.mode}`}
                             type="radio"
@@ -256,9 +281,7 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                             style={{ accentColor: 'var(--accent)' }}
                         />
                         <span>
-                            <span className="block text-sm font-medium text-base-secondary">
-                                {opt.title}
-                            </span>
+                            <span className="block text-sm font-medium text-base-secondary">{opt.title}</span>
                             <span className="block text-xs text-base-muted">{opt.desc}</span>
                         </span>
                     </label>
@@ -268,7 +291,9 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                 <>
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label htmlFor="create-password" className="text-sm font-medium text-base-secondary">Password</label>
+                            <label htmlFor="create-password" className="text-sm font-medium text-base-secondary">
+                                Password
+                            </label>
                             <button
                                 type="button"
                                 onClick={() => {
@@ -299,7 +324,10 @@ function buildCreateModalContent(props: CreateModalProps): React.ReactNode {
                         </div>
                     </div>
                     <div>
-                        <label htmlFor="create-system-role" className="block text-sm font-medium text-base-secondary mb-1">
+                        <label
+                            htmlFor="create-system-role"
+                            className="block text-sm font-medium text-base-secondary mb-1"
+                        >
                             System role <span className="font-normal text-base-muted">(optional)</span>
                         </label>
                         <select
@@ -356,9 +384,22 @@ interface UserListProps {
 
 function buildUserListContent(props: UserListProps): React.ReactNode {
     const {
-        isLoading, isError, users, search, selected, page, totalPages,
-        impersonateIsPending, toggleSelect, toggleAll, setPage, setActiveModal,
-        handleRolesOpen, handleImpersonate, openEdit, navigate,
+        isLoading,
+        isError,
+        users,
+        search,
+        selected,
+        page,
+        totalPages,
+        impersonateIsPending,
+        toggleSelect,
+        toggleAll,
+        setPage,
+        setActiveModal,
+        handleRolesOpen,
+        handleImpersonate,
+        openEdit,
+        navigate,
     } = props;
 
     if (isLoading) {
@@ -422,118 +463,115 @@ function buildUserListContent(props: UserListProps): React.ReactNode {
                     {users.map((user) => {
                         const rowClass = `hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`;
                         return (
-                        <tr
-                            key={user.id}
-                            className={rowClass}
-                        >
-                            <td className="px-4 py-4 w-10">
-                                <input
-                                    type="checkbox"
-                                    className="rounded-sm border-base text-blue-600 focus:ring-blue-500"
-                                    style={{ accentColor: 'var(--accent)' }}
-                                    checked={selected.has(user.id)}
-                                    onChange={() => toggleSelect(user.id)}
-                                />
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="flex items-center gap-3">
-                                    <div className="shrink-0 h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                                        <span className="text-xs font-semibold text-blue-700">
-                                            {(user.display_name || user.username).charAt(0).toUpperCase()}
-                                        </span>
+                            <tr key={user.id} className={rowClass}>
+                                <td className="px-4 py-4 w-10">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded-sm border-base text-blue-600 focus:ring-blue-500"
+                                        style={{ accentColor: 'var(--accent)' }}
+                                        checked={selected.has(user.id)}
+                                        onChange={() => toggleSelect(user.id)}
+                                    />
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center gap-3">
+                                        <div className="shrink-0 h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                                            <span className="text-xs font-semibold text-blue-700">
+                                                {(user.display_name || user.username).charAt(0).toUpperCase()}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <button
+                                                type="button"
+                                                onClick={() => navigate(ROUTES.ADMIN_USER_DETAIL(user.id))}
+                                                className="text-sm font-medium text-base-primary hover:text-accent-text hover:underline text-left"
+                                            >
+                                                {user.display_name || user.username}
+                                            </button>
+                                            <p className="text-xs text-base-muted">@{user.username}</p>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <button
-                                            type="button"
-                                            onClick={() => navigate(ROUTES.ADMIN_USER_DETAIL(user.id))}
-                                            className="text-sm font-medium text-base-primary hover:text-accent-text hover:underline text-left"
-                                        >
-                                            {user.display_name || user.username}
-                                        </button>
-                                        <p className="text-xs text-base-muted">@{user.username}</p>
-                                    </div>
-                                </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
-                                {user.email}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                                <AccountStateBadge state={user.account_state} deleted={!!user.deleted_at} />
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
-                                {user.project_count === undefined ? (
-                                    <span className="text-base-muted">—</span>
-                                ) : (
-                                    <span
-                                        title={`${user.active_project_count ?? 0} active of ${user.project_count} total`}
-                                    >
-                                        {user.active_project_count ?? 0} active · {user.project_count} total
-                                    </span>
-                                )}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                {user.last_login_at ? (
-                                    <span className="text-base-secondary">
-                                        {formatDateShort(user.last_login_at)}
-                                    </span>
-                                ) : (
-                                    <span className="text-base-muted italic">Never</span>
-                                )}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-                                {formatDateShort(user.created_at)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-right">
-                                <div className="flex items-center justify-end gap-2">
-                                    {user.deleted_at ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => setActiveModal({ type: 'restore', user })}
-                                            className="p-1.5 text-base-muted hover:text-green-600 hover:bg-green-50 rounded-sm transition-colors"
-                                            title="Restore user"
-                                        >
-                                            <ArrowPathIcon className="h-4 w-4" />
-                                        </button>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
+                                    {user.email}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    <AccountStateBadge state={user.account_state} deleted={!!user.deleted_at} />
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
+                                    {user.project_count === undefined ? (
+                                        <span className="text-base-muted">—</span>
                                     ) : (
-                                        <>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleRolesOpen(user)}
-                                                className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
-                                                title="Manage roles"
-                                            >
-                                                <ShieldCheckIcon className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleImpersonate(user)}
-                                                disabled={impersonateIsPending}
-                                                className="p-1.5 text-base-muted hover:text-amber-600 hover:bg-amber-50 rounded-sm transition-colors disabled:opacity-50"
-                                                title="Impersonate user"
-                                            >
-                                                <UserCircleIcon className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => openEdit(user)}
-                                                className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
-                                                title="Edit user"
-                                            >
-                                                <PencilIcon className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setActiveModal({ type: 'delete', user })}
-                                                className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
-                                                title="Delete user"
-                                            >
-                                                <TrashIcon className="h-4 w-4" />
-                                            </button>
-                                        </>
+                                        <span
+                                            title={`${user.active_project_count ?? 0} active of ${user.project_count} total`}
+                                        >
+                                            {user.active_project_count ?? 0} active · {user.project_count} total
+                                        </span>
                                     )}
-                                </div>
-                            </td>
-                        </tr>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                    {user.last_login_at ? (
+                                        <span className="text-base-secondary">
+                                            {formatDateShort(user.last_login_at)}
+                                        </span>
+                                    ) : (
+                                        <span className="text-base-muted italic">Never</span>
+                                    )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
+                                    {formatDateShort(user.created_at)}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                        {user.deleted_at ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => setActiveModal({ type: 'restore', user })}
+                                                className="p-1.5 text-base-muted hover:text-green-600 hover:bg-green-50 rounded-sm transition-colors"
+                                                title="Restore user"
+                                            >
+                                                <ArrowPathIcon className="h-4 w-4" />
+                                            </button>
+                                        ) : (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRolesOpen(user)}
+                                                    className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
+                                                    title="Manage roles"
+                                                >
+                                                    <ShieldCheckIcon className="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleImpersonate(user)}
+                                                    disabled={impersonateIsPending}
+                                                    className="p-1.5 text-base-muted hover:text-amber-600 hover:bg-amber-50 rounded-sm transition-colors disabled:opacity-50"
+                                                    title="Impersonate user"
+                                                >
+                                                    <UserCircleIcon className="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openEdit(user)}
+                                                    className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
+                                                    title="Edit user"
+                                                >
+                                                    <PencilIcon className="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setActiveModal({ type: 'delete', user })}
+                                                    className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
+                                                    title="Delete user"
+                                                >
+                                                    <TrashIcon className="h-4 w-4" />
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </td>
+                            </tr>
                         );
                     })}
                 </tbody>
@@ -972,9 +1010,7 @@ export const AdminPage: React.FC = () => {
                 <div className="flex items-center justify-between mb-6">
                     <div>
                         <h1 className="text-2xl font-bold text-base-primary">User Management</h1>
-                        <p className="text-sm text-base-muted mt-1">
-                            {userCountLabel}
-                        </p>
+                        <p className="text-sm text-base-muted mt-1">{userCountLabel}</p>
                     </div>
                     <div className="flex items-center gap-2">
                         {selected.size > 0 && (
@@ -1148,7 +1184,12 @@ export const AdminPage: React.FC = () => {
                         </p>
                     )}
                     <div>
-                        <label htmlFor="edit-display-name" className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
+                        <label
+                            htmlFor="edit-display-name"
+                            className="block text-sm font-medium text-base-secondary mb-1"
+                        >
+                            Display Name
+                        </label>
                         <input
                             id="edit-display-name"
                             type="text"
@@ -1158,7 +1199,9 @@ export const AdminPage: React.FC = () => {
                         />
                     </div>
                     <div>
-                        <label htmlFor="edit-email" className="block text-sm font-medium text-base-secondary mb-1">Email</label>
+                        <label htmlFor="edit-email" className="block text-sm font-medium text-base-secondary mb-1">
+                            Email
+                        </label>
                         <input
                             id="edit-email"
                             type="email"

@@ -5,9 +5,11 @@ This directory contains the client-side state management implementation using Zu
 ## Store Architecture
 
 ### 1. UI Store (`uiStore.ts`)
+
 Manages UI-specific state and interactions.
 
 **Features:**
+
 - Sidebar open/close state
 - Modal management with data passing
 - Page navigation and breadcrumbs
@@ -16,15 +18,18 @@ Manages UI-specific state and interactions.
 - Focus management and accessibility
 
 **Key Methods:**
+
 - `setSidebarOpen(open)` - Control sidebar visibility
 - `openModal(modalId, data)` - Open modal with optional data
 - `setSelectedItems(items)` - Manage bulk selections
 - `toggleSelectedItem(item)` - Toggle individual item selection
 
 ### 2. Form Store (`formStore.ts`)
+
 Comprehensive form state management with validation and auto-save.
 
 **Features:**
+
 - Multi-form management
 - Field-level validation and error handling
 - Dirty/touched state tracking
@@ -33,6 +38,7 @@ Comprehensive form state management with validation and auto-save.
 - Form draft persistence
 
 **Key Methods:**
+
 - `initializeForm(formId, initialValues, meta)` - Initialize a new form
 - `setFieldValue(formId, fieldName, value)` - Update field value
 - `setFieldError(formId, fieldName, error)` - Set field validation error
@@ -40,14 +46,17 @@ Comprehensive form state management with validation and auto-save.
 - `saveFormDraft(formId)` - Save form draft to localStorage
 
 **Custom Hooks:**
+
 - `useForm(formId)` - Complete form management
 - `useFormField(formId, fieldName)` - Individual field management
 - `useFormAutoSave(formId, onSave)` - Auto-save functionality
 
 ### 3. Preferences Store (`preferencesStore.ts`)
+
 User preferences and settings management with persistence.
 
 **Features:**
+
 - Theme management (light/dark/system)
 - Language and localization settings
 - Timezone and date formatting
@@ -56,19 +65,23 @@ User preferences and settings management with persistence.
 - Accessibility settings
 
 **Key Methods:**
+
 - `setTheme(theme)` - Change application theme
 - `setLanguage(language)` - Change interface language
 - `setNotificationSettings(settings)` - Update notification preferences
 - `getFormattedDate(date)` - Format dates with user preferences
 
 **Custom Hooks:**
+
 - `useThemeEffect()` - Apply theme changes to DOM
 - `useLanguageEffect()` - Apply language changes to DOM
 
 ### 4. App Store (`appStore.ts`)
+
 Global application state and system-wide data.
 
 **Features:**
+
 - Application metadata (version, build info)
 - Online/offline status tracking
 - Server connectivity status
@@ -80,19 +93,23 @@ Global application state and system-wide data.
 - Keyboard shortcuts management
 
 **Key Methods:**
+
 - `setOnlineStatus(isOnline)` - Update connectivity status
 - `setFeature(feature, enabled)` - Toggle feature flags
 - `setGlobalSearchOpen(open)` - Control global search
 - `initialize(config)` - Initialize app with configuration
 
 **Custom Hooks:**
+
 - `useOnlineStatusEffect()` - Monitor network connectivity
 - `useKeyboardShortcuts()` - Handle global keyboard shortcuts
 
 ### 5. Notification Store (`notificationStore.ts`)
+
 Toast notifications and alert management.
 
 **Features:**
+
 - Toast notification queue
 - Auto-removal for success/info notifications
 - Read/unread state tracking
@@ -100,14 +117,17 @@ Toast notifications and alert management.
 - Bulk operations (mark all read, clear all)
 
 **Key Methods:**
+
 - `addNotification(notification)` - Add new notification
 - `markAsRead(id)` - Mark notification as read
 - `getUnreadCount()` - Get count of unread notifications
 
 ### 6. Auth Store (`authStore.ts`)
+
 Authentication state and user session management.
 
 **Features:**
+
 - User authentication state
 - JWT token management
 - Session persistence
@@ -140,21 +160,21 @@ import { useForm, useFormField } from '../store/formStore';
 function MyForm() {
     const form = useForm('my-form');
     const emailField = useFormField('my-form', 'email');
-    
+
     useEffect(() => {
         form.initialize({
             email: '',
             password: ''
         });
     }, []);
-    
+
     const handleSubmit = () => {
         if (form.isValid()) {
             const values = form.getValues();
             // Submit form
         }
     };
-    
+
     return (
         <form onSubmit={handleSubmit}>
             <input
@@ -175,12 +195,12 @@ import { useFormAutoSave } from '../store/formStore';
 
 function AutoSaveForm() {
     const form = useForm('auto-save-form');
-    
+
     // Enable auto-save every 30 seconds
     useFormAutoSave('auto-save-form', async (values) => {
         await api.saveDraft(values);
     });
-    
+
     useEffect(() => {
         form.initialize({ content: '' }, { autoSave: true });
         // Try to load existing draft
@@ -196,10 +216,10 @@ import { usePreferencesStore, useThemeEffect } from '../store/preferencesStore';
 
 function ThemeProvider({ children }) {
     const { theme, setTheme } = usePreferencesStore();
-    
+
     // Apply theme changes to DOM
     useThemeEffect();
-    
+
     return (
         <div className={theme === 'dark' ? 'dark' : ''}>
             {children}
@@ -220,12 +240,12 @@ function GlobalSearch() {
         setGlobalSearchOpen,
         setGlobalSearchQuery
     } = useAppStore();
-    
+
     // Enable Cmd+K shortcut
     useKeyboardShortcuts();
-    
+
     if (!globalSearchOpen) return null;
-    
+
     return (
         <Modal onClose={() => setGlobalSearchOpen(false)}>
             <input
@@ -241,11 +261,13 @@ function GlobalSearch() {
 ## Persistence
 
 ### Automatic Persistence
+
 - **Preferences Store**: Automatically persists user preferences
 - **Auth Store**: Persists authentication state
 - **Form Store**: Auto-saves form drafts to localStorage
 
 ### Manual Persistence
+
 - **UI Store**: No persistence (session-only state)
 - **App Store**: No persistence (runtime state)
 - **Notification Store**: No persistence (temporary notifications)
@@ -271,6 +293,7 @@ const store = create<State>()(
 ## Testing
 
 Store tests are located in `__tests__/stores.test.ts` and cover:
+
 - State initialization
 - Action execution
 - State persistence
@@ -278,6 +301,7 @@ Store tests are located in `__tests__/stores.test.ts` and cover:
 - Integration scenarios
 
 Run tests with:
+
 ```bash
 npm run test -- src/store/__tests__/stores.test.ts
 ```

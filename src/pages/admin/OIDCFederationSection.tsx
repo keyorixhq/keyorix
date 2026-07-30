@@ -163,10 +163,22 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
     }
 
     async function submitAdd() {
-        if (!formName.trim()) { setAddError('Name is required.'); return; }
-        if (!formIssuerUrl.trim()) { setAddError('Issuer URL is required.'); return; }
-        if (!formSubjectPattern.trim()) { setAddError('Subject pattern is required.'); return; }
-        if (!formSaId) { setAddError('Select a service account to bind.'); return; }
+        if (!formName.trim()) {
+            setAddError('Name is required.');
+            return;
+        }
+        if (!formIssuerUrl.trim()) {
+            setAddError('Issuer URL is required.');
+            return;
+        }
+        if (!formSubjectPattern.trim()) {
+            setAddError('Subject pattern is required.');
+            return;
+        }
+        if (!formSaId) {
+            setAddError('Select a service account to bind.');
+            return;
+        }
         setAddError('');
         try {
             await addMutation.mutateAsync({
@@ -198,7 +210,8 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                 <div>
                     <h2 className="text-lg font-semibold text-base-primary">OIDC Workload Identity Federation</h2>
                     <p className="text-sm text-base-muted mt-0.5">
-                        Let CI/CD systems exchange short-lived OIDC tokens for Keyorix access — no static secrets needed.
+                        Let CI/CD systems exchange short-lived OIDC tokens for Keyorix access — no static secrets
+                        needed.
                     </p>
                 </div>
                 <Button variant="default" onClick={openAdd} disabled={!!backendNotReady}>
@@ -242,9 +255,7 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                         >
                             <div className="min-w-0 flex-1">
                                 <p className="text-sm font-medium text-base-primary">{cfg.name}</p>
-                                {cfg.description && (
-                                    <p className="text-xs text-base-muted mt-0.5">{cfg.description}</p>
-                                )}
+                                {cfg.description && <p className="text-xs text-base-muted mt-0.5">{cfg.description}</p>}
                                 <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-base-muted">
                                     <span>
                                         <span className="font-medium">Issuer:</span> {cfg.issuer_url}
@@ -319,7 +330,12 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     </div>
 
                     <div>
-                        <label htmlFor="oidc-description-input" className="block text-sm font-medium text-base-secondary mb-1">Description</label>
+                        <label
+                            htmlFor="oidc-description-input"
+                            className="block text-sm font-medium text-base-secondary mb-1"
+                        >
+                            Description
+                        </label>
                         <input
                             id="oidc-description-input"
                             type="text"
@@ -332,7 +348,12 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     </div>
 
                     <div>
-                        <label htmlFor="oidc-issuer-preset" className="block text-sm font-medium text-base-secondary mb-2">Issuer preset</label>
+                        <label
+                            htmlFor="oidc-issuer-preset"
+                            className="block text-sm font-medium text-base-secondary mb-2"
+                        >
+                            Issuer preset
+                        </label>
                         <div className="flex flex-wrap gap-2">
                             {ISSUER_PRESETS.map((p, i) => (
                                 <button
@@ -353,7 +374,10 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                     </div>
 
                     <div>
-                        <label htmlFor="oidc-issuer-url-input" className="block text-sm font-medium text-base-secondary mb-1">
+                        <label
+                            htmlFor="oidc-issuer-url-input"
+                            className="block text-sm font-medium text-base-secondary mb-1"
+                        >
                             Issuer URL <span className="text-red-500">*</span>
                         </label>
                         <input
@@ -369,7 +393,12 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
 
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label htmlFor="oidc-audience-input" className="block text-sm font-medium text-base-secondary mb-1">Audience</label>
+                            <label
+                                htmlFor="oidc-audience-input"
+                                className="block text-sm font-medium text-base-secondary mb-1"
+                            >
+                                Audience
+                            </label>
                             <input
                                 id="oidc-audience-input"
                                 type="text"
@@ -381,7 +410,10 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                             />
                         </div>
                         <div>
-                            <label htmlFor="oidc-subject-pattern-input" className="block text-sm font-medium text-base-secondary mb-1">
+                            <label
+                                htmlFor="oidc-subject-pattern-input"
+                                className="block text-sm font-medium text-base-secondary mb-1"
+                            >
                                 Subject pattern <span className="text-red-500">*</span>
                             </label>
                             <input
@@ -393,12 +425,17 @@ export const OIDCFederationSection: React.FC<Props> = ({ serviceAccounts }) => {
                                 className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono"
                                 style={INPUT_STYLE}
                             />
-                            <p className="text-xs text-base-muted mt-1">Supports <code>*</code> wildcards</p>
+                            <p className="text-xs text-base-muted mt-1">
+                                Supports <code>*</code> wildcards
+                            </p>
                         </div>
                     </div>
 
                     <div>
-                        <label htmlFor="oidc-service-account-select" className="block text-sm font-medium text-base-secondary mb-1">
+                        <label
+                            htmlFor="oidc-service-account-select"
+                            className="block text-sm font-medium text-base-secondary mb-1"
+                        >
                             Bind to service account <span className="text-red-500">*</span>
                         </label>
                         <select
@@ -462,7 +499,8 @@ function HowToUseGuide() {
                             color: 'var(--text-secondary)',
                             border: '1px solid var(--border)',
                         }}
-                    >{`permissions:
+                    >
+                        {`permissions:
   id-token: write   # required for OIDC
 
 steps:
@@ -491,7 +529,8 @@ steps:
         -H "Authorization: Bearer \${KX_TOKEN}"`}
                     </pre>
                     <p className="text-xs text-base-muted">
-                        Set <code>KX_TRUST_CONFIG_ID</code> as a repository variable (not a secret) — it is not sensitive.
+                        Set <code>KX_TRUST_CONFIG_ID</code> as a repository variable (not a secret) — it is not
+                        sensitive.
                     </p>
                 </div>
             )}

@@ -148,125 +148,127 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
         );
     }
 
-    const emptyOrTable = list.secrets.length === 0 ? (
-        <div className="p-10 text-center">
-            <FunnelIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
-            <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-                {list.search || list.typeFilter !== 'all'
-                    ? 'No secrets match your filters'
-                    : `No secrets in ${activeEnvName}`}
-            </p>
-            {!(list.search || list.typeFilter !== 'all') && (
-                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                    Create your first secret in this environment.
+    const emptyOrTable =
+        list.secrets.length === 0 ? (
+            <div className="p-10 text-center">
+                <FunnelIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    {list.search || list.typeFilter !== 'all'
+                        ? 'No secrets match your filters'
+                        : `No secrets in ${activeEnvName}`}
                 </p>
-            )}
-            {!(list.search || list.typeFilter !== 'all') && (
-                <Button onClick={() => list.openModal('create-secret')}>
-                    <PlusIcon className="h-4 w-4 mr-1" />
-                    New Secret
-                </Button>
-            )}
-        </div>
-    ) : (
-        <div className="overflow-x-auto">
-            <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
-                <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
-                    <tr>
-                        <th className="px-4 py-3 text-left w-10">
-                            <input
-                                type="checkbox"
-                                className="rounded-sm border-gray-300 text-blue-600"
-                                checked={
-                                    list.secrets.length > 0 &&
-                                    list.secrets.every((s) => selectedItems.has(s.id))
-                                }
-                                onChange={(e) => {
-                                    if (e.target.checked) list.secrets.forEach((s) => toggleSelected(s.id));
-                                    else clearSelected();
-                                }}
-                            />
-                        </th>
-                        {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map((h) => (
+                {!(list.search || list.typeFilter !== 'all') && (
+                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                        Create your first secret in this environment.
+                    </p>
+                )}
+                {!(list.search || list.typeFilter !== 'all') && (
+                    <Button onClick={() => list.openModal('create-secret')}>
+                        <PlusIcon className="h-4 w-4 mr-1" />
+                        New Secret
+                    </Button>
+                )}
+            </div>
+        ) : (
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y" style={{ borderColor: 'var(--border)' }}>
+                    <thead style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                        <tr>
+                            <th className="px-4 py-3 text-left w-10">
+                                <input
+                                    type="checkbox"
+                                    className="rounded-sm border-gray-300 text-blue-600"
+                                    checked={
+                                        list.secrets.length > 0 && list.secrets.every((s) => selectedItems.has(s.id))
+                                    }
+                                    onChange={(e) => {
+                                        if (e.target.checked) list.secrets.forEach((s) => toggleSelected(s.id));
+                                        else clearSelected();
+                                    }}
+                                />
+                            </th>
+                            {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map((h) => (
+                                <th
+                                    key={h}
+                                    className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider"
+                                    style={{ color: 'var(--text-muted)' }}
+                                >
+                                    {h}
+                                </th>
+                            ))}
                             <th
-                                key={h}
-                                className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider"
+                                className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider min-w-[180px]"
                                 style={{ color: 'var(--text-muted)' }}
                             >
-                                {h}
+                                Actions
                             </th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                        {list.secrets.map((secret) => (
+                            <SecretTableRow
+                                key={secret.id}
+                                secret={secret}
+                                isSelected={selectedItems.has(secret.id)}
+                                onToggleSelect={toggleSelected}
+                                onView={setViewingSecret}
+                                onEdit={(s) => list.openModal('edit-secret', { secret: s })}
+                                onDelete={(s) => list.openModal('delete-secret', { secret: s })}
+                                onShare={(s) => list.openModal('share-secret', { secret: s })}
+                                onRotate={(s) => list.openModal('rotate-secret', { secret: s })}
+                                onCopy={reveal.handleCopySecretValue}
+                                copyingId={reveal.copyingSecretId}
+                                copiedId={reveal.copiedSecretId}
+                                copyErrorId={reveal.copyErrorId}
+                            />
                         ))}
-                        <th
-                            className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider min-w-[180px]"
-                            style={{ color: 'var(--text-muted)' }}
-                        >
-                            Actions
-                        </th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {list.secrets.map((secret) => (
-                        <SecretTableRow
-                            key={secret.id}
-                            secret={secret}
-                            isSelected={selectedItems.has(secret.id)}
-                            onToggleSelect={toggleSelected}
-                            onView={setViewingSecret}
-                            onEdit={(s) => list.openModal('edit-secret', { secret: s })}
-                            onDelete={(s) => list.openModal('delete-secret', { secret: s })}
-                            onShare={(s) => list.openModal('share-secret', { secret: s })}
-                            onRotate={(s) => list.openModal('rotate-secret', { secret: s })}
-                            onCopy={reveal.handleCopySecretValue}
-                            copyingId={reveal.copyingSecretId}
-                            copiedId={reveal.copiedSecretId}
-                            copyErrorId={reveal.copyErrorId}
-                        />
-                    ))}
-                </tbody>
-            </table>
+                    </tbody>
+                </table>
 
-            {/* Pagination */}
-            {list.pagination.totalPages > 1 && (
-                <div
-                    className="px-4 py-3 border-t flex items-center justify-between"
-                    style={{ borderColor: 'var(--border)' }}
-                >
-                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                        {(list.pagination.page - 1) * list.pagination.pageSize + 1}–
-                        {Math.min(list.pagination.page * list.pagination.pageSize, list.pagination.total)}{' '}
-                        of {list.pagination.total}
-                    </p>
-                    <div className="flex items-center gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => list.handlePageChange(list.pagination.page - 1)}
-                            disabled={list.pagination.page === 1}
-                        >
-                            <ChevronLeftIcon className="h-4 w-4" />
-                        </Button>
-                        <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                            {list.pagination.page} / {list.pagination.totalPages}
-                        </span>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => list.handlePageChange(list.pagination.page + 1)}
-                            disabled={list.pagination.page === list.pagination.totalPages}
-                        >
-                            <ChevronRightIcon className="h-4 w-4" />
-                        </Button>
+                {/* Pagination */}
+                {list.pagination.totalPages > 1 && (
+                    <div
+                        className="px-4 py-3 border-t flex items-center justify-between"
+                        style={{ borderColor: 'var(--border)' }}
+                    >
+                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                            {(list.pagination.page - 1) * list.pagination.pageSize + 1}–
+                            {Math.min(list.pagination.page * list.pagination.pageSize, list.pagination.total)} of{' '}
+                            {list.pagination.total}
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => list.handlePageChange(list.pagination.page - 1)}
+                                disabled={list.pagination.page === 1}
+                            >
+                                <ChevronLeftIcon className="h-4 w-4" />
+                            </Button>
+                            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                                {list.pagination.page} / {list.pagination.totalPages}
+                            </span>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => list.handlePageChange(list.pagination.page + 1)}
+                                disabled={list.pagination.page === list.pagination.totalPages}
+                            >
+                                <ChevronRightIcon className="h-4 w-4" />
+                            </Button>
+                        </div>
                     </div>
-                </div>
-            )}
-        </div>
-    );
+                )}
+            </div>
+        );
 
     const tableContent = list.isLoading ? (
         <div className="p-8">
             <Loading />
         </div>
-    ) : emptyOrTable;
+    ) : (
+        emptyOrTable
+    );
 
     return (
         <div>
@@ -335,7 +337,12 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                     <ArrowsRightLeftIcon className="h-4 w-4 mr-1" />
                     Check Drift
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => setRotationPlanOpen(true)} className="flex items-center">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setRotationPlanOpen(true)}
+                    className="flex items-center"
+                >
                     <ArrowPathIcon className="h-4 w-4 mr-1" />
                     Rotation Plan
                 </Button>
@@ -426,7 +433,11 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                     </div>
 
                     <div>
-                        <label htmlFor="create-secret-name" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="create-secret-name"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Name <span style={{ color: 'var(--error)' }}>*</span>
                         </label>
                         <input
@@ -447,7 +458,11 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
 
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label htmlFor="create-secret-value" className="block text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                            <label
+                                htmlFor="create-secret-value"
+                                className="block text-sm font-medium"
+                                style={{ color: 'var(--text-secondary)' }}
+                            >
                                 Value <span style={{ color: 'var(--error)' }}>*</span>
                             </label>
                             <button
@@ -475,7 +490,11 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                     </div>
 
                     <div>
-                        <label htmlFor="create-secret-type" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="create-secret-type"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Type
                         </label>
                         <Select
@@ -542,7 +561,11 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         />
                     )}
                     <div>
-                        <label htmlFor="edit-secret-name" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="edit-secret-name"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Name
                         </label>
                         <input
@@ -560,7 +583,11 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         />
                     </div>
                     <div>
-                        <label htmlFor="edit-secret-type" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="edit-secret-type"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Type
                         </label>
                         <Select
@@ -574,7 +601,11 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label htmlFor="edit-secret-value" className="block text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                            <label
+                                htmlFor="edit-secret-value"
+                                className="block text-sm font-medium"
+                                style={{ color: 'var(--text-secondary)' }}
+                            >
                                 New Value
                             </label>
                             <button
@@ -700,7 +731,11 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                     </p>
                     <div>
                         <div className="flex items-center justify-between mb-1">
-                            <label htmlFor="rotate-secret-value" className="block text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                            <label
+                                htmlFor="rotate-secret-value"
+                                className="block text-sm font-medium"
+                                style={{ color: 'var(--text-secondary)' }}
+                            >
                                 New Value
                             </label>
                             <button

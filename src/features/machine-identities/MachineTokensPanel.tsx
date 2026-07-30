@@ -59,83 +59,84 @@ export const MachineTokensPanel: React.FC<{
         color: 'var(--text-primary)',
     };
 
-    const tokenList = tokens.length === 0 ? (
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            No tokens issued yet.
-        </p>
-    ) : (
-        <ul className="space-y-1">
-            {tokens.map((t) => (
-                <li key={t.id} className="flex items-center gap-2 text-xs">
-                    <span className="font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        {t.prefix}…
-                    </span>
-                    <span className="truncate" style={{ color: 'var(--text-primary)' }}>
-                        {t.name || '(unnamed)'}
-                    </span>
-                    {t.revoked && (
-                        <span
-                            className="px-2 py-0.5 rounded-full font-medium shrink-0"
-                            style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
-                        >
-                            revoked
+    const tokenList =
+        tokens.length === 0 ? (
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                No tokens issued yet.
+            </p>
+        ) : (
+            <ul className="space-y-1">
+                {tokens.map((t) => (
+                    <li key={t.id} className="flex items-center gap-2 text-xs">
+                        <span className="font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+                            {t.prefix}…
                         </span>
-                    )}
-                    <span className="ml-auto flex items-center gap-2 shrink-0">
-                        {canManage ? (
-                            <select
-                                aria-label={`Classification for token ${t.prefix}`}
-                                value={t.classification ?? ''}
-                                disabled={classify.isPending}
-                                onChange={(e) => {
-                                    if (e.target.value === (t.classification ?? '')) return;
-                                    setError('');
-                                    classify.mutate(
-                                        { tokenId: t.id, classification: e.target.value },
-                                        { onError: (err) => surface(err, 'Failed to update classification.') }
-                                    );
-                                }}
-                                className="rounded-lg px-2 py-0.5 text-xs outline-hidden disabled:opacity-50"
-                                style={selectStyle}
-                                title="Data classification (ISO 27001 A.5.12)"
-                            >
-                                {CLASSIFICATION_LEVELS.map((level) => (
-                                    <option key={level || 'unclassified'} value={level}>
-                                        {classificationMeta(level).label}
-                                    </option>
-                                ))}
-                            </select>
-                        ) : (
+                        <span className="truncate" style={{ color: 'var(--text-primary)' }}>
+                            {t.name || '(unnamed)'}
+                        </span>
+                        {t.revoked && (
                             <span
-                                data-testid="mt-classification-badge"
-                                className={`px-2 py-0.5 rounded-full font-medium ${classificationMeta(t.classification ?? '').color}`}
-                                title="Data classification (ISO 27001 A.5.12)"
+                                className="px-2 py-0.5 rounded-full font-medium shrink-0"
+                                style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}
                             >
-                                {classificationMeta(t.classification ?? '').label}
+                                revoked
                             </span>
                         )}
-                        {canManage && !t.revoked && (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setError('');
-                                    revoke.mutate(t.id, {
-                                        onError: (err) => surface(err, 'Failed to revoke token.'),
-                                    });
-                                }}
-                                disabled={revoke.isPending}
-                                className="p-1 rounded-sm disabled:opacity-50"
-                                style={{ color: 'var(--error)' }}
-                                title="Revoke token"
-                            >
-                                <NoSymbolIcon className="h-4 w-4" />
-                            </button>
-                        )}
-                    </span>
-                </li>
-            ))}
-        </ul>
-    );
+                        <span className="ml-auto flex items-center gap-2 shrink-0">
+                            {canManage ? (
+                                <select
+                                    aria-label={`Classification for token ${t.prefix}`}
+                                    value={t.classification ?? ''}
+                                    disabled={classify.isPending}
+                                    onChange={(e) => {
+                                        if (e.target.value === (t.classification ?? '')) return;
+                                        setError('');
+                                        classify.mutate(
+                                            { tokenId: t.id, classification: e.target.value },
+                                            { onError: (err) => surface(err, 'Failed to update classification.') }
+                                        );
+                                    }}
+                                    className="rounded-lg px-2 py-0.5 text-xs outline-hidden disabled:opacity-50"
+                                    style={selectStyle}
+                                    title="Data classification (ISO 27001 A.5.12)"
+                                >
+                                    {CLASSIFICATION_LEVELS.map((level) => (
+                                        <option key={level || 'unclassified'} value={level}>
+                                            {classificationMeta(level).label}
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <span
+                                    data-testid="mt-classification-badge"
+                                    className={`px-2 py-0.5 rounded-full font-medium ${classificationMeta(t.classification ?? '').color}`}
+                                    title="Data classification (ISO 27001 A.5.12)"
+                                >
+                                    {classificationMeta(t.classification ?? '').label}
+                                </span>
+                            )}
+                            {canManage && !t.revoked && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setError('');
+                                        revoke.mutate(t.id, {
+                                            onError: (err) => surface(err, 'Failed to revoke token.'),
+                                        });
+                                    }}
+                                    disabled={revoke.isPending}
+                                    className="p-1 rounded-sm disabled:opacity-50"
+                                    style={{ color: 'var(--error)' }}
+                                    title="Revoke token"
+                                >
+                                    <NoSymbolIcon className="h-4 w-4" />
+                                </button>
+                            )}
+                        </span>
+                    </li>
+                ))}
+            </ul>
+        );
 
     return (
         <div className="px-4 py-3" style={{ backgroundColor: 'var(--bg-app)' }}>
@@ -162,7 +163,9 @@ export const MachineTokensPanel: React.FC<{
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                     Loading tokens…
                 </p>
-            ) : tokenList}
+            ) : (
+                tokenList
+            )}
 
             {/* The raw token is shown ONCE — never retrievable again. */}
             <Modal isOpen={!!issued} onClose={() => setIssued(null)} title="Machine token issued" size="md">

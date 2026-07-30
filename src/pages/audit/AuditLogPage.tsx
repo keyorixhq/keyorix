@@ -17,117 +17,161 @@ const EVENT_STYLES: Record<
     // Auth
     'auth.login': {
         label: 'Login',
-        darkBg: 'rgba(148,163,184,0.15)', darkColor: '#94a3b8',
-        lightBg: '#f1f5f9', lightColor: '#475569',
+        darkBg: 'rgba(148,163,184,0.15)',
+        darkColor: '#94a3b8',
+        lightBg: '#f1f5f9',
+        lightColor: '#475569',
     },
     'auth.logout': {
         label: 'Logout',
-        darkBg: 'rgba(148,163,184,0.15)', darkColor: '#94a3b8',
-        lightBg: '#f1f5f9', lightColor: '#475569',
+        darkBg: 'rgba(148,163,184,0.15)',
+        darkColor: '#94a3b8',
+        lightBg: '#f1f5f9',
+        lightColor: '#475569',
     },
     'auth.login_failed': {
         label: 'Login Failed',
-        darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171',
-        lightBg: '#fee2e2', lightColor: '#991b1b',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
     },
     // Secrets
     'secret.read': {
         label: 'Read',
-        darkBg: 'rgba(251,191,36,0.15)', darkColor: '#fbbf24',
-        lightBg: '#fef9c3', lightColor: '#854d0e',
+        darkBg: 'rgba(251,191,36,0.15)',
+        darkColor: '#fbbf24',
+        lightBg: '#fef9c3',
+        lightColor: '#854d0e',
     },
     'secret.created': {
         label: 'Created',
-        darkBg: 'rgba(16,185,129,0.15)', darkColor: '#34d399',
-        lightBg: '#dcfce7', lightColor: '#166534',
+        darkBg: 'rgba(16,185,129,0.15)',
+        darkColor: '#34d399',
+        lightBg: '#dcfce7',
+        lightColor: '#166534',
     },
     'secret.updated': {
         label: 'Updated',
-        darkBg: 'rgba(59,130,246,0.15)', darkColor: '#60a5fa',
-        lightBg: '#dbeafe', lightColor: '#1e40af',
+        darkBg: 'rgba(59,130,246,0.15)',
+        darkColor: '#60a5fa',
+        lightBg: '#dbeafe',
+        lightColor: '#1e40af',
     },
     'secret.deleted': {
         label: 'Deleted',
-        darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171',
-        lightBg: '#fee2e2', lightColor: '#991b1b',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
     },
     'secret.rotated': {
         label: 'Rotated',
-        darkBg: 'rgba(168,85,247,0.15)', darkColor: '#c084fc',
-        lightBg: '#f3e8ff', lightColor: '#6b21a8',
+        darkBg: 'rgba(168,85,247,0.15)',
+        darkColor: '#c084fc',
+        lightBg: '#f3e8ff',
+        lightColor: '#6b21a8',
     },
     'secret.shared': {
         label: 'Shared',
-        darkBg: 'rgba(99,102,241,0.15)', darkColor: '#818cf8',
-        lightBg: '#e0e7ff', lightColor: '#3730a3',
+        darkBg: 'rgba(99,102,241,0.15)',
+        darkColor: '#818cf8',
+        lightBg: '#e0e7ff',
+        lightColor: '#3730a3',
     },
     'share.revoked': {
         label: 'Unshared',
-        darkBg: 'rgba(251,146,60,0.15)', darkColor: '#fb923c',
-        lightBg: '#ffedd5', lightColor: '#9a3412',
+        darkBg: 'rgba(251,146,60,0.15)',
+        darkColor: '#fb923c',
+        lightBg: '#ffedd5',
+        lightColor: '#9a3412',
     },
     // RBAC — roles
     'rbac.role.created': {
         label: 'Role Created',
-        darkBg: 'rgba(99,102,241,0.15)', darkColor: '#818cf8',
-        lightBg: '#e0e7ff', lightColor: '#3730a3',
+        darkBg: 'rgba(99,102,241,0.15)',
+        darkColor: '#818cf8',
+        lightBg: '#e0e7ff',
+        lightColor: '#3730a3',
     },
     'rbac.role.updated': {
         label: 'Role Updated',
-        darkBg: 'rgba(99,102,241,0.15)', darkColor: '#818cf8',
-        lightBg: '#e0e7ff', lightColor: '#3730a3',
+        darkBg: 'rgba(99,102,241,0.15)',
+        darkColor: '#818cf8',
+        lightBg: '#e0e7ff',
+        lightColor: '#3730a3',
     },
     'rbac.role.deleted': {
         label: 'Role Deleted',
-        darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171',
-        lightBg: '#fee2e2', lightColor: '#991b1b',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
     },
     'rbac.role.assigned': {
         label: 'Role Assigned',
-        darkBg: 'rgba(16,185,129,0.15)', darkColor: '#34d399',
-        lightBg: '#dcfce7', lightColor: '#166534',
+        darkBg: 'rgba(16,185,129,0.15)',
+        darkColor: '#34d399',
+        lightBg: '#dcfce7',
+        lightColor: '#166534',
     },
     'rbac.role.removed': {
         label: 'Role Removed',
-        darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171',
-        lightBg: '#fee2e2', lightColor: '#991b1b',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
     },
     // RBAC — permissions
     'rbac.permission.granted': {
         label: 'Permission Granted',
-        darkBg: 'rgba(16,185,129,0.15)', darkColor: '#34d399',
-        lightBg: '#dcfce7', lightColor: '#166534',
+        darkBg: 'rgba(16,185,129,0.15)',
+        darkColor: '#34d399',
+        lightBg: '#dcfce7',
+        lightColor: '#166534',
     },
     'rbac.permission.revoked': {
         label: 'Permission Revoked',
-        darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171',
-        lightBg: '#fee2e2', lightColor: '#991b1b',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
     },
     // RBAC — groups
     'rbac.group.created': {
         label: 'Group Created',
-        darkBg: 'rgba(168,85,247,0.15)', darkColor: '#c084fc',
-        lightBg: '#f3e8ff', lightColor: '#6b21a8',
+        darkBg: 'rgba(168,85,247,0.15)',
+        darkColor: '#c084fc',
+        lightBg: '#f3e8ff',
+        lightColor: '#6b21a8',
     },
     'rbac.group.updated': {
         label: 'Group Updated',
-        darkBg: 'rgba(168,85,247,0.15)', darkColor: '#c084fc',
-        lightBg: '#f3e8ff', lightColor: '#6b21a8',
+        darkBg: 'rgba(168,85,247,0.15)',
+        darkColor: '#c084fc',
+        lightBg: '#f3e8ff',
+        lightColor: '#6b21a8',
     },
     'rbac.group.deleted': {
         label: 'Group Deleted',
-        darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171',
-        lightBg: '#fee2e2', lightColor: '#991b1b',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
     },
     'rbac.group.member.added': {
         label: 'Added to Group',
-        darkBg: 'rgba(16,185,129,0.15)', darkColor: '#34d399',
-        lightBg: '#dcfce7', lightColor: '#166534',
+        darkBg: 'rgba(16,185,129,0.15)',
+        darkColor: '#34d399',
+        lightBg: '#dcfce7',
+        lightColor: '#166534',
     },
     'rbac.group.member.removed': {
         label: 'Removed from Group',
-        darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171',
-        lightBg: '#fee2e2', lightColor: '#991b1b',
+        darkBg: 'rgba(239,68,68,0.15)',
+        darkColor: '#f87171',
+        lightBg: '#fee2e2',
+        lightColor: '#991b1b',
     },
 };
 
@@ -216,12 +260,18 @@ const ACTOR_TYPE_OPTIONS = [
 ] as const;
 
 const FilterBar: React.FC<FilterBarProps> = ({
-    actorFilter, onActorChange,
-    eventTypeFilter, onEventTypeChange,
-    dateFrom, onDateFromChange,
-    dateTo, onDateToChange,
-    actorTypeFilter, onActorTypeChange,
-    availableTypes, resultCount,
+    actorFilter,
+    onActorChange,
+    eventTypeFilter,
+    onEventTypeChange,
+    dateFrom,
+    onDateFromChange,
+    dateTo,
+    onDateToChange,
+    actorTypeFilter,
+    onActorTypeChange,
+    availableTypes,
+    resultCount,
     onExport,
 }) => (
     <div className="px-5 py-3 border-b border-base flex items-center gap-3 flex-wrap bg-subtle">
@@ -243,7 +293,9 @@ const FilterBar: React.FC<FilterBarProps> = ({
         >
             <option value="all">All event types</option>
             {availableTypes.map((t) => (
-                <option key={t} value={t}>{eventLabel(t)}</option>
+                <option key={t} value={t}>
+                    {eventLabel(t)}
+                </option>
             ))}
         </select>
 
@@ -296,8 +348,12 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 title="Export as CSV"
             >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                        d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                    <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
+                    />
                 </svg>
                 Export CSV
             </button>
@@ -354,9 +410,7 @@ const AuditTable: React.FC<AuditTableProps> = ({ entries, isDark, isLoading, emp
                             <td className="px-5 py-3 whitespace-nowrap text-xs text-base-muted tabular-nums">
                                 {fmtTime(entry.timestamp)}
                             </td>
-                            <td className="px-5 py-3 whitespace-nowrap">
-                                {eventBadge(entry.event_type, isDark)}
-                            </td>
+                            <td className="px-5 py-3 whitespace-nowrap">{eventBadge(entry.event_type, isDark)}</td>
                             <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-base-primary">
                                 {entry.actor}
                                 {entry.actor_type === 'machine_identity' && (
@@ -365,9 +419,7 @@ const AuditTable: React.FC<AuditTableProps> = ({ entries, isDark, isLoading, emp
                                     </span>
                                 )}
                             </td>
-                            <td className="px-5 py-3 text-sm text-base-muted">
-                                {entry.description}
-                            </td>
+                            <td className="px-5 py-3 text-sm text-base-muted">{entry.description}</td>
                         </tr>
                     ))}
                 </tbody>
@@ -486,7 +538,10 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
 
     const toggleSort = (field: SortField) => {
         if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-        else { setSortField(field); setSortDir('desc'); }
+        else {
+            setSortField(field);
+            setSortDir('desc');
+        }
     };
 
     const sorted = [...anomalies]
@@ -538,11 +593,20 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                 key={s}
                                 onClick={() => setFilterSev(s)}
                                 className={`px-2.5 py-1 rounded text-xs font-medium border transition-all duration-100 capitalize
-                                    ${active
-                                        ? activeClass
-                                        : 'border-transparent text-base-muted hover:text-base-secondary'
+                                    ${
+                                        active
+                                            ? activeClass
+                                            : 'border-transparent text-base-muted hover:text-base-secondary'
                                     }`}
-                                style={active && style ? { backgroundColor: style.bg, color: style.color, borderColor: style.color + '50' } : {}}
+                                style={
+                                    active && style
+                                        ? {
+                                              backgroundColor: style.bg,
+                                              color: style.color,
+                                              borderColor: style.color + '50',
+                                          }
+                                        : {}
+                                }
                             >
                                 {s === 'all' ? 'All' : s}
                             </button>
@@ -553,15 +617,20 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                 <div className="w-px h-4 bg-base" />
 
                 <div className="flex gap-1">
-                    {[{ k: 'open', l: 'Open' }, { k: 'ack', l: 'Acknowledged' }, { k: 'all', l: 'All' }].map(({ k, l }) => (
+                    {[
+                        { k: 'open', l: 'Open' },
+                        { k: 'ack', l: 'Acknowledged' },
+                        { k: 'all', l: 'All' },
+                    ].map(({ k, l }) => (
                         <button
                             type="button"
                             key={k}
                             onClick={() => setFilterStatus(k)}
                             className={`px-2.5 py-1 rounded text-xs font-medium border transition-all duration-100
-                                ${filterStatus === k
-                                    ? 'bg-surface border-base text-base-primary shadow-xs'
-                                    : 'border-transparent text-base-muted hover:text-base-secondary'
+                                ${
+                                    filterStatus === k
+                                        ? 'bg-surface border-base text-base-primary shadow-xs'
+                                        : 'border-transparent text-base-muted hover:text-base-secondary'
                                 }`}
                         >
                             {l}
@@ -580,7 +649,9 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                         >
                             <option value="all">All types</option>
                             {alertTypes.map((t) => (
-                                <option key={t} value={t}>{humanizeAlertType(t)}</option>
+                                <option key={t} value={t}>
+                                    {humanizeAlertType(t)}
+                                </option>
                             ))}
                         </select>
                     </>
@@ -601,12 +672,54 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                         <thead>
                             <tr className="bg-subtle border-b border-base">
                                 <th className="pl-4 pr-2 py-3 w-6" />
-                                <th className="px-5 py-3 text-left"><ColBtn field="alert_type" label="Alert Type" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="secret_name" label="Secret" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="accessed_by" label="Actor" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
-                                <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider">IP Address</th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="severity" label="Severity" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
-                                <th className="px-5 py-3 text-left"><ColBtn field="detected_at" label="Detected" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} /></th>
+                                <th className="px-5 py-3 text-left">
+                                    <ColBtn
+                                        field="alert_type"
+                                        label="Alert Type"
+                                        sortField={sortField}
+                                        sortDir={sortDir}
+                                        onToggle={toggleSort}
+                                    />
+                                </th>
+                                <th className="px-5 py-3 text-left">
+                                    <ColBtn
+                                        field="secret_name"
+                                        label="Secret"
+                                        sortField={sortField}
+                                        sortDir={sortDir}
+                                        onToggle={toggleSort}
+                                    />
+                                </th>
+                                <th className="px-5 py-3 text-left">
+                                    <ColBtn
+                                        field="accessed_by"
+                                        label="Actor"
+                                        sortField={sortField}
+                                        sortDir={sortDir}
+                                        onToggle={toggleSort}
+                                    />
+                                </th>
+                                <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider">
+                                    IP Address
+                                </th>
+                                <th className="px-5 py-3 text-left">
+                                    <ColBtn
+                                        field="severity"
+                                        label="Severity"
+                                        sortField={sortField}
+                                        sortDir={sortDir}
+                                        onToggle={toggleSort}
+                                    />
+                                </th>
+                                <th className="px-5 py-3 text-left">
+                                    <ColBtn
+                                        field="detected_at"
+                                        label="Detected"
+                                        sortField={sortField}
+                                        sortDir={sortDir}
+                                        onToggle={toggleSort}
+                                    />
+                                </th>
                                 <th className="px-5 py-3 w-20" />
                             </tr>
                         </thead>
@@ -636,9 +749,13 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                                     {humanizeAlertType(a.AlertType)}
                                                 </span>
                                             </td>
-                                            <td className="px-5 py-3 text-sm font-medium text-base-primary">{a.SecretName}</td>
+                                            <td className="px-5 py-3 text-sm font-medium text-base-primary">
+                                                {a.SecretName}
+                                            </td>
                                             <td className="px-5 py-3 text-sm text-base-muted">{a.AccessedBy}</td>
-                                            <td className="px-5 py-3 text-sm text-base-muted tabular-nums">{a.IPAddress}</td>
+                                            <td className="px-5 py-3 text-sm text-base-muted tabular-nums">
+                                                {a.IPAddress}
+                                            </td>
                                             <td className="px-5 py-3 whitespace-nowrap">
                                                 <span
                                                     className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-semibold uppercase"
@@ -654,7 +771,10 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                                 {!a.Acknowledged && (
                                                     <button
                                                         type="button"
-                                                        onClick={(e) => { e.stopPropagation(); onDismiss(a.ID); }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onDismiss(a.ID);
+                                                        }}
                                                         className="text-xs text-base-muted hover:text-base-secondary transition-colors"
                                                     >
                                                         Dismiss
@@ -673,26 +793,46 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                                 >
                                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                                                         <div>
-                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">Detected At</p>
-                                                            <p className="text-sm text-base-primary tabular-nums">{a.DetectedAt ? fmtTime(a.DetectedAt) : '—'}</p>
-                                                        </div>
-                                                        <div>
-                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">Status</p>
-                                                            <p className="text-sm">
-                                                                {a.Acknowledged
-                                                                    ? <span className="text-emerald-600 font-medium">Acknowledged</span>
-                                                                    : <span className="text-amber-500 font-medium">Open</span>}
+                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">
+                                                                Detected At
+                                                            </p>
+                                                            <p className="text-sm text-base-primary tabular-nums">
+                                                                {a.DetectedAt ? fmtTime(a.DetectedAt) : '—'}
                                                             </p>
                                                         </div>
                                                         <div>
-                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">Alert ID</p>
-                                                            <p className="text-sm text-base-muted tabular-nums">#{a.ID}</p>
+                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">
+                                                                Status
+                                                            </p>
+                                                            <p className="text-sm">
+                                                                {a.Acknowledged ? (
+                                                                    <span className="text-emerald-600 font-medium">
+                                                                        Acknowledged
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-amber-500 font-medium">
+                                                                        Open
+                                                                    </span>
+                                                                )}
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">
+                                                                Alert ID
+                                                            </p>
+                                                            <p className="text-sm text-base-muted tabular-nums">
+                                                                #{a.ID}
+                                                            </p>
                                                         </div>
                                                     </div>
                                                     {a.Description && (
                                                         <div>
-                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">Description</p>
-                                                            <p className="text-sm text-base-primary leading-relaxed">{a.Description}</p>
+                                                            <p className="text-xs font-semibold text-base-muted uppercase tracking-wide mb-1">
+                                                                Description
+                                                            </p>
+                                                            <p className="text-sm text-base-primary leading-relaxed">
+                                                                {a.Description}
+                                                            </p>
                                                         </div>
                                                     )}
                                                 </td>
@@ -736,7 +876,8 @@ export const AuditLogPage: React.FC = () => {
     const { data: anomalyData, isLoading: anomalyLoading } = useAnomalyAlerts(false);
     const acknowledgeAnomaly = useAcknowledgeAnomaly();
     const { theme } = useUIStore();
-    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const isDark =
+        theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
     const anomalies: AnomalyAlert[] = anomalyData?.data?.alerts ?? [];
     const openCount = anomalies.filter((a) => !a.Acknowledged).length;
@@ -744,29 +885,32 @@ export const AuditLogPage: React.FC = () => {
     const allEntries: AuditLogEntry[] = data?.data ?? [];
 
     // Apply tab-level pre-filter first, then user filters
-    const applyFilters = useCallback((entries: AuditLogEntry[]) => {
-        return entries
-            .filter((e) => {
-                if (urlFilter === 'failed') return e.event_type === 'auth.login_failed';
-                if (urlFilter === 'reads') return e.event_type === 'secret.read';
-                if (urlFilter === 'logins') return e.event_type === 'auth.login';
-                return true;
-            })
-            .filter((e) => !actorFilter || e.actor.toLowerCase().includes(actorFilter.toLowerCase()))
-            .filter((e) => eventTypeFilter === 'all' || e.event_type === eventTypeFilter)
-            .filter((e) => actorTypeFilter === 'all' || e.actor_type === actorTypeFilter)
-            .filter((e) => !dateFrom || new Date(e.timestamp) >= new Date(dateFrom))
-            .filter((e) => !dateTo || new Date(e.timestamp) <= new Date(dateTo + 'T23:59:59'));
-    }, [urlFilter, actorFilter, eventTypeFilter, actorTypeFilter, dateFrom, dateTo]);
+    const applyFilters = useCallback(
+        (entries: AuditLogEntry[]) => {
+            return entries
+                .filter((e) => {
+                    if (urlFilter === 'failed') return e.event_type === 'auth.login_failed';
+                    if (urlFilter === 'reads') return e.event_type === 'secret.read';
+                    if (urlFilter === 'logins') return e.event_type === 'auth.login';
+                    return true;
+                })
+                .filter((e) => !actorFilter || e.actor.toLowerCase().includes(actorFilter.toLowerCase()))
+                .filter((e) => eventTypeFilter === 'all' || e.event_type === eventTypeFilter)
+                .filter((e) => actorTypeFilter === 'all' || e.actor_type === actorTypeFilter)
+                .filter((e) => !dateFrom || new Date(e.timestamp) >= new Date(dateFrom))
+                .filter((e) => !dateTo || new Date(e.timestamp) <= new Date(dateTo + 'T23:59:59'));
+        },
+        [urlFilter, actorFilter, eventTypeFilter, actorTypeFilter, dateFrom, dateTo]
+    );
 
     const auditEntries = applyFilters(allEntries);
     const rbacEntries = applyFilters(allEntries.filter((e) => e.event_type.startsWith('rbac.')));
 
     // Unique event types for the dropdown
     const auditTypes = Array.from(new Set(allEntries.map((e) => e.event_type))).sort((a, b) => a.localeCompare(b));
-    const rbacTypes = Array.from(new Set(allEntries
-        .filter((e) => e.event_type.startsWith('rbac.'))
-        .map((e) => e.event_type))).sort((a, b) => a.localeCompare(b));
+    const rbacTypes = Array.from(
+        new Set(allEntries.filter((e) => e.event_type.startsWith('rbac.')).map((e) => e.event_type))
+    ).sort((a, b) => a.localeCompare(b));
 
     const activeEntries = activeTab === 'rbac' ? rbacEntries : auditEntries;
     const activeTypes = activeTab === 'rbac' ? rbacTypes : auditTypes;
@@ -799,13 +943,11 @@ export const AuditLogPage: React.FC = () => {
 
                 {/* Tab toggle */}
                 <div className="flex gap-1 p-1 bg-subtle rounded-lg w-fit border border-base">
-                    {(
-                        [
-                            { id: 'audit' as const, label: 'Audit Log', badge: null as number | null },
-                            { id: 'rbac' as const, label: 'RBAC Events', badge: null as number | null },
-                            { id: 'anomalies' as const, label: 'Anomaly Alerts', badge: openCount > 0 ? openCount : null },
-                        ]
-                    ).map(({ id, label, badge }) => (
+                    {[
+                        { id: 'audit' as const, label: 'Audit Log', badge: null as number | null },
+                        { id: 'rbac' as const, label: 'RBAC Events', badge: null as number | null },
+                        { id: 'anomalies' as const, label: 'Anomaly Alerts', badge: openCount > 0 ? openCount : null },
+                    ].map(({ id, label, badge }) => (
                         <button
                             type="button"
                             key={id}
@@ -850,7 +992,9 @@ export const AuditLogPage: React.FC = () => {
                                     </span>
                                     <button
                                         type="button"
-                                        onClick={() => window.history.replaceState({}, '', window.location.pathname + '?tab=audit')}
+                                        onClick={() =>
+                                            window.history.replaceState({}, '', window.location.pathname + '?tab=audit')
+                                        }
                                         className="text-xs text-base-muted hover:text-base-secondary ml-auto"
                                     >
                                         ✕ Clear filter
@@ -893,12 +1037,23 @@ export const AuditLogPage: React.FC = () => {
                 {activeTab === 'rbac' && (
                     <div className="space-y-4">
                         <div className="flex items-start gap-3 p-4 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950/20 dark:border-indigo-900/30">
-                            <svg className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            <svg
+                                className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                                />
                             </svg>
                             <div>
-                                <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Access governance events</p>
+                                <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                                    Access governance events
+                                </p>
                                 <p className="text-xs text-indigo-600/70 dark:text-indigo-400/70 mt-0.5">
                                     Shows only role assignments, permission changes, and group membership events.
                                     Required for NIS2 Article 21 access control audit trails.

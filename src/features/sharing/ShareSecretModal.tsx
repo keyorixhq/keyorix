@@ -138,45 +138,36 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
         );
     };
 
-    const dropdownContent = results.length === 0 ? (
-        <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
-            No users found for "{query}"
-        </div>
-    ) : (
-        results.map((user) => (
-            <button
-                key={user.id}
-                type="button"
-                onClick={() => handleSelect(user)}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
-                style={{ color: 'var(--text-primary)' }}
-                onMouseEnter={(e) =>
-                    ((e.currentTarget as HTMLElement).style.backgroundColor =
-                        'var(--bg-subtle)')
-                }
-                onMouseLeave={(e) =>
-                    ((e.currentTarget as HTMLElement).style.backgroundColor = '')
-                }
-            >
-                <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
-                    <span
-                        className="text-xs font-semibold"
-                        style={{ color: 'var(--accent-text)' }}
-                    >
-                        {(user.display_name || user.username).charAt(0).toUpperCase()}
-                    </span>
-                </div>
-                <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                        {user.display_name || user.username}
-                    </p>
-                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                        @{user.username} · {user.email}
-                    </p>
-                </div>
-            </button>
-        ))
-    );
+    const dropdownContent =
+        results.length === 0 ? (
+            <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+                No users found for "{query}"
+            </div>
+        ) : (
+            results.map((user) => (
+                <button
+                    key={user.id}
+                    type="button"
+                    onClick={() => handleSelect(user)}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                    style={{ color: 'var(--text-primary)' }}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)')}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '')}
+                >
+                    <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
+                        <span className="text-xs font-semibold" style={{ color: 'var(--accent-text)' }}>
+                            {(user.display_name || user.username).charAt(0).toUpperCase()}
+                        </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{user.display_name || user.username}</p>
+                        <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                            @{user.username} · {user.email}
+                        </p>
+                    </div>
+                </button>
+            ))
+        );
 
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title={`Share "${secret.name}"`} size="md">
@@ -194,7 +185,11 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
 
                 {/* User search */}
                 <div>
-                    <label htmlFor="recipient-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label
+                        htmlFor="recipient-input"
+                        className="block text-sm font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
                         Recipient
                     </label>
                     <div className="relative">
@@ -245,7 +240,9 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
                                     <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
                                         Searching…
                                     </div>
-                                ) : dropdownContent}
+                                ) : (
+                                    dropdownContent
+                                )}
                             </div>
                         )}
                     </div>
@@ -253,7 +250,11 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
 
                 {/* Permission */}
                 <div>
-                    <label htmlFor="permission-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label
+                        htmlFor="permission-select"
+                        className="block text-sm font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
                         Permission
                     </label>
                     <Select
@@ -267,7 +268,11 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
 
                 {/* Access expiry (time-bound / JIT share) */}
                 <div>
-                    <label htmlFor="access-expires-select" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label
+                        htmlFor="access-expires-select"
+                        className="block text-sm font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
                         Access expires
                     </label>
                     <Select

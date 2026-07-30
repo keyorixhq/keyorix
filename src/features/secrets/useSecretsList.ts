@@ -138,7 +138,8 @@ export const useSecretsList = () => {
             pageSize: pagination.pageSize,
             sortBy,
         }),
-        queryFn: () => secretsApi.list(buildSecretQueryParams(filters, pagination.page, pagination.pageSize, environmentIdMap)),
+        queryFn: () =>
+            secretsApi.list(buildSecretQueryParams(filters, pagination.page, pagination.pageSize, environmentIdMap)),
         placeholderData: keepPreviousData,
     });
 

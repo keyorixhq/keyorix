@@ -46,11 +46,16 @@ Specs were rewritten with `page.route` API mocking (no real backend required).
 switched to pnpm and Chromium-only. The `e2e` job is now wired into CI (runs
 after the unit gate passes). See `.github/workflows/ci.yml`.
 
-## Formatting / Prettier — enforced 2026-07-27
+## Formatting / Prettier — enforced 2026-07-27, CI gate fixed 2026-07-30
 
-Prettier is now enforced. `.prettierrc` was added with house style (`tabWidth:
+Prettier is enforced. `.prettierrc` was added with house style (`tabWidth:
 4`, `singleQuote: true`), all ~131 source files were reformatted in one
-standalone commit (Phase 9, PR #115), and `pnpm format:check` runs in CI.
+standalone commit (Phase 9, PR #115).
+
+`pnpm format:check` was *not* actually wired into `ci.yml` at the time,
+despite this doc's earlier claim — so nothing enforced it going forward. 54
+files drifted over the following days. Fixed 2026-07-30: drifted files
+reformatted in a standalone commit, `format:check` added as its own CI step.
 
 ## Dependency maintenance
 

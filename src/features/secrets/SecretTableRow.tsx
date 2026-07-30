@@ -110,9 +110,12 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
     copiedId,
     copyErrorId,
 }) => {
-    const copyIcon = copiedId === secret.id
-        ? <CheckIcon className="h-4 w-4 text-green-500" />
-        : <DocumentDuplicateIcon className="h-4 w-4" />;
+    const copyIcon =
+        copiedId === secret.id ? (
+            <CheckIcon className="h-4 w-4 text-green-500" />
+        ) : (
+            <DocumentDuplicateIcon className="h-4 w-4" />
+        );
 
     return (
         <tr className={`hover:bg-subtle ${isSelected ? 'bg-accent-subtle' : ''}`}>
@@ -226,7 +229,9 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                     >
                         {copyingId === secret.id ? (
                             <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                        ) : copyIcon}
+                        ) : (
+                            copyIcon
+                        )}
                     </button>
                     <button
                         type="button"

@@ -104,7 +104,11 @@ const FederatedReadPanel: React.FC = () => {
             </p>
             {error && <Alert type="error" message={error} />}
             <div>
-                <label htmlFor="federated-connector" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                <label
+                    htmlFor="federated-connector"
+                    className="block text-sm font-medium mb-1"
+                    style={{ color: 'var(--text-secondary)' }}
+                >
                     Connector
                 </label>
                 <select
@@ -308,7 +312,11 @@ const RefGrantsPanel: React.FC = () => {
                         onChange={(e) => setRoleId(e.target.value)}
                     />
                     <div>
-                        <label htmlFor="grant-connector" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="grant-connector"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Connector
                         </label>
                         <select

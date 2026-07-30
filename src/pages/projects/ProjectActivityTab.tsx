@@ -144,12 +144,7 @@ export const ProjectActivityTab: React.FC<ProjectActivityTabProps> = ({ projectI
                         Page {page} of {totalPages}
                     </p>
                     <div className="flex items-center gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setPage((p) => p - 1)}
-                            disabled={page === 1}
-                        >
+                        <Button variant="outline" size="sm" onClick={() => setPage((p) => p - 1)} disabled={page === 1}>
                             <ChevronLeftIcon className="h-4 w-4" />
                         </Button>
                         <Button

@@ -64,13 +64,18 @@ export const PendingOnboardingSection: React.FC<PendingOnboardingSectionProps> =
 
     if (pending.length === 0) return null;
 
-    const handleTransition = (membership: ProjectMembership, action: 'verify' | 'provision' | 'activate' | 'revoke') => {
+    const handleTransition = (
+        membership: ProjectMembership,
+        action: 'verify' | 'provision' | 'activate' | 'revoke'
+    ) => {
         setError('');
         transition.mutate(
             { membershipId: membership.id, action },
             {
                 onError: (err: any) =>
-                    setError(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to update onboarding.'),
+                    setError(
+                        err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to update onboarding.'
+                    ),
             }
         );
     };
@@ -109,12 +114,18 @@ export const PendingOnboardingSection: React.FC<PendingOnboardingSectionProps> =
                             <li key={m.id} className="flex items-center gap-3 px-4 py-3">
                                 <div
                                     className="h-8 w-8 rounded-full flex items-center justify-center shrink-0"
-                                    style={{ backgroundColor: 'var(--warning-subtle, #fffbeb)', color: 'var(--warning, #b45309)' }}
+                                    style={{
+                                        backgroundColor: 'var(--warning-subtle, #fffbeb)',
+                                        color: 'var(--warning, #b45309)',
+                                    }}
                                 >
                                     <ClockIcon className="h-4 w-4" />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                    <p
+                                        className="text-sm font-medium truncate"
+                                        style={{ color: 'var(--text-primary)' }}
+                                    >
                                         {userLabel(user)}
                                     </p>
                                     <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>

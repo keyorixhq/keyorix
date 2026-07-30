@@ -101,7 +101,10 @@ export const MachineIdentitiesPage: React.FC = () => {
                                         <tr key={m.machine_id}>
                                             <td className="px-4 py-3 whitespace-nowrap">
                                                 <div>
-                                                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                                    <p
+                                                        className="text-sm font-medium"
+                                                        style={{ color: 'var(--text-primary)' }}
+                                                    >
                                                         {m.name}
                                                     </p>
                                                     {m.description && (
@@ -111,10 +114,16 @@ export const MachineIdentitiesPage: React.FC = () => {
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                            <td
+                                                className="px-4 py-3 whitespace-nowrap text-sm"
+                                                style={{ color: 'var(--text-secondary)' }}
+                                            >
                                                 {m.credential_count}
                                             </td>
-                                            <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                            <td
+                                                className="px-4 py-3 whitespace-nowrap text-sm"
+                                                style={{ color: 'var(--text-secondary)' }}
+                                            >
                                                 {lastUsedLabel(m.last_used_at)}
                                             </td>
                                             <td className="px-4 py-3 whitespace-nowrap">
@@ -125,7 +134,10 @@ export const MachineIdentitiesPage: React.FC = () => {
                                                     {statusLabel(m)}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-3 whitespace-nowrap text-sm" style={{ color: 'var(--text-muted)' }}>
+                                            <td
+                                                className="px-4 py-3 whitespace-nowrap text-sm"
+                                                style={{ color: 'var(--text-muted)' }}
+                                            >
                                                 {m.created_at ? formatDateShort(m.created_at) : '—'}
                                             </td>
                                         </tr>
@@ -177,7 +189,11 @@ export const MachineIdentitiesPage: React.FC = () => {
             {!isError && data && (
                 <div className="grid grid-cols-3 gap-3 mb-6 max-w-md">
                     <StatCard label="Total" value={data.total_count} />
-                    <StatCard label="Stale" value={data.stale_count} tone={data.stale_count > 0 ? 'var(--warning)' : undefined} />
+                    <StatCard
+                        label="Stale"
+                        value={data.stale_count}
+                        tone={data.stale_count > 0 ? 'var(--warning)' : undefined}
+                    />
                     <StatCard
                         label="Revoked"
                         value={data.revoked_count}

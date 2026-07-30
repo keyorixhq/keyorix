@@ -87,7 +87,11 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
                 )}
 
                 <div>
-                    <label htmlFor="invite-email-input" className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label
+                        htmlFor="invite-email-input"
+                        className="block text-xs font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
                         Email address
                     </label>
                     <input
@@ -103,7 +107,11 @@ export const InviteToProjectModal: React.FC<InviteToProjectModalProps> = ({
                 </div>
 
                 <div>
-                    <label htmlFor="invite-role-select" className="block text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    <label
+                        htmlFor="invite-role-select"
+                        className="block text-xs font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
                         Project role
                     </label>
                     <select

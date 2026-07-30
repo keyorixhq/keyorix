@@ -59,99 +59,98 @@ export const SecretsRotationPlanPanel: React.FC<SecretsRotationPlanPanelProps> =
         </div>
     ) : null;
 
-    const emptyContent = !isLoading && !isError && waves.length === 0 ? (
-        <div className="p-10 text-center">
-            <CheckCircleIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--success)' }} />
-            <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-                Nothing to rotate
-            </p>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                No policy-covered secret in this project is overdue or due soon.
-            </p>
-        </div>
-    ) : null;
+    const emptyContent =
+        !isLoading && !isError && waves.length === 0 ? (
+            <div className="p-10 text-center">
+                <CheckCircleIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--success)' }} />
+                <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                    Nothing to rotate
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    No policy-covered secret in this project is overdue or due soon.
+                </p>
+            </div>
+        ) : null;
 
-    const wavesContent = !isLoading && !isError && waves.length > 0 ? (
-        <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-            {waves.map((wave) => (
-                <div key={wave.index} className="p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                        <span
-                            className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                            style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}
-                        >
-                            Wave {wave.index + 1}
-                        </span>
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {wave.secrets.length} secret{wave.secrets.length === 1 ? '' : 's'} — safe to
-                            rotate together
-                        </span>
-                    </div>
-                    <div className="space-y-2">
-                        {wave.secrets.map((s) => {
-                            const badge = statusBadge(s);
-                            return (
-                                <div
-                                    key={s.secretId}
-                                    className="flex items-start justify-between gap-4 rounded-md px-3 py-2"
-                                    style={{ backgroundColor: 'var(--bg-subtle)' }}
-                                >
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span
-                                                className="font-mono text-xs font-medium"
-                                                style={{ color: 'var(--text-primary)' }}
-                                            >
-                                                {s.secretName}
-                                            </span>
-                                            <span
-                                                className="text-xs px-2 py-0.5 rounded-full"
-                                                style={{ backgroundColor: badge.bg, color: badge.text }}
-                                            >
-                                                {badge.label}
-                                            </span>
-                                            {s.autoRotate && (
+    const wavesContent =
+        !isLoading && !isError && waves.length > 0 ? (
+            <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {waves.map((wave) => (
+                    <div key={wave.index} className="p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                            <span
+                                className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                                style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}
+                            >
+                                Wave {wave.index + 1}
+                            </span>
+                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                {wave.secrets.length} secret{wave.secrets.length === 1 ? '' : 's'} — safe to rotate
+                                together
+                            </span>
+                        </div>
+                        <div className="space-y-2">
+                            {wave.secrets.map((s) => {
+                                const badge = statusBadge(s);
+                                return (
+                                    <div
+                                        key={s.secretId}
+                                        className="flex items-start justify-between gap-4 rounded-md px-3 py-2"
+                                        style={{ backgroundColor: 'var(--bg-subtle)' }}
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
                                                 <span
-                                                    className="inline-flex items-center gap-1 text-xs"
-                                                    style={{ color: 'var(--text-muted)' }}
+                                                    className="font-mono text-xs font-medium"
+                                                    style={{ color: 'var(--text-primary)' }}
                                                 >
-                                                    <ArrowPathIcon className="h-3 w-3" /> self-rotating
+                                                    {s.secretName}
                                                 </span>
+                                                <span
+                                                    className="text-xs px-2 py-0.5 rounded-full"
+                                                    style={{ backgroundColor: badge.bg, color: badge.text }}
+                                                >
+                                                    {badge.label}
+                                                </span>
+                                                {s.autoRotate && (
+                                                    <span
+                                                        className="inline-flex items-center gap-1 text-xs"
+                                                        style={{ color: 'var(--text-muted)' }}
+                                                    >
+                                                        <ArrowPathIcon className="h-3 w-3" /> self-rotating
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {s.reasons.length > 0 && (
+                                                <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                                                    {s.reasons.join(' · ')}
+                                                </div>
                                             )}
                                         </div>
-                                        {s.reasons.length > 0 && (
+                                        <div className="text-right shrink-0">
                                             <div
-                                                className="text-xs mt-1"
-                                                style={{ color: 'var(--text-muted)' }}
+                                                className="text-xs font-medium"
+                                                style={{ color: riskTone(s.riskBand) }}
                                             >
-                                                {s.reasons.join(' · ')}
+                                                {s.riskBand ? `${s.riskBand} risk` : '—'}
                                             </div>
-                                        )}
-                                    </div>
-                                    <div className="text-right shrink-0">
-                                        <div
-                                            className="text-xs font-medium"
-                                            style={{ color: riskTone(s.riskBand) }}
-                                        >
-                                            {s.riskBand ? `${s.riskBand} risk` : '—'}
+                                            {s.riskScore > 0 && (
+                                                <div
+                                                    className="text-xs tabular-nums"
+                                                    style={{ color: 'var(--text-muted)' }}
+                                                >
+                                                    score {s.riskScore}
+                                                </div>
+                                            )}
                                         </div>
-                                        {s.riskScore > 0 && (
-                                            <div
-                                                className="text-xs tabular-nums"
-                                                style={{ color: 'var(--text-muted)' }}
-                                            >
-                                                score {s.riskScore}
-                                            </div>
-                                        )}
                                     </div>
-                                </div>
-                            );
-                        })}
+                                );
+                            })}
+                        </div>
                     </div>
-                </div>
-            ))}
-        </div>
-    ) : null;
+                ))}
+            </div>
+        ) : null;
 
     return (
         <div>

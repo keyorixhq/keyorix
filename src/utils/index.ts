@@ -125,7 +125,9 @@ export function generateSecret(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
     const arr = new Uint8Array(32);
     window.crypto.getRandomValues(arr);
-    return Array.from(arr).map((b) => chars[b % chars.length]).join('');
+    return Array.from(arr)
+        .map((b) => chars[b % chars.length])
+        .join('');
 }
 
 /**
@@ -194,7 +196,7 @@ export const storage = {
     get: <T>(key: string, defaultValue?: T): T | null => {
         try {
             const item = localStorage.getItem(key);
-            return item ? JSON.parse(item) : defaultValue ?? null;
+            return item ? JSON.parse(item) : (defaultValue ?? null);
         } catch (error) {
             console.error(`Error reading from localStorage key "${key}":`, error);
             return defaultValue ?? null;

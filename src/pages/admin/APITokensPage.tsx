@@ -15,7 +15,6 @@ interface FlatToken extends APIToken {
     serviceAccountName: string;
 }
 
-
 export const APITokensPage: React.FC = () => {
     const { theme } = useUIStore();
     const isDark =
@@ -124,9 +123,7 @@ export const APITokensPage: React.FC = () => {
                                                 <span
                                                     className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
                                                     style={{
-                                                        backgroundColor: isDark
-                                                            ? 'rgba(59,130,246,0.15)'
-                                                            : '#eff6ff',
+                                                        backgroundColor: isDark ? 'rgba(59,130,246,0.15)' : '#eff6ff',
                                                         color: isDark ? '#93c5fd' : '#1d4ed8',
                                                     }}
                                                 >

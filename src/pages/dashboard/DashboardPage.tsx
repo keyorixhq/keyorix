@@ -51,9 +51,10 @@ function buildSecurityCardData(
     return {
         label: alertCount > 0 ? `Alerts (${alertCount})` : 'Security',
         value: alertCount > 0 ? alertCount : '✓',
-        sub: alertCount > 0
-            ? `${anomalyCount} anomal${plural} · ${expiredCount} expired · ${expiringCount} expiring`
-            : 'No active alerts',
+        sub:
+            alertCount > 0
+                ? `${anomalyCount} anomal${plural} · ${expiredCount} expired · ${expiringCount} expiring`
+                : 'No active alerts',
         accent: alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500',
     };
 }
@@ -113,7 +114,11 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue
         </>
     );
     if (onClick) {
-        return <button type="button" onClick={onClick} className={cardClass}>{cardContent}</button>;
+        return (
+            <button type="button" onClick={onClick} className={cardClass}>
+                {cardContent}
+            </button>
+        );
     }
     return <div className={cardClass}>{cardContent}</div>;
 };
@@ -141,10 +146,7 @@ const FeaturePill: React.FC<{ label: string; active: boolean }> = ({ label, acti
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border"
             style={active ? activeStyle : inactiveStyle}
         >
-            <div
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ backgroundColor: dotColor }}
-            />
+            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: dotColor }} />
             {label}
         </div>
     );
@@ -235,9 +237,17 @@ const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, o
         </>
     );
     if (onClick) {
-        return <button type="button" onClick={onClick} className={cardClass} style={styles}>{cardContent}</button>;
+        return (
+            <button type="button" onClick={onClick} className={cardClass} style={styles}>
+                {cardContent}
+            </button>
+        );
     }
-    return <div className={cardClass} style={styles}>{cardContent}</div>;
+    return (
+        <div className={cardClass} style={styles}>
+            {cardContent}
+        </div>
+    );
 };
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
@@ -248,11 +258,7 @@ function getGreeting(hour: number): string {
     return 'Good evening';
 }
 
-function getExpiringSeverity(
-    expiringTotal: number,
-    expiredCount: number,
-    urgentCount: number
-): SignalSeverity {
+function getExpiringSeverity(expiringTotal: number, expiredCount: number, urgentCount: number): SignalSeverity {
     if (expiringTotal === 0) return 'neutral';
     if (expiredCount > 0 || urgentCount > 0) return 'alert';
     return 'warn';
@@ -289,11 +295,17 @@ export const DashboardPage: React.FC = () => {
     const sharedCount = stats?.sharedSecrets ?? 0;
     const activeUsersSub = buildActiveUsersSub(sharedCount);
     const auditEventsSub = buildAuditSub(stats?.auditLogins30d, stats?.auditSecretReads30d);
-    const securityCard = buildSecurityCardData(alertCount, anomalies.length, expiredSecrets.length, expiringSecrets.length);
+    const securityCard = buildSecurityCardData(
+        alertCount,
+        anomalies.length,
+        expiredSecrets.length,
+        expiringSecrets.length
+    );
 
-    const expiringHint = expiredSecrets.length > 0
-        ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d`
-        : 'within 30 days';
+    const expiringHint =
+        expiredSecrets.length > 0
+            ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d`
+            : 'within 30 days';
 
     const urgentExpiringCount = expiringSecrets.filter((s: any) => s.daysLeft <= 7).length;
     const expiringSeverity = getExpiringSeverity(expiring.length, expiredSecrets.length, urgentExpiringCount);
@@ -505,7 +517,9 @@ export const DashboardPage: React.FC = () => {
                                     ))}
                                     {expiring.map((s: any) => {
                                         const urgentBadgeColor = s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600';
-                                        const expiryBadgeColor = s.expired ? 'bg-red-500/20 text-red-400' : urgentBadgeColor;
+                                        const expiryBadgeColor = s.expired
+                                            ? 'bg-red-500/20 text-red-400'
+                                            : urgentBadgeColor;
                                         return (
                                             <div
                                                 key={s.id}

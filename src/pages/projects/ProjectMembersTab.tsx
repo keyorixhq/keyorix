@@ -1,6 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { UserCircleIcon, TrashIcon, PlusIcon, EnvelopeIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import {
+    UserCircleIcon,
+    TrashIcon,
+    PlusIcon,
+    EnvelopeIcon,
+    ChevronDownIcon,
+    ChevronRightIcon,
+} from '@heroicons/react/24/outline';
 import { usersApi } from '../../services/users';
 import { PROJECT_ROLES } from '../../services/projects';
 import {
@@ -113,14 +120,17 @@ const EffectivePermissionsPanel: React.FC<EffectivePermissionsPanelProps> = ({ r
                                 {c.name}
                             </span>
                             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                {' '}— {c.description}
+                                {' '}
+                                — {c.description}
                             </span>
                         </div>
                     </div>
                 ))}
                 {denied.map((c) => (
                     <div key={c.name} className="flex items-start gap-2 opacity-40">
-                        <span className="mt-0.5 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>✕</span>
+                        <span className="mt-0.5 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                            ✕
+                        </span>
                         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                             {c.name}
                         </span>
@@ -148,10 +158,11 @@ const RoleLegend: React.FC = () => {
                 <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
                     Role permissions reference
                 </span>
-                {open
-                    ? <ChevronDownIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
-                    : <ChevronRightIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
-                }
+                {open ? (
+                    <ChevronDownIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
+                ) : (
+                    <ChevronRightIcon className="h-4 w-4" style={{ color: 'var(--text-muted)' }} />
+                )}
             </button>
             {open && (
                 <div
@@ -322,7 +333,10 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                             <div className="p-6 space-y-3">
                                 {[1, 2, 3].map((i) => (
                                     <div key={i} className="flex items-center gap-3 animate-pulse">
-                                        <div className="h-8 w-8 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                        <div
+                                            className="h-8 w-8 rounded-full"
+                                            style={{ backgroundColor: 'var(--bg-muted)' }}
+                                        />
                                         <div className="flex-1">
                                             <div
                                                 className="h-3 w-32 rounded-sm mb-1.5"
@@ -341,97 +355,107 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     if (members.length === 0) {
                         return (
                             <div className="p-10 text-center">
-                                <UserCircleIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                                <UserCircleIcon
+                                    className="h-10 w-10 mx-auto mb-3"
+                                    style={{ color: 'var(--text-muted)' }}
+                                />
                                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                                     No members yet. Add a user above to grant project access.
                                 </p>
                             </div>
                         );
                     }
-                    const toggleMember = (userId: number) => setExpandedMemberId((prev) => (prev === userId ? null : userId));
+                    const toggleMember = (userId: number) =>
+                        setExpandedMemberId((prev) => (prev === userId ? null : userId));
                     return (
-                    <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                        {members.map((m) => {
-                            const isExpanded = expandedMemberId === m.userId;
-                            return (
-                                <React.Fragment key={m.userId}>
-                                    <li
-                                        className="relative hover:bg-subtle transition-colors duration-75"
-                                        style={{ borderColor: 'var(--border)' }}
-                                    >
-                                        <button
-                                            type="button"
-                                            className="absolute inset-0 cursor-pointer"
-                                            onClick={() => toggleMember(m.userId)}
-                                            aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${m.displayName || m.username || ''}`}
-                                        />
-                                        <div className="relative flex items-center gap-3 px-4 py-3 pointer-events-none">
-                                        {/* Expand chevron */}
-                                        <span className="text-base-muted text-xs select-none">
-                                            {isExpanded ? '▾' : '▸'}
-                                        </span>
-                                        <div
-                                            className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold"
-                                            style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' }}
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                            {members.map((m) => {
+                                const isExpanded = expandedMemberId === m.userId;
+                                return (
+                                    <React.Fragment key={m.userId}>
+                                        <li
+                                            className="relative hover:bg-subtle transition-colors duration-75"
+                                            style={{ borderColor: 'var(--border)' }}
                                         >
-                                            {(m.displayName || m.username || '?').charAt(0).toUpperCase()}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p
-                                                className="text-sm font-medium truncate"
-                                                style={{ color: 'var(--text-primary)' }}
-                                            >
-                                                {m.displayName || m.username}
-                                            </p>
-                                            <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                                                {m.email}
-                                            </p>
-                                        </div>
-                                        <select
-                                            value={m.roleName}
-                                            onChange={(e) => {
-                                                e.stopPropagation();
-                                                updateRole.mutate({ userId: m.userId, role: e.target.value });
-                                            }}
-                                            onClick={(e) => e.stopPropagation()}
-                                            disabled={updateRole.isPending}
-                                            className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 pointer-events-auto"
-                                            style={selectStyle}
-                                        >
-                                            {/* Include the current role even if it's outside the standard set (e.g. a custom or system role). */}
-                                            {!PROJECT_ROLES.includes(m.roleName as any) && (
-                                                <option value={m.roleName}>{roleLabel(m.roleName)}</option>
-                                            )}
-                                            {PROJECT_ROLES.map((r) => (
-                                                <option key={r} value={r}>
-                                                    {roleLabel(r)}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <button
-                                            type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                removeMember.mutate(m.userId);
-                                            }}
-                                            disabled={removeMember.isPending}
-                                            className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0 pointer-events-auto"
-                                            style={{ color: 'var(--error)' }}
-                                            title="Remove from project"
-                                        >
-                                            <TrashIcon className="h-4 w-4" />
-                                        </button>
-                                        </div>
-                                    </li>
-                                    {isExpanded && (
-                                        <li className="border-t" style={{ borderColor: 'var(--border)' }}>
-                                            <EffectivePermissionsPanel role={m.roleName} />
+                                            <button
+                                                type="button"
+                                                className="absolute inset-0 cursor-pointer"
+                                                onClick={() => toggleMember(m.userId)}
+                                                aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${m.displayName || m.username || ''}`}
+                                            />
+                                            <div className="relative flex items-center gap-3 px-4 py-3 pointer-events-none">
+                                                {/* Expand chevron */}
+                                                <span className="text-base-muted text-xs select-none">
+                                                    {isExpanded ? '▾' : '▸'}
+                                                </span>
+                                                <div
+                                                    className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold"
+                                                    style={{
+                                                        backgroundColor: 'var(--accent-subtle)',
+                                                        color: 'var(--accent-text)',
+                                                    }}
+                                                >
+                                                    {(m.displayName || m.username || '?').charAt(0).toUpperCase()}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p
+                                                        className="text-sm font-medium truncate"
+                                                        style={{ color: 'var(--text-primary)' }}
+                                                    >
+                                                        {m.displayName || m.username}
+                                                    </p>
+                                                    <p
+                                                        className="text-xs truncate"
+                                                        style={{ color: 'var(--text-muted)' }}
+                                                    >
+                                                        {m.email}
+                                                    </p>
+                                                </div>
+                                                <select
+                                                    value={m.roleName}
+                                                    onChange={(e) => {
+                                                        e.stopPropagation();
+                                                        updateRole.mutate({ userId: m.userId, role: e.target.value });
+                                                    }}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    disabled={updateRole.isPending}
+                                                    className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 pointer-events-auto"
+                                                    style={selectStyle}
+                                                >
+                                                    {/* Include the current role even if it's outside the standard set (e.g. a custom or system role). */}
+                                                    {!PROJECT_ROLES.includes(m.roleName as any) && (
+                                                        <option value={m.roleName}>{roleLabel(m.roleName)}</option>
+                                                    )}
+                                                    {PROJECT_ROLES.map((r) => (
+                                                        <option key={r} value={r}>
+                                                            {roleLabel(r)}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        removeMember.mutate(m.userId);
+                                                    }}
+                                                    disabled={removeMember.isPending}
+                                                    className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0 pointer-events-auto"
+                                                    style={{ color: 'var(--error)' }}
+                                                    title="Remove from project"
+                                                >
+                                                    <TrashIcon className="h-4 w-4" />
+                                                </button>
+                                            </div>
                                         </li>
-                                    )}
-                                </React.Fragment>
-                            );
-                        })}
-                    </ul>
+                                        {isExpanded && (
+                                            <li className="border-t" style={{ borderColor: 'var(--border)' }}>
+                                                <EffectivePermissionsPanel role={m.roleName} />
+                                            </li>
+                                        )}
+                                    </React.Fragment>
+                                );
+                            })}
+                        </ul>
                     );
                 })()}
             </div>

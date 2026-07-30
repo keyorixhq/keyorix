@@ -77,10 +77,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         const missingPermissions = requiredPermissions.filter((permission) => !hasPermission(permission));
 
         if (missingPermissions.length > 0) {
-            return denyOrRedirect(
-                redirectOnFailure,
-                `Missing permissions: ${missingPermissions.join(', ')}`,
-            );
+            return denyOrRedirect(redirectOnFailure, `Missing permissions: ${missingPermissions.join(', ')}`);
         }
     }
 

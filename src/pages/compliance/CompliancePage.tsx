@@ -182,11 +182,7 @@ const posturePlaceholder = (): React.ReactElement => (
     >
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[1, 2, 3, 4].map((i) => (
-                <div
-                    key={i}
-                    className="h-16 rounded-lg animate-pulse"
-                    style={{ backgroundColor: 'var(--bg-muted)' }}
-                />
+                <div key={i} className="h-16 rounded-lg animate-pulse" style={{ backgroundColor: 'var(--bg-muted)' }} />
             ))}
         </div>
     </div>
@@ -214,7 +210,9 @@ function countTone(n: number, aboveTone: 'warn' | 'bad'): 'good' | 'warn' | 'bad
 function maybeCountTone(n: number, aboveTone: 'warn' | 'bad'): 'good' | 'warn' | 'bad' | undefined {
     return n > 0 ? aboveTone : undefined;
 }
-function boolTone(ok: boolean): 'good' | 'bad' { return ok ? 'good' : 'bad'; }
+function boolTone(ok: boolean): 'good' | 'bad' {
+    return ok ? 'good' : 'bad';
+}
 
 // PosturePanel surfaces the live controls-posture report (GET /compliance/posture).
 // It needs system.read; non-admins get 403 and the panel shows a quiet note rather
@@ -327,11 +325,7 @@ const PosturePanel: React.FC = () => {
                     value={`${p.classification.unclassified} / ${p.classification.totalSecrets}`}
                     tone={countTone(p.classification.unclassified, 'warn')}
                 />
-                <Tile
-                    label="Open anomalies (NIS2)"
-                    value={anomalyValue}
-                    tone={anomalyTone}
-                />
+                <Tile label="Open anomalies (NIS2)" value={anomalyValue} tone={anomalyTone} />
             </div>
             <div className="px-6 pb-5 pt-1">
                 <h3
@@ -592,8 +586,8 @@ const ControlMatrixPanel: React.FC = () => {
                 </h2>
                 <div className="flex items-center gap-3 shrink-0">
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        {visibleControls.length} control{visibleControls.length !== 1 ? 's' : ''} ·{' '}
-                        {passCount} pass · {gapCount} gap
+                        {visibleControls.length} control{visibleControls.length !== 1 ? 's' : ''} · {passCount} pass ·{' '}
+                        {gapCount} gap
                     </span>
                     <button
                         type="button"
@@ -646,10 +640,7 @@ const ControlMatrixPanel: React.FC = () => {
                             )}
                         </div>
                         <div className="shrink-0 text-right">
-                            <div
-                                className="text-2xl font-bold tabular-nums"
-                                style={{ color: scoreColor }}
-                            >
+                            <div className="text-2xl font-bold tabular-nums" style={{ color: scoreColor }}>
                                 {scorePercent}%
                             </div>
                             <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -669,8 +660,8 @@ const ControlMatrixPanel: React.FC = () => {
                     </div>
                     {gapCount > 0 && (
                         <p className="text-xs mt-2" style={{ color: 'var(--error)' }}>
-                            {gapCount} control{gapCount !== 1 ? 's' : ''} with gaps require remediation to achieve full
-                            {' '}{activeFw.label} coverage.
+                            {gapCount} control{gapCount !== 1 ? 's' : ''} with gaps require remediation to achieve full{' '}
+                            {activeFw.label} coverage.
                         </p>
                     )}
                 </div>
@@ -983,8 +974,8 @@ export const CompliancePage: React.FC = () => (
         </SectionCard>
 
         <SectionCard title="ISO 27001">
-            Keyorix maps directly to ISO 27001 Annex A controls for access management (A.8), cryptography (A.8.24),
-            and operations security. RBAC, AES-256-GCM encryption, and full audit trails are shipped by default — not
+            Keyorix maps directly to ISO 27001 Annex A controls for access management (A.8), cryptography (A.8.24), and
+            operations security. RBAC, AES-256-GCM encryption, and full audit trails are shipped by default — not
             add-ons. On-premise deployment supports your organisation's asset management and boundary control
             requirements. Use the ISO 27001 tab in the control matrix above for a live per-control status.
         </SectionCard>

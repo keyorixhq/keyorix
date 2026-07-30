@@ -7,7 +7,14 @@ const mutate = vi.fn();
 vi.mock('../../projects/api', () => ({
     useProjectMemberships: () => ({
         data: [
-            { id: 1, projectId: 3, userId: 42, role: 'project_developer', state: 'invited', invitedAt: '2026-07-01T00:00:00Z' },
+            {
+                id: 1,
+                projectId: 3,
+                userId: 42,
+                role: 'project_developer',
+                state: 'invited',
+                invitedAt: '2026-07-01T00:00:00Z',
+            },
             { id: 2, projectId: 3, userId: 43, role: 'project_viewer', state: 'identity_verified' },
             { id: 3, projectId: 3, userId: 44, role: 'project_viewer', state: 'provisioned' },
             { id: 4, projectId: 3, userId: 45, role: 'project_admin', state: 'active' },

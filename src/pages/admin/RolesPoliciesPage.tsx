@@ -348,7 +348,11 @@ export const RolesPoliciesPage: React.FC = () => {
                         placeholder="e.g. developer"
                     />
                     <div>
-                        <label htmlFor="create-role-description" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="create-role-description"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Description
                         </label>
                         <textarea
@@ -392,7 +396,11 @@ export const RolesPoliciesPage: React.FC = () => {
                         onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
                     />
                     <div>
-                        <label htmlFor="edit-role-description" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="edit-role-description"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Description
                         </label>
                         <textarea

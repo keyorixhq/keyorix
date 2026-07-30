@@ -400,77 +400,77 @@ const TokensTab: React.FC = () => {
     } else {
         tokenListContent = (
             <div className="space-y-3">
-                    {(tokens || []).map((t: PersonalAccessToken) => (
-                        <div
-                            key={t.id}
-                            className="rounded-lg p-4 flex items-center justify-between"
-                            style={{
-                                backgroundColor: 'var(--bg-surface)',
-                                border: '1px solid var(--border)',
-                                opacity: t.revoked ? 0.5 : 1,
-                            }}
-                        >
-                            <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                        {t.name}
-                                    </span>
-                                    <code
-                                        className="text-xs"
-                                        style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+                {(tokens || []).map((t: PersonalAccessToken) => (
+                    <div
+                        key={t.id}
+                        className="rounded-lg p-4 flex items-center justify-between"
+                        style={{
+                            backgroundColor: 'var(--bg-surface)',
+                            border: '1px solid var(--border)',
+                            opacity: t.revoked ? 0.5 : 1,
+                        }}
+                    >
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    {t.name}
+                                </span>
+                                <code
+                                    className="text-xs"
+                                    style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+                                >
+                                    {t.token_prefix}…
+                                </code>
+                                {t.revoked && (
+                                    <span
+                                        className="text-xs px-2 py-0.5 rounded-full"
+                                        style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-app)' }}
                                     >
-                                        {t.token_prefix}…
-                                    </code>
-                                    {t.revoked && (
-                                        <span
-                                            className="text-xs px-2 py-0.5 rounded-full"
-                                            style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-app)' }}
-                                        >
-                                            revoked
-                                        </span>
-                                    )}
-                                </div>
-                                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                                    created {formatDate(t.created_at)} · last used {formatDate(t.last_used_at)} ·{' '}
-                                    {t.expires_at ? `expires ${formatDate(t.expires_at)}` : 'never expires'}
-                                </p>
-                                {t.scopes.length > 0 || t.project_scope > 0 || t.environment_scope > 0 ? (
-                                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                                        {t.project_scope > 0 && (
-                                            <ScopeChip label={projectName(t.project_scope)} kind="project" />
-                                        )}
-                                        {t.environment_scope > 0 && (
-                                            <ScopeChip label={`env #${t.environment_scope}`} kind="env" />
-                                        )}
-                                        {t.scopes.map((s) => (
-                                            <ScopeChip key={s} label={s} kind="perm" />
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                                        full access (all your permissions)
-                                    </p>
+                                        revoked
+                                    </span>
                                 )}
                             </div>
-                            {!t.revoked && (
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={revoke.isPending}
-                                    onClick={() => revoke.mutate(t.id)}
-                                    title="Revoke this token"
-                                >
-                                    <TrashIcon className="h-4 w-4" />
-                                </Button>
+                            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                                created {formatDate(t.created_at)} · last used {formatDate(t.last_used_at)} ·{' '}
+                                {t.expires_at ? `expires ${formatDate(t.expires_at)}` : 'never expires'}
+                            </p>
+                            {t.scopes.length > 0 || t.project_scope > 0 || t.environment_scope > 0 ? (
+                                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                    {t.project_scope > 0 && (
+                                        <ScopeChip label={projectName(t.project_scope)} kind="project" />
+                                    )}
+                                    {t.environment_scope > 0 && (
+                                        <ScopeChip label={`env #${t.environment_scope}`} kind="env" />
+                                    )}
+                                    {t.scopes.map((s) => (
+                                        <ScopeChip key={s} label={s} kind="perm" />
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                    full access (all your permissions)
+                                </p>
                             )}
                         </div>
-                    ))}
-                    {(tokens || []).length === 0 && (
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                            You have no personal access tokens yet.
-                        </p>
-                    )}
-                </div>
+                        {!t.revoked && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={revoke.isPending}
+                                onClick={() => revoke.mutate(t.id)}
+                                title="Revoke this token"
+                            >
+                                <TrashIcon className="h-4 w-4" />
+                            </Button>
+                        )}
+                    </div>
+                ))}
+                {(tokens || []).length === 0 && (
+                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                        You have no personal access tokens yet.
+                    </p>
+                )}
+            </div>
         );
     }
 

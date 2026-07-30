@@ -70,61 +70,56 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
         });
     };
 
-    const campaignListContent = campaigns.length === 0 ? (
-        <div className="p-8 text-center">
-            <ClipboardDocumentCheckIcon
-                className="h-9 w-9 mx-auto mb-2"
-                style={{ color: 'var(--text-muted)' }}
-            />
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                No campaigns yet. Open one to start a recertification cycle.
-            </p>
-        </div>
-    ) : (
-        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-            {campaigns.map(({ campaign, progress }) => (
-                <li key={campaign.id} className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                        <span
-                            className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
-                            style={
-                                campaign.state === 'open'
-                                    ? {
-                                          backgroundColor: 'var(--accent-subtle)',
-                                          color: 'var(--accent-text)',
-                                      }
-                                    : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
-                            }
-                        >
-                            {campaign.state}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                            <p
-                                className="text-sm font-medium truncate"
-                                style={{ color: 'var(--text-primary)' }}
+    const campaignListContent =
+        campaigns.length === 0 ? (
+            <div className="p-8 text-center">
+                <ClipboardDocumentCheckIcon className="h-9 w-9 mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    No campaigns yet. Open one to start a recertification cycle.
+                </p>
+            </div>
+        ) : (
+            <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {campaigns.map(({ campaign, progress }) => (
+                    <li key={campaign.id} className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                            <span
+                                className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0"
+                                style={
+                                    campaign.state === 'open'
+                                        ? {
+                                              backgroundColor: 'var(--accent-subtle)',
+                                              color: 'var(--accent-text)',
+                                          }
+                                        : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
+                                }
                             >
-                                {campaign.name}
-                            </p>
-                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                {progressLabel(progress)}
-                            </p>
+                                {campaign.state}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                    {campaign.name}
+                                </p>
+                                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                    {progressLabel(progress)}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setSelectedId(selectedId === campaign.id ? null : campaign.id)}
+                                className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0"
+                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                            >
+                                {selectedId === campaign.id ? 'Hide' : 'Review'}
+                            </button>
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => setSelectedId(selectedId === campaign.id ? null : campaign.id)}
-                            className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0"
-                            style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                        >
-                            {selectedId === campaign.id ? 'Hide' : 'Review'}
-                        </button>
-                    </div>
-                    {selectedId === campaign.id && (
-                        <CampaignDetail projectId={projectId} campaignId={campaign.id} onError={onError} />
-                    )}
-                </li>
-            ))}
-        </ul>
-    );
+                        {selectedId === campaign.id && (
+                            <CampaignDetail projectId={projectId} campaignId={campaign.id} onError={onError} />
+                        )}
+                    </li>
+                ))}
+            </ul>
+        );
 
     return (
         <div className="mt-8">
@@ -186,7 +181,9 @@ export const ProjectAccessReviewCampaigns: React.FC<Props> = ({ projectId }) => 
                             />
                         ))}
                     </div>
-                ) : campaignListContent}
+                ) : (
+                    campaignListContent
+                )}
             </div>
         </div>
     );

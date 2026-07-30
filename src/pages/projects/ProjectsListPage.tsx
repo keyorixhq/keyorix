@@ -50,7 +50,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
 
                 <div className="space-y-4">
                     <div>
-                        <label htmlFor="create-project-name" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="create-project-name"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Project name <span style={{ color: 'var(--error)' }}>*</span>
                         </label>
                         <input
@@ -70,7 +74,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                         />
                     </div>
                     <div>
-                        <label htmlFor="create-project-description" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="create-project-description"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Description
                         </label>
                         <input
@@ -331,8 +339,13 @@ export const ProjectsListPage: React.FC = () => {
                     className="flex items-center gap-2 text-sm shrink-0 cursor-pointer"
                     style={{ color: 'var(--text-secondary)' }}
                 >
-                    <input id="show-deleted-checkbox" type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
-                    {' '}Show deleted
+                    <input
+                        id="show-deleted-checkbox"
+                        type="checkbox"
+                        checked={showDeleted}
+                        onChange={(e) => setShowDeleted(e.target.checked)}
+                    />{' '}
+                    Show deleted
                 </label>
             </div>
 

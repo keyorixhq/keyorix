@@ -54,10 +54,7 @@ export const SecretsDriftPanel: React.FC<SecretsDriftPanelProps> = ({ projectId 
 
     const tooFewEnvsPanel = (
         <div className="p-10 text-center">
-            <ArrowsRightLeftIcon
-                className="h-10 w-10 mx-auto mb-3"
-                style={{ color: 'var(--text-muted)' }}
-            />
+            <ArrowsRightLeftIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
             <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                 Need at least two environments
             </p>
@@ -126,9 +123,7 @@ export const SecretsDriftPanel: React.FC<SecretsDriftPanelProps> = ({ projectId 
                                                 className="inline-block h-2.5 w-2.5 rounded-full"
                                                 title={present ? 'present' : 'missing'}
                                                 style={{
-                                                    backgroundColor: present
-                                                        ? 'var(--success)'
-                                                        : 'var(--error)',
+                                                    backgroundColor: present ? 'var(--success)' : 'var(--error)',
                                                 }}
                                             />
                                         </td>
@@ -142,10 +137,7 @@ export const SecretsDriftPanel: React.FC<SecretsDriftPanelProps> = ({ projectId 
                                         {badge.label}
                                     </span>
                                     {key.driftFields.length > 0 && (
-                                        <span
-                                            className="text-xs ml-2"
-                                            style={{ color: 'var(--text-muted)' }}
-                                        >
+                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
                                             {key.driftFields.join(', ')}
                                         </span>
                                     )}

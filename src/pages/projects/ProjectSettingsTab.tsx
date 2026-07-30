@@ -137,8 +137,8 @@ function renderSecuritySection({
                             className="block text-xs mt-0.5"
                             style={{ color: 'var(--text-muted)' }}
                         >
-                            Blocks interactive access to this project's secrets for any session without a
-                            second factor. Changing this requires the Assign Roles permission on this project.
+                            Blocks interactive access to this project's secrets for any session without a second factor.
+                            Changing this requires the Assign Roles permission on this project.
                         </span>
                     </label>
                 </div>
@@ -175,11 +175,7 @@ function renderEnvList({
         return (
             <div className="p-4 animate-pulse space-y-2">
                 {[1, 2, 3].map((i) => (
-                    <div
-                        key={i}
-                        className="h-8 rounded-sm"
-                        style={{ backgroundColor: 'var(--bg-muted)' }}
-                    />
+                    <div key={i} className="h-8 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
                 ))}
             </div>
         );
@@ -194,9 +190,7 @@ function renderEnvList({
     return (
         <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
             {(environments as Env[]).map((env) => {
-                const isDefault = ['development', 'staging', 'production'].includes(
-                    env.name.toLowerCase()
-                );
+                const isDefault = ['development', 'staging', 'production'].includes(env.name.toLowerCase());
                 return (
                     <li
                         key={env.id}
@@ -648,7 +642,11 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         <Alert type="success" title="Saved" message="Project settings updated." />
                     )}
                     <div>
-                        <label htmlFor="project-name-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="project-name-input"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Project name <span style={{ color: 'var(--error)' }}>*</span>
                         </label>
                         <input
@@ -670,7 +668,11 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         )}
                     </div>
                     <div>
-                        <label htmlFor="project-description-input" className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        <label
+                            htmlFor="project-description-input"
+                            className="block text-sm font-medium mb-1"
+                            style={{ color: 'var(--text-secondary)' }}
+                        >
                             Description
                         </label>
                         <input
