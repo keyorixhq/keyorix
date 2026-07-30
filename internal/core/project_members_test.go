@@ -85,6 +85,73 @@ func TestAddProjectMemberUnknownRole(t *testing.T) {
 	require.Error(t, c.AddProjectMember(ctx, 99, 1, u.ID, "no_such_role"))
 }
 
+// ADR-022's domain allowlist previously only gated the email-based
+// InviteToProject/InviteGlobal flow — AddProjectMember (the userID-keyed
+// direct-add path, e.g. an admin or SCIM caller with roles.assign) bypassed
+// it entirely. Verify it's now enforced here too.
+func TestAddProjectMember_RejectsDisallowedDomain(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+	c.SetMembershipDomainAllowlist([]string{"allowed.com"})
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "mallory", Email: "mallory@evil.com", IsActive: true})
+	require.NoError(t, err)
+
+	err = c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not on the allowlist")
+
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	assert.Empty(t, members)
+}
+
+// Same guard, but for SetProjectMemberRole's "adds the member if they had
+// none" path — a second userID-keyed entry point that must not bypass the
+// allowlist either.
+func TestSetProjectMemberRole_RejectsDisallowedDomainForNewMember(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+	c.SetMembershipDomainAllowlist([]string{"allowed.com"})
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "trent", Email: "trent@evil.com", IsActive: true})
+	require.NoError(t, err)
+
+	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not on the allowlist")
+}
+
+// A role change for an ALREADY-established member must not re-run the domain
+// check — the allowlist governs who can join, not every subsequent role edit
+// for someone who already legitimately joined.
+func TestSetProjectMemberRole_AllowsRoleChangeForExistingMemberRegardlessOfDomain(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const proj = uint(7)
+	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
+
+	u, err := st.CreateUser(ctx, &models.User{Username: "peggy", Email: "peggy@evil.com", IsActive: true})
+	require.NoError(t, err)
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
+
+	// The allowlist is only turned on AFTER peggy already joined.
+	c.SetMembershipDomainAllowlist([]string{"allowed.com"})
+
+	require.NoError(t, c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_developer"))
+	members, err := c.ListProjectMembers(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "project_developer", members[0].RoleName)
+}
+
 // AddProjectMember/SetProjectMemberRole/RemoveProjectMember grant/revoke the same
 // underlying role assignment as /user-roles, so they must land in the RBAC audit
 // trail identically (#234) — previously these bypassed AssignUserRole/RemoveUserRole

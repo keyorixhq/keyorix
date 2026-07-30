@@ -11,7 +11,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 )
 
-
 // ListProjectMembers handles GET /api/v1/projects/{id}/members
 func (h *CatalogHandler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
 	id, ok := mustParseProjectID(w, r)
@@ -160,6 +159,8 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
+		case strings.Contains(msg, errDomainNotAllowed):
+			status = http.StatusForbidden
 		case strings.Contains(msg, "already"):
 			status = http.StatusConflict
 		case strings.Contains(msg, "unknown role"):
@@ -204,6 +205,8 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
+		case strings.Contains(msg, errDomainNotAllowed):
+			status = http.StatusForbidden
 		case strings.Contains(msg, "unknown role"):
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "last administrator"):
