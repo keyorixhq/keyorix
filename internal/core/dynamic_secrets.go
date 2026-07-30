@@ -35,10 +35,10 @@ const defaultMaxLeaseTTL = 90 * 24 * time.Hour
 var privateNetworkCIDRs = func() []*net.IPNet {
 	var nets []*net.IPNet
 	for _, cidr := range []string{ // NOSONAR -- these are the SSRF-guard blocklist ranges themselves (RFC-1918/1122/6598 + IPv6 equivalents), not a live endpoint; hardcoding them is the point of isPrivateIP
-		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // RFC-1918 NOSONAR
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // NOSONAR -- RFC-1918
 		"127.0.0.0/8",    // loopback
-		"169.254.0.0/16", // link-local / cloud IMDS NOSONAR
-		"100.64.0.0/10",  // shared address space (RFC 6598) NOSONAR
+		"169.254.0.0/16", // NOSONAR -- link-local / cloud IMDS
+		"100.64.0.0/10",  // NOSONAR -- shared address space (RFC 6598)
 		"::1/128",        // IPv6 loopback
 		"fc00::/7",       // IPv6 unique local
 		"fe80::/10",      // IPv6 link-local
