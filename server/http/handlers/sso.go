@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-
 // oauthErrorAllowlist is the fixed set of error codes defined by RFC 6749 §4.1.2.1 and
 // RFC 6749 §5.2, plus common OIDC extensions. Any error code NOT in this list is
 // replaced with a generic message to prevent injection via a crafted callback URL.
@@ -62,6 +61,7 @@ func isSafeSSOError(msg string) bool {
 		"the assertion carried no subject or email",
 		"no Keyorix account matches this SSO identity",
 		"the IdP returned no email; cannot auto-provision an account",
+		errDomainNotAllowed,
 	} {
 		if strings.Contains(msg, safe) {
 			return true

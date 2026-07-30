@@ -140,6 +140,13 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	if email == "" {
 		email = userName // SCIM userName is conventionally the email
 	}
+	// ADR-022: the domain allowlist is an install-wide boundary on who may hold an
+	// account at all, not just an invite-flow check — a SCIM directory sync from an
+	// unapproved domain (e.g. a misconfigured/multi-tenant IdP) must not silently
+	// mint an account either.
+	if !c.domainAllowed(email) {
+		return nil, fmt.Errorf("email domain is not on the allowlist")
+	}
 	// Fail CLOSED on a lookup error: swallowing it would let a transient DB error during
 	// the dedup check fall through to CreateUser and mint a SECOND identity with the same
 	// email (there is no DB-level email uniqueness), and SSO/SCIM resolve email via

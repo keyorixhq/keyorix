@@ -240,8 +240,11 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	user, err := h.coreService.ProvisionSCIMUser(r.Context(), 0, p.UserName, p.displayName(), p.primaryEmail(), p.ExternalID, active)
 	if err != nil {
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "already exists") {
+		switch {
+		case strings.Contains(err.Error(), "already exists"):
 			status = http.StatusConflict
+		case strings.Contains(err.Error(), errDomainNotAllowed):
+			status = http.StatusForbidden
 		}
 		scimError(w, status, err.Error())
 		return
