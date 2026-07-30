@@ -11,6 +11,7 @@ import {
     useRemoveProjectMember,
 } from '../../features/projects/api';
 import { InviteToProjectModal } from '../../features/invitations/InviteToProjectModal';
+import { PendingOnboardingSection } from '../../features/invitations/PendingOnboardingSection';
 import { PendingAccessRequestsSection } from '../../features/invitations/PendingAccessRequestsSection';
 import { ProjectInvitationsSection } from '../../features/invitations/ProjectInvitationsSection';
 import { MachineIdentitiesSection } from '../../features/machine-identities';
@@ -438,6 +439,10 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
             {/* ADR-023: machine identities — the non-human half of the Members
                 segmentation. Read-only for ordinary members; admins manage. */}
             <MachineIdentitiesSection projectId={projectId} />
+
+            {/* ADR-022: memberships stuck mid-onboarding (invited by email but not
+                yet stepped through to active — no role, not in the list above). */}
+            <PendingOnboardingSection projectId={projectId} users={allUsers} />
 
             {/* ADR-024: pending access requests + invitations (admin-only; the
                 queries 403 for non-admins and the sections render nothing). */}

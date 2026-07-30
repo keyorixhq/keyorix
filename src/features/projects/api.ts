@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { projectsApi, CreateProjectPayload, AccessReviewDecision } from '../../services/projects';
+import { projectMembershipsApi, MembershipAction } from '../../services/projectMemberships';
 
 export const PROJECT_KEYS = {
     all: ['projects'] as const,
@@ -129,6 +130,35 @@ export function useRemoveProjectMember(projectId: number) {
     return useMutation({
         mutationFn: (userId: number) => projectsApi.removeMember(projectId, userId),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) }),
+    });
+}
+
+// ── Membership lifecycle (ADR-022) ──────────────────────────────────────────
+
+export const MEMBERSHIP_KEYS = {
+    list: (projectId: number) => ['project-memberships', 'list', projectId] as const,
+};
+
+export function useProjectMemberships(projectId: number) {
+    return useQuery({
+        queryKey: MEMBERSHIP_KEYS.list(projectId),
+        queryFn: () => projectMembershipsApi.list(projectId),
+        enabled: !!projectId,
+        staleTime: 30_000,
+        retry: false,
+    });
+}
+
+export function useTransitionMembership(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ membershipId, action }: { membershipId: number; action: MembershipAction }) =>
+            projectMembershipsApi.transition(projectId, membershipId, action),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: MEMBERSHIP_KEYS.list(projectId) });
+            // Activating grants a role — the main member roster changes too.
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) });
+        },
     });
 }
 
