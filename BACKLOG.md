@@ -67,6 +67,18 @@ The upgrade campaign is **complete** — `pnpm outdated` is empty.
 - TypeScript is on 6.x; `tsconfig` was modernized (`moduleResolution: bundler`,
   no `baseUrl`) so it is clean for the eventual TS 7.
 
+## Refactor candidates (cyclomatic complexity) — 2026-07-30
+
+See [`docs/REFACTOR-CANDIDATES.md`](docs/REFACTOR-CANDIDATES.md). 45 functions
+above CCN 15 (`lizard`-generated). Worst outliers `buildCreateModalContent`
+(AdminPage.tsx, CCN 115) and `renderExpiringSecretsSection`
+(ProjectSettingsTab.tsx, CCN 103 — extracted from the parent component in
+PR #150 to fix its *cognitive* complexity, but still cyclomatically large
+itself). A cluster of `normalize*()` functions in `src/services/*.ts` also
+shows up with high CCN despite being short — field-mapping code, low risk.
+Not a dedicated-sweep item — fix opportunistically when already touching one
+of these functions.
+
 ## Working agreement (how changes land here)
 
 Conventions established over the recent maintenance arc:
