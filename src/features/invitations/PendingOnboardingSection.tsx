@@ -103,6 +103,8 @@ export const PendingOnboardingSection: React.FC<PendingOnboardingSectionProps> =
                         const user = usersById.get(m.userId);
                         const next = NEXT_ACTION[m.state as MembershipState];
                         const days = daysSince(m.invitedAt);
+                        const daySuffix = days === 1 ? '' : 's';
+                        const daysLabel = days != null ? ` · invited ${days} day${daySuffix} ago` : '';
                         return (
                             <li key={m.id} className="flex items-center gap-3 px-4 py-3">
                                 <div
@@ -117,7 +119,7 @@ export const PendingOnboardingSection: React.FC<PendingOnboardingSectionProps> =
                                     </p>
                                     <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
                                         {STATE_LABEL[m.state] ?? m.state}
-                                        {days != null ? ` · invited ${days} day${days === 1 ? '' : 's'} ago` : ''}
+                                        {daysLabel}
                                     </p>
                                 </div>
                                 {next && (
