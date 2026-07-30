@@ -86,6 +86,51 @@ function envStatusBadge(deleted: boolean | undefined, isDefault: boolean): React
     return null;
 }
 
+interface Hygiene {
+    orphaned_secrets: number;
+    unused_secrets: number;
+    expiring_secrets: number;
+    stale_machine_identities: number;
+    rotation_overdue: number;
+}
+
+interface ExpiringSecret {
+    id: number;
+    name: string;
+    type: string;
+    expiration?: string;
+    expired: boolean;
+}
+
+interface NameViolation {
+    id: number;
+    name: string;
+    type: string;
+    reason: string;
+}
+
+interface NameConformance {
+    policy_enabled: boolean;
+    total_secrets: number;
+    violations: NameViolation[];
+}
+
+interface OrphanedSecret {
+    id: number;
+    name: string;
+    type: string;
+    classification?: string;
+    owner_id: number;
+}
+
+interface DeletedSecret {
+    id: number;
+    name: string;
+    type: string;
+    classification?: string;
+    deleted_at?: string;
+}
+
 interface RenderSecuritySectionProps {
     mfaMutation: { isPending: boolean; isError: boolean; isSuccess: boolean; error: unknown };
     requireMfa: boolean;
@@ -246,6 +291,423 @@ function renderEnvList({
                 );
             })}
         </ul>
+    );
+}
+
+function renderHygieneSection(hygiene: Hygiene | undefined): React.ReactNode {
+    if (!hygiene) return null;
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                Hygiene
+            </h2>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                Outstanding cleanup signals for this project. Zero across the board is healthy.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                {(
+                    [
+                        ['Orphaned secrets', hygiene.orphaned_secrets],
+                        ['Unused secrets', hygiene.unused_secrets],
+                        ['Expiring secrets', hygiene.expiring_secrets],
+                        ['Stale machine IDs', hygiene.stale_machine_identities],
+                        ['Rotation overdue', hygiene.rotation_overdue],
+                    ] as [string, number][]
+                ).map(([label, count]) => (
+                    <div
+                        key={label}
+                        className="rounded-lg border p-3"
+                        style={{
+                            borderColor: count > 0 ? 'var(--warning, #d97706)' : 'var(--border)',
+                            backgroundColor: count > 0 ? 'var(--warning-subtle, #fffbeb)' : 'var(--bg-surface)',
+                        }}
+                    >
+                        <div
+                            className="text-2xl font-semibold"
+                            style={{ color: count > 0 ? 'var(--warning, #92400e)' : 'var(--text-primary)' }}
+                        >
+                            {count}
+                        </div>
+                        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                            {label}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
+}
+
+interface RenderOrphanedSecretsSectionProps {
+    orphanedSecrets: OrphanedSecret[];
+    orphanedOwners: number[];
+    reassignOwnerMutation: {
+        isPending: boolean;
+        isError: boolean;
+        mutate: (vars: { from: number; to: number }) => void;
+    };
+    reassignMsg: string;
+    setReassignMsg: (m: string) => void;
+}
+
+function renderOrphanedSecretsSection({
+    orphanedSecrets,
+    orphanedOwners,
+    reassignOwnerMutation,
+    reassignMsg,
+    setReassignMsg,
+}: RenderOrphanedSecretsSectionProps): React.ReactNode {
+    if (orphanedSecrets.length === 0) return null;
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                Orphaned secrets
+            </h2>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                These secrets are owned by a user who no longer exists (offboarded). Re-home a former owner's secrets in
+                bulk below, or open a secret to transfer it individually.
+            </p>
+            {reassignOwnerMutation.isError && (
+                <Alert
+                    type="error"
+                    title="Reassignment failed"
+                    message="Could not reassign ownership. Check the new owner's user ID."
+                />
+            )}
+            {reassignMsg && <Alert type="success" title="Done" message={reassignMsg} />}
+            <div
+                className="rounded-lg border"
+                style={{
+                    borderColor: 'var(--warning, #a16207)',
+                    backgroundColor: 'var(--warning-subtle, #fef9c3)',
+                }}
+            >
+                <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {orphanedSecrets.map((s) => (
+                        <li key={s.id} className="flex items-center justify-between px-4 py-3">
+                            <div className="min-w-0">
+                                <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    {s.name}
+                                </span>
+                                <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+                                    {s.type} · former owner #{s.owner_id}
+                                </span>
+                            </div>
+                            {s.classification && (
+                                <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
+                                    style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}
+                                >
+                                    {s.classification}
+                                </span>
+                            )}
+                        </li>
+                    ))}
+                </ul>
+                {/* Bulk re-home, one action per distinct former owner. */}
+                <div className="border-t px-4 py-3 space-y-2" style={{ borderColor: 'var(--border)' }}>
+                    {orphanedOwners.map((ownerId) => (
+                        <button
+                            key={ownerId}
+                            type="button"
+                            disabled={reassignOwnerMutation.isPending}
+                            onClick={() => {
+                                const input = window.prompt(
+                                    `Reassign all secrets from former owner #${ownerId} to which user ID?`
+                                );
+                                const to = Number(input);
+                                if (!input || !Number.isInteger(to) || to <= 0) return;
+                                setReassignMsg('');
+                                reassignOwnerMutation.mutate({ from: ownerId, to });
+                            }}
+                            className="flex items-center gap-1 text-sm font-medium disabled:opacity-50"
+                            style={{ color: 'var(--accent)' }}
+                        >
+                            <ArrowPathIcon className="h-4 w-4" />
+                            Reassign all from former owner #{ownerId}…
+                        </button>
+                    ))}
+                </div>
+            </div>
+        </section>
+    );
+}
+
+interface RenderExpiringSecretsSectionProps {
+    expiringSecrets: ExpiringSecret[];
+    extendExpiringMutation: { isPending: boolean; mutate: () => void };
+    extendMsg: string;
+    setExtendMsg: (m: string) => void;
+}
+
+function renderExpiringSecretsSection({
+    expiringSecrets,
+    extendExpiringMutation,
+    extendMsg,
+    setExtendMsg,
+}: RenderExpiringSecretsSectionProps): React.ReactNode {
+    if (expiringSecrets.length === 0) return null;
+    return (
+        <section>
+            <div className="flex items-center justify-between mb-1">
+                <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    Expiring secrets
+                </h2>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                        setExtendMsg('');
+                        extendExpiringMutation.mutate();
+                    }}
+                    disabled={extendExpiringMutation.isPending}
+                >
+                    <ArrowPathIcon className="h-4 w-4 mr-1" />
+                    {extendExpiringMutation.isPending ? 'Renewing…' : 'Extend all (90d)'}
+                </Button>
+            </div>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                Secrets expiring soon or already expired — renew or rotate them before they lapse.
+            </p>
+            {extendMsg && (
+                <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+                    {extendMsg}
+                </p>
+            )}
+            <div
+                className="rounded-lg border"
+                style={{
+                    borderColor: 'var(--warning, #a16207)',
+                    backgroundColor: 'var(--warning-subtle, #fef9c3)',
+                }}
+            >
+                <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {expiringSecrets.map((s) => (
+                        <li key={s.id} className="flex items-center justify-between px-4 py-3">
+                            <div className="min-w-0">
+                                <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    {s.name}
+                                </span>
+                                <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+                                    {s.type}
+                                    {s.expiration ? ` · ${new Date(s.expiration).toLocaleDateString()}` : ''}
+                                </span>
+                            </div>
+                            <span
+                                className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
+                                style={
+                                    s.expired
+                                        ? { backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }
+                                        : { backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }
+                                }
+                            >
+                                {s.expired ? 'expired' : 'expiring'}
+                            </span>
+                        </li>
+                    ))}
+                </ul>
+            </div>
+        </section>
+    );
+}
+
+interface RenderNamingViolationsSectionProps {
+    nameViolations: NameViolation[];
+    renameInputs: Record<number, string>;
+    setRenameInputs: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+    pendingRenames: Array<{ id: number; new_name: string }>;
+    bulkRenameMutation: { isPending: boolean; mutate: (renames: Array<{ id: number; new_name: string }>) => void };
+    bulkRenameMsg: string;
+}
+
+function renderNamingViolationsSection({
+    nameViolations,
+    renameInputs,
+    setRenameInputs,
+    pendingRenames,
+    bulkRenameMutation,
+    bulkRenameMsg,
+}: RenderNamingViolationsSectionProps): React.ReactNode {
+    if (nameViolations.length === 0) return null;
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                Naming-policy violations
+            </h2>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                These secret names don't match the current naming policy. The policy is enforced when a secret is
+                created, so names from before it was added or tightened need renaming to conform.
+            </p>
+            <div
+                className="rounded-lg border"
+                style={{
+                    borderColor: 'var(--warning, #a16207)',
+                    backgroundColor: 'var(--warning-subtle, #fef9c3)',
+                }}
+            >
+                <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {nameViolations.map((v) => (
+                        <li key={v.id} className="px-4 py-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0 flex items-center gap-2">
+                                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        {v.type}
+                                    </span>
+                                    <input
+                                        type="text"
+                                        aria-label={`New name for ${v.name}`}
+                                        className="text-sm px-2 py-1 rounded-sm border w-56"
+                                        style={{
+                                            borderColor: 'var(--border)',
+                                            backgroundColor: 'var(--bg-base)',
+                                            color: 'var(--text-primary)',
+                                        }}
+                                        value={renameInputs[v.id] ?? v.name}
+                                        onChange={(e) =>
+                                            setRenameInputs((prev) => ({ ...prev, [v.id]: e.target.value }))
+                                        }
+                                    />
+                                </div>
+                                <span className="text-xs ml-3 truncate" style={{ color: 'var(--error)' }}>
+                                    {v.reason}
+                                </span>
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+                <Button
+                    variant="secondary"
+                    disabled={pendingRenames.length === 0 || bulkRenameMutation.isPending}
+                    onClick={() => bulkRenameMutation.mutate(pendingRenames)}
+                >
+                    {bulkRenameMutation.isPending ? 'Renaming…' : `Apply renames (${pendingRenames.length})`}
+                </Button>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Edit a name above, then apply. Names that still don't conform are skipped.
+                </span>
+            </div>
+            {bulkRenameMsg && (
+                <div className="mt-3">
+                    <Alert
+                        type={bulkRenameMsg.startsWith('Error') ? 'error' : 'success'}
+                        title={bulkRenameMsg.startsWith('Error') ? 'Rename failed' : 'Done'}
+                        message={bulkRenameMsg}
+                    />
+                </div>
+            )}
+        </section>
+    );
+}
+
+interface RenderRecycleBinSectionProps {
+    deletedSecrets: DeletedSecret[];
+    restoreSecretMutation: { isPending: boolean; mutate: (id: number) => void };
+}
+
+function renderRecycleBinSection({
+    deletedSecrets,
+    restoreSecretMutation,
+}: RenderRecycleBinSectionProps): React.ReactNode {
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                Recycle bin
+            </h2>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                Deleted secrets stay restorable until the retention window expires. Restore one to return it to the live
+                list.
+            </p>
+            <div
+                className="rounded-lg border"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
+                {deletedSecrets.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                        Recycle bin is empty.
+                    </div>
+                ) : (
+                    <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                        {deletedSecrets.map((s) => (
+                            <li key={s.id} className="flex items-center justify-between px-4 py-3">
+                                <div className="min-w-0">
+                                    <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                                        {s.name}
+                                    </span>
+                                    <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+                                        {s.type}
+                                        {s.deleted_at
+                                            ? ` · deleted ${new Date(s.deleted_at).toLocaleDateString()}`
+                                            : ''}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => restoreSecretMutation.mutate(s.id)}
+                                    disabled={restoreSecretMutation.isPending}
+                                    className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
+                                    style={{ color: 'var(--accent)' }}
+                                    title="Restore secret"
+                                >
+                                    <ArrowPathIcon className="h-4 w-4" />
+                                    Restore
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </div>
+        </section>
+    );
+}
+
+interface RenderDeleteEnvironmentModalProps {
+    envToDelete: Env | null;
+    deleteEnvError: string;
+    closeDeleteEnvModal: () => void;
+    deleteEnvMutation: { isPending: boolean; mutate: (id: number) => void };
+}
+
+function renderDeleteEnvironmentModal({
+    envToDelete,
+    deleteEnvError,
+    closeDeleteEnvModal,
+    deleteEnvMutation,
+}: RenderDeleteEnvironmentModalProps): React.ReactNode {
+    return (
+        <Modal isOpen={envToDelete !== null} onClose={closeDeleteEnvModal} title="Delete Environment" size="sm">
+            <div className="space-y-4">
+                {deleteEnvError ? (
+                    <Alert type="error" title="Cannot delete environment" message={deleteEnvError} />
+                ) : (
+                    <div className="space-y-2">
+                        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                            Delete environment <span className="font-semibold">{envToDelete?.name}</span>?
+                        </p>
+                        {['development', 'staging', 'production'].includes(envToDelete?.name?.toLowerCase() ?? '') && (
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                This is a default environment. It will be soft-deleted and can be recreated at any time.
+                            </p>
+                        )}
+                    </div>
+                )}
+                <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                    <Button variant="outline" onClick={closeDeleteEnvModal}>
+                        {deleteEnvError ? 'Close' : 'Cancel'}
+                    </Button>
+                    {!deleteEnvError && (
+                        <Button
+                            variant="destructive"
+                            disabled={deleteEnvMutation.isPending}
+                            onClick={() => envToDelete && deleteEnvMutation.mutate(envToDelete.id)}
+                        >
+                            {deleteEnvMutation.isPending ? 'Deleting…' : 'Delete'}
+                        </Button>
+                    )}
+                </div>
+            </div>
+        </Modal>
     );
 }
 
@@ -418,13 +880,6 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     });
 
     // Hygiene posture: one-call counts of the project's cleanup signals (server #338).
-    interface Hygiene {
-        orphaned_secrets: number;
-        unused_secrets: number;
-        expiring_secrets: number;
-        stale_machine_identities: number;
-        rotation_overdue: number;
-    }
     const { data: hygiene } = useQuery<Hygiene>({
         queryKey: ['project-hygiene', projectId],
         queryFn: async () => {
@@ -442,13 +897,6 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     });
 
     // Expiring secrets: expiring/expired within the window, soonest-first (server #343).
-    interface ExpiringSecret {
-        id: number;
-        name: string;
-        type: string;
-        expiration?: string;
-        expired: boolean;
-    }
     const { data: expiringSecrets = [] } = useQuery<ExpiringSecret[]>({
         queryKey: ['project-expiring-secrets', projectId],
         queryFn: async () => {
@@ -471,17 +919,6 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     // Naming-policy conformance: live secrets whose names violate the current naming
     // policy (server #371). The policy is enforced only at create, so tightening it
     // later leaves stragglers — surface them for renaming. Empty when policy is off.
-    interface NameViolation {
-        id: number;
-        name: string;
-        type: string;
-        reason: string;
-    }
-    interface NameConformance {
-        policy_enabled: boolean;
-        total_secrets: number;
-        violations: NameViolation[];
-    }
     const { data: nameConformance } = useQuery<NameConformance>({
         queryKey: ['project-name-conformance', projectId],
         queryFn: async () => {
@@ -519,13 +956,6 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         .map(({ id, new_name }) => ({ id, new_name }));
 
     // Recycle bin: soft-deleted (restorable) secrets in this project (server #323).
-    interface DeletedSecret {
-        id: number;
-        name: string;
-        type: string;
-        classification?: string;
-        deleted_at?: string;
-    }
     const { data: deletedSecrets = [] } = useQuery<DeletedSecret[]>({
         queryKey: ['project-deleted-secrets', projectId],
         queryFn: async () => {
@@ -542,13 +972,6 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     });
 
     // Orphaned secrets: live secrets whose owner is no longer a live user (server #326).
-    interface OrphanedSecret {
-        id: number;
-        name: string;
-        type: string;
-        classification?: string;
-        owner_id: number;
-    }
     const { data: orphanedSecrets = [] } = useQuery<OrphanedSecret[]>({
         queryKey: ['project-orphaned-secrets', projectId],
         queryFn: async () => {
@@ -585,46 +1008,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     return (
         <div className="space-y-8 max-w-2xl">
             {/* ── Hygiene posture ── */}
-            {hygiene && (
-                <section>
-                    <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                        Hygiene
-                    </h2>
-                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                        Outstanding cleanup signals for this project. Zero across the board is healthy.
-                    </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                        {(
-                            [
-                                ['Orphaned secrets', hygiene.orphaned_secrets],
-                                ['Unused secrets', hygiene.unused_secrets],
-                                ['Expiring secrets', hygiene.expiring_secrets],
-                                ['Stale machine IDs', hygiene.stale_machine_identities],
-                                ['Rotation overdue', hygiene.rotation_overdue],
-                            ] as [string, number][]
-                        ).map(([label, count]) => (
-                            <div
-                                key={label}
-                                className="rounded-lg border p-3"
-                                style={{
-                                    borderColor: count > 0 ? 'var(--warning, #d97706)' : 'var(--border)',
-                                    backgroundColor: count > 0 ? 'var(--warning-subtle, #fffbeb)' : 'var(--bg-surface)',
-                                }}
-                            >
-                                <div
-                                    className="text-2xl font-semibold"
-                                    style={{ color: count > 0 ? 'var(--warning, #92400e)' : 'var(--text-primary)' }}
-                                >
-                                    {count}
-                                </div>
-                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                                    {label}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            )}
+            {renderHygieneSection(hygiene)}
 
             {/* ── General ── */}
             <section>
@@ -847,265 +1231,34 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             </section>
 
             {/* ── Orphaned secrets ── (only when present; it's an alert) */}
-            {orphanedSecrets.length > 0 && (
-                <section>
-                    <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                        Orphaned secrets
-                    </h2>
-                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                        These secrets are owned by a user who no longer exists (offboarded). Re-home a former owner's
-                        secrets in bulk below, or open a secret to transfer it individually.
-                    </p>
-                    {reassignOwnerMutation.isError && (
-                        <Alert
-                            type="error"
-                            title="Reassignment failed"
-                            message="Could not reassign ownership. Check the new owner's user ID."
-                        />
-                    )}
-                    {reassignMsg && <Alert type="success" title="Done" message={reassignMsg} />}
-                    <div
-                        className="rounded-lg border"
-                        style={{
-                            borderColor: 'var(--warning, #a16207)',
-                            backgroundColor: 'var(--warning-subtle, #fef9c3)',
-                        }}
-                    >
-                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                            {orphanedSecrets.map((s) => (
-                                <li key={s.id} className="flex items-center justify-between px-4 py-3">
-                                    <div className="min-w-0">
-                                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                            {s.name}
-                                        </span>
-                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
-                                            {s.type} · former owner #{s.owner_id}
-                                        </span>
-                                    </div>
-                                    {s.classification && (
-                                        <span
-                                            className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
-                                            style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}
-                                        >
-                                            {s.classification}
-                                        </span>
-                                    )}
-                                </li>
-                            ))}
-                        </ul>
-                        {/* Bulk re-home, one action per distinct former owner. */}
-                        <div className="border-t px-4 py-3 space-y-2" style={{ borderColor: 'var(--border)' }}>
-                            {orphanedOwners.map((ownerId) => (
-                                <button
-                                    key={ownerId}
-                                    type="button"
-                                    disabled={reassignOwnerMutation.isPending}
-                                    onClick={() => {
-                                        const input = window.prompt(
-                                            `Reassign all secrets from former owner #${ownerId} to which user ID?`
-                                        );
-                                        const to = Number(input);
-                                        if (!input || !Number.isInteger(to) || to <= 0) return;
-                                        setReassignMsg('');
-                                        reassignOwnerMutation.mutate({ from: ownerId, to });
-                                    }}
-                                    className="flex items-center gap-1 text-sm font-medium disabled:opacity-50"
-                                    style={{ color: 'var(--accent)' }}
-                                >
-                                    <ArrowPathIcon className="h-4 w-4" />
-                                    Reassign all from former owner #{ownerId}…
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </section>
-            )}
+            {renderOrphanedSecretsSection({
+                orphanedSecrets,
+                orphanedOwners,
+                reassignOwnerMutation,
+                reassignMsg,
+                setReassignMsg,
+            })}
 
             {/* ── Expiring secrets ── (only when present) */}
-            {expiringSecrets.length > 0 && (
-                <section>
-                    <div className="flex items-center justify-between mb-1">
-                        <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                            Expiring secrets
-                        </h2>
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                                setExtendMsg('');
-                                extendExpiringMutation.mutate();
-                            }}
-                            disabled={extendExpiringMutation.isPending}
-                        >
-                            <ArrowPathIcon className="h-4 w-4 mr-1" />
-                            {extendExpiringMutation.isPending ? 'Renewing…' : 'Extend all (90d)'}
-                        </Button>
-                    </div>
-                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                        Secrets expiring soon or already expired — renew or rotate them before they lapse.
-                    </p>
-                    {extendMsg && (
-                        <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                            {extendMsg}
-                        </p>
-                    )}
-                    <div
-                        className="rounded-lg border"
-                        style={{
-                            borderColor: 'var(--warning, #a16207)',
-                            backgroundColor: 'var(--warning-subtle, #fef9c3)',
-                        }}
-                    >
-                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                            {expiringSecrets.map((s) => (
-                                <li key={s.id} className="flex items-center justify-between px-4 py-3">
-                                    <div className="min-w-0">
-                                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                            {s.name}
-                                        </span>
-                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
-                                            {s.type}
-                                            {s.expiration ? ` · ${new Date(s.expiration).toLocaleDateString()}` : ''}
-                                        </span>
-                                    </div>
-                                    <span
-                                        className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
-                                        style={
-                                            s.expired
-                                                ? { backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }
-                                                : { backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }
-                                        }
-                                    >
-                                        {s.expired ? 'expired' : 'expiring'}
-                                    </span>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                </section>
-            )}
+            {renderExpiringSecretsSection({
+                expiringSecrets,
+                extendExpiringMutation,
+                extendMsg,
+                setExtendMsg,
+            })}
 
             {/* ── Naming-policy violations ── (only when the policy flags existing names) */}
-            {nameViolations.length > 0 && (
-                <section>
-                    <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                        Naming-policy violations
-                    </h2>
-                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                        These secret names don't match the current naming policy. The policy is enforced when a secret
-                        is created, so names from before it was added or tightened need renaming to conform.
-                    </p>
-                    <div
-                        className="rounded-lg border"
-                        style={{
-                            borderColor: 'var(--warning, #a16207)',
-                            backgroundColor: 'var(--warning-subtle, #fef9c3)',
-                        }}
-                    >
-                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                            {nameViolations.map((v) => (
-                                <li key={v.id} className="px-4 py-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div className="min-w-0 flex items-center gap-2">
-                                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                                {v.type}
-                                            </span>
-                                            <input
-                                                type="text"
-                                                aria-label={`New name for ${v.name}`}
-                                                className="text-sm px-2 py-1 rounded-sm border w-56"
-                                                style={{
-                                                    borderColor: 'var(--border)',
-                                                    backgroundColor: 'var(--bg-base)',
-                                                    color: 'var(--text-primary)',
-                                                }}
-                                                value={renameInputs[v.id] ?? v.name}
-                                                onChange={(e) =>
-                                                    setRenameInputs((prev) => ({ ...prev, [v.id]: e.target.value }))
-                                                }
-                                            />
-                                        </div>
-                                        <span className="text-xs ml-3 truncate" style={{ color: 'var(--error)' }}>
-                                            {v.reason}
-                                        </span>
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                    <div className="flex items-center gap-3 mt-3">
-                        <Button
-                            variant="secondary"
-                            disabled={pendingRenames.length === 0 || bulkRenameMutation.isPending}
-                            onClick={() => bulkRenameMutation.mutate(pendingRenames)}
-                        >
-                            {bulkRenameMutation.isPending ? 'Renaming…' : `Apply renames (${pendingRenames.length})`}
-                        </Button>
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            Edit a name above, then apply. Names that still don't conform are skipped.
-                        </span>
-                    </div>
-                    {bulkRenameMsg && (
-                        <div className="mt-3">
-                            <Alert
-                                type={bulkRenameMsg.startsWith('Error') ? 'error' : 'success'}
-                                title={bulkRenameMsg.startsWith('Error') ? 'Rename failed' : 'Done'}
-                                message={bulkRenameMsg}
-                            />
-                        </div>
-                    )}
-                </section>
-            )}
+            {renderNamingViolationsSection({
+                nameViolations,
+                renameInputs,
+                setRenameInputs,
+                pendingRenames,
+                bulkRenameMutation,
+                bulkRenameMsg,
+            })}
 
             {/* ── Recycle bin ── */}
-            <section>
-                <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                    Recycle bin
-                </h2>
-                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                    Deleted secrets stay restorable until the retention window expires. Restore one to return it to the
-                    live list.
-                </p>
-                <div
-                    className="rounded-lg border"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    {deletedSecrets.length === 0 ? (
-                        <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                            Recycle bin is empty.
-                        </div>
-                    ) : (
-                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                            {deletedSecrets.map((s) => (
-                                <li key={s.id} className="flex items-center justify-between px-4 py-3">
-                                    <div className="min-w-0">
-                                        <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                                            {s.name}
-                                        </span>
-                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
-                                            {s.type}
-                                            {s.deleted_at
-                                                ? ` · deleted ${new Date(s.deleted_at).toLocaleDateString()}`
-                                                : ''}
-                                        </span>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => restoreSecretMutation.mutate(s.id)}
-                                        disabled={restoreSecretMutation.isPending}
-                                        className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
-                                        style={{ color: 'var(--accent)' }}
-                                        title="Restore secret"
-                                    >
-                                        <ArrowPathIcon className="h-4 w-4" />
-                                        Restore
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-            </section>
+            {renderRecycleBinSection({ deletedSecrets, restoreSecretMutation })}
 
             {/* ── Danger zone ── */}
             <section>
@@ -1131,41 +1284,12 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             </section>
 
             {/* ── Delete environment modal ── */}
-            <Modal isOpen={envToDelete !== null} onClose={closeDeleteEnvModal} title="Delete Environment" size="sm">
-                <div className="space-y-4">
-                    {deleteEnvError ? (
-                        <Alert type="error" title="Cannot delete environment" message={deleteEnvError} />
-                    ) : (
-                        <div className="space-y-2">
-                            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                                Delete environment <span className="font-semibold">{envToDelete?.name}</span>?
-                            </p>
-                            {['development', 'staging', 'production'].includes(
-                                envToDelete?.name?.toLowerCase() ?? ''
-                            ) && (
-                                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                    This is a default environment. It will be soft-deleted and can be recreated at any
-                                    time.
-                                </p>
-                            )}
-                        </div>
-                    )}
-                    <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                        <Button variant="outline" onClick={closeDeleteEnvModal}>
-                            {deleteEnvError ? 'Close' : 'Cancel'}
-                        </Button>
-                        {!deleteEnvError && (
-                            <Button
-                                variant="destructive"
-                                disabled={deleteEnvMutation.isPending}
-                                onClick={() => envToDelete && deleteEnvMutation.mutate(envToDelete.id)}
-                            >
-                                {deleteEnvMutation.isPending ? 'Deleting…' : 'Delete'}
-                            </Button>
-                        )}
-                    </div>
-                </div>
-            </Modal>
+            {renderDeleteEnvironmentModal({
+                envToDelete,
+                deleteEnvError,
+                closeDeleteEnvModal,
+                deleteEnvMutation,
+            })}
 
             {/* ── Delete project modal ── */}
             <Modal
