@@ -264,7 +264,6 @@ jobs:
               -e 'internal/storage/remote' \
               -e 'server/http$' \
               -e 'server/http/handlers$' \
-              -e 'server/middleware$' \
               -e 'server/proto/pb$'
           }
 
