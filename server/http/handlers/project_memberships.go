@@ -19,7 +19,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // staleInviteThreshold is when an unaccepted invite is surfaced as stale (ADR-022).
 const staleInviteThreshold = 7 * 24 * time.Hour
 
@@ -87,6 +86,8 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
+		case strings.Contains(msg, errDomainNotAllowed):
+			status = http.StatusForbidden
 		case strings.Contains(msg, "already has"):
 			status = http.StatusConflict
 		case strings.Contains(msg, "unknown role"), strings.Contains(msg, "required"):

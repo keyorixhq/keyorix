@@ -99,6 +99,24 @@ func (c *KeyorixCore) domainAllowed(email string) bool {
 	return false
 }
 
+// domainAllowedForUser is domainAllowed for the userID-keyed onboarding paths
+// (InviteMember, AddProjectMember, SetProjectMemberRole) — every place that
+// grants a project-scope role directly by user ID rather than by email, and
+// so doesn't otherwise pass through InviteToProject/InviteGlobal's check.
+func (c *KeyorixCore) domainAllowedForUser(ctx context.Context, userID uint) error {
+	if len(c.membershipDomainAllowlist) == 0 {
+		return nil
+	}
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+	if !c.domainAllowed(user.Email) {
+		return fmt.Errorf("email domain is not on the allowlist")
+	}
+	return nil
+}
+
 func (c *KeyorixCore) validationMode() string {
 	if c.membershipValidationMode == "" {
 		return ValidationModeAllowlist
@@ -127,6 +145,9 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	}
 	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+	if err := c.domainAllowedForUser(ctx, userID); err != nil {
+		return nil, err
 	}
 	// The parent project must be live. GetProject is soft-delete-scoped, so this refuses
 	// onboarding into a soft-deleted project — otherwise accepting an invitation that was

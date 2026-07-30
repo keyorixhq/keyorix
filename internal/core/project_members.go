@@ -15,7 +15,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
-
 // ListProjectMembers returns the users with a role at the project's scope.
 func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
 	return c.storage.ListProjectMembers(ctx, projectID)
@@ -29,6 +28,9 @@ func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([
 // mint a project_admin (or any role bundling permissions they don't hold) through
 // this direct entry point.
 func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string) error {
+	if err := c.domainAllowedForUser(ctx, userID); err != nil {
+		return err
+	}
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
@@ -48,6 +50,14 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
 	if err != nil {
 		return err
+	}
+	// Only re-run the domain check when this call is establishing NEW project
+	// membership (the user holds no role at this scope yet) — an existing
+	// member changing roles already passed the check when they joined.
+	if len(existing) == 0 {
+		if err := c.domainAllowedForUser(ctx, userID); err != nil {
+			return err
+		}
 	}
 	// Refuse a demotion that would leave the project with no roles.assign holder
 	// (#236): after this call the user's only project-scope role is roleName, so

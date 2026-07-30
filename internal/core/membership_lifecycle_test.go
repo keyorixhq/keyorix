@@ -91,6 +91,24 @@ func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
 	store.AssertCalled(t, "AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
 }
 
+// ADR-022's domain allowlist previously only gated the email-based
+// InviteToProject/InviteGlobal flow — InviteMember (the userID-keyed invite
+// path) bypassed it entirely. Verify it's now enforced here too.
+func TestInviteMember_RejectsDisallowedDomain(t *testing.T) {
+	store := new(MockStorage)
+	c := newMembershipCore(store)
+	c.membershipDomainAllowlist = []string{"allowed.com"}
+	ctx := context.Background()
+
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Email: "outsider@evil.com"}, nil)
+
+	_, err := c.InviteMember(ctx, 1, 2, "project_developer", 9, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not on the allowlist")
+	store.AssertNotCalled(t, "CreateProjectMembership", mock.Anything, mock.Anything)
+}
+
 func TestInviteMember_RejectsDuplicate(t *testing.T) {
 	store := new(MockStorage)
 	c := newMembershipCore(store)
