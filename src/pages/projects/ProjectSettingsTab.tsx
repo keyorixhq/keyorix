@@ -229,6 +229,35 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         });
     };
 
+    // ── Security (ADR-037) ───────────────────────────────────────────────
+    // Separate mutation from the General save above: the backend only
+    // re-checks roles.assign when require_mfa is present (non-nil) in the PUT
+    // body. Keeping it out of the name/description payload means an ordinary
+    // editor (secrets.write, no roles.assign) can still save those without
+    // hitting the stricter MFA-toggle gate.
+    const [requireMfa, setRequireMfa] = useState(false);
+
+    React.useEffect(() => {
+        if (project) setRequireMfa(project.requireMfa ?? false);
+    }, [project]);
+
+    const mfaMutation = useMutation({
+        mutationFn: (value: boolean) =>
+            // The endpoint validates `name` as required on every PUT — send the
+            // project's current, unchanged name/description alongside the toggle
+            // rather than only require_mfa.
+            apiClient.put(`/api/v1/projects/${projectId}`, {
+                name: project?.name ?? '',
+                description: project?.description,
+                require_mfa: value,
+            }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
+        },
+    });
+
+    const handleSaveMfa = () => mfaMutation.mutate(requireMfa);
+
     // ── Environments ──────────────────────────────────────────────────────
     const [newEnvName, setNewEnvName] = useState('');
     const [addEnvError, setAddEnvError] = useState('');
@@ -595,6 +624,56 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                     <div className="flex justify-end">
                         <Button onClick={handleSave} disabled={updateMutation.isPending}>
                             {updateMutation.isPending ? 'Saving…' : 'Save'}
+                        </Button>
+                    </div>
+                </div>
+            </section>
+
+            {/* ── Security (ADR-037) ── */}
+            <section>
+                <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+                    Security
+                </h2>
+                <div
+                    className="rounded-lg border p-5 space-y-4"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+                >
+                    {mfaMutation.isError && (
+                        <Alert
+                            type="error"
+                            title="Failed to update"
+                            message={
+                                (mfaMutation.error as any)?.response?.data?.message ??
+                                (mfaMutation.error as any)?.response?.data?.error ??
+                                'Could not save this setting.'
+                            }
+                        />
+                    )}
+                    {mfaMutation.isSuccess && (
+                        <Alert type="success" title="Saved" message="Project security settings updated." />
+                    )}
+                    <label htmlFor="project-require-mfa" className="flex items-start gap-3 cursor-pointer">
+                        <input
+                            id="project-require-mfa"
+                            type="checkbox"
+                            checked={requireMfa}
+                            onChange={(e) => setRequireMfa(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded-sm"
+                            style={{ accentColor: 'var(--accent)' }}
+                        />
+                        <span>
+                            <span className="block text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                Require MFA for this project
+                            </span>
+                            <span className="block text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                Blocks interactive access to this project's secrets for any session without a
+                                second factor. Changing this requires the Assign Roles permission on this project.
+                            </span>
+                        </span>
+                    </label>
+                    <div className="flex justify-end">
+                        <Button onClick={handleSaveMfa} disabled={mfaMutation.isPending}>
+                            {mfaMutation.isPending ? 'Saving…' : 'Save'}
                         </Button>
                     </div>
                 </div>

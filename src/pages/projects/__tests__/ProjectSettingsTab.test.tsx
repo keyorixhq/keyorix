@@ -4,12 +4,13 @@ import { ProjectSettingsTab } from '../ProjectSettingsTab';
 
 const mockPost = vi.fn();
 const mockGet = vi.fn();
+const mockPut = vi.fn();
 
 vi.mock('../../../services/client', () => ({
     apiClient: {
         get: (...args: any[]) => mockGet(...args),
         post: (...args: any[]) => mockPost(...args),
-        put: vi.fn().mockResolvedValue({ data: { data: {} } }),
+        put: (...args: any[]) => mockPut(...args),
         delete: vi.fn().mockResolvedValue({ data: { data: {} } }),
     },
 }));
@@ -18,11 +19,19 @@ beforeEach(() => {
     // jsdom has no object-URL API; stub it for the inventory download.
     (URL as any).createObjectURL = vi.fn(() => 'blob:mock');
     (URL as any).revokeObjectURL = vi.fn();
+    mockPut.mockReset();
+    mockPut.mockResolvedValue({ data: { data: {} } });
 });
+
+// A stable object reference — React Query memoizes `data` in production, so
+// the component's `useEffect([project])` only fires when it actually
+// changes. A fresh object literal returned on every mock call would look
+// "changed" every render and keep resetting local form state.
+const mockProject = { id: 1, name: 'web', description: '', requireMfa: false };
 
 vi.mock('../../../features/projects/api', () => ({
     PROJECT_KEYS: { all: ['projects'] },
-    useProject: () => ({ data: { id: 1, name: 'web', description: '' }, isLoading: false }),
+    useProject: () => ({ data: mockProject, isLoading: false }),
     useProjectEnvironments: () => ({
         data: [
             { id: 2, name: 'staging' },
@@ -241,5 +250,31 @@ describe('ProjectSettingsTab — promote environment', () => {
         expect(
             await screen.findByText(/0 secret\(s\), 1 skipped.*does not match the required pattern/i)
         ).toBeInTheDocument();
+    });
+
+    it('saves the require-MFA toggle with the current name/description, independent of General', async () => {
+        render(<ProjectSettingsTab projectId={1} />);
+
+        fireEvent.click(screen.getByLabelText(/Require MFA for this project/));
+        fireEvent.click(screen.getAllByRole('button', { name: /^save$/i })[1]); // Security section's Save
+
+        await waitFor(() =>
+            expect(mockPut).toHaveBeenCalledWith('/api/v1/projects/1', {
+                name: 'web',
+                description: '',
+                require_mfa: true,
+            })
+        );
+        expect(await screen.findByText('Project security settings updated.')).toBeInTheDocument();
+    });
+
+    it('surfaces a permission error from the MFA toggle save', async () => {
+        mockPut.mockRejectedValue({ response: { data: { message: 'roles.assign is required' } } });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByLabelText(/Require MFA for this project/));
+        fireEvent.click(screen.getAllByRole('button', { name: /^save$/i })[1]);
+
+        expect(await screen.findByText('roles.assign is required')).toBeInTheDocument();
     });
 });

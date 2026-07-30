@@ -10,6 +10,10 @@ export interface Project {
     createdAt?: string;
     updatedAt?: string;
     deleted?: boolean;
+    // ADR-037: blocks interactive access to this project for sessions without
+    // a second factor. Toggling requires roles.assign (stricter than the
+    // secrets.write gate on name/description).
+    requireMfa?: boolean;
 }
 
 export interface ProjectEnvironment {
@@ -281,6 +285,7 @@ const normalize = (p: any): Project => ({
     createdAt: p.CreatedAt ?? p.created_at ?? '',
     updatedAt: p.UpdatedAt ?? p.updated_at ?? '',
     deleted: p.deleted ?? false,
+    requireMfa: p.RequireMFA ?? p.require_mfa ?? false,
 });
 
 const normalizeEnv = (e: any): ProjectEnvironment => ({
