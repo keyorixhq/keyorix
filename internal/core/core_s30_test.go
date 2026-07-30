@@ -91,6 +91,21 @@ func TestProvisionSCIMUser_Success(t *testing.T) {
 	assert.Equal(t, uint(10), u.ID)
 }
 
+// ADR-022's domain allowlist previously only gated the email-based
+// InviteToProject/InviteGlobal flow — a SCIM directory sync from an
+// unapproved domain (e.g. a misconfigured/multi-tenant IdP) could still
+// silently mint an account. Verify it's now enforced here too.
+func TestProvisionSCIMUser_RejectsDisallowedDomain(t *testing.T) {
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	c.SetMembershipDomainAllowlist([]string{"allowed.com"})
+
+	_, err := c.ProvisionSCIMUser(context.Background(), 0, "eve@evil.com", "", "", "ext-eve", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not on the allowlist")
+	ms.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
+}
+
 func TestProvisionSCIMUser_EmailFallback(t *testing.T) {
 	// When email is empty, it defaults to userName.
 	ms := new(MockStorage)

@@ -475,6 +475,13 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	if strings.TrimSpace(email) == "" {
 		return nil, fmt.Errorf("the IdP returned no email; cannot auto-provision an account")
 	}
+	// ADR-022: the domain allowlist is an install-wide boundary on who may hold an
+	// account at all, not just an invite-flow check — an SSO login from an
+	// unapproved domain (e.g. a misconfigured/multi-tenant IdP) must not silently
+	// JIT-provision an account either.
+	if !c.domainAllowed(email) {
+		return nil, fmt.Errorf("email domain is not on the allowlist")
+	}
 	// Guard against a race / case where a user materialised between the resolve and here:
 	// reuse it rather than create a duplicate. This MUST go through resolveSSOUser (not a
 	// raw email lookup), so the same guards apply — an EXISTING account is reused via an

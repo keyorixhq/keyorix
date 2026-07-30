@@ -252,6 +252,20 @@ func TestProvisionSSOUser(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	// ADR-022's domain allowlist previously only gated the email-based
+	// InviteToProject/InviteGlobal flow — an SSO login from an unapproved
+	// domain (e.g. a misconfigured/multi-tenant IdP) could still silently
+	// JIT-provision an account. Verify it's now enforced here too.
+	t.Run("refuses a disallowed email domain", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		c.SetMembershipDomainAllowlist([]string{"allowed.com"})
+
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|999", "mallory@evil.com", true, "Mallory")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not on the allowlist")
+		store.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
+	})
+
 	// CRITICAL regression: the JIT path must NOT reuse an existing account matched by an
 	// UNVERIFIED email — that was an account-takeover (an IdP omitting email_verified could
 	// assert a victim's email and be logged in as the victim). With emailVerified=false the
