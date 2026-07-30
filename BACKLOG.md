@@ -82,6 +82,12 @@ _(nothing claimed)_
 
 ### Other
 - **ADR-020** — project detail page (frontend, `keyorix-web`), still Proposed.
+- **Refactor candidates (cyclomatic complexity)** — see
+  [`docs/REFACTOR-CANDIDATES.md`](docs/REFACTOR-CANDIDATES.md). 55 functions
+  above CCN 15 (`lizard`-generated, 2026-07-30), worst outliers
+  `migrateDatabase` (CCN 182) and `initializeCoreService` (CCN 108). Not a
+  dedicated-sweep item — fix opportunistically when already touching one of
+  these functions.
 
 [#1225]: https://github.com/keyorixhq/keyorix/pull/1225
 [#1226]: https://github.com/keyorixhq/keyorix/pull/1226
