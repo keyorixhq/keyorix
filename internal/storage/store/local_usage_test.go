@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,11 +14,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// usageDBSeq makes each in-memory DB unique within the process, even across
+// repeated invocations of the same test (e.g. `go test -count=N`).
+var usageDBSeq atomic.Int64
+
 // newUsageStore opens a unique named in-memory SQLite DB, migrates the
 // tables needed for GetProjectUsageStats, and returns a LocalStorage.
 func newUsageStore(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_usage?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_usage_%d?mode=memory&cache=shared", t.Name(), usageDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 

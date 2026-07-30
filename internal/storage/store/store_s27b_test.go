@@ -45,6 +45,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,12 +58,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// s27bDBSeq makes each in-memory DB unique within the process, even across
+// repeated invocations of the same test (e.g. `go test -count=N`).
+var s27bDBSeq atomic.Int64
+
 // newS27bStore opens a unique in-memory SQLite DB, auto-migrates the supplied
 // model types, and returns a LocalStorage. The "_s27b" suffix avoids DSN
 // collisions with store_s27_test.go's "_s27" suffix.
 func newS27bStore(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_s27b?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s27b_%d?mode=memory&cache=shared", t.Name(), s27bDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(mods) > 0 {
@@ -284,8 +290,8 @@ func TestCountProjectMembershipsByUsers_S27b_HappyPath(t *testing.T) {
 	rows := []*models.ProjectMembership{
 		{ProjectID: 1, UserID: 10, State: "active", InvitedAt: now},
 		{ProjectID: 2, UserID: 10, State: "active", InvitedAt: now},
-		{ProjectID: 3, UserID: 10, State: "invited", InvitedAt: now},  // non-revoked but not active
-		{ProjectID: 4, UserID: 10, State: "revoked", InvitedAt: now},  // revoked — excluded from total
+		{ProjectID: 3, UserID: 10, State: "invited", InvitedAt: now}, // non-revoked but not active
+		{ProjectID: 4, UserID: 10, State: "revoked", InvitedAt: now}, // revoked — excluded from total
 	}
 	for _, r := range rows {
 		require.NoError(t, ls.db.Create(r).Error)

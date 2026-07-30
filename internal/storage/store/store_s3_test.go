@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,11 +24,15 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
+// storeS3DBSeq makes each in-memory DB unique within the process, even
+// across repeated invocations of the same test (e.g. `go test -count=N`).
+var storeS3DBSeq atomic.Int64
+
 // newStoreS3 returns a LocalStorage over a unique in-memory SQLite database,
 // auto-migrated for a given set of GORM models.
 func newStoreS3(t *testing.T, name string, migrateModels ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:store_s3_%s?mode=memory&cache=shared", name)
+	dsn := fmt.Sprintf("file:store_s3_%s_%d?mode=memory&cache=shared", name, storeS3DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(migrateModels) > 0 {
@@ -903,10 +908,10 @@ func TestDynamicSecretLease_CRUD(t *testing.T) {
 
 	now := time.Now()
 	lease, err := ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "lease-001",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: now,
+		LeaseID:   "lease-001",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  now,
 		ExpiresAt: now.Add(time.Hour),
 	})
 	require.NoError(t, err)
@@ -940,10 +945,10 @@ func TestDynamicSecretLease_CRUD(t *testing.T) {
 
 	// Create an active lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "lease-002",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: now,
+		LeaseID:   "lease-002",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  now,
 		ExpiresAt: now.Add(time.Hour),
 	})
 	require.NoError(t, err)
@@ -967,30 +972,30 @@ func TestListExpiredActiveLeases(t *testing.T) {
 
 	// Expired active lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "exp-active",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: past,
+		LeaseID:   "exp-active",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  past,
 		ExpiresAt: past,
 	})
 	require.NoError(t, err)
 
 	// Expired revoke_failed lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "exp-failed",
-		ConfigID: cfg.ID,
-		Status:   "revoke_failed",
-		IssuedAt: past,
+		LeaseID:   "exp-failed",
+		ConfigID:  cfg.ID,
+		Status:    "revoke_failed",
+		IssuedAt:  past,
 		ExpiresAt: past,
 	})
 	require.NoError(t, err)
 
 	// Non-expired active lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "live-active",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: now,
+		LeaseID:   "live-active",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  now,
 		ExpiresAt: now.Add(time.Hour),
 	})
 	require.NoError(t, err)

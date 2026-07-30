@@ -58,6 +58,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -69,12 +71,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// s25DBSeq makes each in-memory DB unique within the process, even across
+// repeated invocations of the same test (e.g. `go test -count=N`).
+var s25DBSeq atomic.Int64
+
 // newS25Store opens a fresh in-memory SQLite DB, runs AutoMigrate on the
 // supplied model types, and returns the LocalStorage. Using a "_s25" DSN
 // suffix prevents collisions with other sweeps' test-name-keyed DSNs.
 func newS25Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_s25?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s25_%d?mode=memory&cache=shared", t.Name(), s25DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(mods) > 0 {

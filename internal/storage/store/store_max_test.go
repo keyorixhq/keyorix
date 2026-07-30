@@ -18,6 +18,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,9 +34,13 @@ import (
 // helper: newMaxStore — unique in-memory SQLite DB auto-migrated for many models
 // ---------------------------------------------------------------------------
 
+// maxStoreDBSeq makes each in-memory DB unique within the process, even
+// across repeated invocations of the same test (e.g. `go test -count=N`).
+var maxStoreDBSeq atomic.Int64
+
 func newMaxStore(t *testing.T, tag string, ms ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:max_%s_%s?mode=memory&cache=shared", tag, t.Name())
+	dsn := fmt.Sprintf("file:max_%s_%s_%d?mode=memory&cache=shared", tag, t.Name(), maxStoreDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(ms) > 0 {

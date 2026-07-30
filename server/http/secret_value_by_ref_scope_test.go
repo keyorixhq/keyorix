@@ -28,7 +28,10 @@ func setupByRefScopeCore(t *testing.T) *core.KeyorixCore {
 	// A uniquely-NAMED shared-cache in-memory DB: shared-cache keeps the connection pool
 	// on one DB (a plain ":memory:" pool gives each connection its own empty DB), and the
 	// unique name isolates it from other tests that use the default shared ":memory:".
-	db, err := gorm.Open(sqlite.Open("file:byref_scope_test?mode=memory&cache=shared"), &gorm.Config{})
+	// uniqueMemDSN (defined in integration_test.go) folds in an atomic counter so repeated
+	// invocations within one process (e.g. go test -count=N) each get a fresh DB instead of
+	// re-attaching to a prior iteration's live leftover.
+	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("")), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -59,8 +62,8 @@ func setupByRefScopeCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)                 // admin: global
-	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error)   // viewerA: project A only
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)               // admin: global
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error) // viewerA: project A only
 
 	seedSession(t, db, 1, "admin-tok")
 	seedSession(t, db, 2, "viewerA-tok")

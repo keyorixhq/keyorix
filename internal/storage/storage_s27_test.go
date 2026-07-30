@@ -50,7 +50,9 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -59,6 +61,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// s27ExistingQSDSNSeq makes the in-memory DSN unique per invocation so that
+// repeated test runs (go test -count=N) don't attach to a live leftover DB
+// from a prior iteration.
+var s27ExistingQSDSNSeq atomic.Int64
 
 // ---------------------------------------------------------------------------
 // withMigrationLock — isPostgres=true on a SQLite DB triggers error branch
@@ -453,7 +460,7 @@ func TestCreateLocalStorage_S27_ExistingDSNQueryString(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Type = "local"
 	// A named in-memory DSN that already has a query-string component.
-	cfg.Storage.Database.Path = "file:creates27_existing_qs?mode=memory&cache=shared"
+	cfg.Storage.Database.Path = fmt.Sprintf("file:creates27_existing_qs_%d?mode=memory&cache=shared", s27ExistingQSDSNSeq.Add(1))
 
 	s, err := NewStorageFactory().CreateStorage(cfg)
 	require.NoError(t, err, "createLocalStorage must succeed with a pre-existing DSN query string")

@@ -2,43 +2,45 @@
 //
 // Targets (all 0 % or low-% from the post-s21 coverage run):
 //
-//   local_auth.go
-//     EnforceSessionLimit          (0%)
-//     TouchSession                 (0%)
-//     CleanupExpiredSessions       (0%)
-//     GetPersonalAccessTokenByID   (0%)
-//     GetPersonalAccessTokenByHash (0%)
-//     RevokeAllPersonalAccessTokensForUser (0%)
-//     TouchPersonalAccessToken     (0%)
-//     CreateSetupToken             (0%)
-//     GetSetupTokenByHash          (0%)
-//     SupersedeActiveSetupTokens   (0%)
-//     MarkSetupTokenConsumed       (0%)
-//     MarkSetupTokenExpired        (0%)
-//     CountSetupTokensSince        (0%)
+//	local_auth.go
+//	  EnforceSessionLimit          (0%)
+//	  TouchSession                 (0%)
+//	  CleanupExpiredSessions       (0%)
+//	  GetPersonalAccessTokenByID   (0%)
+//	  GetPersonalAccessTokenByHash (0%)
+//	  RevokeAllPersonalAccessTokensForUser (0%)
+//	  TouchPersonalAccessToken     (0%)
+//	  CreateSetupToken             (0%)
+//	  GetSetupTokenByHash          (0%)
+//	  SupersedeActiveSetupTokens   (0%)
+//	  MarkSetupTokenConsumed       (0%)
+//	  MarkSetupTokenExpired        (0%)
+//	  CountSetupTokensSince        (0%)
 //
-//   local_break_glass.go
-//     CreateBreakGlassActivation   (0%)
-//     GetBreakGlassActivation      (0%)
-//     RevokeBreakGlassActivation   (0%)
+//	local_break_glass.go
+//	  CreateBreakGlassActivation   (0%)
+//	  GetBreakGlassActivation      (0%)
+//	  RevokeBreakGlassActivation   (0%)
 //
-//   local_login_attempts.go
-//     PruneLoginAttempts           (0%)
+//	local_login_attempts.go
+//	  PruneLoginAttempts           (0%)
 //
-//   local_webauthn.go
-//     LockWebAuthnCredentialForUpdate (0% — SQLite path)
-//     UpdateWebAuthnCredential     (0%)
-//     AdvanceWebAuthnCredentialCounter (0%)
-//     DeleteWebAuthnCredential     (0%)
-//     CountWebAuthnCredentials     (0%)
-//     SetUserWebAuthnEnabled       (0%)
-//     CreateWebAuthnSession        (0%)
-//     ConsumeWebAuthnSession       (0%)
+//	local_webauthn.go
+//	  LockWebAuthnCredentialForUpdate (0% — SQLite path)
+//	  UpdateWebAuthnCredential     (0%)
+//	  AdvanceWebAuthnCredentialCounter (0%)
+//	  DeleteWebAuthnCredential     (0%)
+//	  CountWebAuthnCredentials     (0%)
+//	  SetUserWebAuthnEnabled       (0%)
+//	  CreateWebAuthnSession        (0%)
+//	  ConsumeWebAuthnSession       (0%)
 package store
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,11 +51,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// s22DBSeq makes each in-memory DB unique within the process, even across
+// repeated invocations of the same test (e.g. `go test -count=N`).
+var s22DBSeq atomic.Int64
+
 // newS22Store opens a unique in-memory SQLite DB, migrates the supplied models
 // and returns the LocalStorage. It mirrors the s21 helper pattern.
 func newS22Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_s22?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s22_%d?mode=memory&cache=shared", t.Name(), s22DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(mods) > 0 {

@@ -6,6 +6,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,11 +19,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// likeEscapeDBSeq makes each in-memory DB unique within the process, even
+// across repeated invocations of the same test (e.g. `go test -count=N`).
+var likeEscapeDBSeq atomic.Int64
+
 // TestGetAuditLogs_LIKEEscape_ActorUsername verifies that the escapeLIKE applied
 // to actor_username filter prevents SQL wildcard injection: a search for
 // "alice%admin" must NOT match a user whose name is "alice-admin" (#r124-M).
 func TestGetAuditLogs_LIKEEscape_ActorUsername(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:kxlikeescape_actor?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:kxlikeescape_actor_%d?mode=memory&cache=shared", likeEscapeDBSeq.Add(1))), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
 
@@ -72,7 +78,7 @@ func TestGetAuditLogs_LIKEEscape_ActorUsername(t *testing.T) {
 // containing SQL LIKE metacharacters is escaped so it matches only the intended
 // resource prefix and not unrelated event types (#r124-M).
 func TestGetAuditLogs_LIKEEscape_ResourceType(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:kxlikeescape_restype?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:kxlikeescape_restype_%d?mode=memory&cache=shared", likeEscapeDBSeq.Add(1))), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
 
@@ -123,7 +129,7 @@ func TestGetAuditLogs_LIKEEscape_ResourceType(t *testing.T) {
 // is silently clamped to maxStoragePage rather than generating an enormous OFFSET
 // (#r124-M pagination DoS).
 func TestGetAuditLogs_ClampPage(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:kxlikeescape_clamppage?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:kxlikeescape_clamppage_%d?mode=memory&cache=shared", likeEscapeDBSeq.Add(1))), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
 
@@ -143,7 +149,7 @@ func TestGetAuditLogs_ClampPage(t *testing.T) {
 // parameter is escaped so a caller-supplied "%" or "_" in a search term does
 // not expand unexpectedly (#r124-M LIKE injection in ListSecrets).
 func TestListSecrets_LIKEEscape_Search(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:kxlikeescape_search?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:kxlikeescape_search_%d?mode=memory&cache=shared", likeEscapeDBSeq.Add(1))), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}))
 

@@ -78,6 +78,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,11 +95,15 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
+// s27DBSeq makes each in-memory DB unique within the process, even across
+// repeated invocations of the same test (e.g. `go test -count=N`).
+var s27DBSeq atomic.Int64
+
 // newS27Store opens a unique in-memory SQLite DB with the requested models
 // auto-migrated.
 func newS27Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_s27?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s27_%d?mode=memory&cache=shared", t.Name(), s27DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(mods) > 0 {
@@ -109,7 +115,7 @@ func newS27Store(t *testing.T, mods ...interface{}) *LocalStorage {
 // brokenS27Store returns a LocalStorage whose DB is closed so every query fails.
 func brokenS27Store(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_s27broken?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s27broken_%d?mode=memory&cache=shared", t.Name(), s27DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()

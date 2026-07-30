@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,9 +16,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// complianceSnapDBSeq makes each in-memory DB unique within the process.
+var complianceSnapDBSeq atomic.Int64
+
 func newSnapshotCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kx_snap_core_%s?mode=memory&cache=shared&_timeout=30000", t.Name())
+	dsn := fmt.Sprintf("file:kx_snap_core_%d?mode=memory&cache=shared&_timeout=30000", complianceSnapDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(

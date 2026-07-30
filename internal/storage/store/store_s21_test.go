@@ -4,12 +4,14 @@
 //   - local_scheduler_lock.go      WithSchedulerLock — happy path (fn=nil), panic recovery
 //   - local_audit_checkpoint_lock.go WithAuditCheckpointLock — happy path (fn=nil)
 //   - local_sharing.go             CreateShareRecord — validation error, owner mismatch,
-//                                  group recipient path, upsert (existing share updated)
+//     group recipient path, upsert (existing share updated)
 package store
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -19,11 +21,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// s21DBSeq makes each in-memory DB unique within the process, even across
+// repeated invocations of the same test (e.g. `go test -count=N`).
+var s21DBSeq atomic.Int64
+
 // newS21UniqueStore opens a fresh in-memory SQLite DB with a per-test unique DSN
 // so parallel tests don't share the same in-memory instance.
 func newS21UniqueStore(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s21_%d?mode=memory&cache=shared", t.Name(), s21DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(mods) > 0 {

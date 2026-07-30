@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -22,6 +23,11 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// migrateS24DBSeq makes each in-memory DB unique within the process, so that
+// repeated invocations of the same test (go test -count=N) don't attach to a
+// live leftover DB from a prior iteration.
+var migrateS24DBSeq atomic.Int64
 
 // captureStdout redirects os.Stdout for the duration of fn and returns what was
 // written to it.
@@ -139,7 +145,7 @@ func bootstrapFileDBWithProjectAndUser(t *testing.T, dbPath, projectName, userna
 // the requested name. This uses an in-memory core with no projects seeded, so
 // the list returns an empty slice.
 func TestResolveProjectID_NotFoundAfterListSucceeds(t *testing.T) {
-	dsn := "file:test_migrate_s24_" + t.Name() + "?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:test_migrate_s24_%s_%d?mode=memory&cache=shared", t.Name(), migrateS24DBSeq.Add(1))
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))
@@ -180,7 +186,7 @@ func TestResolveProjectID_NotFoundAfterListSucceeds(t *testing.T) {
 // roles.assign check. This is a complementary angle to the authority_test
 // coverage using the shared newBootstrappedCore helper.
 func TestRequireMigrationAuthority_RolesAssignDenied(t *testing.T) {
-	dsn := "file:test_migrate_s24_" + t.Name() + "?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:test_migrate_s24_%s_%d?mode=memory&cache=shared", t.Name(), migrateS24DBSeq.Add(1))
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
 	}))

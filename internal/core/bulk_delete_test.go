@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,14 +18,18 @@ import (
 	"gorm.io/gorm"
 )
 
+// bulkDeleteDBSeq makes each in-memory DB unique within the process.
+var bulkDeleteDBSeq atomic.Int64
+
 // setupBulkDeleteDB opens an in-memory SQLite DB, migrates the necessary models,
 // and returns a core instance plus a factory for creating test secrets.
 func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 
-	// Use a unique in-memory DSN per test to avoid shared state across tests.
-	dsn := "file:bulkdelete_" + t.Name() + "?mode=memory&cache=shared&_busy_timeout=5000"
+	// Use a unique in-memory DSN per invocation to avoid shared state across tests
+	// and across repeated invocations of the same test (e.g. go test -count=N).
+	dsn := fmt.Sprintf("file:bulkdelete_%d?mode=memory&cache=shared&_busy_timeout=5000", bulkDeleteDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
@@ -191,7 +196,7 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 
-	dsn := "file:bulkdelete_crossproject_" + t.Name() + "?mode=memory&cache=shared&_busy_timeout=5000"
+	dsn := fmt.Sprintf("file:bulkdelete_crossproject_%d?mode=memory&cache=shared&_busy_timeout=5000", bulkDeleteDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,9 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// bulkRotateDBSeq makes each in-memory DB unique within the process.
+var bulkRotateDBSeq atomic.Int64
 
 // bulkRotateDBRaw sets up an isolated in-memory SQLite DB and returns the core and the
 // raw LocalStorage for tests that need more granular control (cross-project, folder-node,
@@ -41,7 +45,8 @@ func bulkRotateDBRaw(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 // tests and returns a core + a helper to create test secrets.
 func bulkRotateDB(t *testing.T) (*KeyorixCore, func(name, classification string, autoRotate bool) uint) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:bulk_rotate_shared_%d?mode=memory&cache=shared&_journal_mode=WAL", bulkRotateDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)

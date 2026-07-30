@@ -2,8 +2,10 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +19,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// scopedTestDBSeq makes each in-memory DB unique within the process, so that
+// repeated invocations of the same test (go test -count=N) don't attach to a
+// live leftover DB from a prior iteration.
+var scopedTestDBSeq atomic.Int64
+
 // newScopedTestDB creates an in-memory SQLite DB suitable for scope resolver
 // and handleScopedPermissionRequest tests. It migrates only the tables needed
 // for the paths under test (RBAC, environments, secrets, shares, rotation
@@ -26,7 +33,7 @@ func newScopedTestDB(t *testing.T) *gorm.DB {
 	// i18n is needed by the local storage layer for error messages.
 	require.NoError(t, i18n.InitializeForTesting())
 	// Use a unique per-test file URI so parallel subtests don't share state.
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), scopedTestDBSeq.Add(1))), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{},

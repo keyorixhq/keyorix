@@ -96,8 +96,10 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,6 +111,10 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// s28DBSeq makes each in-memory DB unique within the process, even across
+// repeated invocations of the same test (e.g. `go test -count=N`).
+var s28DBSeq atomic.Int64
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -122,7 +128,7 @@ func apiErrResp(code, message string) []byte {
 // newS28Store opens a unique in-memory SQLite DB with the requested models auto-migrated.
 func newS28Store(t *testing.T, mods ...interface{}) *store.LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_s28?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s28_%d?mode=memory&cache=shared", t.Name(), s28DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	if len(mods) > 0 {
@@ -134,7 +140,7 @@ func newS28Store(t *testing.T, mods ...interface{}) *store.LocalStorage {
 // brokenS28Store returns a LocalStorage whose underlying DB is already closed.
 func brokenS28Store(t *testing.T) *store.LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_s28broken?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_s28broken_%d?mode=memory&cache=shared", t.Name(), s28DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()

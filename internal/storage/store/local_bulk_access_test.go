@@ -4,6 +4,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -13,11 +15,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// bulkAccessDBSeq makes each in-memory DB unique within the process, even
+// across repeated invocations of the same test (e.g. `go test -count=N`).
+var bulkAccessDBSeq atomic.Int64
+
 // newBulkAccessStore returns a LocalStorage backed by an in-memory SQLite DB
 // migrated with the tables required for bulk-access operations.
 func newBulkAccessStore(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_bulkaccess?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_bulkaccess_%d?mode=memory&cache=shared", t.Name(), bulkAccessDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -42,7 +48,7 @@ func newBulkAccessStore(t *testing.T) *LocalStorage {
 // so every call returns "no such table" errors.
 func newBulkAccessBrokenStore(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := "file:" + t.Name() + "_bulkbroken?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:%s_bulkbroken_%d?mode=memory&cache=shared", t.Name(), bulkAccessDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	return NewLocalStorage(db)
