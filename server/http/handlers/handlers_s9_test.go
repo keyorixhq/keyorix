@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -150,7 +152,9 @@ func TestUpdateAccessRequestProxy_Success_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -192,7 +196,9 @@ func TestCreateAccessRequestApprovalProxy_Success_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -217,7 +223,9 @@ func TestListAccessRequestApprovalsProxy_WithData_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -267,7 +275,9 @@ func TestGetAccessReviewCampaignProxy_Success_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -325,7 +335,9 @@ func TestUpdateAccessReviewCampaignProxy_Success_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -350,7 +362,9 @@ func TestCreateAccessReviewItemsProxy_Success_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -375,7 +389,9 @@ func TestListAccessReviewItemsProxy_WithData_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -400,7 +416,9 @@ func TestCountPendingAccessReviewItemsProxy_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -433,7 +451,13 @@ func TestImpersonationHandler_End_NoAdminCookie_S9(t *testing.T) {
 
 func TestCreateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"user_id":1,"credential_id":"dGVzdC1jcmVkLXM5","public_key":"cHVia2V5LXM5","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["internal"]}`
+	// credential_id is a []byte field (base64 on the wire) carrying a DB-level
+	// unique constraint; fold in a counter (see s4UniqueCounter) so a repeat
+	// invocation against the shared sharedS4Core DB doesn't collide with its own
+	// prior insert. Must stay valid base64, so encode the unique string rather
+	// than appending raw text to the existing base64 literal.
+	credID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("test-cred-s9-%d", s4UniqueCounter.Add(1))))
+	body := fmt.Sprintf(`{"user_id":1,"credential_id":%q,"public_key":"cHVia2V5LXM5","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["internal"]}`, credID)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateWebAuthnCredentialProxy(w, req)
@@ -443,8 +467,12 @@ func TestCreateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 func TestListWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 
-	// Create a credential first
-	body := `{"user_id":77,"credential_id":"dGVzdC1jcmVkLXM5Mg==","public_key":"cHVia2V5LXM5Mg==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["usb"]}`
+	// Create a credential first. credential_id is a []byte field (base64 on the
+	// wire) carrying a DB-level unique constraint; fold in a counter (see
+	// s4UniqueCounter) so a repeat invocation against the shared sharedS4Core DB
+	// doesn't collide with its own prior insert.
+	credID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("test-cred-s92-%d", s4UniqueCounter.Add(1))))
+	body := fmt.Sprintf(`{"user_id":77,"credential_id":%q,"public_key":"cHVia2V5LXM5Mg==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["usb"]}`, credID)
 	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	createW := httptest.NewRecorder()
 	h.CreateWebAuthnCredentialProxy(createW, createReq)
@@ -460,8 +488,12 @@ func TestListWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 func TestCountWebAuthnCredentialsProxy_WithData_S9(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 
-	// Create a credential
-	body := `{"user_id":88,"credential_id":"dGVzdC1jcmVkLXM5Mw==","public_key":"cHVia2V5LXM5Mw==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["nfc"]}`
+	// Create a credential. credential_id is a []byte field (base64 on the wire)
+	// carrying a DB-level unique constraint; fold in a counter (see
+	// s4UniqueCounter) so a repeat invocation against the shared sharedS4Core DB
+	// doesn't collide with its own prior insert.
+	credID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("test-cred-s93-%d", s4UniqueCounter.Add(1))))
+	body := fmt.Sprintf(`{"user_id":88,"credential_id":%q,"public_key":"cHVia2V5LXM5Mw==","aaguid":"00000000-0000-0000-0000-000000000000","sign_count":0,"transports":["nfc"]}`, credID)
 	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	createW := httptest.NewRecorder()
 	h.CreateWebAuthnCredentialProxy(createW, createReq)
@@ -485,7 +517,9 @@ func TestUpdateWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -510,7 +544,9 @@ func TestDeleteWebAuthnCredentialProxy_Success_S9(t *testing.T) {
 	require.Equal(t, http.StatusOK, createW.Code)
 
 	var createResp struct {
-		Data struct{ ID uint `json:"id"` } `json:"data"`
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(createW.Body).Decode(&createResp))
 	require.NotZero(t, createResp.Data.ID)
@@ -536,7 +572,11 @@ func TestSetUserWebAuthnEnabledProxy_Success_S9(t *testing.T) {
 
 func TestCreateWebAuthnSessionProxy_Success_S9(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"user_id":66,"token_hash":"s9-test-token-hash-unique","expires_at":"2030-01-01T00:00:00Z"}`
+	// token_hash carries a DB-level unique constraint; fold in a counter (see
+	// s4UniqueCounter) so a repeat invocation against the shared sharedS4Core DB
+	// doesn't collide with its own prior insert.
+	tokenHash := fmt.Sprintf("s9-test-token-hash-unique-%d", s4UniqueCounter.Add(1))
+	body := fmt.Sprintf(`{"user_id":66,"token_hash":%q,"expires_at":"2030-01-01T00:00:00Z"}`, tokenHash)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateWebAuthnSessionProxy(w, req)
