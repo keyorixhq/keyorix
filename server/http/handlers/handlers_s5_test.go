@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -697,8 +698,11 @@ func notificationToAPIInternal(n *notificationModel) map[string]any {
 
 func TestCreateSSOLoginStateProxy_HappyPath_S5(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
+	// state carries a DB-level uniqueIndex (models.SSOLoginState.State); fold in
+	// a counter (see s4UniqueCounter) so a repeat invocation against the shared
+	// sharedS4Core DB doesn't collide with its own prior insert.
 	body, _ := json.Marshal(map[string]any{
-		"state":    "teststate",
+		"state":    fmt.Sprintf("teststate-%d", s4UniqueCounter.Add(1)),
 		"nonce":    "testnonce",
 		"provider": "google",
 	})
@@ -2900,7 +2904,11 @@ func TestCreateMachineIdentityCredentialProxy_HappyPath(t *testing.T) {
 	h.CreateMachineIdentityProxy(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	body := `{"machine_identity_id":1,"token_hash":"deadbeefdeadbeefdeadbeefdeadbeef","name":"cred1"}`
+	// token_hash carries a DB-level unique constraint; fold in a counter (see
+	// s4UniqueCounter) so a repeat invocation against the shared sharedS4Core DB
+	// doesn't collide with its own prior insert.
+	tokenHash := fmt.Sprintf("deadbeefdeadbeefdeadbeefdeadbeef%d", s4UniqueCounter.Add(1))
+	body := fmt.Sprintf(`{"machine_identity_id":1,"token_hash":%q,"name":"cred1"}`, tokenHash)
 	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w2 := httptest.NewRecorder()
 	h.CreateMachineIdentityCredentialProxy(w2, req2)
@@ -3521,8 +3529,6 @@ func TestSupersedeSetupTokensProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-
-
 // ── webauthn_proxy.go — additional paths ─────────────────────────────────────
 
 // TestListWebAuthnCredentialsProxy_HappyPath already in s4
@@ -3547,6 +3553,11 @@ func TestDeleteWebAuthnCredentialProxy_NotFound(t *testing.T) {
 
 func TestCreateLegalHoldProxy_HappyPathS5(t *testing.T) {
 	h := newDashboardHandlerS5(t)
+	// This body has no "placed_by", so a successful create leaves an active hold
+	// with PlacedBy=0 in the shared sharedS4Core DB — release it afterward so it
+	// doesn't leak into later tests (e.g. TestLiftLegalHold_NoActiveHold) or
+	// persist across a `-count=N` repeat of the whole binary.
+	t.Cleanup(func() { releaseActiveLegalHoldS4(t, h) })
 	body := `{"user_id":1,"secret_id":1,"reason":"compliance review"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -3585,7 +3596,6 @@ func TestCreateBreakGlassActivationProxy_HappyPath(t *testing.T) {
 	h.CreateBreakGlassActivationProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
-
 
 func TestRevokeBreakGlassActivationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)

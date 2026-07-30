@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -808,6 +809,18 @@ var (
 	sharedS4CoreOnce sync.Once
 	sharedS4Core     *core.KeyorixCore
 )
+
+// s4UniqueCounter mints a per-process-unique suffix for literal values (e.g.
+// SSO state tokens, WebAuthn credential IDs, credential token hashes) that a
+// handful of s4/s5/s9 tests insert into the shared sharedS4Core DB. Those
+// tests assert on a fixed-string insert succeeding; under `go test -count=N`
+// the whole binary (and sharedS4Core with it) is reused across iterations, so
+// a hardcoded literal collides with its own prior insert on repeat. Folding
+// this counter into the literal keeps each invocation's value unique without
+// touching the singleton itself. Shared across files (not per-file, unlike
+// the sN DBCounter DSN-uniqueness vars elsewhere in this package) because all
+// of s4/s5/s9 write into the SAME sharedS4Core DB, not independent ones.
+var s4UniqueCounter atomic.Int64
 
 // newHandlerCoreS4 returns a shared *core.KeyorixCore backed by a single
 // in-memory SQLite DB whose schema is migrated exactly once per test binary.
@@ -4539,7 +4552,6 @@ func TestSCIMHandler_PatchGroup_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-
 // ── Batch 3: comprehensive coverage for remaining 0% functions ────────────────
 
 // ── Helper constructors ────────────────────────────────────────────────────────
@@ -5097,7 +5109,11 @@ func TestCreateSSOLoginStateProxy_MissingFields(t *testing.T) {
 
 func TestCreateSSOLoginStateProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"state":"s1","nonce":"n1","provider":"oidc","expires_at":"2099-01-01T00:00:00Z"}`
+	// state carries a DB-level uniqueIndex (models.SSOLoginState.State); fold in
+	// a counter so a repeat invocation against the shared DB (see s4UniqueCounter)
+	// doesn't collide with its own prior insert.
+	state := fmt.Sprintf("s1-%d", s4UniqueCounter.Add(1))
+	body := fmt.Sprintf(`{"state":%q,"nonce":"n1","provider":"oidc","expires_at":"2099-01-01T00:00:00Z"}`, state)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateSSOLoginStateProxy(w, req)
@@ -6714,11 +6730,16 @@ func TestAuthHandler_Profile_UnauthorizedV2(t *testing.T) {
 
 func TestAuthHandler_Profile_UserNotFound(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
-	// userCtx with a non-existent user
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/auth/profile", nil))
+	// userCtx with a non-existent user. UserID 1 is NOT safe here: other happy-path
+	// tests sharing this DB (sharedS4Core) legitimately create the first-ever user
+	// row, which lands on ID 1 — a fixed low ID risks colliding with that real
+	// data (especially across `-count=N` repeats). Use a large, out-of-range ID
+	// that can never collide, matching the convention other "not found" tests in
+	// this package use (e.g. TestGetActiveMembershipProxy_NotFound_S13's 99999).
+	req := withUserCtxID(httptest.NewRequest(http.MethodGet, "/auth/profile", nil), 999999999, "nonexistent-user")
 	w := httptest.NewRecorder()
 	h.Profile(w, req)
-	// User ID=1 doesn't exist → 404
+	// User doesn't exist → 404
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -9939,7 +9960,12 @@ func TestCatalogHandler_GetActiveMembershipProxy_BadUserID(t *testing.T) {
 
 func TestCatalogHandler_GetActiveMembershipProxy_NotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?project_id=1&user_id=1", nil)
+	// project_id=1&user_id=1 is NOT safe here: other happy-path tests sharing this
+	// DB (sharedS4Core) legitimately create an active membership for project 1 /
+	// user 1 (e.g. TestCatalogHandler_CreateMembershipProxy_HappyPath below) and
+	// never tear it down. Use out-of-range IDs that can never collide, matching
+	// TestGetActiveMembershipProxy_NotFound_S13's existing 99999 convention.
+	req := httptest.NewRequest(http.MethodGet, "/?project_id=99999&user_id=99999", nil)
 	w := httptest.NewRecorder()
 	h.GetActiveMembershipProxy(w, req)
 	// not found → 404
@@ -11740,7 +11766,6 @@ func TestAuthHandler_AcquireSchedulerLockProxy_BadJSON(t *testing.T) {
 
 // ── login_attempts_proxy.go: CountLoginAttemptsProxy ─────────────────────────
 
-
 func TestAuthHandler_CountLoginAttemptsProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	req := httptest.NewRequest(http.MethodGet, "/?ip=127.0.0.1&since=2026-01-01T00:00:00Z", nil)
@@ -11944,6 +11969,7 @@ func TestDashboardHandler_CreateLegalHoldProxy_MissingReason(t *testing.T) {
 
 func TestDashboardHandler_CreateLegalHoldProxy_HappyPath(t *testing.T) {
 	h := NewDashboardHandler(newHandlerCoreS4(t))
+	t.Cleanup(func() { releaseActiveLegalHoldS4(t, h) })
 	body := `{"reason":"Litigation hold","placed_by":1}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -11969,11 +11995,37 @@ func TestDashboardHandler_UpdateLegalHoldProxy_BadID(t *testing.T) {
 
 func TestDashboardHandler_UpdateLegalHoldProxy_HappyPath(t *testing.T) {
 	h := NewDashboardHandler(newHandlerCoreS4(t))
+	t.Cleanup(func() { releaseActiveLegalHoldS4(t, h) })
+	// NOTE: UpdateLegalHoldProxy is a raw full-row Save (see legal_hold_proxy.go) —
+	// this body omits "released"/"placed_by", so it zeroes those fields out on the
+	// row with id=1 (created by TestDashboardHandler_CreateLegalHoldProxy_HappyPath
+	// just above). Without the Cleanup above, that leaves a permanently "active"
+	// hold with no valid placer in the shared sharedS4Core DB, which breaks
+	// TestLiftLegalHold_NoActiveHold on any later run against the same process
+	// (e.g. `go test -count=2`).
 	body := `{"reason":"Updated hold reason"}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateLegalHoldProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+}
+
+// releaseActiveLegalHoldS4 marks any currently-active legal hold in the shared
+// sharedS4Core DB as released, restoring the "no active hold" invariant that
+// TestLiftLegalHold_NoActiveHold (and similar) depend on. Several happy-path
+// legal-hold proxy tests (Create/UpdateLegalHoldProxy) intentionally leave a
+// hold row behind to exercise their success path; because sharedS4Core lives
+// for the whole test binary (see sharedS4CoreOnce above), that row would
+// otherwise persist into every later test and every `-count=N` repeat.
+func releaseActiveLegalHoldS4(t *testing.T, h *DashboardHandler) {
+	t.Helper()
+	ctx := context.Background()
+	hold, err := h.coreService.Storage().GetActiveLegalHold(ctx)
+	if err != nil || hold == nil {
+		return
+	}
+	hold.Released = true
+	_ = h.coreService.Storage().UpdateLegalHold(ctx, hold)
 }
 
 // ── rbac_role_grants_proxy.go: RemoveGlobalAdminRoleGuardedProxy ──────────────
