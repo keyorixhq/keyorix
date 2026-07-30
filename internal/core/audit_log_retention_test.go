@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,12 +17,19 @@ import (
 	"gorm.io/gorm"
 )
 
+// purgeTestDBSeq makes each in-memory DB unique within the process so that
+// repeated invocations of the same test (e.g. `go test -count=N`) don't
+// attach to the same SQLite shared-cache in-memory database as a prior
+// iteration and see its leftover rows.
+var purgeTestDBSeq atomic.Int64
+
 // newPurgeTestCore opens a fresh in-memory SQLite DB, migrates AuditEvent and
 // LegalHold (needed by the legalHoldGuard that PurgeAuditLogs now calls),
 // and returns a KeyorixCore with a fixed clock so retention cutoffs are stable.
 func newPurgeTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:kx_purge_%d?mode=memory&cache=shared&_busy_timeout=5000", purgeTestDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.LegalHold{}))
 	fixed := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
@@ -45,7 +54,7 @@ func TestPurgeAuditLogs_HappyPath(t *testing.T) {
 
 	// Five events older than 30 days.
 	for i := 0; i < 5; i++ {
-		seedRetentionAuditEvent(t, db, fixed.AddDate(0, 0, -(31 + i)))
+		seedRetentionAuditEvent(t, db, fixed.AddDate(0, 0, -(31+i)))
 	}
 	// Three recent events within the retention window.
 	for i := 0; i < 3; i++ {

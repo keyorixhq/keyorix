@@ -7,6 +7,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// bulkAccessDBSeq makes each in-memory DB unique within the process. t.Name()
+// alone repeats across `go test -count=N` iterations of the same test, which
+// would otherwise attach to the same SQLite shared-cache in-memory database
+// left open by a prior iteration and collide on the seeded fixture rows.
+var bulkAccessDBSeq atomic.Int64
+
 // setupBulkAccessDB opens a uniquely-named in-memory SQLite DB, migrates all
 // tables needed for access-request approval/rejection (roles, permissions,
 // assignments, SoD, access schedules, audit), and seeds minimal RBAC fixtures.
@@ -26,7 +33,7 @@ func setupBulkAccessDB(t *testing.T) (k *KeyorixCore, db *gorm.DB, approverID, r
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 
-	dsn := fmt.Sprintf("file:bulkaccess_%s?mode=memory&cache=shared&_busy_timeout=5000", t.Name())
+	dsn := fmt.Sprintf("file:bulkaccess_%s_%d?mode=memory&cache=shared&_busy_timeout=5000", t.Name(), bulkAccessDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()

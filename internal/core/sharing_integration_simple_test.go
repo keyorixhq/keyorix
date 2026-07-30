@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// sharingIntegrationDBSeq makes each in-memory DB unique within the process
+// so that repeated invocations (e.g. `go test -count=N`) don't attach to the
+// same SQLite shared-cache in-memory database left open by a prior iteration.
+var sharingIntegrationDBSeq atomic.Int64
+
 // TestSharingIntegrationSimple tests the complete sharing workflow with real storage
 func TestSharingIntegrationSimple(t *testing.T) {
 	// Initialize i18n for testing
@@ -25,7 +31,8 @@ func TestSharingIntegrationSimple(t *testing.T) {
 	// Create test database (in-memory for isolation).
 	// Use WAL journal mode to allow concurrent reads alongside writes,
 	// and limit to a single connection so SQLite doesn't deadlock itself.
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:kx_sharing_simple_%d?mode=memory&cache=shared&_journal_mode=WAL", sharingIntegrationDBSeq.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 
 	sqlDB, err := db.DB()
