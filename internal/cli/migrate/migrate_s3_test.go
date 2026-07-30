@@ -2,8 +2,10 @@ package migrate
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -17,6 +19,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// migrateS3DBSeq makes each in-memory DB unique within the process, so that
+// repeated invocations of the same test (go test -count=N) don't attach to a
+// live leftover DB from a prior iteration.
+var migrateS3DBSeq atomic.Int64
+
 // newBootstrappedCore creates an in-memory core with RBAC fully seeded,
 // mirroring newTestMigrateCore in user_to_machine_authority_test.go.
 func newBootstrappedCore(t *testing.T) (*core.KeyorixCore, *store.LocalStorage) {
@@ -26,7 +33,7 @@ func newBootstrappedCore(t *testing.T) (*core.KeyorixCore, *store.LocalStorage) 
 	}))
 
 	// Use a unique per-test DSN so parallel tests don't share state.
-	dsn := "file:test_migrate_s3_" + t.Name() + "?mode=memory&cache=shared"
+	dsn := fmt.Sprintf("file:test_migrate_s3_%s_%d?mode=memory&cache=shared", t.Name(), migrateS3DBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -64,7 +71,7 @@ func resetU2MVars(t *testing.T) {
 	t.Helper()
 	orig := struct {
 		project, typ, name, by string
-		keepUser                bool
+		keepUser               bool
 	}{u2mProject, u2mType, u2mName, u2mBy, u2mKeepUser}
 	t.Cleanup(func() {
 		u2mProject = orig.project

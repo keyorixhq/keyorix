@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -19,6 +20,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// rotationStateDBCounter makes each in-memory DB unique within the process.
+var rotationStateDBCounter atomic.Int64
+
 func setupRotationStateTest(t *testing.T) (*RotationPolicyHandler, *gorm.DB) {
 	t.Helper()
 
@@ -30,7 +34,8 @@ func setupRotationStateTest(t *testing.T) (*RotationPolicyHandler, *gorm.DB) {
 	}
 	require.NoError(t, i18n.Initialize(cfg))
 
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	n := rotationStateDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), n)
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 

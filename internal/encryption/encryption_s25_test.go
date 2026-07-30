@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -38,6 +39,11 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// s25DBSeq makes each in-memory DB unique within the process, so that
+// repeated invocations of the same test (go test -count=N) don't attach to a
+// live leftover DB from a prior iteration.
+var s25DBSeq atomic.Int64
+
 // ─── local helpers ────────────────────────────────────────────────────────────
 
 func s25ES(t *testing.T) *EncryptionService {
@@ -49,7 +55,7 @@ func s25ES(t *testing.T) *EncryptionService {
 
 func s25DB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_%s:?mode=memory&cache=shared", t.Name())),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_%s_%d:?mode=memory&cache=shared", t.Name(), s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -91,8 +97,8 @@ func TestSweepSecretVersions_DeserializeError(t *testing.T) {
 
 	// Store a version with corrupt (non-parseable) encrypted value.
 	ver := &models.SecretVersion{
-		SecretNodeID:  node.ID,
-		VersionNumber: 1,
+		SecretNodeID:   node.ID,
+		VersionNumber:  1,
 		EncryptedValue: []byte(`{bad json`),
 	}
 	require.NoError(t, db.Create(ver).Error)
@@ -119,10 +125,10 @@ func TestSweepSecretVersions_NoProjectFound_Error(t *testing.T) {
 
 	// Insert a version that references a SecretNodeID that has NO matching SecretNode row.
 	ver := &models.SecretVersion{
-		SecretNodeID:        9999, // no such node
-		VersionNumber:       1,
-		EncryptedValue:      encBytes,
-		EncryptionMetadata:  models.JSON(metaBytes),
+		SecretNodeID:       9999, // no such node
+		VersionNumber:      1,
+		EncryptedValue:     encBytes,
+		EncryptionMetadata: models.JSON(metaBytes),
 	}
 	require.NoError(t, db.Create(ver).Error)
 
@@ -1092,7 +1098,7 @@ func TestSweepSessions_UpdatesError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Open a fresh DB just for this test.
-	db, err := gorm.Open(sqlite.Open("file::s25_sweep_sess_close?mode=memory&cache=shared"),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_sess_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Session{}))
@@ -1127,7 +1133,7 @@ func TestSweepAPITokens_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open("file::s25_sweep_apitoken_close?mode=memory&cache=shared"),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_apitoken_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.APIToken{}))
@@ -1158,7 +1164,7 @@ func TestSweepAPIClients_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open("file::s25_sweep_apiclient_close?mode=memory&cache=shared"),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_apiclient_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.APIClient{}))
@@ -1191,7 +1197,7 @@ func TestSweepPasswordResets_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open("file::s25_sweep_pwreset_close?mode=memory&cache=shared"),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_pwreset_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.PasswordReset{}))
@@ -1225,7 +1231,7 @@ func TestSweepMFASecrets_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open("file::s25_sweep_mfa_close?mode=memory&cache=shared"),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_mfa_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.MFASecret{}))
@@ -1246,7 +1252,7 @@ func TestSweepMFASecrets_UpdatesError(t *testing.T) {
 func TestSweepDynamicSecretConfigs_UpdatesError(t *testing.T) {
 	es := s25ES(t)
 
-	db, err := gorm.Open(sqlite.Open("file::s25_sweep_dynconfig_close?mode=memory&cache=shared"),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_dynconfig_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}))
@@ -1278,7 +1284,7 @@ func TestSweepDynamicSecretConfigs_UpdatesError(t *testing.T) {
 func TestSweepDynamicSecretLeases_UpdatesError(t *testing.T) {
 	es := s25ES(t)
 
-	db, err := gorm.Open(sqlite.Open("file::s25_sweep_dynlease_close?mode=memory&cache=shared"),
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_dynlease_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
 		&gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.DynamicSecretLease{}))
@@ -1590,7 +1596,7 @@ type mockKeyProvider struct {
 }
 
 func (m *mockKeyProvider) KEK() ([]byte, error) { return m.kek, m.err }
-func (m *mockKeyProvider) Name() string          { return "mock" }
+func (m *mockKeyProvider) Name() string         { return "mock" }
 
 // ─── unwrapKey: too-short wrapped key returns error ───────────────────────────
 

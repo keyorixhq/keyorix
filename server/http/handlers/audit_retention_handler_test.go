@@ -3,8 +3,10 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -17,12 +19,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// auditRetentionDBCounter makes each in-memory DB unique within the process.
+var auditRetentionDBCounter atomic.Int64
+
 // newAuditRetentionHandler builds an AdminJobsHandler backed by a fresh
 // in-memory SQLite DB with the AuditEvent schema migrated.
 func newAuditRetentionHandler(t *testing.T) *AdminJobsHandler {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open("file::memory:?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	n := auditRetentionDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhandlers_auditretention_%d?mode=memory&cache=shared&_busy_timeout=5000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	return NewAdminJobsHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
@@ -91,7 +98,9 @@ func TestPurgeAuditLogsHandler_InvalidJSON(t *testing.T) {
 // TestPurgeAuditLogsHandler_StorageError verifies 500 when the DB is closed.
 func TestPurgeAuditLogsHandler_StorageError(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open("file::memory:?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	n := auditRetentionDBCounter.Add(1)
+	dsn := fmt.Sprintf("file:kxhandlers_auditretention_%d?mode=memory&cache=shared&_busy_timeout=5000", n)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 

@@ -6,10 +6,12 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +24,11 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// authS24DBSeq makes each in-memory DB unique within the process, so that
+// repeated invocations of the same test (go test -count=N) don't attach to a
+// live leftover DB from a prior iteration.
+var authS24DBSeq atomic.Int64
 
 // ── validateToken branches ────────────────────────────────────────────────────
 
@@ -189,7 +196,7 @@ func TestPruneLocked_TimeBasedSweep(t *testing.T) {
 // not errTargetNotFound (404).
 func TestScopeFromRefQuery_InvalidRefFormat(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open("file:scopeRefInvalid?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:scopeRefInvalid_%d?mode=memory&cache=shared", authS24DBSeq.Add(1))), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
@@ -207,7 +214,7 @@ func TestScopeFromRefQuery_InvalidRefFormat(t *testing.T) {
 // a non-existent secret returns errTargetNotFound.
 func TestScopeFromRefQuery_NotFound(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open("file:scopeRefNotFound?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:scopeRefNotFound_%d?mode=memory&cache=shared", authS24DBSeq.Add(1))), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
