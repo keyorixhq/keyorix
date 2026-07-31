@@ -259,6 +259,12 @@ export interface AuthState {
     user: User | null;
     isAuthenticated: boolean;
     isLoading: boolean;
+    // True once the initial checkAuth() bootstrap has resolved at least once
+    // (success or failure). Distinct from isLoading, which also flips true/false
+    // for every subsequent login/logout/refresh call — route guards should key
+    // their full-page spinner off this, not isLoading, or a plain login attempt
+    // unmounts the login page mid-request (see PublicRoute/ProtectedRoute).
+    hasCheckedAuth: boolean;
     error: string | null;
 }
 

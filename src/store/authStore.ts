@@ -48,6 +48,12 @@ interface AuthStore extends AuthState {
 // POST /auth/refresh (see refreshToken). Module-scoped: there is one auth store.
 let inFlightRefresh: Promise<void> | null = null;
 
+// Re-entrancy guard for checkAuth, separate from isLoading — isLoading starts
+// true by design (to hold route guards in the spinner state until the first
+// check resolves), so gating checkAuth on isLoading would make its own very
+// first call a no-op.
+let checkAuthInFlight = false;
+
 export const useAuthStore = create<AuthStore>()(
     persist(
         (set, get) => ({
@@ -61,6 +67,7 @@ export const useAuthStore = create<AuthStore>()(
             isAuthenticated: false,
             impersonatedBy: null,
             isLoading: true,
+            hasCheckedAuth: false,
             error: null,
 
             // Actions
@@ -230,7 +237,8 @@ export const useAuthStore = create<AuthStore>()(
                 // Always attempt the profile fetch — under cookie auth there is no
                 // client-visible token to gate on; a 401 from the request itself is
                 // the only way to know the session is gone.
-                if (get().isLoading) return;
+                if (checkAuthInFlight) return;
+                checkAuthInFlight = true;
                 set({ isLoading: true });
                 try {
                     const profile = await authService.getProfile();
@@ -269,6 +277,9 @@ export const useAuthStore = create<AuthStore>()(
                     if (window.location.pathname !== '/login') {
                         window.location.href = '/login';
                     }
+                } finally {
+                    checkAuthInFlight = false;
+                    set({ hasCheckedAuth: true });
                 }
             },
 

@@ -39,11 +39,13 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     fallbackPath = ROUTES.LOGIN,
     redirectOnFailure = true,
 }) => {
-    const { isAuthenticated, isLoading, user, hasPermission } = useAuth();
+    const { isAuthenticated, hasCheckedAuth, user, hasPermission } = useAuth();
     const location = useLocation();
 
-    // Show loading while checking authentication
-    if (isLoading) {
+    // Show loading only for the initial auth check — not every subsequent
+    // login/logout isLoading flip, which would otherwise unmount this route's
+    // children mid-request.
+    if (!hasCheckedAuth) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-50">
                 <div className="text-center">

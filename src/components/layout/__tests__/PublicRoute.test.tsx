@@ -11,10 +11,11 @@ vi.mock('../../../features/auth', () => ({
 
 const mockUseAuth = vi.mocked(useAuth);
 
-function setAuth(overrides: { isAuthenticated?: boolean; isLoading?: boolean } = {}) {
+function setAuth(overrides: { isAuthenticated?: boolean; isLoading?: boolean; hasCheckedAuth?: boolean } = {}) {
     mockUseAuth.mockReturnValue({
         isAuthenticated: overrides.isAuthenticated ?? false,
         isLoading: overrides.isLoading ?? false,
+        hasCheckedAuth: overrides.hasCheckedAuth ?? true,
     } as unknown as ReturnType<typeof useAuth>);
 }
 
@@ -35,7 +36,7 @@ describe('PublicRoute', () => {
     });
 
     it('shows a loading state while auth is resolving', () => {
-        setAuth({ isLoading: true });
+        setAuth({ isLoading: true, hasCheckedAuth: false });
         renderGuard(<PublicRoute>login form</PublicRoute>);
         expect(screen.getByText('Loading...')).toBeInTheDocument();
     });

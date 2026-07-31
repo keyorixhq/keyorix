@@ -1,6 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { mockApiCatchAll, mockUnauthenticated } from './mocks';
 
 test.describe('Basic Application Tests', () => {
+    test.beforeEach(async ({ page }) => {
+        await mockApiCatchAll(page);
+        await mockUnauthenticated(page);
+    });
+
     test('should load the application', async ({ page }) => {
         await page.goto('/');
 

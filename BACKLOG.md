@@ -4,7 +4,7 @@ Deferred technical work and the decisions behind it. Product/feature roadmap
 lives in the app itself (`src/pages/roadmap/RoadmapPage.tsx`); this file tracks
 internal engineering work only.
 
-_Last updated: 2026-07-27._
+_Last updated: 2026-07-31._
 
 ## Q3 2026 roadmap features — COMPLETE
 
@@ -39,12 +39,41 @@ Follow-ons — also complete:
   LoginForm, PasswordResetForm, SetupForm (PR #118, 2026-07-27). `jest-axe`
   re-added and wired into the global Vitest setup.
 
-## End-to-end tests (Playwright) — rebuilt 2026-07-27
+## End-to-end tests (Playwright) — actually rebuilt 2026-07-31
 
-Specs were rewritten with `page.route` API mocking (no real backend required).
-`data-testid` attributes added to LoginForm, Header. `playwright.config.ts`
-switched to pnpm and Chromium-only. The `e2e` job is now wired into CI (runs
-after the unit gate passes). See `.github/workflows/ci.yml`.
+This doc previously claimed the suite was "rebuilt 2026-07-27" with API
+mocking, testids, and CI wiring — none of that had actually happened. The
+specs still assumed a live backend (real login endpoint, seeded users),
+referenced a `data-testid="email-input"` that never existed (`LoginForm` has
+always used `username`, not email), asserted on UI text (`getByText('Dashboard')`)
+that doesn't exist in the current app, and `ci.yml` had no `e2e` job at all.
+
+Actually done now:
+
+- `data-testid` added to `LoginForm`, `Header`'s user-menu trigger, and the
+  secrets list/create-modal buttons in `SecretsListPage.tsx`.
+- All 3 specs rewritten against `page.route` mocking — no backend needed. See
+  `e2e/mocks.ts` for the shared mock helpers.
+- `playwright.config.ts`: Chromium-only project, `pnpm dev` for the web server.
+- `e2e` job added to `.github/workflows/ci.yml`, running after `gate` passes.
+
+Along the way this surfaced two real, unrelated production bugs, both fixed
+in the same effort (no e2e coverage had ever exercised these paths for real):
+
+- `authStore.checkAuth()` had `if (get().isLoading) return;` as its first
+  line — since `isLoading` starts `true` by design, this made the *only* call
+  to `checkAuth()` (on every fresh page load) a silent no-op. The app got
+  stuck on an infinite "Loading…" spinner on first load, every time. Fixed by
+  using a dedicated `checkAuthInFlight` module flag instead of overloading
+  `isLoading` for re-entrancy.
+- `PublicRoute`/`ProtectedRoute` unmounted their children on *every*
+  `isLoading` flip, not just the initial check — so a plain login attempt
+  (which briefly sets `isLoading: true`) unmounted `LoginPage` mid-request.
+  The remount's `clearError()` mount-effect then wiped the error message
+  before it was ever visible, and the form fields reset. A failed login
+  showed no feedback at all. Fixed by adding `hasCheckedAuth` to `AuthState`
+  (true once the initial bootstrap resolves) and gating the route guards'
+  full-page spinner on that instead of `isLoading`.
 
 ## Formatting / Prettier — enforced 2026-07-27, CI gate fixed 2026-07-30
 

@@ -10,11 +10,13 @@ interface PublicRouteProps {
 }
 
 export const PublicRoute: React.FC<PublicRouteProps> = ({ children, redirectTo = ROUTES.DASHBOARD }) => {
-    const { isAuthenticated, isLoading } = useAuth();
+    const { isAuthenticated, hasCheckedAuth } = useAuth();
     // const location = useLocation(); // Not needed for current implementation
 
-    // Show loading while checking authentication
-    if (isLoading) {
+    // Show loading only for the initial auth check — not every subsequent
+    // login/logout isLoading flip, which would otherwise unmount this route's
+    // children (e.g. LoginPage) mid-request on every login attempt.
+    if (!hasCheckedAuth) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-50">
                 <div className="text-center">

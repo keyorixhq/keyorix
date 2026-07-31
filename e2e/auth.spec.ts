@@ -1,107 +1,82 @@
 import { test, expect } from '@playwright/test';
+import {
+    mockApiCatchAll,
+    mockAuthenticated,
+    mockUnauthenticated,
+    mockLoginSuccess,
+    mockLoginFailure,
+    mockLogoutSuccess,
+    mockDashboardData,
+} from './mocks';
 
 test.describe('Authentication', () => {
     test.beforeEach(async ({ page }) => {
+        await mockApiCatchAll(page);
+    });
+
+    test('redirects to login when not authenticated', async ({ page }) => {
+        await mockUnauthenticated(page);
         await page.goto('/');
-    });
 
-    test('should redirect to login when not authenticated', async ({ page }) => {
         await expect(page).toHaveURL('/login');
-        await expect(page.getByText('Sign In')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
     });
 
-    test('should login with valid credentials', async ({ page }) => {
-        await page.fill('[data-testid="email-input"]', 'admin@example.com');
-        await page.fill('[data-testid="password-input"]', 'password123');
-        await page.click('[data-testid="login-button"]');
+    test('shows validation errors on empty submit', async ({ page }) => {
+        await mockUnauthenticated(page);
+        await page.goto('/login');
 
-        await expect(page).toHaveURL('/dashboard');
-        await expect(page.getByText('Dashboard')).toBeVisible();
+        await page.getByTestId('login-button').click();
+
+        await expect(page.getByText('Username is required')).toBeVisible();
+        await expect(page.getByText('Password must be at least 6 characters')).toBeVisible();
     });
 
-    test('should show error with invalid credentials', async ({ page }) => {
-        await page.fill('[data-testid="email-input"]', 'admin@example.com');
-        await page.fill('[data-testid="password-input"]', 'wrongpassword');
-        await page.click('[data-testid="login-button"]');
+    test('shows a server error message on invalid credentials', async ({ page }) => {
+        await mockUnauthenticated(page);
+        await mockLoginFailure(page, 'Invalid credentials');
+        await page.goto('/login');
+
+        await page.getByTestId('username-input').fill('admin');
+        await page.getByTestId('password-input').fill('wrongpassword');
+        await page.getByTestId('login-button').click();
 
         await expect(page.getByText('Invalid credentials')).toBeVisible();
         await expect(page).toHaveURL('/login');
     });
 
-    test('should logout successfully', async ({ page }) => {
-        // Login first
-        await page.fill('[data-testid="email-input"]', 'admin@example.com');
-        await page.fill('[data-testid="password-input"]', 'password123');
-        await page.click('[data-testid="login-button"]');
+    test('logs in successfully and lands on the dashboard', async ({ page }) => {
+        await mockUnauthenticated(page);
+        await mockLoginSuccess(page);
+        await mockDashboardData(page);
+        await page.goto('/login');
+
+        await page.getByTestId('username-input').fill('admin');
+        await page.getByTestId('password-input').fill('password123');
+        // Once logged in, the app re-checks /auth/profile — switch that mock
+        // over to "authenticated" before submitting so the redirect resolves.
+        await mockAuthenticated(page);
+        await page.getByTestId('login-button').click();
 
         await expect(page).toHaveURL('/dashboard');
-
-        // Logout
-        await page.click('[data-testid="user-menu-button"]');
-        await page.click('[data-testid="logout-button"]');
-
-        await expect(page).toHaveURL('/login');
-        await expect(page.getByText('Sign In')).toBeVisible();
+        await expect(page.getByText('Total Secrets')).toBeVisible();
     });
 
-    test('should handle session timeout', async ({ page }) => {
-        // Login first
-        await page.fill('[data-testid="email-input"]', 'admin@example.com');
-        await page.fill('[data-testid="password-input"]', 'password123');
-        await page.click('[data-testid="login-button"]');
+    test('logs out and returns to the login page', async ({ page }) => {
+        await mockAuthenticated(page);
+        await mockDashboardData(page);
+        await mockLogoutSuccess(page);
+        await page.goto('/dashboard');
 
         await expect(page).toHaveURL('/dashboard');
+        // Logout does a hard reload, which re-runs the initial auth check —
+        // reflect the session actually being gone so it doesn't just bounce
+        // back to /dashboard.
+        await mockUnauthenticated(page);
+        await page.getByTestId('user-menu-button').click();
+        await page.getByRole('menuitem', { name: 'Sign out' }).click();
 
-        // Mock expired session by clearing cookies
-        await page.context().clearCookies();
-
-        // Try to navigate to a protected page
-        await page.goto('/secrets');
-
-        await expect(page).toHaveURL('/login');
-        await expect(page.getByText('Your session has expired')).toBeVisible();
-    });
-
-    test('should remember login state across browser sessions', async ({ page, context }) => {
-        // Login with remember me
-        await page.fill('[data-testid="email-input"]', 'admin@example.com');
-        await page.fill('[data-testid="password-input"]', 'password123');
-        await page.check('[data-testid="remember-me-checkbox"]');
-        await page.click('[data-testid="login-button"]');
-
-        await expect(page).toHaveURL('/dashboard');
-
-        // Create new page in same context (simulates new tab)
-        const newPage = await context.newPage();
-        await newPage.goto('/');
-
-        // Should be automatically logged in
-        await expect(newPage).toHaveURL('/dashboard');
-    });
-
-    test('should validate form fields', async ({ page }) => {
-        // Try to submit empty form
-        await page.click('[data-testid="login-button"]');
-
-        await expect(page.getByText('Email is required')).toBeVisible();
-        await expect(page.getByText('Password is required')).toBeVisible();
-
-        // Test invalid email format
-        await page.fill('[data-testid="email-input"]', 'invalid-email');
-        await page.blur('[data-testid="email-input"]');
-
-        await expect(page.getByText('Please enter a valid email')).toBeVisible();
-    });
-
-    test('should handle password reset flow', async ({ page }) => {
-        await page.click('[data-testid="forgot-password-link"]');
-
-        await expect(page).toHaveURL('/forgot-password');
-        await expect(page.getByText('Reset Password')).toBeVisible();
-
-        await page.fill('[data-testid="email-input"]', 'admin@example.com');
-        await page.click('[data-testid="reset-button"]');
-
-        await expect(page.getByText('Password reset email sent')).toBeVisible();
+        await page.waitForURL('/login');
+        await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
     });
 });

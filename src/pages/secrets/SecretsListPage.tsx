@@ -276,7 +276,7 @@ export const SecretsListPage: React.FC = () => {
                         : 'Get started by creating your first secret.'}
                 </p>
                 {!list.hasActiveFilters && (
-                    <Button onClick={() => list.openModal('create-secret')}>
+                    <Button data-testid="create-secret-button" onClick={() => list.openModal('create-secret')}>
                         <PlusIcon className="h-4 w-4 mr-2" />
                         Create Secret
                     </Button>
@@ -284,7 +284,7 @@ export const SecretsListPage: React.FC = () => {
             </div>
         ) : (
             <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-base dark:divide-gray-700">
+                <table data-testid="secrets-table" className="min-w-full divide-y divide-base dark:divide-gray-700">
                     <thead className="bg-subtle dark:bg-gray-900">
                         <tr>
                             <th className="px-4 py-3 text-left w-10">
@@ -436,7 +436,11 @@ export const SecretsListPage: React.FC = () => {
                             </Button>
                         </div>
                     )}
-                    <Button onClick={() => list.openModal('create-secret')} className="flex items-center">
+                    <Button
+                        data-testid="create-secret-button"
+                        onClick={() => list.openModal('create-secret')}
+                        className="flex items-center"
+                    >
                         <PlusIcon className="h-4 w-4 mr-2" />
                         New Secret
                     </Button>
@@ -909,7 +913,11 @@ export const SecretsListPage: React.FC = () => {
                         >
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={list.createMutation.isPending}>
+                        <Button
+                            data-testid="create-secret-submit"
+                            type="submit"
+                            disabled={list.createMutation.isPending}
+                        >
                             {list.createMutation.isPending ? 'Creating…' : 'Create Secret'}
                         </Button>
                     </div>

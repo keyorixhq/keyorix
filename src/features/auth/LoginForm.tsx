@@ -41,6 +41,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSubmit, isLoading = fals
                 autoComplete="username"
                 placeholder="Username"
                 disabled={isLoading}
+                data-testid="username-input"
                 {...(errors.username?.message && { error: errors.username.message })}
                 {...register('username')}
             />
@@ -51,6 +52,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSubmit, isLoading = fals
                 autoComplete="current-password"
                 placeholder="Password"
                 disabled={isLoading}
+                data-testid="password-input"
                 {...(errors.password?.message && { error: errors.password.message })}
                 trailingElement={
                     <button
@@ -77,6 +79,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSubmit, isLoading = fals
                         type="checkbox"
                         className="h-4 w-4 rounded-sm"
                         disabled={isLoading}
+                        data-testid="remember-me-checkbox"
                         {...register('rememberMe')}
                     />
                     <label htmlFor="rememberMe" className="ml-2 text-sm text-base-secondary">
@@ -97,7 +100,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSubmit, isLoading = fals
 
             {error && <Alert type="error" message={error} />}
 
-            <Button type="submit" className="w-full" loading={isLoading} disabled={isLoading}>
+            <Button
+                type="submit"
+                className="w-full"
+                loading={isLoading}
+                disabled={isLoading}
+                data-testid="login-button"
+            >
                 Sign in
             </Button>
         </form>

@@ -14,6 +14,7 @@ const mockUseAuth = vi.mocked(useAuth);
 type AuthOverrides = {
     isAuthenticated?: boolean;
     isLoading?: boolean;
+    hasCheckedAuth?: boolean;
     user?: { role?: string; permissions?: string[] } | null;
 };
 
@@ -23,6 +24,7 @@ function setAuth(overrides: AuthOverrides = {}) {
         user: overrides.user ?? null,
         isAuthenticated: overrides.isAuthenticated ?? false,
         isLoading: overrides.isLoading ?? false,
+        hasCheckedAuth: overrides.hasCheckedAuth ?? true,
         hasPermission: (permission: string) => permissions.includes(permission),
     } as unknown as ReturnType<typeof useAuth>);
 }

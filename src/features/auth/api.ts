@@ -22,8 +22,19 @@ const SESSION_TIMEOUT_WARNING_MS = 5 * 60 * 1000;
 let didInit = false;
 
 export const useAuth = () => {
-    const { user, isAuthenticated, isLoading, error, login, logout, refreshToken, checkAuth, clearError, setError } =
-        useAuthStore();
+    const {
+        user,
+        isAuthenticated,
+        isLoading,
+        hasCheckedAuth,
+        error,
+        login,
+        logout,
+        refreshToken,
+        checkAuth,
+        clearError,
+        setError,
+    } = useAuthStore();
 
     // Run auth check once on mount only - wait for persist hydration first.
     // Always revalidate against the server here, even if hydration already set
@@ -101,6 +112,7 @@ export const useAuth = () => {
         user,
         isAuthenticated,
         isLoading,
+        hasCheckedAuth,
         error,
         // Non-null only once inside the SESSION_TIMEOUT_WARNING_MS window before
         // an inactivity-triggered logout; null the rest of the session.

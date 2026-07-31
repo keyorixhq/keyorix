@@ -54,6 +54,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     const userMenuTrigger = (
         <button
             type="button"
+            data-testid="user-menu-button"
             className="flex items-center space-x-2 text-sm rounded-full focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1"
         >
             <div

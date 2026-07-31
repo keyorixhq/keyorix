@@ -74,14 +74,21 @@ const mockUseAuth = vi.mocked(useAuth);
 type AuthOverrides = {
     isAuthenticated?: boolean;
     isLoading?: boolean;
+    hasCheckedAuth?: boolean;
     user?: { role?: string; passwordChangeRequired?: boolean; permissions?: string[] } | null;
 };
 
-function setAuth({ isAuthenticated = false, isLoading = false, user = null }: AuthOverrides = {}) {
+function setAuth({
+    isAuthenticated = false,
+    isLoading = false,
+    hasCheckedAuth = true,
+    user = null,
+}: AuthOverrides = {}) {
     mockUseAuth.mockReturnValue({
         user,
         isAuthenticated,
         isLoading,
+        hasCheckedAuth,
         hasPermission: (p: string) => (user?.permissions ?? []).includes(p),
     } as unknown as ReturnType<typeof useAuth>);
 }
@@ -102,7 +109,7 @@ describe('App', () => {
 
     describe('auth bootstrap', () => {
         it('shows the route-guard loading indicator while the auth check is in flight', () => {
-            setAuth({ isLoading: true });
+            setAuth({ isLoading: true, hasCheckedAuth: false });
             renderAt('/dashboard');
             // ProtectedRoute renders its own spinner synchronously — no Suspense involved.
             expect(screen.getByText('Loading...')).toBeInTheDocument();
