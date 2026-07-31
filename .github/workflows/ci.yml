@@ -89,8 +89,25 @@ jobs:
               -e 'internal/core$' \
               -e 'internal/storage/remote' \
               -e 'server/http$' \
+              -e 'server/http/handlers$' \
               -e 'server/middleware$' \
               -e 'server/proto/pb$')
+
+      # server/http/handlers (167 test files, each opening its own SQLite DB)
+      # runs in its own step with a longer -timeout (ADR-048): under -race,
+      # modernc.org/sqlite is ~3.6x slower here than the mattn/go-sqlite3 CGO
+      # driver it replaced (112s -> 406s locally), which crossed the shared
+      # 600s budget on the CI runner. -race is dev/CI-only instrumentation;
+      # production binaries are unaffected. 1200s leaves ample margin above
+      # the measured runtime.
+      - name: go test (server/http/handlers)
+        run: go test -race -timeout 1200s -coverprofile=coverage_handlers.out -covermode=atomic ./server/http/handlers/...
+
+      - name: Merge coverage profiles
+        run: |
+          echo "mode: atomic" > coverage_merged.out
+          tail -q -n +2 coverage.out coverage_handlers.out >> coverage_merged.out
+          mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
         run: |
@@ -304,11 +321,19 @@ jobs:
       # finding, not a license this job should flag. (The operator module has
       # no LICENSE file of its own inside operator/, so without --ignore its
       # own packages would misleadingly show up as "Unknown" too.)
+      #
+      # modernc.org/mathutil (transitive, via modernc.org/sqlite ->
+      # modernc.org/libc, ADR-048) is also ignored here: it ships a genuine
+      # BSD-3-Clause LICENSE file at its module root (manually verified), but
+      # go-licenses v1.6.0's classifier fails to recognize this exact license
+      # text variant and misreports it as unknown/disallowed -- a tool
+      # limitation, not an actual licensing concern.
       - name: go-licenses check (root module)
         run: |
           go-licenses check ./... \
             --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0 \
-            --ignore github.com/keyorixhq/keyorix
+            --ignore github.com/keyorixhq/keyorix \
+            --ignore modernc.org/mathutil
 
       # The operator is a separate Go module (see the `operator` job above);
       # GOWORK=off keeps it out of this repo's go.work, mirroring that job's

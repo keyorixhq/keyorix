@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // newCheckpointCore builds a real-SQLite core with a fixed checkpoint signing key.

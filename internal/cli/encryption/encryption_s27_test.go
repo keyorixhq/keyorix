@@ -15,8 +15,8 @@
 //
 //   - encryption.go:
 //     runInit/runStatus/runValidate/runFixPerms/runRotate/runUpgradeAAD:
-//       loadConfig() failure paths (all six wrappers redirect to inner funcs,
-//       but the wrapper's own error branch is only hit when loadConfig fails)
+//     loadConfig() failure paths (all six wrappers redirect to inner funcs,
+//     but the wrapper's own error branch is only hit when loadConfig fails)
 //     dryRunRotation: masterPassphrase error branch
 //     fixPermsWithConfig: FixKeyFilePermissions error path
 //
@@ -30,13 +30,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -450,9 +451,10 @@ func TestCopyFile_S27_SyncDirFails(t *testing.T) {
 // way the targetPassphrase check runs before or concurrently in the flow.
 //
 // The function flow after all guards pass:
-//   masterPassphrase (old) → ok
-//   targetPassphrase (new) → error if KEYORIX_NEW_MASTER_PASSWORD not set
-//   → "target provider is password — set KEYORIX_NEW_MASTER_PASSWORD"
+//
+//	masterPassphrase (old) → ok
+//	targetPassphrase (new) → error if KEYORIX_NEW_MASTER_PASSWORD not set
+//	→ "target provider is password — set KEYORIX_NEW_MASTER_PASSWORD"
 //
 // We need a valid encryption config with existing keys so the old Initialize
 // doesn't fail first (in that case the error message would be about

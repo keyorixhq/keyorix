@@ -3,15 +3,15 @@
 // Targets branches in:
 //   - shamir_split.go:       threshold<2 guard, shares<threshold guard, stdout output
 //   - auth_encryption.go:    status ENABLED path, initialized+key_version path,
-//                            already-enabled-no-force early-return path,
-//                            runRotateAuthEncryption config-load error path
+//     already-enabled-no-force early-return path,
+//     runRotateAuthEncryption config-load error path
 //   - auth_encryption_migrate.go: runMigrateAuthData full success path (dry/non-dry)
 //   - auth_encryption_validate.go: runValidateAuthEncryption all-passed path,
-//                            unmigrated>0 path, decrypt-error paths per table
+//     unmigrated>0 path, decrypt-error paths per table
 //   - migrate_provider.go:   findMigrateBackups IsDir skip, targetPassphrase password error,
-//                            migrateProviderWithConfig targetPassphrase failure,
-//                            migrateProviderCleanupWithConfig SecureDeleteFile error,
-//                            copyFile dst-dir-missing error
+//     migrateProviderWithConfig targetPassphrase failure,
+//     migrateProviderCleanupWithConfig SecureDeleteFile error,
+//     copyFile dst-dir-missing error
 package encryption
 
 import (
@@ -20,13 +20,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // ── shamir-split validation guards ─────────────────────────────────────────

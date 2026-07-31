@@ -9,6 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -17,9 +21,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"github.com/keyorixhq/keyorix/server/grpc/services"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // TestAuthzParity_HTTPvsGRPC_Secrets pins that the HTTP and gRPC surfaces reach the

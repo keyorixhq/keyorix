@@ -5,13 +5,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // newStatsTestCore returns a KeyorixCore backed by a migrated, isolated
@@ -170,21 +171,21 @@ func TestGetProjectStats_RotationHealth(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create two secrets: one recently rotated (ok), one long-overdue.
-	recentRotatedAt := fixed.Add(-5 * 24 * time.Hour) // 5 days ago
+	recentRotatedAt := fixed.Add(-5 * 24 * time.Hour)    // 5 days ago
 	overdueRotatedAt := fixed.Add(-200 * 24 * time.Hour) // 200 days ago
 
 	_, err = c.storage.CreateSecret(ctx, &models.SecretNode{
 		Name: "recent", ProjectID: proj.ID, EnvironmentID: env.ID,
 		Type: "password", IsSecret: true,
 		LastRotatedAt: &recentRotatedAt,
-		CreatedAt: recentRotatedAt, UpdatedAt: fixed,
+		CreatedAt:     recentRotatedAt, UpdatedAt: fixed,
 	})
 	require.NoError(t, err)
 	_, err = c.storage.CreateSecret(ctx, &models.SecretNode{
 		Name: "overdue", ProjectID: proj.ID, EnvironmentID: env.ID,
 		Type: "password", IsSecret: true,
 		LastRotatedAt: &overdueRotatedAt,
-		CreatedAt: overdueRotatedAt, UpdatedAt: fixed,
+		CreatedAt:     overdueRotatedAt, UpdatedAt: fixed,
 	})
 	require.NoError(t, err)
 

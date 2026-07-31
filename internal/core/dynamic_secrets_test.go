@@ -5,15 +5,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 const adminDSNPlain = "postgres://admin:s3cr3t@db.internal:5432/app"
@@ -187,7 +188,7 @@ func TestDynamicSecrets_AdminDSNTransplantBetweenConfigsFailsToDecrypt(t *testin
 	cfgA := mkConfig(t, c, ctx)
 	cfgB, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "other-db", ProjectID: 1, BackendType: "postgres",
-		AdminDSN: "postgres://admin:different@other-db.internal:5432/app",
+		AdminDSN:          "postgres://admin:different@other-db.internal:5432/app",
 		DefaultTTLSeconds: 3600,
 		ActorID:           testAdminActorID,
 	})

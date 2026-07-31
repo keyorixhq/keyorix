@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 func newSoftDeleteTestStore(t *testing.T) *LocalStorage {
@@ -107,4 +108,3 @@ func TestPurgeDeletedSecretsBefore_CascadesDependencyEdges(t *testing.T) {
 	require.NoError(t, ls.db.Model(&models.SecretDependency{}).Count(&edges).Error)
 	assert.Equal(t, int64(0), edges, "the edge incident to the purged secret is removed (no orphan)")
 }
-

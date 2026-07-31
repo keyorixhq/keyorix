@@ -6,23 +6,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 // ── blastRiskLevel unit tests ──────────────────────────────────────────────────
 
 func TestBlastRiskLevel_AllBranches(t *testing.T) {
 	cases := []struct {
-		depth      int
-		srcClass   string
-		depClass   string
-		wantRisk   string
+		depth    int
+		srcClass string
+		depClass string
+		wantRisk string
 	}{
 		// critical: depth=1 AND source is restricted
 		{1, "restricted", "", "critical"},
@@ -246,8 +247,8 @@ func TestGetBlastRadius_RiskLevelHighFromDeepConfidential(t *testing.T) {
 	srcID := mkBlastSecret(t, db, "confidential-src", withClassification("confidential"))
 	midID := mkBlastSecret(t, db, "mid")
 	leafID := mkBlastSecret(t, db, "leaf")
-	mkBlastDep(t, db, midID, srcID)   // depth=1
-	mkBlastDep(t, db, leafID, midID)  // depth=2
+	mkBlastDep(t, db, midID, srcID)  // depth=1
+	mkBlastDep(t, db, leafID, midID) // depth=2
 
 	report, err := c.GetBlastRadius(context.Background(), srcID)
 	require.NoError(t, err)

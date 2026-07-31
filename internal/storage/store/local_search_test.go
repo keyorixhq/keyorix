@@ -9,12 +9,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 var searchTestCounter atomic.Int64

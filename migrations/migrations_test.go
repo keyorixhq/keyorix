@@ -3,9 +3,9 @@
 // not exercised by any other automated harness (they're applied, if at all,
 // via scripts/run_migrations.sh + the external golang-migrate CLI) — this
 // test applies the raw SQL directly against a real SQLite database using the
-// same mattn/go-sqlite3 driver already used elsewhere in the codebase
-// (indirectly, via gorm.io/driver/sqlite), so no new test-only dependency is
-// introduced.
+// same modernc.org/sqlite driver used elsewhere in the codebase (ADR-048,
+// indirectly via internal/storage/sqlitedialect), so no new test-only
+// dependency is introduced.
 //
 // It covers backlog finding #203: three destructive down-migrations
 // (002_rbac_enhancements, 004_add_auth_encryption, 005_secret_sharing) used
@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3" // registers the sqlite3 driver with database/sql
+	_ "modernc.org/sqlite" // registers the "sqlite" driver with database/sql
 )
 
 // openTestDB opens a fresh, file-backed (not shared in-memory) SQLite
@@ -33,9 +33,9 @@ func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "migrations-test.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("open sqlite3 db: %v", err)
+		t.Fatalf("open sqlite db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 

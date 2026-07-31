@@ -6,15 +6,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 const (
@@ -81,7 +82,7 @@ const defaultMaxOpenConns = 25
 // invented one.
 const sqliteBusyTimeoutMillis = 10000
 
-// sqliteDSN builds the gorm-sqlite (mattn/go-sqlite3) DSN for a local SQLite database
+// sqliteDSN builds the gorm-sqlite (modernc.org/sqlite, ADR-048) DSN for a local SQLite database
 // file, appending the DSN-level pragmas needed for correctness/robustness on the
 // default local-storage backend:
 //
@@ -175,6 +176,8 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// in-process goroutines when both are enabled — so this is a real deployment
 	// race, not just a test artifact (empirically reproduced standalone against the
 	// mattn/go-sqlite3 driver directly, ~1-in-5 under concurrent fresh-file opens).
+	// Serializing here is driver-agnostic protection either way (ADR-048 swapped
+	// the driver to modernc.org/sqlite; this lock is kept regardless of outcome).
 	// Serializing Open ensures only one goroutine ever performs the actual mode
 	// switch; every later Open against an already-WAL file is a same-mode pragma
 	// no-op that always succeeds immediately, regardless of other open connections.
@@ -419,10 +422,10 @@ func rolePKIsComplete(db *gorm.DB, table string) bool {
 // Idempotent: if the PK is already correct, nothing is done.
 func rebuildRolePKIfNeeded(db *gorm.DB) error {
 	type tableSpec struct {
-		name    string // table name
-		idCol   string // first PK column (user_id or group_id)
-		pkCols  string // full new PK column list for CREATE TABLE
-		oldPK   string // old PK constraint name on Postgres (heuristic)
+		name   string // table name
+		idCol  string // first PK column (user_id or group_id)
+		pkCols string // full new PK column list for CREATE TABLE
+		oldPK  string // old PK constraint name on Postgres (heuristic)
 	}
 	tables := []tableSpec{
 		{

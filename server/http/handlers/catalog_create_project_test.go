@@ -7,14 +7,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func newCreateProjectHandler(t *testing.T) (*CatalogHandler, *gorm.DB) {
@@ -89,8 +90,8 @@ func TestCreateProject_RejectsDangerousNames(t *testing.T) {
 	cases := map[string]string{
 		"zero-width space":        "prod\u200bteam", // U+200B ZERO WIDTH SPACE
 		"RTL override":            "prod\u202eteam", // U+202E RIGHT-TO-LEFT OVERRIDE
-		"non-breaking space":      "prod team", // U+00A0 NO-BREAK SPACE (not in allowlist)
-		"cyrillic homograph 'a'":  "prodаpi",   // U+0430 CYRILLIC SMALL LETTER A looks like Latin "a"
+		"non-breaking space":      "prod team",      // U+00A0 NO-BREAK SPACE (not in allowlist)
+		"cyrillic homograph 'a'":  "prodаpi",        // U+0430 CYRILLIC SMALL LETTER A looks like Latin "a"
 		"CSV-formula-like prefix": "=cmd|'/calc'",
 	}
 	for name, dangerous := range cases {

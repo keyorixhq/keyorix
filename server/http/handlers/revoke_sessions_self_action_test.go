@@ -5,15 +5,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func setupUserHandlerTest(t *testing.T) *UserHandler {
@@ -49,7 +50,7 @@ func TestRevokeSessions_BlocksSelfAction(t *testing.T) {
 	handler := setupUserHandlerTest(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/1/revoke-sessions", nil)
-	req = withUserCtx(req)   // admin, UserID: 1
+	req = withUserCtx(req) // admin, UserID: 1
 	req = withChiParam(req, "id", "1")
 
 	w := httptest.NewRecorder()
@@ -62,7 +63,7 @@ func TestRevokeSessions_AllowsTargetingOtherUsers(t *testing.T) {
 	handler := setupUserHandlerTest(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/2/revoke-sessions", nil)
-	req = withUserCtx(req)   // admin, UserID: 1
+	req = withUserCtx(req) // admin, UserID: 1
 	req = withChiParam(req, "id", "2")
 
 	w := httptest.NewRecorder()

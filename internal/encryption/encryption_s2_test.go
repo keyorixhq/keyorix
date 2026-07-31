@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // setupS2AuthEncEnabled creates an AuthEncryption with encryption ENABLED.
@@ -1299,4 +1300,3 @@ func TestService_RotateDEKWithSweep_AuthTables(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my-session-token", string(plain))
 }
-

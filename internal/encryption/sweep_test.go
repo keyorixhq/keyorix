@@ -19,12 +19,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ─── helpers ───────────────────────────────────────────────────────────────

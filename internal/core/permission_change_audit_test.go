@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // newPermAuditCore creates a minimal core backed by an in-memory SQLite DB with
@@ -160,8 +161,8 @@ func TestGetPermissionChangeAudit_SinceUntilFiltering(t *testing.T) {
 	ctx := context.Background()
 
 	base := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
-	oldEvent := base.Add(-48 * time.Hour) // outside window
-	inWindow := base                      // inside window
+	oldEvent := base.Add(-48 * time.Hour)   // outside window
+	inWindow := base                        // inside window
 	futureEvent := base.Add(48 * time.Hour) // outside window
 
 	seedAuditEvent(t, db, EventRoleAssigned, nil, `{"role_id":1}`, oldEvent)

@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -150,12 +151,29 @@ func (s *scanTime) Scan(value interface{}) error {
 }
 
 func (s *scanTime) parse(str string) error {
+	// time.Time.String() appends a monotonic-clock reading (" m=+0.204177834"
+	// or " m=-...") when the value still carries one (e.g. derived from
+	// time.Now() without a Round(0)/Truncate). modernc.org/sqlite (ADR-048)
+	// returns MIN()/MAX() aggregates over a time.Time column via this String()
+	// representation, monotonic suffix included; it isn't a parseable layout
+	// element (Parse has no directive for it), so strip it before matching
+	// against the layouts below.
+	if idx := strings.Index(str, " m="); idx != -1 {
+		str = str[:idx]
+	}
 	for _, layout := range []string{
 		"2006-01-02 15:04:05.999999999-07:00",
 		"2006-01-02 15:04:05-07:00",
 		time.RFC3339Nano,
 		"2006-01-02 15:04:05.999999999",
 		"2006-01-02 15:04:05",
+		// modernc.org/sqlite (ADR-048) returns an aggregate MAX()/MIN() over a
+		// time.Time column as text in Go's own time.Time.String() format —
+		// space before the offset, plus a trailing zone abbreviation — rather
+		// than one of the layouts above (which is what mattn/go-sqlite3
+		// produced). This is exactly that format (not a named time.* constant;
+		// time.Time.String()'s own layout isn't exposed as one).
+		"2006-01-02 15:04:05.999999999 -0700 MST",
 	} {
 		if t, err := time.Parse(layout, str); err == nil {
 			s.t = &t

@@ -26,12 +26,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	enc "github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 const dryRunTestPassphrase = "dry-run-test-passphrase-correct-horse-battery"

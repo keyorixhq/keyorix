@@ -10,16 +10,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // ──────────────────────────── in-memory core helper ──────────────────────
@@ -85,8 +86,10 @@ func TestRunCreate_RemoteSetupLink_ReachesServer(t *testing.T) {
 
 	origU, origE, origSL, origPW := createUsername, createEmail, createSetupLink, createPassword
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createPassword = origPW
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createPassword = origPW
 	}()
 	createUsername = "bob"
 	createEmail = "bob@example.com"

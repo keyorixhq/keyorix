@@ -5,13 +5,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func TestExtendExpiringSecrets(t *testing.T) {
@@ -49,7 +50,7 @@ func TestExtendExpiringSecrets(t *testing.T) {
 
 	expiredID := mk("expired", &expired)
 	soonID := mk("soon", &soon)
-	farID := mk("far", &far)   // outside the 30d window — untouched
+	farID := mk("far", &far)    // outside the 30d window — untouched
 	neverID := mk("never", nil) // no expiry — untouched
 
 	t.Run("renews expiring/expired secrets to now+window, leaves others", func(t *testing.T) {

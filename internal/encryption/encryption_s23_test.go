@@ -22,14 +22,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // ─── local helpers ────────────────────────────────────────────────────────────
@@ -921,10 +922,10 @@ func TestSweepSessions_HappyPath_Persists(t *testing.T) {
 	require.NoError(t, err)
 
 	row := &models.Session{
-		UserID:               50,
-		SessionToken:         "hash50",
+		UserID:                50,
+		SessionToken:          "hash50",
 		EncryptedSessionToken: encBytes,
-		SessionTokenMetadata: models.JSON(metaBytes),
+		SessionTokenMetadata:  models.JSON(metaBytes),
 	}
 	require.NoError(t, db.Create(row).Error)
 

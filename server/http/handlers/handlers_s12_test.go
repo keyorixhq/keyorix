@@ -7,7 +7,7 @@
 //   - users_crud.go: mutual-exclusion guards (both flags / assignments with
 //     setup-link/OTP), classic path (no password), OTP/setup-link conflict
 //     errors, GetUserByEmail/GetUserByUsername/GetUserByExternalID empty param
-//     + not-found, GetUser/UpdateUser/DeleteUser/UnlockUser bad-param + not-
+//   - not-found, GetUser/UpdateUser/DeleteUser/UnlockUser bad-param + not-
 //     found, accountStateAction self-action + not-found
 //   - helpers.go: sendCreated with message, sendSuccess without message
 package handlers
@@ -22,14 +22,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -439,10 +440,10 @@ func freshUserHandlerS12(t *testing.T) (*UserHandler, *core.KeyorixCore, *gorm.D
 func TestCreateUser_BothFlagsSet_S12(t *testing.T) {
 	uh, _, _ := freshUserHandlerS12(t)
 	body, _ := json.Marshal(map[string]interface{}{
-		"username":                  "bothflagsuser_s12",
-		"email":                     "bothflags_s12@x.com",
-		"display_name":              "Both Flags",
-		"deliver_setup_link":        true,
+		"username":                   "bothflagsuser_s12",
+		"email":                      "bothflags_s12@x.com",
+		"display_name":               "Both Flags",
+		"deliver_setup_link":         true,
 		"generate_one_time_password": true,
 	})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(body)))
@@ -477,11 +478,11 @@ func TestCreateUser_AssignmentsWithSetupLink_S12(t *testing.T) {
 func TestCreateUser_AssignmentsWithOTP_S12(t *testing.T) {
 	uh, _, _ := freshUserHandlerS12(t)
 	body, _ := json.Marshal(map[string]interface{}{
-		"username":                  "otpassign_s12",
-		"email":                     "otpassign_s12@x.com",
-		"display_name":              "OTP Assign",
+		"username":                   "otpassign_s12",
+		"email":                      "otpassign_s12@x.com",
+		"display_name":               "OTP Assign",
 		"generate_one_time_password": true,
-		"role":                      "admin",
+		"role":                       "admin",
 	})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -503,9 +504,9 @@ func TestCreateUserWithOTP_ConflictError_S12(t *testing.T) {
 	require.NoError(t, db.Create(existing).Error)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"username":                  "otp-exists-s12",
-		"email":                     "otp-exists-s12@x.com",
-		"display_name":              "OTP Exists S12",
+		"username":                   "otp-exists-s12",
+		"email":                      "otp-exists-s12@x.com",
+		"display_name":               "OTP Exists S12",
 		"generate_one_time_password": true,
 	})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(body)))

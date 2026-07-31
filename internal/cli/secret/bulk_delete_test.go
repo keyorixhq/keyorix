@@ -12,15 +12,16 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // bulkDeleteStub sets up an httptest server that mimics the bulk-delete endpoint.
@@ -275,8 +276,8 @@ func TestPrintBulkDeleteResult_WithFailures(t *testing.T) {
 	r := bulkDeleteResult{
 		Deleted: []uint{1},
 		Failed: []bulkDeleteError{
-			{SecretID: 99, Name: "ghost", Error: "not found"},  // named failure
-			{SecretID: 100, Error: "access denied"},             // unnamed failure (id=N label)
+			{SecretID: 99, Name: "ghost", Error: "not found"}, // named failure
+			{SecretID: 100, Error: "access denied"},           // unnamed failure (id=N label)
 		},
 		Total: 3,
 	}
