@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -2038,6 +2039,16 @@ func isBackendRoute(p string) bool {
 	return false
 }
 
+// writeJSONNotFound sends a JSON 404, for a NotFound request whose Accept
+// header indicates the caller is not a browser expecting the SPA shell.
+func writeJSONNotFound(w http.ResponseWriter) {
+	w.Header().Set(hdrContentType, "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "NotFound", "message": "not found", "code": http.StatusNotFound,
+	})
+}
+
 // noDirListing wraps a static file handler so a request that resolves to a
 // directory (no index file inside it) returns 404 instead of falling through to
 // Go's default http.FileServer directory listing (#213). dist/assets has no
@@ -2099,6 +2110,16 @@ func registerWebUI(r chi.Router, fsys http.FileSystem) {
 		// A mutating method to a non-backend, unmatched path is not a page load.
 		if req.Method != http.MethodGet && req.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// A client asking for something other than HTML — an OpenAPI-driven
+		// scanner or API client hitting a fuzzed/mistyped path, for example —
+		// should get a JSON 404, not the SPA shell's text/html (ZAP/100001:
+		// "Unexpected Content-Type"). Real browsers always include text/html
+		// or */* in Accept; a client that names application/json and nothing
+		// else never accepted an HTML response.
+		if accept := req.Header.Get("Accept"); accept != "" && !strings.Contains(accept, "text/html") && !strings.Contains(accept, "*/*") {
+			writeJSONNotFound(w)
 			return
 		}
 		f, err := fsys.Open("index.html")
