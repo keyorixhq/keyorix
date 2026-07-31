@@ -97,6 +97,21 @@ under concurrent WAL reads (cznic/sqlite#115) did not reproduce, the
 protection, and `local_legal_hold.go`'s `"UNIQUE constraint failed"` error-string
 match is produced identically by `modernc.org/sqlite`.
 
+One genuine performance regression did surface, and was mitigated rather than
+ignored: under `-race` (CI's `go test -race -timeout 600s ./...`),
+`server/http/handlers` (167 test files, each opening its own SQLite database) went
+from 112.7s on the `mattn` baseline to 406.0s on `modernc.org/sqlite` — a ~3.6x
+slowdown, large enough to cross CI's shared 600s timeout on the runner (it stayed
+just under locally). This is plausibly the race detector's instrumentation
+compounding with `modernc`'s pure-Go execution path in a way `mattn`'s compiled-C
+driver never exposed to Go's race instrumentation at all; `-race` is dev/CI-only
+and does not affect production binaries. Rather than accept a flaky/failing CI job
+or fall back to a different driver for an instrumentation-only cost, `.github/
+workflows/ci.yml` now runs `server/http/handlers` as its own step with a longer
+(1200s) timeout, merging its coverage profile back into the shared one before the
+coverage-floor check. Every other package's runtime was unaffected by the driver
+swap.
+
 ## Tasks
 
 1. Baseline. `go build ./...` and full `go test ./...` green on the current

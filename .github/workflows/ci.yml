@@ -89,8 +89,25 @@ jobs:
               -e 'internal/core$' \
               -e 'internal/storage/remote' \
               -e 'server/http$' \
+              -e 'server/http/handlers$' \
               -e 'server/middleware$' \
               -e 'server/proto/pb$')
+
+      # server/http/handlers (167 test files, each opening its own SQLite DB)
+      # runs in its own step with a longer -timeout (ADR-048): under -race,
+      # modernc.org/sqlite is ~3.6x slower here than the mattn/go-sqlite3 CGO
+      # driver it replaced (112s -> 406s locally), which crossed the shared
+      # 600s budget on the CI runner. -race is dev/CI-only instrumentation;
+      # production binaries are unaffected. 1200s leaves ample margin above
+      # the measured runtime.
+      - name: go test (server/http/handlers)
+        run: go test -race -timeout 1200s -coverprofile=coverage_handlers.out -covermode=atomic ./server/http/handlers/...
+
+      - name: Merge coverage profiles
+        run: |
+          echo "mode: atomic" > coverage_merged.out
+          tail -q -n +2 coverage.out coverage_handlers.out >> coverage_merged.out
+          mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
         run: |
