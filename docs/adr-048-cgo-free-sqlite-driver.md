@@ -112,6 +112,15 @@ workflows/ci.yml` now runs `server/http/handlers` as its own step with a longer
 coverage-floor check. Every other package's runtime was unaffected by the driver
 swap.
 
+The `licenses` CI job's `go-licenses check` also needed one adjustment:
+`modernc.org/mathutil` (transitive, via `modernc.org/sqlite` → `modernc.org/libc`)
+ships a genuine BSD-3-Clause `LICENSE` file at its module root (manually read and
+verified), but `go-licenses` v1.6.0's classifier fails to recognize this exact
+license-text wording and reports it as disallowed — a tool limitation, confirmed
+by reproducing the same failure locally against the exact pinned version, not an
+actual licensing concern. `modernc.org/mathutil` was added to the job's `--ignore`
+list alongside this repo's own module path.
+
 ## Tasks
 
 1. Baseline. `go build ./...` and full `go test ./...` green on the current
