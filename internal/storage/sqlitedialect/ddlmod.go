@@ -235,7 +235,6 @@ func (d *ddl) addConstraint(name string, sql string) {
 
 func (d *ddl) removeConstraint(name string) bool {
 	reg := compileConstraintRegexp(name)
-
 	for i := 0; i < len(d.fields); i++ {
 		if reg.MatchString(d.fields[i]) {
 			d.fields = append(d.fields[:i], d.fields[i+1:]...)
@@ -252,6 +251,15 @@ func (d *ddl) getColumns() []string {
 		fUpper := strings.ToUpper(f)
 		if strings.HasPrefix(fUpper, "PRIMARY KEY") ||
 			strings.HasPrefix(fUpper, "FOREIGN KEY") ||
+			// A freshly-added constraint field (CreateConstraint's
+			// constraint.Build(), via addConstraint) is still an
+			// unsubstituted "CONSTRAINT ? ..." SQL template at this point --
+			// substitution happens later in GORM's own tx.Exec -- so it
+			// never matches constraintRegexp's literal-backtick-quoted-name
+			// pattern below. Catch it by keyword prefix first, same as
+			// PRIMARY KEY/FOREIGN KEY above, so it isn't mistaken for a
+			// column named "CONSTRAINT".
+			strings.HasPrefix(fUpper, "CONSTRAINT ") ||
 			strings.Contains(fUpper, "GENERATED ALWAYS AS") {
 			continue
 		}

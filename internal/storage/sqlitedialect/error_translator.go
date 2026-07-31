@@ -22,6 +22,16 @@ type ErrMessage struct {
 // Translate it will translate the error to native gorm errors.
 // We are not using go-sqlite3 error type intentionally here because it will need the CGO_ENABLED=1 and cross-C-compiler.
 func (dialector Dialector) Translate(err error) error {
+	// modernc.org/sqlite's *Error (ADR-048) stores the SQLite extended result
+	// code in an unexported field, exposed only via this Code() method -- it
+	// has no exported Code/ExtendedCode fields for json.Marshal below to see,
+	// unlike mattn/go-sqlite3's error type. Check it first.
+	if coder, ok := err.(interface{ Code() int }); ok {
+		if translatedErr, found := errCodes[coder.Code()]; found {
+			return translatedErr
+		}
+	}
+
 	parsedErr, marshalErr := json.Marshal(err)
 	if marshalErr != nil {
 		return err
