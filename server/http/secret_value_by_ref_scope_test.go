@@ -8,15 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // setupByRefScopeCore builds a core with two projects, a value-bearing secret in each
@@ -59,8 +60,8 @@ func setupByRefScopeCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)                 // admin: global
-	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error)   // viewerA: project A only
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)               // admin: global
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error) // viewerA: project A only
 
 	seedSession(t, db, 1, "admin-tok")
 	seedSession(t, db, 2, "viewerA-tok")

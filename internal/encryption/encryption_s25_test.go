@@ -28,14 +28,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // ─── local helpers ────────────────────────────────────────────────────────────
@@ -91,8 +92,8 @@ func TestSweepSecretVersions_DeserializeError(t *testing.T) {
 
 	// Store a version with corrupt (non-parseable) encrypted value.
 	ver := &models.SecretVersion{
-		SecretNodeID:  node.ID,
-		VersionNumber: 1,
+		SecretNodeID:   node.ID,
+		VersionNumber:  1,
 		EncryptedValue: []byte(`{bad json`),
 	}
 	require.NoError(t, db.Create(ver).Error)
@@ -119,10 +120,10 @@ func TestSweepSecretVersions_NoProjectFound_Error(t *testing.T) {
 
 	// Insert a version that references a SecretNodeID that has NO matching SecretNode row.
 	ver := &models.SecretVersion{
-		SecretNodeID:        9999, // no such node
-		VersionNumber:       1,
-		EncryptedValue:      encBytes,
-		EncryptionMetadata:  models.JSON(metaBytes),
+		SecretNodeID:       9999, // no such node
+		VersionNumber:      1,
+		EncryptedValue:     encBytes,
+		EncryptionMetadata: models.JSON(metaBytes),
 	}
 	require.NoError(t, db.Create(ver).Error)
 
@@ -1590,7 +1591,7 @@ type mockKeyProvider struct {
 }
 
 func (m *mockKeyProvider) KEK() ([]byte, error) { return m.kek, m.err }
-func (m *mockKeyProvider) Name() string          { return "mock" }
+func (m *mockKeyProvider) Name() string         { return "mock" }
 
 // ─── unwrapKey: too-short wrapped key returns error ───────────────────────────
 

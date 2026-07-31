@@ -2,14 +2,12 @@
 
 ## Status
 
-Proposed.
+Accepted.
 
-Evaluate replacing the current CGO SQLite driver (`gorm.io/driver/sqlite` →
-`mattn/go-sqlite3`) with a pure-Go driver (`modernc.org/sqlite`, with
-`ncruces/go-sqlite3`/`gormlite` as the secondary candidate) for the embedded
-single-node / air-gapped deployment profile and the test suite. SQLite is RETAINED
-as a supported backend; this is a driver swap, not a backend change. Decision gated
-on the full test suite passing green on the new driver.
+The evaluation below passed clean: `modernc.org/sqlite` is adopted as the SQLite
+driver for the embedded/air-gapped backend and tests, replacing the CGO
+`mattn/go-sqlite3` path. SQLite remains a supported, non-HA backend; only the
+driver changed — no SQL, migration, or backend-selection logic changed.
 
 ## Context
 
@@ -58,12 +56,46 @@ taken on faith, given the size of the SQLite-backed test surface.
 
 ## Decision
 
-(Proposed — pending the evaluation below.)
+Adopted `modernc.org/sqlite` as the SQLite driver for the embedded/air-gapped
+backend and tests, replacing the CGO `mattn/go-sqlite3` path. PostgreSQL remains
+the production/HA default and `remote` is unchanged. SQLite remains a first-class
+supported backend; only the driver changed.
 
-Adopt `modernc.org/sqlite` as the SQLite driver for the embedded/air-gapped backend
-and tests, replacing the CGO `mattn/go-sqlite3` path, IF AND ONLY IF the full test
-suite passes green on it. Keep PostgreSQL as the production/HA default and `remote`
-unchanged. SQLite remains a first-class supported backend; only the driver changes.
+`modernc.org/sqlite` is a `database/sql` driver, not a GORM dialector, and the
+community GORM wrapper around it (`github.com/glebarez/sqlite`) was stale (last
+release ~2 years behind modernc's own releases, with a documented
+double-registration conflict when modernc is also imported directly). Rather than
+depend on that wrapper, `internal/storage/sqlitedialect` is a small local fork of
+`go-gorm/sqlite`'s `sqlite.go` (MIT-licensed, attribution preserved in-file) with
+the driver import swapped from `mattn/go-sqlite3` to `modernc.org/sqlite`. Because
+the fork keeps the identical `package sqlite` name and exported API (`Open`, `New`,
+`Config`, `Dialector`), every call site across the repo needed only its import
+path changed, not its code.
+
+Two genuine driver-behavior differences surfaced during the full-suite run and were
+fixed (not routed around):
+
+- `internal/storage/store/local_audit.go`'s `scanTime.parse()` had a hardcoded
+  layout list tuned to `mattn`'s output. `modernc.org/sqlite` returns a `MIN()`/
+  `MAX()` aggregate over a `time.Time` column via Go's own `time.Time.String()`
+  format (space before the offset, trailing zone abbreviation, and — when the
+  value still carries one — a monotonic-clock-reading suffix such as
+  `" m=+0.204177834"`, which has no `time.Parse` layout directive at all). Fixed by
+  stripping the `" m="`-onward suffix before matching, and adding the missing
+  literal layout `"2006-01-02 15:04:05.999999999 -0700 MST"` to the list.
+- The forked `internal/storage/sqlitedialect` package (copied close to verbatim
+  from upstream `go-gorm/sqlite`) tripped 29 `golangci-lint` findings (27
+  `errcheck` on intentionally-ignored `Write*`/`Scan` calls, one ineffective
+  `break` in a state-machine switch, one genuinely-unused method). Held to the same
+  lint bar as the rest of the repo per this ADR's own task list — all 29 fixed,
+  none suppressed.
+
+No other behavior gap from the ADR's risk list materialized: the `ALTER TABLE`
+migration-sequencing bug class (ent/ent#2209) did not reproduce, `SQLITE_BUSY`
+under concurrent WAL reads (cznic/sqlite#115) did not reproduce, the
+`migrationMu`-guarded WAL race in `factory.go` still applies as driver-agnostic
+protection, and `local_legal_hold.go`'s `"UNIQUE constraint failed"` error-string
+match is produced identically by `modernc.org/sqlite`.
 
 ## Tasks
 
@@ -97,17 +129,29 @@ unchanged. SQLite remains a first-class supported backend; only the driver chang
 
 ## Acceptance criteria
 
-- SQLite remains a supported backend; `factory.go` still offers postgres / sqlite /
-  remote. PostgreSQL stays the production/HA default. No SQL or migration logic
-  changed by the driver swap.
-- `go test ./...` is green on the selected pure-Go driver, with no regressions versus
-  the `mattn` baseline.
-- A `CGO_ENABLED=0` static binary cross-compiles for linux/amd64 and linux/arm64.
-- The `mattn/go-sqlite3` (CGO) dependency is removed from the build once the pure-Go
-  driver is adopted.
-- This ADR records the final chosen driver and the rationale, including the explicit
-  note that SQLite is an embedded/test backend and never an HA backend, and that no
-  embedded engine "unlocks" features — that is Postgres's role.
+- [x] SQLite remains a supported backend; `factory.go` still offers postgres /
+  sqlite / remote. PostgreSQL stays the production/HA default. No SQL or migration
+  logic changed by the driver swap.
+- [x] `go test ./...` is green on the selected pure-Go driver, with no regressions
+  versus the `mattn` baseline (verified package-by-package; the two real
+  regressions found were fixed, not routed around — see Decision).
+- [x] A `CGO_ENABLED=0` static binary cross-compiles for linux/amd64 and linux/arm64
+  (verified for both the CLI and server binaries; confirmed statically linked via
+  `file`).
+- [x] The `mattn/go-sqlite3` (CGO) dependency is removed from the build:
+  `gorm.io/driver/sqlite` no longer appears in `go.mod`; `mattn/go-sqlite3` remains
+  listed only as an indirect, test-only dependency of `gorm.io/gorm` itself (`go mod
+  why` traces it exclusively to `gorm.io/gorm.test`), confirmed via `go list -deps`
+  that none of this repo's own binaries (`.`, `./server`, `./cmd/secret`) reference
+  it.
+- [x] This ADR records the final chosen driver and the rationale, including the
+  explicit note that SQLite is an embedded/test backend and never an HA backend,
+  and that no embedded engine "unlocks" features — that is Postgres's role.
+- [x] `golangci-lint run ./...` and `gosec -severity medium -exclude-generated ./...`
+  (CI's exact invocation) both report zero issues. `govulncheck ./...` reports zero
+  vulnerabilities reachable from this repo's code (one advisory,
+  `GO-2026-5932`/`golang.org/x/crypto`, exists in a required-but-uncalled
+  transitive module and predates this change).
 
 ## Consequences
 

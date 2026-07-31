@@ -7,21 +7,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // matrixStorageOverride wraps MockStorage and lets individual tests override
 // ListAllUserRoleGrants and GetRolePermissions without touching the shared mock.
 type matrixStorageOverride struct {
 	corestorage.Storage
-	listGrantsErr  error
-	listGrantsRows []*models.UserRole
+	listGrantsErr   error
+	listGrantsRows  []*models.UserRole
 	getRolePermsErr error
 }
 

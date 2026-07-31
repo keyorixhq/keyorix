@@ -48,12 +48,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // newS27bStore opens a unique in-memory SQLite DB, auto-migrates the supplied
@@ -284,8 +285,8 @@ func TestCountProjectMembershipsByUsers_S27b_HappyPath(t *testing.T) {
 	rows := []*models.ProjectMembership{
 		{ProjectID: 1, UserID: 10, State: "active", InvitedAt: now},
 		{ProjectID: 2, UserID: 10, State: "active", InvitedAt: now},
-		{ProjectID: 3, UserID: 10, State: "invited", InvitedAt: now},  // non-revoked but not active
-		{ProjectID: 4, UserID: 10, State: "revoked", InvitedAt: now},  // revoked — excluded from total
+		{ProjectID: 3, UserID: 10, State: "invited", InvitedAt: now}, // non-revoked but not active
+		{ProjectID: 4, UserID: 10, State: "revoked", InvitedAt: now}, // revoked — excluded from total
 	}
 	for _, r := range rows {
 		require.NoError(t, ls.db.Create(r).Error)

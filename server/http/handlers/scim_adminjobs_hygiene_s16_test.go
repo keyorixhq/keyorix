@@ -1,10 +1,10 @@
 // scim_adminjobs_hygiene_s16_test.go — coverage sweep targeting uncovered branches in:
 //   - scim.go:       bad-id param, invalid filter, bad body, scimPaging edge cases,
-//                    displayName/primaryEmail helpers, parseSCIMUserPatchOp paths,
-//                    GetUser/PatchUser/DeleteUser not-found
+//     displayName/primaryEmail helpers, parseSCIMUserPatchOp paths,
+//     GetUser/PatchUser/DeleteUser not-found
 //   - scim_groups.go: bad-id param, invalid filter, bad body, too-many-members,
-//                     too-many-ops, not-found (replace/patch/delete), pageSlice edges,
-//                     conflict on duplicate create, replace-all members path
+//     too-many-ops, not-found (replace/patch/delete), pageSlice edges,
+//     conflict on duplicate create, replace-all members path
 //   - admin_jobs.go: RunExpiryReminders default/invalid lead_days, RunComplianceDigest happy
 //   - deployment_hygiene.go: unauthenticated, authenticated with query params
 package handlers
@@ -21,12 +21,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // ── local setup helpers ───────────────────────────────────────────────────────

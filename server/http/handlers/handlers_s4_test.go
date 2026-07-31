@@ -18,15 +18,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/server/middleware"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // newCatalogHandlerS4 creates a CatalogHandler with the full s4 DB.
@@ -4538,7 +4539,6 @@ func TestSCIMHandler_PatchGroup_BadID(t *testing.T) {
 	h.PatchGroup(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
-
 
 // ── Batch 3: comprehensive coverage for remaining 0% functions ────────────────
 
@@ -11739,7 +11739,6 @@ func TestAuthHandler_AcquireSchedulerLockProxy_BadJSON(t *testing.T) {
 }
 
 // ── login_attempts_proxy.go: CountLoginAttemptsProxy ─────────────────────────
-
 
 func TestAuthHandler_CountLoginAttemptsProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)

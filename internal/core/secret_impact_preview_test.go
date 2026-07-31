@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 // newImpactPreviewCore builds a minimal in-memory core for impact-preview tests.
@@ -44,7 +45,6 @@ func mkIPSecret(t *testing.T, db *gorm.DB, name string) uint {
 	require.NoError(t, db.Create(s).Error)
 	return s.ID
 }
-
 
 // TestGetSecretImpactPreview_NoDependents: a secret with no downstream dependents
 // returns all-zero counts and an empty (non-nil) slice.

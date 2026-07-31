@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 // newPurgeTestCore opens a fresh in-memory SQLite DB, migrates AuditEvent and
@@ -45,7 +46,7 @@ func TestPurgeAuditLogs_HappyPath(t *testing.T) {
 
 	// Five events older than 30 days.
 	for i := 0; i < 5; i++ {
-		seedRetentionAuditEvent(t, db, fixed.AddDate(0, 0, -(31 + i)))
+		seedRetentionAuditEvent(t, db, fixed.AddDate(0, 0, -(31+i)))
 	}
 	// Three recent events within the retention window.
 	for i := 0; i < 3; i++ {

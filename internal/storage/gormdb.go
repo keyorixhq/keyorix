@@ -3,10 +3,11 @@ package storage
 import (
 	"fmt"
 
-	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 // OpenGormDB opens a raw *gorm.DB for the configured local backend, switching on

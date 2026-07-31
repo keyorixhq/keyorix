@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // Session tokens must be stored hashed (like PATs/setup tokens), so a database read

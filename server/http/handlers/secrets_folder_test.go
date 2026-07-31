@@ -17,22 +17,23 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/server/middleware"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // decodeFolderListResponse decodes a list-secrets HTTP response envelope.
 func decodeFolderListResponse(t *testing.T, body []byte) *models.SecretListResponse {
 	t.Helper()
 	var wrapper struct {
-		Success bool                      `json:"success"`
+		Success bool                       `json:"success"`
 		Data    *models.SecretListResponse `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(body, &wrapper))

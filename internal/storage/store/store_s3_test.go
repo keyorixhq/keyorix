@@ -11,12 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ---------------------------------------------------------------------------
@@ -903,10 +904,10 @@ func TestDynamicSecretLease_CRUD(t *testing.T) {
 
 	now := time.Now()
 	lease, err := ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "lease-001",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: now,
+		LeaseID:   "lease-001",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  now,
 		ExpiresAt: now.Add(time.Hour),
 	})
 	require.NoError(t, err)
@@ -940,10 +941,10 @@ func TestDynamicSecretLease_CRUD(t *testing.T) {
 
 	// Create an active lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "lease-002",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: now,
+		LeaseID:   "lease-002",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  now,
 		ExpiresAt: now.Add(time.Hour),
 	})
 	require.NoError(t, err)
@@ -967,30 +968,30 @@ func TestListExpiredActiveLeases(t *testing.T) {
 
 	// Expired active lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "exp-active",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: past,
+		LeaseID:   "exp-active",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  past,
 		ExpiresAt: past,
 	})
 	require.NoError(t, err)
 
 	// Expired revoke_failed lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "exp-failed",
-		ConfigID: cfg.ID,
-		Status:   "revoke_failed",
-		IssuedAt: past,
+		LeaseID:   "exp-failed",
+		ConfigID:  cfg.ID,
+		Status:    "revoke_failed",
+		IssuedAt:  past,
 		ExpiresAt: past,
 	})
 	require.NoError(t, err)
 
 	// Non-expired active lease.
 	_, err = ls.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "live-active",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: now,
+		LeaseID:   "live-active",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  now,
 		ExpiresAt: now.Add(time.Hour),
 	})
 	require.NoError(t, err)

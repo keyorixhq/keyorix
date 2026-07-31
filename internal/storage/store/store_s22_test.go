@@ -2,38 +2,38 @@
 //
 // Targets (all 0 % or low-% from the post-s21 coverage run):
 //
-//   local_auth.go
-//     EnforceSessionLimit          (0%)
-//     TouchSession                 (0%)
-//     CleanupExpiredSessions       (0%)
-//     GetPersonalAccessTokenByID   (0%)
-//     GetPersonalAccessTokenByHash (0%)
-//     RevokeAllPersonalAccessTokensForUser (0%)
-//     TouchPersonalAccessToken     (0%)
-//     CreateSetupToken             (0%)
-//     GetSetupTokenByHash          (0%)
-//     SupersedeActiveSetupTokens   (0%)
-//     MarkSetupTokenConsumed       (0%)
-//     MarkSetupTokenExpired        (0%)
-//     CountSetupTokensSince        (0%)
+//	local_auth.go
+//	  EnforceSessionLimit          (0%)
+//	  TouchSession                 (0%)
+//	  CleanupExpiredSessions       (0%)
+//	  GetPersonalAccessTokenByID   (0%)
+//	  GetPersonalAccessTokenByHash (0%)
+//	  RevokeAllPersonalAccessTokensForUser (0%)
+//	  TouchPersonalAccessToken     (0%)
+//	  CreateSetupToken             (0%)
+//	  GetSetupTokenByHash          (0%)
+//	  SupersedeActiveSetupTokens   (0%)
+//	  MarkSetupTokenConsumed       (0%)
+//	  MarkSetupTokenExpired        (0%)
+//	  CountSetupTokensSince        (0%)
 //
-//   local_break_glass.go
-//     CreateBreakGlassActivation   (0%)
-//     GetBreakGlassActivation      (0%)
-//     RevokeBreakGlassActivation   (0%)
+//	local_break_glass.go
+//	  CreateBreakGlassActivation   (0%)
+//	  GetBreakGlassActivation      (0%)
+//	  RevokeBreakGlassActivation   (0%)
 //
-//   local_login_attempts.go
-//     PruneLoginAttempts           (0%)
+//	local_login_attempts.go
+//	  PruneLoginAttempts           (0%)
 //
-//   local_webauthn.go
-//     LockWebAuthnCredentialForUpdate (0% — SQLite path)
-//     UpdateWebAuthnCredential     (0%)
-//     AdvanceWebAuthnCredentialCounter (0%)
-//     DeleteWebAuthnCredential     (0%)
-//     CountWebAuthnCredentials     (0%)
-//     SetUserWebAuthnEnabled       (0%)
-//     CreateWebAuthnSession        (0%)
-//     ConsumeWebAuthnSession       (0%)
+//	local_webauthn.go
+//	  LockWebAuthnCredentialForUpdate (0% — SQLite path)
+//	  UpdateWebAuthnCredential     (0%)
+//	  AdvanceWebAuthnCredentialCounter (0%)
+//	  DeleteWebAuthnCredential     (0%)
+//	  CountWebAuthnCredentials     (0%)
+//	  SetUserWebAuthnEnabled       (0%)
+//	  CreateWebAuthnSession        (0%)
+//	  ConsumeWebAuthnSession       (0%)
 package store
 
 import (
@@ -42,11 +42,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // newS22Store opens a unique in-memory SQLite DB, migrates the supplied models

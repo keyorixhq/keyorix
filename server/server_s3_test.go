@@ -14,11 +14,12 @@ import (
 	"os"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/server/middleware"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // ── cmpOr ─────────────────────────────────────────────────────────────────────

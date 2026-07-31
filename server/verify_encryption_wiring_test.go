@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // TestSecretValueEncryptedAtRest is the regression test for the plaintext-at-rest

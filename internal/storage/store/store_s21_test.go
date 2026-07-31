@@ -4,7 +4,7 @@
 //   - local_scheduler_lock.go      WithSchedulerLock — happy path (fn=nil), panic recovery
 //   - local_audit_checkpoint_lock.go WithAuditCheckpointLock — happy path (fn=nil)
 //   - local_sharing.go             CreateShareRecord — validation error, owner mismatch,
-//                                  group recipient path, upsert (existing share updated)
+//     group recipient path, upsert (existing share updated)
 package store
 
 import (
@@ -12,11 +12,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // newS21UniqueStore opens a fresh in-memory SQLite DB with a per-test unique DSN

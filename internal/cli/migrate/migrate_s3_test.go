@@ -6,15 +6,16 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // newBootstrappedCore creates an in-memory core with RBAC fully seeded,
@@ -64,7 +65,7 @@ func resetU2MVars(t *testing.T) {
 	t.Helper()
 	orig := struct {
 		project, typ, name, by string
-		keepUser                bool
+		keepUser               bool
 	}{u2mProject, u2mType, u2mName, u2mBy, u2mKeepUser}
 	t.Cleanup(func() {
 		u2mProject = orig.project

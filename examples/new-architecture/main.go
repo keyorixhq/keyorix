@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // This example demonstrates how to use the new unified architecture

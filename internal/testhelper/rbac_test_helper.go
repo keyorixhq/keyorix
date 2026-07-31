@@ -5,27 +5,28 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 const (
-	permAuditAdmin = "audit.admin"
-	permAuditRead = "audit.read"
-	permRolesAssign = "roles.assign"
-	permRolesRead = "roles.read"
+	permAuditAdmin    = "audit.admin"
+	permAuditRead     = "audit.read"
+	permRolesAssign   = "roles.assign"
+	permRolesRead     = "roles.read"
 	permSecretsDelete = "secrets.delete"
-	permSecretsRead = "secrets.read"
-	permSecretsWrite = "secrets.write"
-	permSystemRead = "system.read"
-	permUsersRead = "users.read"
-	permUsersWrite = "users.write"
+	permSecretsRead   = "secrets.read"
+	permSecretsWrite  = "secrets.write"
+	permSystemRead    = "system.read"
+	permUsersRead     = "users.read"
+	permUsersWrite    = "users.write"
 )
 
 type testContextKey string

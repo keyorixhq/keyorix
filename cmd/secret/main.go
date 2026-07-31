@@ -7,7 +7,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/di"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 
-	"gorm.io/driver/sqlite"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/gorm"
 )
 

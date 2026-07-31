@@ -4,18 +4,19 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 type shareTestRig struct {
@@ -56,7 +57,7 @@ func newShareTestRig(t *testing.T) *shareTestRig {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 2}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 3}).Error)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID}).Error)                    // global
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID}).Error)               // global
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: writerRoleID, ProjectID: 1}).Error) // project member for recipient
 
 	// Give recipient (user 2) a project-scoped role with NO permissions so that

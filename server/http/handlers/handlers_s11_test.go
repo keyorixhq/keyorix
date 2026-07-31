@@ -23,15 +23,16 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/server/middleware"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // ── DB / helper plumbing ─────────────────────────────────────────────────────
@@ -2033,10 +2034,10 @@ func TestListDynamicSecretLeasesProxy_WithLeases_S11(t *testing.T) {
 
 	// Create a lease for that config.
 	_, err = cs.Storage().CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-		LeaseID:  "s11-listlease-test",
-		ConfigID: cfg.ID,
-		Status:   "active",
-		IssuedAt: time.Now(),
+		LeaseID:   "s11-listlease-test",
+		ConfigID:  cfg.ID,
+		Status:    "active",
+		IssuedAt:  time.Now(),
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
 	require.NoError(t, err)

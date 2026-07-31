@@ -11,13 +11,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func newGroupHandlerForTest(t *testing.T) *GroupHandler {
@@ -45,9 +46,9 @@ func postCreateGroup(t *testing.T, h *GroupHandler, name string) *httptest.Respo
 
 func TestCreateGroup_RejectsDangerousNames(t *testing.T) {
 	cases := map[string]string{
-		"zero-width space": "prod\u200bteam", // U+200B ZERO WIDTH SPACE
-		"RTL override":     "prod\u202eteam", // U+202E RIGHT-TO-LEFT OVERRIDE
-		"cyrillic homograph 'a'": "prodаpi", // U+0430 CYRILLIC SMALL LETTER A
+		"zero-width space":       "prod\u200bteam", // U+200B ZERO WIDTH SPACE
+		"RTL override":           "prod\u202eteam", // U+202E RIGHT-TO-LEFT OVERRIDE
+		"cyrillic homograph 'a'": "prodаpi",        // U+0430 CYRILLIC SMALL LETTER A
 	}
 	for name, dangerous := range cases {
 		t.Run(name, func(t *testing.T) {

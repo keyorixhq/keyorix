@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 // newDiffCore opens an in-memory SQLite database, runs AutoMigrate for the
@@ -65,11 +66,11 @@ func seedDiffFixture(t *testing.T, db *gorm.DB, classification string, expiry *t
 func addVersion(t *testing.T, db *gorm.DB, secretID uint, versionNumber, readCount int) {
 	t.Helper()
 	require.NoError(t, db.Create(&models.SecretVersion{
-		SecretNodeID:  secretID,
-		VersionNumber: versionNumber,
+		SecretNodeID:   secretID,
+		VersionNumber:  versionNumber,
 		EncryptedValue: []byte("ciphertext-v" + string(rune('0'+versionNumber))),
-		ReadCount:     readCount,
-		CreatedAt:     time.Now(),
+		ReadCount:      readCount,
+		CreatedAt:      time.Now(),
 	}).Error)
 }
 
