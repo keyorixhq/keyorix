@@ -89,6 +89,31 @@ fixed (not routed around):
   `break` in a state-machine switch, one genuinely-unused method). Held to the same
   lint bar as the rest of the repo per this ADR's own task list — all 29 fixed,
   none suppressed.
+- `Dialector.Translate()` (used only when a caller opts into
+  `gorm.Config{TranslateError: true}`) mapped raw driver errors to
+  `gorm.ErrDuplicatedKey`/`gorm.ErrForeignKeyViolated` by `json.Marshal`-ing the
+  error and reading exported `Code`/`ExtendedCode` fields — present on
+  `mattn/go-sqlite3`'s error type, absent on `modernc.org/sqlite`'s (which stores
+  its result code in an unexported field, exposed only via a `Code() int`
+  method). Fixed by checking that method first, falling back to the original
+  JSON path. This app does not currently set `TranslateError: true` anywhere
+  (confirmed by grep), so nothing in production was silently broken by this, but
+  it's now correct rather than silently a no-op for modernc if anyone opts in.
+- Writing direct tests for the forked package (added to close the coverage gap
+  below) surfaced a real, pre-existing bug, **not introduced by this driver
+  swap**: `ddl.getColumns()` (`ddlmod.go`, unchanged, driver-agnostic string
+  logic present identically in upstream `go-gorm/sqlite`) failed to recognize a
+  constraint clause added by `Migrator.CreateConstraint` as anything other than
+  a column, because `constraint.Build()` returns an unsubstituted `CONSTRAINT ?
+  ...` SQL template at that point (substitution happens later, inside GORM's own
+  `tx.Exec`) — which never matches `constraintRegexp`'s literal-backtick-quoted-
+  name pattern. Any future migration adding a new constraint to an existing
+  table (e.g. via `AutoMigrate` picking up a new `gorm:"unique"` field — 6 real
+  fields in `internal/storage/models/models.go` already use this tag) would hit
+  this and corrupt the table-recreation data copy, on `mattn` today just as much
+  as on `modernc.org/sqlite`. Fixed by recognizing the `CONSTRAINT ` keyword
+  prefix directly, the same way `getColumns()` already handles `PRIMARY KEY`/
+  `FOREIGN KEY`, rather than relying solely on the quoted-name regex.
 
 No other behavior gap from the ADR's risk list materialized: the `ALTER TABLE`
 migration-sequencing bug class (ent/ent#2209) did not reproduce, `SQLITE_BUSY`
@@ -120,6 +145,22 @@ license-text wording and reports it as disallowed — a tool limitation, confirm
 by reproducing the same failure locally against the exact pinned version, not an
 actual licensing concern. `modernc.org/mathutil` was added to the job's `--ignore`
 list alongside this repo's own module path.
+
+SonarCloud's quality gate also failed on this PR: `new_coverage` measured 2.4%
+against the 80% threshold, because `internal/storage/sqlitedialect` had no tests
+of its own (Go's default per-package coverage attribution credits none of the
+execution it gets indirectly from every other SQLite-backed test in the suite —
+confirmed 35.1% of its statements are exercised by `internal/storage/store`'s
+tests alone, via a scratch `-coverpkg` measurement, none of it counted). Rather
+than reach for `-coverpkg` (which would have REPLACED, not added to, every other
+package's own coverage self-attribution in the same `go test` invocation — a much
+larger and riskier change, caught before it was committed), the honest fix was to
+add real unit and integration tests for the forked package directly
+(`sqlite_test.go`, `migrator_test.go`, `ddlmod_parse_all_columns_test.go`),
+covering the dialector's exported surface, the `Migrator`'s table/column/index/
+constraint lifecycle against a real in-memory database, and the DDL string
+helpers. This reached 81.3% self-coverage and is what surfaced the
+`CreateConstraint`/`getColumns()` and `Translate()` findings above.
 
 ## Tasks
 
