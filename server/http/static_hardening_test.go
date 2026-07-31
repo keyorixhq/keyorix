@@ -163,3 +163,38 @@ func TestNotFound_BackendRoutePrefixesReturn404(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, body, "Keyorix")
 }
+
+// TestNotFound_NonHTMLAcceptReturnsJSON404 pins #1245 (ZAP/100001, "Unexpected
+// Content-Type was returned"): a fuzzed/mistyped path that doesn't exactly
+// prefix-match a known backend route family still falls through to this
+// NotFound handler, and previously always served the SPA shell's text/html —
+// including to a scanner or API client that explicitly asked for JSON and
+// never accepted HTML. The handler must honor Accept and return a JSON 404 for
+// those callers, while browsers (which always send text/html or */* in
+// Accept, or send no Accept header at all) keep getting the SPA shell.
+func TestNotFound_NonHTMLAcceptReturnsJSON404(t *testing.T) {
+	srv := newOnDiskWebUIRouter(t)
+	client := &http.Client{}
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/does-not-exist-and-not-a-prefix-match", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	body := readAll(t, resp.Body)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Header.Get(hdrContentType))
+	assert.NotContains(t, body, "<html", "a JSON-Accept client must never receive the SPA shell")
+
+	// A browser-style Accept header still gets the SPA shell (unchanged behavior).
+	req, err = http.NewRequest(http.MethodGet, srv.URL+"/admin/users", nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	resp, err = client.Do(req)
+	require.NoError(t, err)
+	body = readAll(t, resp.Body)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, body, "Keyorix")
+}
