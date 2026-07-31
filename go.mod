@@ -3,7 +3,7 @@ module github.com/keyorixhq/keyorix
 go 1.26.5
 
 require (
-	cloud.google.com/go/kms v1.32.0
+	cloud.google.com/go/kms v1.33.0
 	cloud.google.com/go/secretmanager v1.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
@@ -51,6 +51,7 @@ require (
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.5.0
+	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
 	modernc.org/sqlite v1.55.0
 )
