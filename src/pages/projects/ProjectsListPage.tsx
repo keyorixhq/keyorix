@@ -385,7 +385,7 @@ export const ProjectsListPage: React.FC = () => {
                                         project={p}
                                         onDeleteRequest={setProjectToDelete}
                                         onRestore={handleRestore}
-                                        restoring={restoreProject.isPending}
+                                        restoring={restoreProject.isPending && restoreProject.variables === p.id}
                                     />
                                 ))}
                             </div>
@@ -410,7 +410,7 @@ export const ProjectsListPage: React.FC = () => {
                                         project={p}
                                         onDeleteRequest={setProjectToDelete}
                                         onRestore={handleRestore}
-                                        restoring={restoreProject.isPending}
+                                        restoring={restoreProject.isPending && restoreProject.variables === p.id}
                                     />
                                 ))}
                             </div>
