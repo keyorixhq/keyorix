@@ -209,8 +209,8 @@ const Group: React.FC<GroupProps> = ({
     sidebarExpanded,
     onClose,
 }) => {
-    const expanded = sidebarExpanded[item.id] ?? false;
     const active = isGroupActive(item);
+    const expanded = (sidebarExpanded[item.id] ?? false) || active;
     return (
         <div>
             <button

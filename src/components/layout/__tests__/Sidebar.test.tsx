@@ -129,17 +129,17 @@ describe('Sidebar', () => {
     });
 
     it(
-        'marks a group header active when a child route matches, but — BUG — leaves the child hidden ' +
-            'if its group is collapsed: isGroupActive only styles the header, it never auto-expands ' +
-            'sidebarExpanded, so a user landing directly on a nested route (deep link, refresh) sees a ' +
-            'bolded group header with no visible indication of *which* child is current',
+        'auto-expands a group whose child route is active even when sidebarExpanded has it collapsed, ' +
+            'so a user landing directly on a nested route (deep link, refresh) sees both the bolded ' +
+            'group header and the active child leaf itself',
         () => {
             window.history.pushState({}, '', '/integrations/connect');
             renderSidebar();
 
             const integrationsButton = screen.getByRole('button', { name: 'Integrations' });
             expect(integrationsButton).toHaveStyle({ color: 'var(--text-primary)' });
-            expect(screen.queryByRole('link', { name: 'Keyorix Connect' })).not.toBeInTheDocument();
+            expect(screen.getByRole('link', { name: 'Keyorix Connect' })).toBeInTheDocument();
+            expect(screen.getByRole('link', { name: 'Keyorix Connect' })).toHaveClass('font-medium');
         }
     );
 
