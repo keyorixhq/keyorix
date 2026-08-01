@@ -1,0 +1,259 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Back the storage layer with a simple in-memory map so we test routing logic
+// in isolation (not localStorage/JSON serialization) — same pattern as
+// src/utils/__tests__/auth.test.ts.
+const { memStore } = vi.hoisted(() => {
+    const map = new Map<string, unknown>();
+    return {
+        memStore: {
+            map,
+            get: <T>(key: string, def?: T): T | null => (map.has(key) ? (map.get(key) as T) : (def ?? null)),
+            set: (key: string, value: unknown): void => {
+                map.set(key, value);
+            },
+            remove: (key: string): void => {
+                map.delete(key);
+            },
+        },
+    };
+});
+
+vi.mock('../index', () => ({ storage: memStore }));
+
+import {
+    storeIntendedRoute,
+    getAndClearIntendedRoute,
+    clearIntendedRoute,
+    getPostLoginRedirect,
+    isProtectedRoute,
+    isAdminRoute,
+    getFallbackRoute,
+    canAccessRoute,
+    createAuthAwareNavigate,
+} from '../routing';
+import { ROUTES } from '../../constants';
+
+beforeEach(() => {
+    memStore.map.clear();
+});
+
+describe('storeIntendedRoute', () => {
+    it('does not store the login route', () => {
+        storeIntendedRoute(ROUTES.LOGIN);
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+
+    it('does not store any /auth-prefixed route', () => {
+        storeIntendedRoute('/auth/callback');
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+
+    it('stores an ordinary path', () => {
+        storeIntendedRoute('/projects/42/secrets');
+        expect(getAndClearIntendedRoute()).toBe('/projects/42/secrets');
+    });
+});
+
+describe('getAndClearIntendedRoute', () => {
+    it('returns null when nothing is stored', () => {
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+
+    it('returns the stored route and clears it (one-shot read)', () => {
+        storeIntendedRoute('/dashboard/widgets');
+        expect(getAndClearIntendedRoute()).toBe('/dashboard/widgets');
+        // second read finds nothing left
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+
+    it('treats an empty-string route as absent and leaves it un-cleared', () => {
+        // storeIntendedRoute('') passes both guard checks ('' !== LOGIN and
+        // ''.startsWith('/auth') is false) so it IS written to storage — but
+        // getAndClearIntendedRoute's `if (intendedRoute)` check is falsy for
+        // '', so it reports null on every read without ever removing the
+        // value. Documenting this real (if minor) quirk rather than fixing it
+        // per the coverage-only scope of this PR.
+        storeIntendedRoute('');
+        expect(getAndClearIntendedRoute()).toBeNull();
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+});
+
+describe('clearIntendedRoute', () => {
+    it('removes a stored route without returning it', () => {
+        storeIntendedRoute('/audit');
+        clearIntendedRoute();
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+
+    it('is a no-op when nothing is stored', () => {
+        expect(() => clearIntendedRoute()).not.toThrow();
+    });
+});
+
+describe('getPostLoginRedirect', () => {
+    it('falls back to ROUTES.DASHBOARD by default when nothing is stored', () => {
+        expect(getPostLoginRedirect()).toBe(ROUTES.DASHBOARD);
+    });
+
+    it('falls back to a supplied default when nothing is stored', () => {
+        expect(getPostLoginRedirect('/custom-landing')).toBe('/custom-landing');
+    });
+
+    it('prefers the intended route over the default, and clears it after use', () => {
+        storeIntendedRoute('/secrets/7');
+        expect(getPostLoginRedirect('/custom-landing')).toBe('/secrets/7');
+        // consumed: a second call falls through to the default again
+        expect(getPostLoginRedirect('/custom-landing')).toBe('/custom-landing');
+    });
+});
+
+describe('isProtectedRoute', () => {
+    it('treats the known public routes as not protected', () => {
+        expect(isProtectedRoute(ROUTES.LOGIN)).toBe(false);
+        expect(isProtectedRoute('/auth')).toBe(false);
+        expect(isProtectedRoute('/auth/callback')).toBe(false);
+        expect(isProtectedRoute('/forgot-password')).toBe(false);
+        expect(isProtectedRoute('/reset-password')).toBe(false);
+        expect(isProtectedRoute('/reset-password/some-token')).toBe(false);
+    });
+
+    it('treats other routes as protected', () => {
+        expect(isProtectedRoute(ROUTES.DASHBOARD)).toBe(true);
+        expect(isProtectedRoute('/')).toBe(true);
+        expect(isProtectedRoute(ROUTES.PROJECTS)).toBe(true);
+    });
+
+    it('matches by startsWith prefix, not exact equality (real, undocumented behavior)', () => {
+        // '/login' is compared with startsWith, so any path that merely begins
+        // with a public-route string is classified as public too — e.g. a
+        // hypothetical '/login-help' route would be (mis)treated as public.
+        // Not fixing, since this is existing production behavior and out of
+        // scope for a coverage-only PR; documenting it here.
+        expect(isProtectedRoute('/login-help')).toBe(false);
+    });
+});
+
+describe('isAdminRoute', () => {
+    it('is true for the admin route and its sub-routes', () => {
+        expect(isAdminRoute(ROUTES.ADMIN)).toBe(true);
+        expect(isAdminRoute('/admin/users')).toBe(true);
+    });
+
+    it('is false for non-admin routes', () => {
+        expect(isAdminRoute(ROUTES.DASHBOARD)).toBe(false);
+        expect(isAdminRoute('/')).toBe(false);
+    });
+});
+
+describe('getFallbackRoute', () => {
+    it('returns ROUTES.ADMIN for the literal "admin" role', () => {
+        expect(getFallbackRoute('admin')).toBe(ROUTES.ADMIN);
+    });
+
+    it('returns ROUTES.DASHBOARD when no role is supplied', () => {
+        expect(getFallbackRoute()).toBe(ROUTES.DASHBOARD);
+    });
+
+    it('returns ROUTES.DASHBOARD for a non-admin role', () => {
+        expect(getFallbackRoute('viewer')).toBe(ROUTES.DASHBOARD);
+    });
+
+    it('returns ROUTES.DASHBOARD (not ROUTES.ADMIN) for other admin-tier roles', () => {
+        // ADMIN_ROLES (src/features/auth/roles.ts) is ['admin', 'system_admin',
+        // 'super_admin'], and canAccessRoute's access check uses that whole
+        // list. But getFallbackRoute only special-cases the literal string
+        // 'admin' — a 'system_admin'/'super_admin' caller falls through to
+        // DASHBOARD instead of ADMIN. In practice callAccessRoute only invokes
+        // this as a redirect for roles that already failed the ADMIN_ROLES
+        // check, so the mismatch isn't currently reachable end-to-end, but it
+        // is a real inconsistency in this standalone exported function.
+        // Documenting rather than fixing, per coverage-only scope.
+        expect(getFallbackRoute('system_admin')).toBe(ROUTES.DASHBOARD);
+        expect(getFallbackRoute('super_admin')).toBe(ROUTES.DASHBOARD);
+    });
+});
+
+describe('canAccessRoute', () => {
+    it('always allows public routes, regardless of auth state', () => {
+        expect(canAccessRoute(ROUTES.LOGIN, false)).toEqual({ canAccess: true });
+        expect(canAccessRoute(ROUTES.LOGIN, true, 'admin')).toEqual({ canAccess: true });
+    });
+
+    it('denies protected routes to unauthenticated users, redirecting to LOGIN', () => {
+        expect(canAccessRoute(ROUTES.DASHBOARD, false)).toEqual({
+            canAccess: false,
+            redirectTo: ROUTES.LOGIN,
+        });
+    });
+
+    it('denies admin routes to authenticated non-admin users, redirecting to their fallback', () => {
+        expect(canAccessRoute(ROUTES.ADMIN, true, 'viewer')).toEqual({
+            canAccess: false,
+            redirectTo: ROUTES.DASHBOARD,
+        });
+    });
+
+    it('denies admin routes to authenticated users with no role set', () => {
+        expect(canAccessRoute(ROUTES.ADMIN, true)).toEqual({
+            canAccess: false,
+            redirectTo: ROUTES.DASHBOARD,
+        });
+    });
+
+    it('allows admin routes for every role in ADMIN_ROLES', () => {
+        expect(canAccessRoute(ROUTES.ADMIN, true, 'admin')).toEqual({ canAccess: true });
+        expect(canAccessRoute(ROUTES.ADMIN, true, 'system_admin')).toEqual({ canAccess: true });
+        expect(canAccessRoute(ROUTES.ADMIN, true, 'super_admin')).toEqual({ canAccess: true });
+    });
+
+    it('allows authenticated users onto non-admin protected routes regardless of role', () => {
+        expect(canAccessRoute(ROUTES.DASHBOARD, true, 'viewer')).toEqual({ canAccess: true });
+        expect(canAccessRoute(ROUTES.DASHBOARD, true)).toEqual({ canAccess: true });
+    });
+});
+
+describe('createAuthAwareNavigate', () => {
+    it('navigates directly when the route is accessible', () => {
+        const navigate = vi.fn();
+        const guardedNavigate = createAuthAwareNavigate(navigate, true, 'viewer');
+
+        guardedNavigate(ROUTES.DASHBOARD);
+
+        expect(navigate).toHaveBeenCalledWith(ROUTES.DASHBOARD);
+        expect(navigate).toHaveBeenCalledTimes(1);
+    });
+
+    it('stores the intended route and redirects to LOGIN when unauthenticated', () => {
+        const navigate = vi.fn();
+        const guardedNavigate = createAuthAwareNavigate(navigate, false);
+
+        guardedNavigate('/secrets/9');
+
+        expect(navigate).toHaveBeenCalledWith(ROUTES.LOGIN);
+        // the attempted path was preserved for post-login redirect
+        expect(getAndClearIntendedRoute()).toBe('/secrets/9');
+    });
+
+    it('redirects to the role fallback (without storing an intended route) when denied for role reasons', () => {
+        const navigate = vi.fn();
+        const guardedNavigate = createAuthAwareNavigate(navigate, true, 'viewer');
+
+        guardedNavigate(ROUTES.ADMIN);
+
+        expect(navigate).toHaveBeenCalledWith(ROUTES.DASHBOARD);
+        expect(navigate).toHaveBeenCalledTimes(1);
+        // no intended-route bookkeeping for non-LOGIN redirects
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+
+    it('defaults permissions to an empty array when omitted', () => {
+        const navigate = vi.fn();
+        const guardedNavigate = createAuthAwareNavigate(navigate, true, 'admin');
+
+        guardedNavigate(ROUTES.ADMIN);
+
+        expect(navigate).toHaveBeenCalledWith(ROUTES.ADMIN);
+    });
+});
