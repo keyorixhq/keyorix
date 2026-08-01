@@ -213,13 +213,7 @@ describe('useAdminUserList', () => {
         });
     });
 
-    // BUG (documented, not fixed — out of scope for this coverage-only PR):
-    // the queryKey is ['admin-users', page, search, includeDeleted, inactive] — it
-    // does not include pageSize, even though pageSize is sent in the request params.
-    // So changing only the page size (e.g. a "rows per page" selector left on the
-    // same page/search/filters) does not change the query key, and react-query
-    // serves the previously cached page instead of refetching at the new page size.
-    it('does not refetch when only pageSize changes (query key omits pageSize)', async () => {
+    it('refetches when only pageSize changes (query key includes pageSize)', async () => {
         users.list.mockResolvedValue({ items: [], total: 0 });
         const { wrapper } = createWrapper();
         const { result, rerender } = renderHook(
@@ -231,9 +225,9 @@ describe('useAdminUserList', () => {
         expect(users.list).toHaveBeenCalledTimes(1);
 
         rerender({ pageSize: 25 });
-        await act(async () => {});
+        await waitFor(() => expect(users.list).toHaveBeenCalledTimes(2));
 
-        expect(users.list).toHaveBeenCalledTimes(1); // unchanged — the key didn't change
+        expect(users.list).toHaveBeenLastCalledWith({ page: 1, page_size: 25 });
     });
 });
 

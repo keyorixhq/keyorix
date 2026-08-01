@@ -65,7 +65,7 @@ export const useAdminUserList = ({
     inactive?: boolean;
 }) => {
     return useQuery({
-        queryKey: ['admin-users', page, search, includeDeleted, inactive],
+        queryKey: ['admin-users', page, pageSize, search, includeDeleted, inactive],
         queryFn: () => {
             const params: Record<string, any> = { page, page_size: pageSize };
             if (search) params.search = search;
