@@ -123,9 +123,11 @@ For findings that will reappear on every scan (e.g. `style-src 'unsafe-inline'`
 required by the SPA's CSS-in-JS runtime), close the issue with an explanation
 and leave a note in this file under **Known accepted exceptions**.
 
-There is currently no per-URL suppression list in the scan scripts; add one to
-`scan-zap.sh` / `scan-zap-full.sh` via ZAP's `-c` config-file option if the
-volume of false positives warrants it.
+`scan-zap.sh` scopes the stock "Unexpected Content Types" rule (100001) away
+from the SPA shell via `zap-api-scope-hook.py`, loaded through zap-api-scan.py's
+`--hook` option — see **Known accepted exceptions** below. Add further per-URL
+suppressions the same way (a global alert filter in the hook) or via ZAP's `-c`
+config-file option if the volume of false positives warrants it.
 
 ## Running a scan manually
 
@@ -181,3 +183,4 @@ postgres volume — the KEK is bound to the encrypted data on disk.
 | Issue | Finding | Reason |
 |-------|---------|--------|
 | #1213 (closed) | `CSP: style-src unsafe-inline` | Required by the SPA's CSS-in-JS / Tailwind runtime. `script-src` does not carry `unsafe-inline`, so inline script injection (the primary XSS vector) remains blocked. |
+| #1210, #1245, #1249 (closed) | `ZAP/100001: Unexpected Content-Type was returned`, for the bare target URL (`/`) and random top-level paths | zap-api-scan.py's "Unexpected Content Types" rule checks every URL ZAP visits, not just declared OpenAPI operations — including the base target URL it always hits first and assorted spider/connectivity probes. Those URLs correctly fall through to the SPA shell (`text/html`) per `server/http/router.go`'s `NotFound` handler, since they're not under any backend route prefix and must stay servable as client-side routes. Suppressed via a global alert filter in `zap-api-scope-hook.py` (see above) rather than relaxing the router, which would break SPA routing. Genuine API paths (`/api/`, `/auth/`, etc.) are unaffected and still enforce JSON-only content types (#1245/#1247 fixed that case in application code). |
