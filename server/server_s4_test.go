@@ -2163,11 +2163,16 @@ func TestStartHTTPServer_ShortLive(t *testing.T) {
 		done <- startHTTPServer(ctx, cfg)
 	}()
 
+	// 11 schedulers all fire on this 200ms window; under a loaded CI runner
+	// running the rest of the suite in parallel, waiting for all of them to
+	// settle and the server to shut down can take longer than a tight ceiling
+	// allows (observed flake: keyorixhq/keyorix#1257, #1258, #1263) even
+	// though the goroutine itself completes in well under 1s locally.
 	select {
 	case err := <-done:
 		_ = err
-	case <-time.After(2 * time.Second):
-		t.Fatal("startHTTPServer did not return within 2s")
+	case <-time.After(10 * time.Second):
+		t.Fatal("startHTTPServer did not return within 10s")
 	}
 }
 
