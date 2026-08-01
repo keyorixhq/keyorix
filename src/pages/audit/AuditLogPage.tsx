@@ -859,6 +859,149 @@ function resolveInitialTab(tab: string | null): ActiveTab {
     return 'audit';
 }
 
+interface TabToggleProps {
+    activeTab: ActiveTab;
+    openCount: number;
+    onChange: (tab: ActiveTab) => void;
+}
+
+const TABS: { id: ActiveTab; label: string }[] = [
+    { id: 'audit', label: 'Audit Log' },
+    { id: 'rbac', label: 'RBAC Events' },
+    { id: 'anomalies', label: 'Anomaly Alerts' },
+];
+
+const TabToggle: React.FC<TabToggleProps> = ({ activeTab, openCount, onChange }) => (
+    <div className="flex gap-1 p-1 bg-subtle rounded-lg w-fit border border-base">
+        {TABS.map(({ id, label }) => {
+            const badge = id === 'anomalies' && openCount > 0 ? openCount : null;
+            return (
+                <button
+                    type="button"
+                    key={id}
+                    onClick={() => onChange(id)}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-100 flex items-center gap-2 ${
+                        activeTab === id
+                            ? 'bg-surface text-base-primary shadow-xs border border-base'
+                            : 'text-base-muted hover:text-base-secondary'
+                    }`}
+                >
+                    {label}
+                    {badge != null && badge > 0 && (
+                        <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold leading-none">
+                            {badge}
+                        </span>
+                    )}
+                </button>
+            );
+        })}
+    </div>
+);
+
+const URL_FILTER_LABELS: Record<string, string> = {
+    failed: 'Failed auth attempts',
+    reads: 'Secret reads',
+    logins: 'Login events',
+};
+
+interface UrlFilterBannerProps {
+    urlFilter: string | null;
+}
+
+const UrlFilterBanner: React.FC<UrlFilterBannerProps> = ({ urlFilter }) => {
+    if (!urlFilter) return null;
+    return (
+        <div className="px-5 py-2 border-b border-base flex items-center gap-2 bg-subtle">
+            <span className="text-xs text-base-muted">Filtered:</span>
+            <span className="text-xs font-medium text-base-secondary">
+                {URL_FILTER_LABELS[urlFilter] ?? 'Custom filter'}
+            </span>
+            <button
+                type="button"
+                onClick={() => window.history.replaceState({}, '', window.location.pathname + '?tab=audit')}
+                className="text-xs text-base-muted hover:text-base-secondary ml-auto"
+            >
+                ✕ Clear filter
+            </button>
+        </div>
+    );
+};
+
+const GovernanceBanner: React.FC = () => (
+    <div className="flex items-start gap-3 p-4 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950/20 dark:border-indigo-900/30">
+        <svg className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+            />
+        </svg>
+        <div>
+            <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Access governance events</p>
+            <p className="text-xs text-indigo-600/70 dark:text-indigo-400/70 mt-0.5">
+                Shows only role assignments, permission changes, and group membership events. Required for NIS2 Article
+                21 access control audit trails.
+            </p>
+        </div>
+    </div>
+);
+
+interface PageData {
+    page?: number;
+    totalPages?: number;
+    total?: number;
+    pageSize?: number;
+}
+
+interface AuditTabPanelProps {
+    error: unknown;
+    innerBanner?: React.ReactNode;
+    filterBarProps: Omit<FilterBarProps, 'resultCount'>;
+    resultCount: number;
+    entries: AuditLogEntry[];
+    isDark: boolean;
+    isLoading: boolean;
+    emptyMessage: string;
+    data: PageData | undefined;
+    onPageChange: (p: number) => void;
+}
+
+const AuditTabPanel: React.FC<AuditTabPanelProps> = ({
+    error,
+    innerBanner,
+    filterBarProps,
+    resultCount,
+    entries,
+    isDark,
+    isLoading,
+    emptyMessage,
+    data,
+    onPageChange,
+}) => (
+    <>
+        {!!error && (
+            <Alert
+                type="error"
+                title="Failed to load audit log"
+                message="There was an error loading the audit log. Please try again."
+            />
+        )}
+        <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">
+            {innerBanner}
+            <FilterBar {...filterBarProps} resultCount={resultCount} />
+            <AuditTable entries={entries} isDark={isDark} isLoading={isLoading} emptyMessage={emptyMessage} />
+            <Pagination
+                page={data?.page ?? 1}
+                totalPages={data?.totalPages ?? 1}
+                total={data?.total ?? 0}
+                pageSize={data?.pageSize ?? 100}
+                onChange={onPageChange}
+            />
+        </div>
+    </>
+);
+
 export const AuditLogPage: React.FC = () => {
     const [searchParams] = useSearchParams();
     const [activeTab, setActiveTab] = useState<ActiveTab>(resolveInitialTab(searchParams.get('tab')));
@@ -942,163 +1085,65 @@ export const AuditLogPage: React.FC = () => {
                 </div>
 
                 {/* Tab toggle */}
-                <div className="flex gap-1 p-1 bg-subtle rounded-lg w-fit border border-base">
-                    {[
-                        { id: 'audit' as const, label: 'Audit Log', badge: null as number | null },
-                        { id: 'rbac' as const, label: 'RBAC Events', badge: null as number | null },
-                        { id: 'anomalies' as const, label: 'Anomaly Alerts', badge: openCount > 0 ? openCount : null },
-                    ].map(({ id, label, badge }) => (
-                        <button
-                            type="button"
-                            key={id}
-                            onClick={() => resetPageOnTabChange(id)}
-                            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-100 flex items-center gap-2 ${
-                                activeTab === id
-                                    ? 'bg-surface text-base-primary shadow-xs border border-base'
-                                    : 'text-base-muted hover:text-base-secondary'
-                            }`}
-                        >
-                            {label}
-                            {badge != null && badge > 0 && (
-                                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold leading-none">
-                                    {badge}
-                                </span>
-                            )}
-                        </button>
-                    ))}
-                </div>
+                <TabToggle activeTab={activeTab} openCount={openCount} onChange={resetPageOnTabChange} />
 
                 {/* ── Audit Log tab ── */}
                 {activeTab === 'audit' && (
-                    <>
-                        {!!error && (
-                            <Alert
-                                type="error"
-                                title="Failed to load audit log"
-                                message="There was an error loading the audit log. Please try again."
-                            />
-                        )}
-                        <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">
-                            {urlFilter && (
-                                <div className="px-5 py-2 border-b border-base flex items-center gap-2 bg-subtle">
-                                    <span className="text-xs text-base-muted">Filtered:</span>
-                                    <span className="text-xs font-medium text-base-secondary">
-                                        {(() => {
-                                            if (urlFilter === 'failed') return 'Failed auth attempts';
-                                            if (urlFilter === 'reads') return 'Secret reads';
-                                            if (urlFilter === 'logins') return 'Login events';
-                                            return 'Custom filter';
-                                        })()}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={() =>
-                                            window.history.replaceState({}, '', window.location.pathname + '?tab=audit')
-                                        }
-                                        className="text-xs text-base-muted hover:text-base-secondary ml-auto"
-                                    >
-                                        ✕ Clear filter
-                                    </button>
-                                </div>
-                            )}
-                            <FilterBar
-                                actorFilter={actorFilter}
-                                onActorChange={setActorFilter}
-                                eventTypeFilter={eventTypeFilter}
-                                onEventTypeChange={setEventTypeFilter}
-                                dateFrom={dateFrom}
-                                onDateFromChange={setDateFrom}
-                                dateTo={dateTo}
-                                onDateToChange={setDateTo}
-                                actorTypeFilter={actorTypeFilter}
-                                onActorTypeChange={setActorTypeFilter}
-                                availableTypes={activeTypes}
-                                resultCount={auditEntries.length}
-                                onExport={handleExport}
-                            />
-                            <AuditTable
-                                entries={auditEntries}
-                                isDark={isDark}
-                                isLoading={isLoading}
-                                emptyMessage="No audit events match the current filters."
-                            />
-                            <Pagination
-                                page={data?.page ?? 1}
-                                totalPages={data?.totalPages ?? 1}
-                                total={data?.total ?? 0}
-                                pageSize={data?.pageSize ?? 100}
-                                onChange={setPage}
-                            />
-                        </div>
-                    </>
+                    <AuditTabPanel
+                        error={error}
+                        innerBanner={<UrlFilterBanner urlFilter={urlFilter} />}
+                        filterBarProps={{
+                            actorFilter,
+                            onActorChange: setActorFilter,
+                            eventTypeFilter,
+                            onEventTypeChange: setEventTypeFilter,
+                            dateFrom,
+                            onDateFromChange: setDateFrom,
+                            dateTo,
+                            onDateToChange: setDateTo,
+                            actorTypeFilter,
+                            onActorTypeChange: setActorTypeFilter,
+                            availableTypes: activeTypes,
+                            onExport: handleExport,
+                        }}
+                        resultCount={auditEntries.length}
+                        entries={auditEntries}
+                        isDark={isDark}
+                        isLoading={isLoading}
+                        emptyMessage="No audit events match the current filters."
+                        data={data}
+                        onPageChange={setPage}
+                    />
                 )}
 
                 {/* ── RBAC Events tab ── */}
                 {activeTab === 'rbac' && (
                     <div className="space-y-4">
-                        <div className="flex items-start gap-3 p-4 rounded-lg bg-indigo-50 border border-indigo-100 dark:bg-indigo-950/20 dark:border-indigo-900/30">
-                            <svg
-                                className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                                />
-                            </svg>
-                            <div>
-                                <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
-                                    Access governance events
-                                </p>
-                                <p className="text-xs text-indigo-600/70 dark:text-indigo-400/70 mt-0.5">
-                                    Shows only role assignments, permission changes, and group membership events.
-                                    Required for NIS2 Article 21 access control audit trails.
-                                </p>
-                            </div>
-                        </div>
-
-                        {!!error && (
-                            <Alert
-                                type="error"
-                                title="Failed to load audit log"
-                                message="There was an error loading the audit log. Please try again."
-                            />
-                        )}
-
-                        <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">
-                            <FilterBar
-                                actorFilter={actorFilter}
-                                onActorChange={setActorFilter}
-                                eventTypeFilter={eventTypeFilter}
-                                onEventTypeChange={setEventTypeFilter}
-                                dateFrom={dateFrom}
-                                onDateFromChange={setDateFrom}
-                                dateTo={dateTo}
-                                onDateToChange={setDateTo}
-                                actorTypeFilter={actorTypeFilter}
-                                onActorTypeChange={setActorTypeFilter}
-                                availableTypes={activeTypes}
-                                resultCount={rbacEntries.length}
-                                onExport={handleExport}
-                            />
-                            <AuditTable
-                                entries={rbacEntries}
-                                isDark={isDark}
-                                isLoading={isLoading}
-                                emptyMessage="No RBAC events recorded. Role assignments, permission grants, and group changes will appear here."
-                            />
-                            <Pagination
-                                page={data?.page ?? 1}
-                                totalPages={data?.totalPages ?? 1}
-                                total={data?.total ?? 0}
-                                pageSize={data?.pageSize ?? 100}
-                                onChange={setPage}
-                            />
-                        </div>
+                        <GovernanceBanner />
+                        <AuditTabPanel
+                            error={error}
+                            filterBarProps={{
+                                actorFilter,
+                                onActorChange: setActorFilter,
+                                eventTypeFilter,
+                                onEventTypeChange: setEventTypeFilter,
+                                dateFrom,
+                                onDateFromChange: setDateFrom,
+                                dateTo,
+                                onDateToChange: setDateTo,
+                                actorTypeFilter,
+                                onActorTypeChange: setActorTypeFilter,
+                                availableTypes: activeTypes,
+                                onExport: handleExport,
+                            }}
+                            resultCount={rbacEntries.length}
+                            entries={rbacEntries}
+                            isDark={isDark}
+                            isLoading={isLoading}
+                            emptyMessage="No RBAC events recorded. Role assignments, permission grants, and group changes will appear here."
+                            data={data}
+                            onPageChange={setPage}
+                        />
                     </div>
                 )}
 
