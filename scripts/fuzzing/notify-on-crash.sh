@@ -15,12 +15,31 @@ LOGFILE="${3:?path to the log file for this run}"
 : "${KEYORIX_REPO:?}"
 : "${FUZZ_CORPUS_BRANCH:=fuzz-corpus}"
 
+cd "$KEYORIX_REPO"
+
 fail_line="$(grep -m1 -E 'FAIL|panic:' "$LOGFILE" || true)"
 fail_hash="$(printf '%s' "${fail_line:-unknown}" | sha256sum | cut -c1-16)"
 marker="$NOTIFIED_STATE_DIR/notified-$FUNC-$fail_hash"
 
 if [[ -f "$marker" ]]; then
   exit 0 # already alerted for this exact failure
+fi
+
+# `go test -fuzz` can exit non-zero for reasons that never produce a
+# testdata/fuzz/<Func>/ reproducer — e.g. the process running out of disk or
+# memory near the end of a multi-hour run, rather than the fuzzing engine
+# actually finding and minimizing a new failing input. sync-corpus.sh only
+# commits+pushes when it finds real new content, so if nothing landed on
+# $FUZZ_CORPUS_BRANCH for this func, there is no reproducer to open a PR
+# about — doing so anyway produces a PR whose body falsely claims a crash
+# input was committed, and whose branch (unchanged) drifts further from main
+# every cycle until its CI fails on staleness alone. Confirmed root cause of
+# keyorixhq/keyorix#1243 and #1248: both claimed a committed reproducer that
+# was never actually pushed.
+git fetch origin "$FUZZ_CORPUS_BRANCH" --quiet 2>>"$NOTIFIED_STATE_DIR/gh-error-$FUNC-$fail_hash.log" || true
+if ! git ls-tree -r --name-only "origin/$FUZZ_CORPUS_BRANCH" 2>/dev/null | grep -q "^testdata/fuzz/$FUNC/"; then
+  echo "notify-on-crash: $FUNC exited non-zero (hash $fail_hash) but no testdata/fuzz/$FUNC/ reproducer exists on $FUZZ_CORPUS_BRANCH — treating as an infra failure, not a crash. Not opening a PR or alert. See $LOGFILE." >&2
+  exit 0
 fi
 
 summary="$(grep -m8 -E 'FAIL|panic:|--- FAIL|Fatalf|\.go:[0-9]+' "$LOGFILE" | head -c 1500 || true)"
@@ -64,7 +83,6 @@ The crashing input is committed to the \`$FUZZ_CORPUS_BRANCH\` branch and will b
 # crashes that were never actually reported, permanently suppressing them.
 gh_err="$NOTIFIED_STATE_DIR/gh-error-$FUNC-$fail_hash.log"
 
-cd "$KEYORIX_REPO"
 pr_notified=false
 existing_pr="$(gh pr list --head "$FUZZ_CORPUS_BRANCH" --state open --json number --jq '.[0].number' 2>>"$gh_err" || true)"
 if [[ -n "$existing_pr" ]]; then
