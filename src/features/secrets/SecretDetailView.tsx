@@ -122,7 +122,7 @@ const getPermissionColor = (permission: string): string => PERMISSION_COLORS[per
 
 function computeLatestVersion(versions: VersionItem[] | undefined): VersionItem | null {
     if (!versions || versions.length === 0) return null;
-    return versions.reduce((a, b) => (a.VersionNumber >= b.VersionNumber ? a : b));
+    return versions.reduce((a, b) => (a.VersionNumber >= b.VersionNumber ? a : b), versions[0]!);
 }
 
 function buildSecretValueDisplay(

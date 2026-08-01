@@ -698,7 +698,7 @@ const DeleteSecretModal: React.FC<DeleteSecretModalProps> = ({ isOpen, secret, o
 interface CreateSecretModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+    onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void;
     createName: string;
     setCreateName: (v: string) => void;
     createValue: string;
@@ -1194,7 +1194,7 @@ export const SecretsListPage: React.FC = () => {
         resetCreateForm();
     };
 
-    const handleCreateSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    const handleCreateSubmit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
         setCreateError('');
         if (!createProjectId || !createEnvId) {
