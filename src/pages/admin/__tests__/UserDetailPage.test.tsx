@@ -295,6 +295,13 @@ describe('UserDetailPage — lifecycle action visibility', () => {
         expect(screen.queryByRole('button', { name: 'Suspend' })).not.toBeInTheDocument();
     });
 
+    it('shows account actions when there is no authenticated user (never self)', () => {
+        authUserId = null;
+        render(<UserDetailPage />);
+        expect(screen.getByText('Account actions')).toBeInTheDocument();
+        expect(screen.queryByText('Lifecycle actions are unavailable on your own account.')).not.toBeInTheDocument();
+    });
+
     it('hides lifecycle actions entirely for a deleted user (not self)', () => {
         userData = { ...baseUser, deleted_at: '2026-02-01T00:00:00Z' };
         render(<UserDetailPage />);
