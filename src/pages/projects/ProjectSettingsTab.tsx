@@ -711,6 +711,397 @@ function renderDeleteEnvironmentModal({
     );
 }
 
+interface RenderGeneralSectionProps {
+    updateMutation: { isPending: boolean; isError: boolean; isSuccess: boolean };
+    name: string;
+    setName: (v: string) => void;
+    description: string;
+    setDescription: (v: string) => void;
+    nameError: string;
+    handleSave: () => void;
+}
+
+function renderGeneralSection({
+    updateMutation,
+    name,
+    setName,
+    description,
+    setDescription,
+    nameError,
+    handleSave,
+}: RenderGeneralSectionProps): React.ReactNode {
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+                General
+            </h2>
+            <div
+                className="rounded-lg border p-5 space-y-4"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
+                {updateMutation.isError && (
+                    <Alert type="error" title="Failed to update" message="Could not save project settings." />
+                )}
+                {updateMutation.isSuccess && <Alert type="success" title="Saved" message="Project settings updated." />}
+                <div>
+                    <label
+                        htmlFor="project-name-input"
+                        className="block text-sm font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
+                        Project name <span style={{ color: 'var(--error)' }}>*</span>
+                    </label>
+                    <input
+                        id="project-name-input"
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            color: 'var(--text-primary)',
+                            borderColor: nameError ? 'var(--error)' : 'var(--border)',
+                        }}
+                    />
+                    {nameError && (
+                        <p className="text-xs mt-1" style={{ color: 'var(--error)' }}>
+                            {nameError}
+                        </p>
+                    )}
+                </div>
+                <div>
+                    <label
+                        htmlFor="project-description-input"
+                        className="block text-sm font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
+                        Description
+                    </label>
+                    <input
+                        id="project-description-input"
+                        type="text"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Optional"
+                        className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            color: 'var(--text-primary)',
+                            borderColor: 'var(--border)',
+                        }}
+                    />
+                </div>
+                <div className="flex justify-end">
+                    <Button onClick={handleSave} disabled={updateMutation.isPending}>
+                        {updateMutation.isPending ? 'Saving…' : 'Save'}
+                    </Button>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+interface RenderEnvironmentsSectionProps {
+    envsLoading: boolean;
+    environments: Env[];
+    restoreEnvMutation: { isPending: boolean; mutate: (id: number) => void };
+    promoteEnvMutation: { isPending: boolean };
+    handlePromote: (env: Env) => void;
+    setDeleteEnvError: (err: string) => void;
+    setEnvToDelete: (env: Env) => void;
+    promoteMsg: string;
+    addEnvError: string;
+    newEnvName: string;
+    setNewEnvName: (v: string) => void;
+    setAddEnvError: (v: string) => void;
+    addEnvMutation: { isPending: boolean; mutate: (name: string) => void };
+}
+
+function renderEnvironmentsSection({
+    envsLoading,
+    environments,
+    restoreEnvMutation,
+    promoteEnvMutation,
+    handlePromote,
+    setDeleteEnvError,
+    setEnvToDelete,
+    promoteMsg,
+    addEnvError,
+    newEnvName,
+    setNewEnvName,
+    setAddEnvError,
+    addEnvMutation,
+}: RenderEnvironmentsSectionProps): React.ReactNode {
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                Environments
+            </h2>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                Environments group secrets by deployment stage. An environment with active secrets cannot be deleted —
+                move or delete its secrets first.
+            </p>
+            <div
+                className="rounded-lg border"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
+                {/* Environment list */}
+                {renderEnvList({
+                    envsLoading,
+                    environments,
+                    restoreEnvMutation,
+                    promoteEnvMutation,
+                    handlePromote,
+                    setDeleteEnvError,
+                    setEnvToDelete,
+                })}
+
+                {/* Add environment */}
+                <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>
+                    {promoteMsg && (
+                        <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+                            {promoteMsg}
+                        </p>
+                    )}
+                    {addEnvError && (
+                        <p className="text-xs mb-2" style={{ color: 'var(--error)' }}>
+                            {addEnvError}
+                        </p>
+                    )}
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={newEnvName}
+                            onChange={(e) => {
+                                setNewEnvName(e.target.value);
+                                setAddEnvError('');
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && newEnvName.trim()) addEnvMutation.mutate(newEnvName.trim());
+                            }}
+                            placeholder="New environment name…"
+                            className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-hidden focus:ring-2 focus:ring-blue-500"
+                            style={{
+                                backgroundColor: 'var(--bg-app)',
+                                color: 'var(--text-primary)',
+                                borderColor: 'var(--border)',
+                            }}
+                        />
+                        <Button
+                            size="sm"
+                            onClick={() => newEnvName.trim() && addEnvMutation.mutate(newEnvName.trim())}
+                            disabled={!newEnvName.trim() || addEnvMutation.isPending}
+                        >
+                            <PlusIcon className="h-4 w-4 mr-1" />
+                            Add
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+interface RenderComplianceSectionProps {
+    inventoryMsg: string;
+    inventoryBusy: boolean;
+    handleExportInventory: () => void;
+}
+
+function renderComplianceSection({
+    inventoryMsg,
+    inventoryBusy,
+    handleExportInventory,
+}: RenderComplianceSectionProps): React.ReactNode {
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                Compliance
+            </h2>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                Export an asset inventory of this project's secrets (metadata only — names, environments,
+                classification, owners, timestamps; never values) for audit hand-off (ISO 27001 A.5.9).
+            </p>
+            <div
+                className="rounded-lg border p-4 flex items-center justify-between gap-3"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
+                <div className="min-w-0">
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                        Secret inventory (CSV)
+                    </p>
+                    {inventoryMsg && (
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--error)' }}>
+                            {inventoryMsg}
+                        </p>
+                    )}
+                </div>
+                <Button size="sm" variant="outline" onClick={handleExportInventory} disabled={inventoryBusy}>
+                    <ArrowDownTrayIcon className="h-4 w-4 mr-1" />
+                    {inventoryBusy ? 'Exporting…' : 'Export inventory'}
+                </Button>
+            </div>
+        </section>
+    );
+}
+
+interface RenderIncidentResponseSectionProps {
+    suspendAllMutation: { isPending: boolean; isError: boolean; mutate: () => void };
+    resumeAllMutation: { isPending: boolean; isError: boolean; mutate: () => void };
+    freezeMsg: string;
+    setFreezeMsg: (v: string) => void;
+}
+
+function renderIncidentResponseSection({
+    suspendAllMutation,
+    resumeAllMutation,
+    freezeMsg,
+    setFreezeMsg,
+}: RenderIncidentResponseSectionProps): React.ReactNode {
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+                Incident response
+            </h2>
+            <div
+                className="rounded-lg border p-5 space-y-3"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
+            >
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    Freeze blocks value reads of every secret in this project (versions and shares are preserved);
+                    resume restores them. Use during incident response.
+                </p>
+                {(suspendAllMutation.isError || resumeAllMutation.isError) && (
+                    <Alert type="error" title="Error" message="The action failed. Please try again." />
+                )}
+                {freezeMsg && <Alert type="success" title="Done" message={freezeMsg} />}
+                <div className="flex gap-2">
+                    <Button
+                        variant="outline"
+                        disabled={suspendAllMutation.isPending}
+                        onClick={() => {
+                            if (
+                                window.confirm(
+                                    'Freeze ALL secrets in this project? Value reads will be blocked until you resume them.'
+                                )
+                            ) {
+                                setFreezeMsg('');
+                                suspendAllMutation.mutate();
+                            }
+                        }}
+                    >
+                        {suspendAllMutation.isPending ? 'Freezing…' : 'Freeze all secrets'}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        disabled={resumeAllMutation.isPending}
+                        onClick={() => {
+                            setFreezeMsg('');
+                            resumeAllMutation.mutate();
+                        }}
+                    >
+                        {resumeAllMutation.isPending ? 'Resuming…' : 'Resume all'}
+                    </Button>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+interface RenderDangerZoneSectionProps {
+    onOpenDeleteModal: () => void;
+}
+
+function renderDangerZoneSection({ onOpenDeleteModal }: RenderDangerZoneSectionProps): React.ReactNode {
+    return (
+        <section>
+            <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--error)' }}>
+                Danger Zone
+            </h2>
+            <div
+                className="rounded-lg border p-5 flex items-center justify-between"
+                style={{ borderColor: 'var(--error)', backgroundColor: 'var(--error-subtle)' }}
+            >
+                <div>
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                        Delete this project
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        Permanently deletes the project and all its secrets. This cannot be undone.
+                    </p>
+                </div>
+                <Button variant="destructive" onClick={onOpenDeleteModal}>
+                    Delete Project
+                </Button>
+            </div>
+        </section>
+    );
+}
+
+interface RenderDeleteProjectModalProps {
+    isOpen: boolean;
+    projectName: string | undefined;
+    deleteConfirm: string;
+    setDeleteConfirm: (v: string) => void;
+    deleteProjectMutation: { isPending: boolean; isError: boolean; error: unknown; mutate: () => void };
+    onClose: () => void;
+}
+
+function renderDeleteProjectModal({
+    isOpen,
+    projectName,
+    deleteConfirm,
+    setDeleteConfirm,
+    deleteProjectMutation,
+    onClose,
+}: RenderDeleteProjectModalProps): React.ReactNode {
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Delete Project" size="sm">
+            <div className="space-y-4">
+                {deleteProjectMutation.isError && (
+                    <Alert
+                        type="error"
+                        title="Failed to delete"
+                        message={
+                            (deleteProjectMutation.error as any)?.response?.data?.error ??
+                            (deleteProjectMutation.error as any)?.message ??
+                            'Could not delete the project.'
+                        }
+                    />
+                )}
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    Delete project <span className="font-semibold">{projectName}</span>? The project, its environments,
+                    and all its secrets will be soft-deleted. Type the project name to confirm.
+                </p>
+                <input
+                    type="text"
+                    value={deleteConfirm}
+                    onChange={(e) => setDeleteConfirm(e.target.value)}
+                    placeholder={projectName}
+                    className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
+                    style={{
+                        backgroundColor: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        borderColor: 'var(--border)',
+                    }}
+                />
+                <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                    <Button variant="outline" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button
+                        variant="destructive"
+                        disabled={deleteConfirm !== projectName || deleteProjectMutation.isPending}
+                        onClick={() => deleteProjectMutation.mutate()}
+                    >
+                        {deleteProjectMutation.isPending ? 'Deleting…' : 'Delete'}
+                    </Button>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
 export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectId }) => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -1011,224 +1402,40 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             {renderHygieneSection(hygiene)}
 
             {/* ── General ── */}
-            <section>
-                <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                    General
-                </h2>
-                <div
-                    className="rounded-lg border p-5 space-y-4"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    {updateMutation.isError && (
-                        <Alert type="error" title="Failed to update" message="Could not save project settings." />
-                    )}
-                    {updateMutation.isSuccess && (
-                        <Alert type="success" title="Saved" message="Project settings updated." />
-                    )}
-                    <div>
-                        <label
-                            htmlFor="project-name-input"
-                            className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}
-                        >
-                            Project name <span style={{ color: 'var(--error)' }}>*</span>
-                        </label>
-                        <input
-                            id="project-name-input"
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                borderColor: nameError ? 'var(--error)' : 'var(--border)',
-                            }}
-                        />
-                        {nameError && (
-                            <p className="text-xs mt-1" style={{ color: 'var(--error)' }}>
-                                {nameError}
-                            </p>
-                        )}
-                    </div>
-                    <div>
-                        <label
-                            htmlFor="project-description-input"
-                            className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}
-                        >
-                            Description
-                        </label>
-                        <input
-                            id="project-description-input"
-                            type="text"
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Optional"
-                            className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                borderColor: 'var(--border)',
-                            }}
-                        />
-                    </div>
-                    <div className="flex justify-end">
-                        <Button onClick={handleSave} disabled={updateMutation.isPending}>
-                            {updateMutation.isPending ? 'Saving…' : 'Save'}
-                        </Button>
-                    </div>
-                </div>
-            </section>
+            {renderGeneralSection({
+                updateMutation,
+                name,
+                setName,
+                description,
+                setDescription,
+                nameError,
+                handleSave,
+            })}
 
             {renderSecuritySection({ mfaMutation, requireMfa, setRequireMfa, handleSaveMfa })}
 
             {/* ── Environments ── */}
-            <section>
-                <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                    Environments
-                </h2>
-                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                    Environments group secrets by deployment stage. An environment with active secrets cannot be deleted
-                    — move or delete its secrets first.
-                </p>
-                <div
-                    className="rounded-lg border"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    {/* Environment list */}
-                    {renderEnvList({
-                        envsLoading,
-                        environments,
-                        restoreEnvMutation,
-                        promoteEnvMutation,
-                        handlePromote,
-                        setDeleteEnvError,
-                        setEnvToDelete,
-                    })}
-
-                    {/* Add environment */}
-                    <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>
-                        {promoteMsg && (
-                            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-                                {promoteMsg}
-                            </p>
-                        )}
-                        {addEnvError && (
-                            <p className="text-xs mb-2" style={{ color: 'var(--error)' }}>
-                                {addEnvError}
-                            </p>
-                        )}
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                value={newEnvName}
-                                onChange={(e) => {
-                                    setNewEnvName(e.target.value);
-                                    setAddEnvError('');
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && newEnvName.trim())
-                                        addEnvMutation.mutate(newEnvName.trim());
-                                }}
-                                placeholder="New environment name…"
-                                className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-hidden focus:ring-2 focus:ring-blue-500"
-                                style={{
-                                    backgroundColor: 'var(--bg-app)',
-                                    color: 'var(--text-primary)',
-                                    borderColor: 'var(--border)',
-                                }}
-                            />
-                            <Button
-                                size="sm"
-                                onClick={() => newEnvName.trim() && addEnvMutation.mutate(newEnvName.trim())}
-                                disabled={!newEnvName.trim() || addEnvMutation.isPending}
-                            >
-                                <PlusIcon className="h-4 w-4 mr-1" />
-                                Add
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            </section>
+            {renderEnvironmentsSection({
+                envsLoading,
+                environments,
+                restoreEnvMutation,
+                promoteEnvMutation,
+                handlePromote,
+                setDeleteEnvError,
+                setEnvToDelete,
+                promoteMsg,
+                addEnvError,
+                newEnvName,
+                setNewEnvName,
+                setAddEnvError,
+                addEnvMutation,
+            })}
 
             {/* ── Compliance ── */}
-            <section>
-                <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                    Compliance
-                </h2>
-                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                    Export an asset inventory of this project's secrets (metadata only — names, environments,
-                    classification, owners, timestamps; never values) for audit hand-off (ISO 27001 A.5.9).
-                </p>
-                <div
-                    className="rounded-lg border p-4 flex items-center justify-between gap-3"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    <div className="min-w-0">
-                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                            Secret inventory (CSV)
-                        </p>
-                        {inventoryMsg && (
-                            <p className="text-xs mt-0.5" style={{ color: 'var(--error)' }}>
-                                {inventoryMsg}
-                            </p>
-                        )}
-                    </div>
-                    <Button size="sm" variant="outline" onClick={handleExportInventory} disabled={inventoryBusy}>
-                        <ArrowDownTrayIcon className="h-4 w-4 mr-1" />
-                        {inventoryBusy ? 'Exporting…' : 'Export inventory'}
-                    </Button>
-                </div>
-            </section>
+            {renderComplianceSection({ inventoryMsg, inventoryBusy, handleExportInventory })}
 
             {/* ── Incident response ── */}
-            <section>
-                <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                    Incident response
-                </h2>
-                <div
-                    className="rounded-lg border p-5 space-y-3"
-                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-                >
-                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                        Freeze blocks value reads of every secret in this project (versions and shares are preserved);
-                        resume restores them. Use during incident response.
-                    </p>
-                    {(suspendAllMutation.isError || resumeAllMutation.isError) && (
-                        <Alert type="error" title="Error" message="The action failed. Please try again." />
-                    )}
-                    {freezeMsg && <Alert type="success" title="Done" message={freezeMsg} />}
-                    <div className="flex gap-2">
-                        <Button
-                            variant="outline"
-                            disabled={suspendAllMutation.isPending}
-                            onClick={() => {
-                                if (
-                                    window.confirm(
-                                        'Freeze ALL secrets in this project? Value reads will be blocked until you resume them.'
-                                    )
-                                ) {
-                                    setFreezeMsg('');
-                                    suspendAllMutation.mutate();
-                                }
-                            }}
-                        >
-                            {suspendAllMutation.isPending ? 'Freezing…' : 'Freeze all secrets'}
-                        </Button>
-                        <Button
-                            variant="outline"
-                            disabled={resumeAllMutation.isPending}
-                            onClick={() => {
-                                setFreezeMsg('');
-                                resumeAllMutation.mutate();
-                            }}
-                        >
-                            {resumeAllMutation.isPending ? 'Resuming…' : 'Resume all'}
-                        </Button>
-                    </div>
-                </div>
-            </section>
+            {renderIncidentResponseSection({ suspendAllMutation, resumeAllMutation, freezeMsg, setFreezeMsg })}
 
             {/* ── Orphaned secrets ── (only when present; it's an alert) */}
             {renderOrphanedSecretsSection({
@@ -1261,27 +1468,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             {renderRecycleBinSection({ deletedSecrets, restoreSecretMutation })}
 
             {/* ── Danger zone ── */}
-            <section>
-                <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--error)' }}>
-                    Danger Zone
-                </h2>
-                <div
-                    className="rounded-lg border p-5 flex items-center justify-between"
-                    style={{ borderColor: 'var(--error)', backgroundColor: 'var(--error-subtle)' }}
-                >
-                    <div>
-                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                            Delete this project
-                        </p>
-                        <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                            Permanently deletes the project and all its secrets. This cannot be undone.
-                        </p>
-                    </div>
-                    <Button variant="destructive" onClick={() => setShowDeleteModal(true)}>
-                        Delete Project
-                    </Button>
-                </div>
-            </section>
+            {renderDangerZoneSection({ onOpenDeleteModal: () => setShowDeleteModal(true) })}
 
             {/* ── Delete environment modal ── */}
             {renderDeleteEnvironmentModal({
@@ -1292,63 +1479,17 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             })}
 
             {/* ── Delete project modal ── */}
-            <Modal
-                isOpen={showDeleteModal}
-                onClose={() => {
+            {renderDeleteProjectModal({
+                isOpen: showDeleteModal,
+                projectName: project?.name,
+                deleteConfirm,
+                setDeleteConfirm,
+                deleteProjectMutation,
+                onClose: () => {
                     setShowDeleteModal(false);
                     setDeleteConfirm('');
-                }}
-                title="Delete Project"
-                size="sm"
-            >
-                <div className="space-y-4">
-                    {deleteProjectMutation.isError && (
-                        <Alert
-                            type="error"
-                            title="Failed to delete"
-                            message={
-                                (deleteProjectMutation.error as any)?.response?.data?.error ??
-                                (deleteProjectMutation.error as any)?.message ??
-                                'Could not delete the project.'
-                            }
-                        />
-                    )}
-                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                        Delete project <span className="font-semibold">{project?.name}</span>? The project, its
-                        environments, and all its secrets will be soft-deleted. Type the project name to confirm.
-                    </p>
-                    <input
-                        type="text"
-                        value={deleteConfirm}
-                        onChange={(e) => setDeleteConfirm(e.target.value)}
-                        placeholder={project?.name}
-                        className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
-                        style={{
-                            backgroundColor: 'var(--bg-app)',
-                            color: 'var(--text-primary)',
-                            borderColor: 'var(--border)',
-                        }}
-                    />
-                    <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                        <Button
-                            variant="outline"
-                            onClick={() => {
-                                setShowDeleteModal(false);
-                                setDeleteConfirm('');
-                            }}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            disabled={deleteConfirm !== project?.name || deleteProjectMutation.isPending}
-                            onClick={() => deleteProjectMutation.mutate()}
-                        >
-                            {deleteProjectMutation.isPending ? 'Deleting…' : 'Delete'}
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+                },
+            })}
         </div>
     );
 };
