@@ -11,7 +11,7 @@ describe('Dialog', () => {
     it('renders title and message when isOpen is true', () => {
         render(<Dialog isOpen title="Delete item" message="Are you sure you want to delete this?" onClose={vi.fn()} />);
         expect(screen.getByRole('dialog')).toBeInTheDocument();
-        expect(screen.getByText('Delete item')).toBeInTheDocument();
+        expect(screen.getByText('Delete item', { selector: 'h3' })).toBeInTheDocument();
         expect(screen.getByText('Are you sure you want to delete this?')).toBeInTheDocument();
     });
 
@@ -74,18 +74,11 @@ describe('Dialog', () => {
         expect(onClose).toHaveBeenCalledOnce();
     });
 
-    // Note: this fires onClose twice, not once. The underlying Modal wires both an
-    // explicit `onEscapeKeyDown={() => onClose()}` handler on radix's Dialog.Content
-    // AND passes `onOpenChange` to Dialog.Root, and radix's default Escape handling
-    // also flips `open` to false there, invoking onClose a second time. That
-    // duplicate-invocation quirk lives in Modal.tsx (out of scope for this
-    // coverage-only PR on Dialog.tsx), so this test pins the actual observed
-    // behavior rather than the single-call behavior one might expect.
-    it('calls onClose on Escape key (delegated to the underlying Modal/radix Dialog)', () => {
+    it('calls onClose once on Escape key (delegated to the underlying Modal/radix Dialog)', () => {
         const onClose = vi.fn();
         render(<Dialog isOpen title="Confirm" message="Proceed?" onClose={onClose} />);
         fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape', code: 'Escape' });
-        expect(onClose).toHaveBeenCalledTimes(2);
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('disables the cancel button and shows a loading state on confirm while loading', () => {
@@ -115,15 +108,8 @@ describe('Dialog', () => {
         expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
 
-    // Bug (documented, not fixed per coverage-only PR scope): Dialog renders its own
-    // plain <h3> for `title` instead of passing `title` through to the underlying
-    // <Modal>. Because Modal's `title` prop is never set (and showCloseButton is
-    // forced to false), Modal never renders a radix `Dialog.Title`, so the dialog
-    // has no accessible name/title for screen readers — radix logs a console error
-    // ("`DialogContent` requires a `DialogTitle`") for every open Dialog. This test
-    // pins down that observable symptom without attempting a fix.
-    it('does not wire an accessible radix Dialog.Title (known a11y gap - see comment above)', () => {
+    it('wires an accessible name matching the title via the underlying radix Dialog.Title', () => {
         render(<Dialog isOpen title="Delete item" message="Are you sure?" onClose={vi.fn()} />);
-        expect(screen.getByRole('dialog')).not.toHaveAccessibleName();
+        expect(screen.getByRole('dialog')).toHaveAccessibleName('Delete item');
     });
 });

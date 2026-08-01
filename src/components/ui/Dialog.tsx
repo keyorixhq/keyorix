@@ -76,7 +76,15 @@ const Dialog: React.FC<DialogProps> = ({
     const confirmButtonVariant = type === 'danger' ? 'destructive' : 'default';
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} size="sm" showCloseButton={false} closeOnOverlayClick={!loading}>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={title}
+            hideTitleVisually
+            size="sm"
+            showCloseButton={false}
+            closeOnOverlayClick={!loading}
+        >
             <div className="flex">
                 <div
                     className={clsx(

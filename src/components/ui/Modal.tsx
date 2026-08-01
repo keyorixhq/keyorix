@@ -12,6 +12,8 @@ export interface ModalProps {
     showCloseButton?: boolean;
     closeOnOverlayClick?: boolean;
     className?: string;
+    /** Provide the accessible name via Radix's Dialog.Title without rendering it visibly (e.g. when the caller renders its own visible heading). */
+    hideTitleVisually?: boolean;
 }
 
 const SIZE: Record<NonNullable<ModalProps['size']>, string> = {
@@ -31,6 +33,7 @@ const Modal: React.FC<ModalProps> = ({
     showCloseButton = true,
     closeOnOverlayClick = true,
     className,
+    hideTitleVisually = false,
 }) => (
     <Dialog.Root
         open={isOpen}
@@ -52,7 +55,6 @@ const Modal: React.FC<ModalProps> = ({
             {/* Panel */}
             <Dialog.Content
                 {...(!closeOnOverlayClick && { onInteractOutside: (e) => e.preventDefault() })}
-                onEscapeKeyDown={() => onClose()}
                 className={cn(
                     'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2',
                     'rounded-lg border shadow-xl overflow-hidden',
@@ -63,12 +65,14 @@ const Modal: React.FC<ModalProps> = ({
                 )}
                 style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
-                {(title || showCloseButton) && (
+                {title && hideTitleVisually && <Dialog.Title className="sr-only">{title}</Dialog.Title>}
+
+                {((title && !hideTitleVisually) || showCloseButton) && (
                     <div
                         className="flex items-center justify-between px-6 py-4 border-b"
                         style={{ borderColor: 'var(--border)' }}
                     >
-                        {title && (
+                        {title && !hideTitleVisually && (
                             <Dialog.Title
                                 className="text-lg font-medium leading-6"
                                 style={{ color: 'var(--text-primary)' }}
