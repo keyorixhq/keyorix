@@ -11,6 +11,17 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      # codeql-action ships init/analyze/upload-sarif as separate dependency
+      # names (one per sub-action path), so an ungrouped bump lands as
+      # separate PRs — merging just one leaves workflows mixing versions,
+      # which CodeQL treats as a hard configuration error ("Loaded a
+      # configuration file for version X, but running version Y"), failing
+      # CI on PRs that have nothing to do with the bump itself (#1257,
+      # #1260). Group them so every sub-action bumps atomically in one PR.
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
   # #478: without a gomod entry, Go dependency/toolchain-minimum drift (e.g. #477)
   # has no automated forcing function and depends on someone noticing manually.
   - package-ecosystem: gomod
