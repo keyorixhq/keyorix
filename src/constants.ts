@@ -86,6 +86,7 @@ export const ROUTES = {
     ADMIN_USER_DETAIL: (id: number | string) => `/admin/users/${id}`,
     ADMIN_ROLES: '/admin/roles',
     ADMIN_SETTINGS: '/admin/settings',
+    ADMIN_NOTIFICATION_CHANNELS: '/admin/notification-channels',
     COMPLIANCE: '/compliance',
     CONNECT: '/integrations/connect',
     ROADMAP: '/roadmap',

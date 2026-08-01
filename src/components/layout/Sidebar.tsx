@@ -33,6 +33,7 @@ interface NavLeaf {
     href: string;
     icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>;
     soon?: boolean;
+    adminOnly?: boolean; // hidden from non-admins, independent of the parent group
 }
 
 interface NavGroup {
@@ -108,7 +109,7 @@ const NAV: NavItem[] = [
         children: [
             { kind: 'leaf', name: 'SDKs & CLI', href: '/integrations/sdks', soon: true },
             { kind: 'leaf', name: 'Keyorix Connect', href: '/integrations/connect' },
-            { kind: 'leaf', name: 'Webhooks', href: '/integrations/webhooks', soon: true },
+            { kind: 'leaf', name: 'Notification Channels', href: '/admin/notification-channels', adminOnly: true },
         ],
     },
     {
@@ -325,9 +326,15 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     const { sidebarExpanded, toggleSidebarGroup } = useUIStore();
     const { isAdmin } = useAuth();
 
-    // Hide admin-only groups (e.g. Access Control) from non-admins. The backend
-    // still enforces every API; this just keeps the nav honest per role.
-    const navItems = NAV.filter((item) => !(item.kind === 'group' && item.adminOnly && !isAdmin));
+    // Hide admin-only groups (e.g. Access Control) from non-admins, and
+    // admin-only leaves within otherwise-visible groups (e.g. Notification
+    // Channels inside Integrations). The backend still enforces every API;
+    // this just keeps the nav honest per role.
+    const navItems = NAV.filter((item) => !(item.kind === 'group' && item.adminOnly && !isAdmin)).map((item) =>
+        item.kind === 'group'
+            ? { ...item, children: item.children.filter((child) => !(child.adminOnly && !isAdmin)) }
+            : item
+    );
 
     const isActive = (href: string) => location.pathname === href || location.pathname.startsWith(href + '/');
 

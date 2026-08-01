@@ -72,6 +72,9 @@ const APITokensPage = React.lazy(() =>
 const MachineIdentitiesPage = React.lazy(() =>
     import('./pages/admin/MachineIdentitiesPage').then((m) => ({ default: m.MachineIdentitiesPage }))
 );
+const NotificationChannelsPage = React.lazy(() =>
+    import('./pages/admin/NotificationChannelsPage').then((m) => ({ default: m.NotificationChannelsPage }))
+);
 
 const AppearancePage = React.lazy(() =>
     import('./pages/settings/AppearancePage').then((m) => ({ default: m.AppearancePage }))
@@ -193,6 +196,14 @@ function App() {
                                                     element={
                                                         <AdminRoute>
                                                             <MachineIdentitiesPage />
+                                                        </AdminRoute>
+                                                    }
+                                                />
+                                                <Route
+                                                    path={ROUTES.ADMIN_NOTIFICATION_CHANNELS}
+                                                    element={
+                                                        <AdminRoute>
+                                                            <NotificationChannelsPage />
                                                         </AdminRoute>
                                                     }
                                                 />

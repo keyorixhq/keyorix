@@ -402,47 +402,58 @@ interface SystemHealthPanelProps {
     dbMetrics: Record<string, any>;
 }
 
-const SystemHealthPanel: React.FC<SystemHealthPanelProps> = ({ metrics, sysInfo, features, dbMetrics }) => (
-    <div className="bg-surface border border-base rounded-xl shadow-xs">
-        <div className="px-5 py-4 border-b border-base">
-            <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">System Health</h2>
-        </div>
-        <div className="px-5 py-4 space-y-3">
-            <div className="flex items-center justify-between">
-                <span className="text-sm text-base-muted">Status</span>
-                <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-sm font-semibold text-emerald-600">Healthy</span>
+const HEALTH_STATUS_STYLES: Record<SignalSeverity, { dot: string; text: string; label: string }> = {
+    neutral: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Healthy' },
+    warn: { dot: 'bg-amber-500', text: 'text-amber-600', label: 'Degraded' },
+    alert: { dot: 'bg-red-500', text: 'text-red-600', label: 'Unhealthy' },
+};
+
+const SystemHealthPanel: React.FC<SystemHealthPanelProps> = ({ metrics, sysInfo, features, dbMetrics }) => {
+    const severity = getSystemHealthSeverity(metrics, sysInfo);
+    const statusStyle = HEALTH_STATUS_STYLES[severity];
+
+    return (
+        <div className="bg-surface border border-base rounded-xl shadow-xs">
+            <div className="px-5 py-4 border-b border-base">
+                <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">System Health</h2>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+                <div className="flex items-center justify-between">
+                    <span className="text-sm text-base-muted">Status</span>
+                    <div className="flex items-center gap-1.5">
+                        <div className={`w-2 h-2 rounded-full ${statusStyle.dot} animate-pulse`} />
+                        <span className={`text-sm font-semibold ${statusStyle.text}`}>{statusStyle.label}</span>
+                    </div>
+                </div>
+                <div className="flex items-center justify-between">
+                    <span className="text-sm text-base-muted">Uptime</span>
+                    <span className="text-sm font-medium text-base-primary">
+                        {parseUptime(metrics?.uptime ?? sysInfo?.uptime ?? '')}
+                    </span>
+                </div>
+                <div className="flex items-center justify-between">
+                    <span className="text-sm text-base-muted">DB connections</span>
+                    <span className="text-sm font-medium text-base-primary">
+                        {dbMetrics.connections_active != null ? `${dbMetrics.connections_active} active` : '—'}
+                    </span>
+                </div>
+                <div className="flex items-center justify-between">
+                    <span className="text-sm text-base-muted">Encryption</span>
+                    <span className="text-sm font-medium text-base-primary">
+                        {sysInfo?.security?.encryption_method ?? 'AES-256-GCM'}
+                    </span>
+                </div>
+
+                <div className="pt-2 flex flex-wrap gap-1.5">
+                    <FeaturePill label="Encryption" active={features.encryption_enabled ?? true} />
+                    <FeaturePill label="RBAC" active={features.rbac_enabled ?? true} />
+                    <FeaturePill label="Audit" active={features.audit_enabled ?? true} />
+                    <FeaturePill label="TLS" active={features.tls_enabled ?? true} />
                 </div>
             </div>
-            <div className="flex items-center justify-between">
-                <span className="text-sm text-base-muted">Uptime</span>
-                <span className="text-sm font-medium text-base-primary">
-                    {parseUptime(metrics?.uptime ?? sysInfo?.uptime ?? '')}
-                </span>
-            </div>
-            <div className="flex items-center justify-between">
-                <span className="text-sm text-base-muted">DB connections</span>
-                <span className="text-sm font-medium text-base-primary">
-                    {dbMetrics.connections_active != null ? `${dbMetrics.connections_active} active` : '—'}
-                </span>
-            </div>
-            <div className="flex items-center justify-between">
-                <span className="text-sm text-base-muted">Encryption</span>
-                <span className="text-sm font-medium text-base-primary">
-                    {sysInfo?.security?.encryption_method ?? 'AES-256-GCM'}
-                </span>
-            </div>
-
-            <div className="pt-2 flex flex-wrap gap-1.5">
-                <FeaturePill label="Encryption" active={features.encryption_enabled ?? true} />
-                <FeaturePill label="RBAC" active={features.rbac_enabled ?? true} />
-                <FeaturePill label="Audit" active={features.audit_enabled ?? true} />
-                <FeaturePill label="TLS" active={features.tls_enabled ?? true} />
-            </div>
         </div>
-    </div>
-);
+    );
+};
 
 interface SecurityAlertsPanelProps {
     alertCount: number;
@@ -581,6 +592,43 @@ function getFailedAuthSeverity(failedAuth: number): SignalSeverity {
     if (failedAuth === 0) return 'neutral';
     if (failedAuth >= 5) return 'alert';
     return 'warn';
+}
+
+// Thresholds for the System Health panel's status badge. Tunable — these are
+// deliberately conservative starting points, not values derived from any SLO.
+const HTTP_ERROR_RATE_ALERT = 0.25; // server failing most requests
+const HTTP_ERROR_RATE_WARN = 0.05;
+const DB_AVG_QUERY_TIME_WARN_MS = 500;
+const DB_POOL_SATURATION_ALERT = 0.95; // active/max connections
+const DB_POOL_SATURATION_WARN = 0.8;
+
+function getSystemHealthSeverity(metrics: Metrics, sysInfo: SysInfo): SignalSeverity {
+    // Not loaded yet — don't flash a false alert while data is still in flight.
+    if (!metrics && !sysInfo) return 'neutral';
+
+    const errorRate = metrics?.http?.error_rate ?? 0;
+    const avgQueryTime = metrics?.database?.avg_query_time ?? 0;
+    const slowQueries = metrics?.database?.slow_queries ?? 0;
+    const queriesTotal = metrics?.database?.queries_total ?? 0;
+    const slowQueryFraction = queriesTotal > 0 ? slowQueries / queriesTotal : 0;
+
+    const pool = sysInfo?.database?.pool;
+    const poolSaturation = pool && pool.max_connections > 0 ? pool.active_connections / pool.max_connections : 0;
+
+    const dbConnected = sysInfo?.database?.connected ?? true;
+
+    if (!dbConnected || errorRate > HTTP_ERROR_RATE_ALERT || poolSaturation > DB_POOL_SATURATION_ALERT) {
+        return 'alert';
+    }
+    if (
+        errorRate > HTTP_ERROR_RATE_WARN ||
+        avgQueryTime > DB_AVG_QUERY_TIME_WARN_MS ||
+        slowQueryFraction > 0.05 ||
+        poolSaturation > DB_POOL_SATURATION_WARN
+    ) {
+        return 'warn';
+    }
+    return 'neutral';
 }
 
 type AnomalyData = ReturnType<typeof useAnomalyAlerts>['data'];

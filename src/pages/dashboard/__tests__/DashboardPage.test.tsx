@@ -151,6 +151,54 @@ describe('DashboardPage — system health', () => {
         expect(screen.getAllByText('Encryption')).toHaveLength(2);
         expect(screen.getByText('Audit')).toBeInTheDocument(); // shown even though inactive
     });
+
+    it('shows Healthy when metrics are within normal range', () => {
+        render(<DashboardPage />);
+        expect(screen.getByText('Healthy')).toBeInTheDocument();
+    });
+
+    it('shows Degraded when the HTTP error rate crosses the warn threshold', () => {
+        useSystemMetrics.mockReturnValue({
+            data: {
+                uptime: '2h34m12.456s',
+                http: { error_rate: 0.1 },
+                database: { connections_active: 5, avg_query_time: 10, slow_queries: 0, queries_total: 100 },
+            },
+        });
+        render(<DashboardPage />);
+        expect(screen.getByText('Degraded')).toBeInTheDocument();
+    });
+
+    it('shows Unhealthy when the database reports disconnected', () => {
+        useSystemInfo.mockReturnValue({
+            data: {
+                features: { encryption_enabled: true, rbac_enabled: true, audit_enabled: false, tls_enabled: true },
+                security: { encryption_method: 'AES-256-GCM' },
+                database: { connected: false },
+            },
+        });
+        render(<DashboardPage />);
+        expect(screen.getByText('Unhealthy')).toBeInTheDocument();
+    });
+
+    it('shows Unhealthy when the DB connection pool is nearly saturated', () => {
+        useSystemInfo.mockReturnValue({
+            data: {
+                features: { encryption_enabled: true, rbac_enabled: true, audit_enabled: false, tls_enabled: true },
+                security: { encryption_method: 'AES-256-GCM' },
+                database: { connected: true, pool: { max_connections: 100, active_connections: 98 } },
+            },
+        });
+        render(<DashboardPage />);
+        expect(screen.getByText('Unhealthy')).toBeInTheDocument();
+    });
+
+    it('shows Healthy (not a false alert) before metrics have loaded', () => {
+        useSystemMetrics.mockReturnValue({ data: undefined });
+        useSystemInfo.mockReturnValue({ data: undefined });
+        render(<DashboardPage />);
+        expect(screen.getByText('Healthy')).toBeInTheDocument();
+    });
 });
 
 describe('DashboardPage — security alerts panel', () => {

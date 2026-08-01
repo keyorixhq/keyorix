@@ -66,16 +66,16 @@ describe('RoadmapPage', () => {
         expect(
             screen.getByText('Effective permissions panel and role legend in project Members tab')
         ).toBeInTheDocument();
+        expect(screen.getByText('Dynamic secrets (database credentials, cloud keys)')).toBeInTheDocument();
+        expect(screen.getByText('User invitation and access request flows')).toBeInTheDocument();
+        expect(screen.getByText('Webhook notifications for rotation events')).toBeInTheDocument();
+        expect(screen.getByText('Real-time self-hosted install health status')).toBeInTheDocument();
     });
 
     it('renders every roadmap item for the Q4 2026 quarter', () => {
         render(<RoadmapPage />);
 
-        expect(screen.getByText('Dynamic secrets (database credentials, cloud keys)')).toBeInTheDocument();
-        expect(screen.getByText('User invitation and access request flows')).toBeInTheDocument();
-        expect(screen.getByText('Webhook notifications for rotation events')).toBeInTheDocument();
         expect(screen.getByText('Kubernetes operator (alpha)')).toBeInTheDocument();
-        expect(screen.getByText('Self-hosted install health monitoring')).toBeInTheDocument();
         expect(screen.getByText('OIDC federation backend (token exchange endpoint)')).toBeInTheDocument();
         expect(screen.getByText('demo.keyorix.com hosted demo environment')).toBeInTheDocument();
     });

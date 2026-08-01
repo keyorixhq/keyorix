@@ -1,5 +1,6 @@
 export * from './api';
 export * from './useRbac';
+export * from './useNotificationChannels';
 export * from './useServiceAccounts';
 export * from './AccountStateBadge';
 export * from './StaleAccountsSection';

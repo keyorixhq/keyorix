@@ -98,6 +98,10 @@ export const RoadmapPage: React.FC = () => (
                 'OIDC service account authentication UI for CI/CD (backend in Q4)',
                 'Project switcher in sidebar header',
                 'Effective permissions panel and role legend in project Members tab',
+                'Dynamic secrets (database credentials, cloud keys)',
+                'User invitation and access request flows',
+                'Webhook notifications for rotation events',
+                'Real-time self-hosted install health status',
             ]}
         />
 
@@ -105,11 +109,7 @@ export const RoadmapPage: React.FC = () => (
             quarter="Q4 2026"
             badge="planned"
             items={[
-                'Dynamic secrets (database credentials, cloud keys)',
-                'User invitation and access request flows',
-                'Webhook notifications for rotation events',
                 'Kubernetes operator (alpha)',
-                'Self-hosted install health monitoring',
                 'OIDC federation backend (token exchange endpoint)',
                 'demo.keyorix.com hosted demo environment',
             ]}
