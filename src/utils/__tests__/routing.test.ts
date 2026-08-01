@@ -125,13 +125,11 @@ describe('isProtectedRoute', () => {
         expect(isProtectedRoute(ROUTES.PROJECTS)).toBe(true);
     });
 
-    it('matches by startsWith prefix, not exact equality (real, undocumented behavior)', () => {
-        // '/login' is compared with startsWith, so any path that merely begins
-        // with a public-route string is classified as public too — e.g. a
-        // hypothetical '/login-help' route would be (mis)treated as public.
-        // Not fixing, since this is existing production behavior and out of
-        // scope for a coverage-only PR; documenting it here.
-        expect(isProtectedRoute('/login-help')).toBe(false);
+    it('requires a path-segment boundary, not just a shared prefix', () => {
+        // A sibling path that merely begins with a public-route string (but
+        // isn't that route or a sub-route of it) must NOT be misclassified as
+        // public.
+        expect(isProtectedRoute('/login-help')).toBe(true);
     });
 });
 
@@ -144,6 +142,13 @@ describe('isAdminRoute', () => {
     it('is false for non-admin routes', () => {
         expect(isAdminRoute(ROUTES.DASHBOARD)).toBe(false);
         expect(isAdminRoute('/')).toBe(false);
+    });
+
+    it('requires a path-segment boundary, not just a shared prefix', () => {
+        // A sibling path that merely begins with the admin-route string (but
+        // isn't that route or a sub-route of it) must NOT be misclassified as
+        // an admin route.
+        expect(isAdminRoute('/administration-guide')).toBe(false);
     });
 });
 
@@ -160,18 +165,12 @@ describe('getFallbackRoute', () => {
         expect(getFallbackRoute('viewer')).toBe(ROUTES.DASHBOARD);
     });
 
-    it('returns ROUTES.DASHBOARD (not ROUTES.ADMIN) for other admin-tier roles', () => {
+    it('returns ROUTES.ADMIN for every role in ADMIN_ROLES, not just the literal "admin"', () => {
         // ADMIN_ROLES (src/features/auth/roles.ts) is ['admin', 'system_admin',
         // 'super_admin'], and canAccessRoute's access check uses that whole
-        // list. But getFallbackRoute only special-cases the literal string
-        // 'admin' — a 'system_admin'/'super_admin' caller falls through to
-        // DASHBOARD instead of ADMIN. In practice callAccessRoute only invokes
-        // this as a redirect for roles that already failed the ADMIN_ROLES
-        // check, so the mismatch isn't currently reachable end-to-end, but it
-        // is a real inconsistency in this standalone exported function.
-        // Documenting rather than fixing, per coverage-only scope.
-        expect(getFallbackRoute('system_admin')).toBe(ROUTES.DASHBOARD);
-        expect(getFallbackRoute('super_admin')).toBe(ROUTES.DASHBOARD);
+        // list, so getFallbackRoute must be consistent with it.
+        expect(getFallbackRoute('system_admin')).toBe(ROUTES.ADMIN);
+        expect(getFallbackRoute('super_admin')).toBe(ROUTES.ADMIN);
     });
 });
 

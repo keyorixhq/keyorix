@@ -46,26 +46,34 @@ export const getPostLoginRedirect = (defaultPath: string = ROUTES.DASHBOARD): st
 };
 
 /**
+ * Checks whether `path` is `route` itself or a sub-route of it (i.e. `route`
+ * followed by a `/` segment boundary). Plain `startsWith` would also match
+ * unrelated sibling paths that merely share a prefix (e.g. `/login-help`
+ * against `/login`), so callers should use this instead.
+ */
+const matchesRoutePrefix = (path: string, route: string): boolean => path === route || path.startsWith(`${route}/`);
+
+/**
  * Checks if a route requires authentication
  */
 export const isProtectedRoute = (path: string): boolean => {
     const publicRoutes = [ROUTES.LOGIN, '/auth', '/forgot-password', '/reset-password'];
 
-    return !publicRoutes.some((route) => path.startsWith(route));
+    return !publicRoutes.some((route) => matchesRoutePrefix(path, route));
 };
 
 /**
  * Checks if a route is admin-only
  */
 export const isAdminRoute = (path: string): boolean => {
-    return path.startsWith(ROUTES.ADMIN);
+    return matchesRoutePrefix(path, ROUTES.ADMIN);
 };
 
 /**
  * Gets the appropriate fallback route based on user role
  */
 export const getFallbackRoute = (userRole?: string): string => {
-    if (userRole === 'admin') {
+    if (ADMIN_ROLES.includes(userRole ?? '')) {
         return ROUTES.ADMIN;
     }
 
