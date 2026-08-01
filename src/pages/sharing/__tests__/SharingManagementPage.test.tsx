@@ -375,17 +375,7 @@ describe('SharingManagementPage — bulk selection and bulk revoke', () => {
         expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
     });
 
-    // BUG (documented, not fixed — out of scope for this coverage-only PR):
-    // handleBulkDelete / handleDeleteShare only ever call openModal('confirm-delete', ...).
-    // No component anywhere in this app renders UI for the 'confirm-delete' modal id
-    // (verified: no consumer keys off `activeModal === 'confirm-delete'` in the
-    // codebase) — SharingManagementPage itself only renders a Modal for
-    // `activeModal === 'edit-share'`. So clicking "Revoke" here never shows any
-    // confirmation dialog and the delete mutation can never actually be reached from
-    // the UI. We exercise the wiring directly by capturing and invoking the onConfirm
-    // callback that was handed to openModal, since that's the only way to reach
-    // deleteMutation/bulkDeleteMutation from this file at all.
-    it('opens a confirm-delete request for bulk revoke, and invoking its onConfirm calls the bulk mutation', () => {
+    it('opens the confirm dialog for bulk revoke; confirming triggers the bulk mutation and closes on success', () => {
         render(<SharingManagementPage />);
         fireEvent.click(screen.getByRole('button', { name: 'Select' }));
         fireEvent.click(within(rowFor('Alice Anderson')).getByRole('checkbox'));
@@ -402,18 +392,25 @@ describe('SharingManagementPage — bulk selection and bulk revoke', () => {
             })
         );
 
-        const { onConfirm } = openModalMock.mock.calls.at(-1)![1];
-        act(() => onConfirm());
+        const dialog = screen.getByRole('dialog');
+        // Modal also renders an sr-only <h2> with the same text for the dialog's
+        // accessible name (Dialog.tsx passes hideTitleVisually) — scope to the
+        // visible <h3> Dialog.tsx itself renders, not just any matching text.
+        expect(within(dialog).getByRole('heading', { level: 3, name: 'Delete Multiple Shares' })).toBeInTheDocument();
+        expect(within(dialog).getByText('Are you sure you want to revoke 2 share(s)?')).toBeInTheDocument();
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }));
         expect(bulkDeleteMutate).toHaveBeenCalledWith(
             [1, 3],
             expect.objectContaining({ onSuccess: expect.any(Function) })
         );
 
-        // Simulate the mutation's onSuccess: selection clears and bulk mode exits.
+        // Simulate the mutation's onSuccess: selection clears, bulk mode exits, dialog closes.
         const { onSuccess } = bulkDeleteMutate.mock.calls[0]![1];
         act(() => onSuccess());
         expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
     it('the Revoke bulk action is disabled with nothing selected', () => {
@@ -431,9 +428,7 @@ describe('SharingManagementPage — per-row actions', () => {
         expect(openModalMock).toHaveBeenCalledWith('view-secret', { secretId: 101 });
     });
 
-    // BUG (documented, not fixed): same missing-confirmation-dialog issue as bulk
-    // revoke above — 'confirm-delete' is requested but never rendered anywhere.
-    it('Revoke access opens a confirm-delete request whose onConfirm deletes the share', () => {
+    it('Revoke access opens the confirm dialog; confirming deletes the share and closes on success', () => {
         render(<SharingManagementPage />);
         fireEvent.click(within(rowFor('Alice Anderson')).getByTitle('Revoke access'));
 
@@ -446,9 +441,34 @@ describe('SharingManagementPage — per-row actions', () => {
             })
         );
 
-        const { onConfirm } = openModalMock.mock.calls.at(-1)![1];
-        act(() => onConfirm());
-        expect(deleteMutate).toHaveBeenCalledWith(1);
+        const dialog = screen.getByRole('dialog');
+        // Modal also renders an sr-only <h2> with the same text for the dialog's
+        // accessible name (Dialog.tsx passes hideTitleVisually) — scope to the
+        // visible <h3> Dialog.tsx itself renders, not just any matching text.
+        expect(within(dialog).getByRole('heading', { level: 3, name: 'Delete Share' })).toBeInTheDocument();
+        expect(
+            within(dialog).getByText('Are you sure you want to revoke access for "Alice Anderson"?')
+        ).toBeInTheDocument();
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }));
+        expect(deleteMutate).toHaveBeenCalledWith(1, expect.objectContaining({ onSuccess: expect.any(Function) }));
+
+        // Simulate the mutation's onSuccess: the dialog closes.
+        const { onSuccess } = deleteMutate.mock.calls[0]![1];
+        act(() => onSuccess());
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('cancelling the confirm dialog closes it without deleting', () => {
+        render(<SharingManagementPage />);
+        fireEvent.click(within(rowFor('Alice Anderson')).getByTitle('Revoke access'));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+        expect(closeModalMock).toHaveBeenCalled();
+        expect(deleteMutate).not.toHaveBeenCalled();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 });
 

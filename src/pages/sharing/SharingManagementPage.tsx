@@ -23,6 +23,7 @@ import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
+import { Dialog } from '../../components/ui/Dialog';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -192,7 +193,12 @@ export const SharingManagementPage: React.FC = () => {
         openModal('confirm-delete', {
             title: 'Delete Share',
             message: `Are you sure you want to revoke access for "${share.recipientName}"?`,
-            onConfirm: () => deleteMutation.mutate(share.id),
+            onConfirm: () =>
+                deleteMutation.mutate(share.id, {
+                    onSuccess: () => {
+                        closeModal();
+                    },
+                }),
         });
     };
 
@@ -207,6 +213,7 @@ export const SharingManagementPage: React.FC = () => {
                     onSuccess: () => {
                         clearSelectedItems();
                         setBulkActionMode(false);
+                        closeModal();
                     },
                 }),
         });
@@ -690,6 +697,17 @@ export const SharingManagementPage: React.FC = () => {
                     </div>
                 </div>
             </Modal>
+
+            <Dialog
+                isOpen={activeModal === 'confirm-delete'}
+                onClose={closeModal}
+                title={modalData?.title ?? ''}
+                message={modalData?.message ?? ''}
+                onConfirm={modalData?.onConfirm}
+                type="danger"
+                confirmText="Revoke"
+                loading={deleteMutation.isPending || bulkDeleteMutation.isPending}
+            />
         </div>
     );
 };
