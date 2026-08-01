@@ -1,6 +1,6 @@
 # ADR-028 — Credential Delivery: Email Transport, Setup Tokens, and Out-of-Band Provisioning
 
-**Status:** Proposed (June 5, 2026)
+**Status:** Accepted — implemented (`internal/core/setup_delivery.go`, `setup_token.go`, `setup_consume.go`, `internal/delivery/smtp.go`); verified against the codebase and updated August 2026 (originally Proposed June 5, 2026)
 **Decision:** Introduce a single credential-delivery subsystem that backs every "get a new principal their first credential" flow. It has two interchangeable delivery channels — **operator-configured SMTP email** (via a vetted library) and **admin out-of-band display** (link / one-time password shown once on screen, audited) — sitting behind one `CredentialDelivery` interface, and a single **single-use, hashed-at-rest, TTL'd setup-token** mechanism that the invitation-accept (ADR-024), admin-direct-creation (ADR-025), and resend flows all share. **No password and no reusable credential is ever placed in an email.**
 
 ## Context
