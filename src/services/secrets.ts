@@ -148,7 +148,7 @@ export const secretsApi = {
 
     // suspend freezes value reads of the secret (incident response); resume restores.
     async suspend(id: number, reason?: string) {
-        const response = await apiClient.post(`/api/v1/secrets/${id}/suspend`, reason ? { reason } : {});
+        const response = await apiClient.post(`/api/v1/secrets/${id}/suspend`, reason !== undefined ? { reason } : {});
         return response.data;
     },
     async resume(id: number) {
@@ -221,8 +221,8 @@ export const secretsApi = {
 
     async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {
         const query: Record<string, unknown> = {};
-        if (params?.days) query.days = params.days;
-        if (params?.limit) query.limit = params.limit;
+        if (params?.days !== undefined) query.days = params.days;
+        if (params?.limit !== undefined) query.limit = params.limit;
         if (params?.projectId) query.project_id = params.projectId;
         const response = await apiClient.get('/api/v1/secrets/usage/most-accessed', { params: query });
         return (response.data.data?.secrets ?? []) as SecretUsageStat[];
@@ -230,7 +230,7 @@ export const secretsApi = {
 
     async unused(params?: { days?: number; projectId?: number }): Promise<UnusedSecretStat[]> {
         const query: Record<string, unknown> = {};
-        if (params?.days) query.days = params.days;
+        if (params?.days !== undefined) query.days = params.days;
         if (params?.projectId) query.project_id = params.projectId;
         const response = await apiClient.get('/api/v1/secrets/usage/unused', { params: query });
         return (response.data.data?.secrets ?? []) as UnusedSecretStat[];

@@ -285,16 +285,15 @@ describe('secretsApi.suspend', () => {
         expect(mocked.post).toHaveBeenCalledWith('/api/v1/secrets/1/suspend', {});
     });
 
-    // Documented, not fixed: reason is checked with a plain truthy test, so an
-    // explicitly-passed empty string ('') is dropped just like omitting it —
-    // the server never sees `{ reason: '' }`. Only observable if a caller ever
-    // means "clear the reason to empty" as distinct from "no reason".
-    it('also POSTs an empty body when reason is explicitly an empty string (falsy-check quirk)', async () => {
+    // reason is checked against undefined (not truthiness), so an explicitly-passed
+    // empty string ('') is sent as `{ reason: '' }` rather than being dropped like an
+    // omitted reason — distinguishing "clear the reason to empty" from "no reason".
+    it('POSTs {reason: ""} when reason is explicitly an empty string', async () => {
         mocked.post.mockResolvedValue({ data: { message: 'Suspended' } });
 
         await secretsApi.suspend(1, '');
 
-        expect(mocked.post).toHaveBeenCalledWith('/api/v1/secrets/1/suspend', {});
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/secrets/1/suspend', { reason: '' });
     });
 });
 
@@ -592,15 +591,16 @@ describe('secretsApi usage analytics', () => {
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/most-accessed', { params: {} });
     });
 
-    // Documented, not fixed: each param is gated with a plain truthy check
-    // (`if (params?.days)`), so an explicitly-passed 0 is indistinguishable from
-    // "not provided" and silently dropped from the query string.
-    it('drops an explicit days: 0 from the query (falsy-check quirk)', async () => {
+    // Each param is gated against undefined (not truthiness), so an explicitly-passed
+    // 0 is distinguishable from "not provided" and is included in the query string.
+    it('includes an explicit days: 0 and limit: 0 in the query', async () => {
         mocked.get.mockResolvedValue({ data: { data: { secrets: [] } } });
 
         await secretsApi.mostAccessed({ days: 0, limit: 0 });
 
-        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/most-accessed', { params: {} });
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/most-accessed', {
+            params: { days: 0, limit: 0 },
+        });
     });
 
     it('unused unwraps secrets and defaults to an empty array', async () => {
@@ -618,6 +618,14 @@ describe('secretsApi usage analytics', () => {
         await secretsApi.unused({ projectId: 2 });
 
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/unused', { params: { project_id: 2 } });
+    });
+
+    it('unused includes an explicit days: 0 in the query', async () => {
+        mocked.get.mockResolvedValue({ data: { data: { secrets: [] } } });
+
+        await secretsApi.unused({ days: 0 });
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/unused', { params: { days: 0 } });
     });
 });
 
