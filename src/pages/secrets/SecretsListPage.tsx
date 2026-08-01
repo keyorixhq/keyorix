@@ -146,6 +146,938 @@ function checkNamePatternUnsafe(policy: SecretPolicy['name'] | undefined): boole
     return !!policy?.enabled && !!policy.pattern && !isPatternSafe(policy.pattern);
 }
 
+// ─── Section components ─────────────────────────────────────────────────────
+
+type ListState = ReturnType<typeof useSecretsList>;
+
+interface SecretsPageHeaderProps {
+    selectedItems: Set<number>;
+    bulkClassifyPending: boolean;
+    onBulkClassify: (level: string) => void;
+    onBulkDelete: () => void;
+    onClearSelection: () => void;
+    onCreateClick: () => void;
+}
+
+const SecretsPageHeader: React.FC<SecretsPageHeaderProps> = ({
+    selectedItems,
+    bulkClassifyPending,
+    onBulkClassify,
+    onBulkDelete,
+    onClearSelection,
+    onCreateClick,
+}) => (
+    <div className="flex items-center justify-between">
+        <div>
+            <h1 className="text-2xl font-semibold text-base-primary ">Secrets</h1>
+            <p className="mt-1 text-sm text-base-muted ">Manage your secrets and access controls</p>
+        </div>
+        <div className="flex items-center space-x-3">
+            {selectedItems.size > 0 && (
+                <div className="flex items-center space-x-2">
+                    <span className="text-sm text-base-muted">{selectedItems.size} selected</span>
+                    <Select
+                        aria-label="Classify selected"
+                        value=""
+                        disabled={bulkClassifyPending}
+                        onChange={(e) => {
+                            const level = e.target.value;
+                            if (!level) return;
+                            onBulkClassify(level);
+                        }}
+                        options={[
+                            { value: '', label: 'Classify as…' },
+                            { value: 'public', label: 'Public' },
+                            { value: 'internal', label: 'Internal' },
+                            { value: 'confidential', label: 'Confidential' },
+                            { value: 'restricted', label: 'Restricted' },
+                            { value: 'unclassified', label: 'Unclassified' },
+                        ]}
+                    />
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        disabled
+                        title="Share each secret individually — bulk sharing is not supported"
+                    >
+                        <ShareIcon className="h-4 w-4 mr-1" />
+                        Share
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onBulkDelete}
+                        disabled={selectedItems.size === 0}
+                        className="text-red-600 hover:text-red-700"
+                    >
+                        <TrashIcon className="h-4 w-4 mr-1" />
+                        Delete
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={onClearSelection}>
+                        Clear
+                    </Button>
+                </div>
+            )}
+            <Button data-testid="create-secret-button" onClick={onCreateClick} className="flex items-center">
+                <PlusIcon className="h-4 w-4 mr-2" />
+                New Secret
+            </Button>
+        </div>
+    </div>
+);
+
+interface SecretsFilterBarProps {
+    searchInput: string;
+    onSearchChange: (v: string) => void;
+    filters: ListState['filters'];
+    onFilterChange: ListState['handleFilterChange'];
+    environments: ListState['environments'];
+    sortBy: string;
+    onSortChange: (v: string) => void;
+    pageSize: number;
+    onPageSizeChange: (v: number) => void;
+    showAdvancedFilters: boolean;
+    onToggleAdvanced: () => void;
+    hasActiveFilters: boolean;
+    onClearFilters: () => void;
+    isFetching: boolean;
+}
+
+const SecretsFilterBar: React.FC<SecretsFilterBarProps> = ({
+    searchInput,
+    onSearchChange,
+    filters,
+    onFilterChange,
+    environments,
+    sortBy,
+    onSortChange,
+    pageSize,
+    onPageSizeChange,
+    showAdvancedFilters,
+    onToggleAdvanced,
+    hasActiveFilters,
+    onClearFilters,
+    isFetching,
+}) => (
+    <div className="bg-surface rounded-lg border border-base  p-4">
+        <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                <div className="lg:col-span-2">
+                    <Input
+                        type="text"
+                        placeholder="Search by name, type, or tags..."
+                        value={searchInput}
+                        onChange={(e) => onSearchChange(e.target.value)}
+                        icon={MagnifyingGlassIcon}
+                    />
+                </div>
+                <Select
+                    value={filters.type}
+                    onChange={(e) => onFilterChange('type', e.target.value)}
+                    options={SECRET_TYPES}
+                />
+                <Select
+                    value={filters.classification || 'all'}
+                    onChange={(e) => onFilterChange('classification', e.target.value === 'all' ? '' : e.target.value)}
+                    options={[
+                        { value: 'all', label: 'All Classifications' },
+                        { value: 'unclassified', label: 'Unclassified' },
+                        { value: 'public', label: 'Public' },
+                        { value: 'internal', label: 'Internal' },
+                        { value: 'confidential', label: 'Confidential' },
+                        { value: 'restricted', label: 'Restricted' },
+                    ]}
+                />
+                <Select
+                    value={filters.environment || 'all'}
+                    onChange={(e) => onFilterChange('environment', e.target.value === 'all' ? '' : e.target.value)}
+                    options={[
+                        { value: 'all', label: 'All Environments' },
+                        ...environments.map((e) => ({
+                            value: e.name,
+                            label: e.name.charAt(0).toUpperCase() + e.name.slice(1),
+                        })),
+                    ]}
+                />
+                <Select
+                    value={sortBy}
+                    onChange={(e) => onSortChange(e.target.value)}
+                    options={SORT_OPTIONS}
+                    placeholder="Sort by"
+                />
+                <Select
+                    value={String(pageSize)}
+                    onChange={(e) => onPageSizeChange(Number(e.target.value))}
+                    options={PAGE_SIZE_OPTIONS}
+                />
+                <Button variant="outline" onClick={onToggleAdvanced} className="w-full">
+                    <FunnelIcon className="h-4 w-4 mr-2" />
+                    {showAdvancedFilters ? 'Hide' : 'More'} Filters
+                </Button>
+            </div>
+            {showAdvancedFilters && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-base ">
+                    {/* Project filter — Phase 3: replace with project selector dropdown */}
+                </div>
+            )}
+            {/* Tag filter hidden — tags not yet implemented on secrets */}
+            {hasActiveFilters && (
+                <div className="flex items-center justify-end pt-4 border-t border-base ">
+                    <Button variant="ghost" size="sm" onClick={onClearFilters} className="text-xs">
+                        Clear all
+                    </Button>
+                </div>
+            )}
+            {isFetching && (
+                <div className="flex items-center justify-center py-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    <span className="ml-2 text-sm text-base-muted ">Updating results...</span>
+                </div>
+            )}
+        </div>
+    </div>
+);
+
+const ExpiringFilterBanner: React.FC = () => (
+    <div
+        className="flex items-center justify-between px-4 py-2.5 rounded-lg border"
+        style={{
+            backgroundColor: 'rgba(217,119,6,0.06)',
+            borderColor: 'rgba(217,119,6,0.30)',
+            color: '#92400e',
+        }}
+    >
+        <span className="text-sm font-medium" style={{ color: 'inherit' }}>
+            Showing secrets with expiration set
+        </span>
+        <button
+            type="button"
+            onClick={() => window.history.replaceState({}, '', window.location.pathname)}
+            className="text-sm font-medium underline underline-offset-2 hover:opacity-75 transition-opacity ml-4"
+            style={{ color: 'inherit' }}
+        >
+            ✕ Clear filter
+        </button>
+    </div>
+);
+
+interface SecretsTableProps {
+    isLoading: boolean;
+    displayedSecrets: any[];
+    hasActiveFilters: boolean;
+    onCreateClick: () => void;
+    selectedItems: Set<number>;
+    toggleSelectedItem: (id: number) => void;
+    clearSelectedItems: () => void;
+    onView: (secret: any) => void;
+    onEdit: (secret: any) => void;
+    onDelete: (secret: any) => void;
+    onShare: (secret: any) => void;
+    onRotate: (secret: any) => void;
+    onAutoRotate: (secret: any) => void;
+    reveal: ReturnType<typeof useSecretReveal>;
+    pagination: ListState['pagination'];
+    onPageChange: (page: number) => void;
+}
+
+const SecretsTable: React.FC<SecretsTableProps> = ({
+    isLoading,
+    displayedSecrets,
+    hasActiveFilters,
+    onCreateClick,
+    selectedItems,
+    toggleSelectedItem,
+    clearSelectedItems,
+    onView,
+    onEdit,
+    onDelete,
+    onShare,
+    onRotate,
+    onAutoRotate,
+    reveal,
+    pagination,
+    onPageChange,
+}) => {
+    if (isLoading) {
+        return (
+            <div className="p-8">
+                <Loading />
+            </div>
+        );
+    }
+    if (displayedSecrets.length === 0) {
+        return (
+            <div className="p-8 text-center">
+                <FunnelIcon className="h-12 w-12 mx-auto text-base-muted  mb-4" />
+                <h3 className="text-lg font-medium text-base-primary  mb-2">No secrets found</h3>
+                <p className="text-base-muted  mb-4">
+                    {hasActiveFilters
+                        ? 'Try adjusting your filters or search terms.'
+                        : 'Get started by creating your first secret.'}
+                </p>
+                {!hasActiveFilters && (
+                    <Button data-testid="create-secret-button" onClick={onCreateClick}>
+                        <PlusIcon className="h-4 w-4 mr-2" />
+                        Create Secret
+                    </Button>
+                )}
+            </div>
+        );
+    }
+    return (
+        <div className="overflow-x-auto">
+            <table data-testid="secrets-table" className="min-w-full divide-y divide-base dark:divide-gray-700">
+                <thead className="bg-subtle dark:bg-gray-900">
+                    <tr>
+                        <th className="px-4 py-3 text-left w-10">
+                            <input
+                                type="checkbox"
+                                className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
+                                checked={
+                                    displayedSecrets.length > 0 &&
+                                    displayedSecrets.every((s) => selectedItems.has(s.id))
+                                }
+                                onChange={(e) => {
+                                    if (e.target.checked) displayedSecrets.forEach((s) => toggleSelectedItem(s.id));
+                                    else clearSelectedItems();
+                                }}
+                            />
+                        </th>
+                        {['Name', 'Type', 'Classification', 'Environment', 'Sharing', 'Modified'].map((h) => (
+                            <th
+                                key={h}
+                                className="px-6 py-3 text-left text-xs font-medium text-base-muted  uppercase tracking-wider"
+                            >
+                                {h}
+                            </th>
+                        ))}
+                        <th className="px-6 py-3 text-right text-xs font-medium text-base-muted  uppercase tracking-wider min-w-[180px]">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody className="bg-surface divide-y divide-base dark:divide-gray-700">
+                    {displayedSecrets.map((secret) => (
+                        <SecretTableRow
+                            key={secret.id}
+                            secret={secret}
+                            isSelected={selectedItems.has(secret.id)}
+                            onToggleSelect={toggleSelectedItem}
+                            onView={onView}
+                            onEdit={onEdit}
+                            onDelete={onDelete}
+                            onShare={onShare}
+                            onRotate={onRotate}
+                            onAutoRotate={onAutoRotate}
+                            onCopy={reveal.handleCopySecretValue}
+                            copyingId={reveal.copyingSecretId}
+                            copiedId={reveal.copiedSecretId}
+                            copyErrorId={reveal.copyErrorId}
+                        />
+                    ))}
+                </tbody>
+            </table>
+
+            {pagination.totalPages > 1 && (
+                <div className="px-4 py-3 border-t border-base  flex items-center justify-between">
+                    <p className="text-sm text-base-secondary dark:text-base-muted">
+                        Showing <span className="font-medium">{(pagination.page - 1) * pagination.pageSize + 1}</span>{' '}
+                        to{' '}
+                        <span className="font-medium">
+                            {Math.min(pagination.page * pagination.pageSize, pagination.total)}
+                        </span>{' '}
+                        of <span className="font-medium">{pagination.total}</span> results
+                    </p>
+                    <div className="flex items-center space-x-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onPageChange(pagination.page - 1)}
+                            disabled={pagination.page === 1}
+                        >
+                            <ChevronLeftIcon className="h-4 w-4" />
+                        </Button>
+                        <span className="text-sm text-base-secondary dark:text-base-muted">
+                            Page {pagination.page} of {pagination.totalPages}
+                        </span>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onPageChange(pagination.page + 1)}
+                            disabled={pagination.page === pagination.totalPages}
+                        >
+                            <ChevronRightIcon className="h-4 w-4" />
+                        </Button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+interface ViewSecretModalProps {
+    secret: any;
+    onClose: () => void;
+    onEdit: (secret: any) => void;
+    onShare: (secret: any) => void;
+    onDelete: (secret: any) => void;
+}
+
+const ViewSecretModal: React.FC<ViewSecretModalProps> = ({ secret, onClose, onEdit, onShare, onDelete }) => (
+    <Modal isOpen={secret !== null} onClose={onClose} size="xl">
+        {secret && (
+            <SecretDetailView
+                secret={secret}
+                onClose={onClose}
+                onEdit={(s) => {
+                    onClose();
+                    onEdit(s);
+                }}
+                onShare={(s) => {
+                    onClose();
+                    onShare(s);
+                }}
+                onDelete={(s) => {
+                    onClose();
+                    onDelete(s);
+                }}
+            />
+        )}
+    </Modal>
+);
+
+interface EditSecretModalProps {
+    isOpen: boolean;
+    secret: any;
+    onClose: () => void;
+    editName: string;
+    setEditName: (v: string) => void;
+    editType: SecretType;
+    setEditType: (v: SecretType) => void;
+    editValue: string;
+    setEditValue: (v: string) => void;
+    mutation: ListState['editMutation'];
+}
+
+const EditSecretModal: React.FC<EditSecretModalProps> = ({
+    isOpen,
+    secret,
+    onClose,
+    editName,
+    setEditName,
+    editType,
+    setEditType,
+    editValue,
+    setEditValue,
+    mutation,
+}) => (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Edit Secret: ${secret?.name ?? ''}`} size="md">
+        <form
+            onSubmit={(e) => {
+                e.preventDefault();
+                if (!secret) return;
+                mutation.mutate({ id: secret.id, name: editName, type: editType, value: editValue });
+            }}
+            className="space-y-4"
+        >
+            {mutation.isError && (
+                <Alert
+                    type="error"
+                    title="Failed to update secret"
+                    message={mutation.error instanceof Error ? mutation.error.message : 'An unexpected error occurred'}
+                />
+            )}
+            <div>
+                <label
+                    htmlFor="edit-secret-name"
+                    className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
+                >
+                    Name
+                </label>
+                <input
+                    id="edit-secret-name"
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                />
+            </div>
+            <div>
+                <label
+                    htmlFor="edit-secret-type"
+                    className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
+                >
+                    Type
+                </label>
+                <Select
+                    id="edit-secret-type"
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value as SecretType)}
+                    options={SECRET_TYPES.filter((t) => t.value !== 'all') as { value: SecretType; label: string }[]}
+                />
+            </div>
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="edit-secret-value" className="block text-sm font-medium text-base-secondary">
+                        New Value
+                    </label>
+                    <button
+                        type="button"
+                        onClick={() => setEditValue(generateSecret())}
+                        className="text-xs font-medium transition-colors"
+                        style={{ color: 'var(--accent-text)' }}
+                    >
+                        ↻ Generate
+                    </button>
+                </div>
+                <input
+                    id="edit-secret-value"
+                    type="text"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    placeholder="Leave blank to keep existing value"
+                    className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    style={{
+                        backgroundColor: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        borderColor: 'var(--border-strong)',
+                    }}
+                />
+                <p className="mt-1 text-xs text-base-muted">Leave blank to keep the existing value.</p>
+            </div>
+            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
+                <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
+                    Cancel
+                </Button>
+                <Button type="submit" disabled={mutation.isPending}>
+                    {mutation.isPending ? 'Saving…' : 'Save Changes'}
+                </Button>
+            </div>
+        </form>
+    </Modal>
+);
+
+interface DeleteSecretModalProps {
+    isOpen: boolean;
+    secret: any;
+    onClose: () => void;
+    mutation: ListState['deleteMutation'];
+}
+
+const DeleteSecretModal: React.FC<DeleteSecretModalProps> = ({ isOpen, secret, onClose, mutation }) => (
+    <Modal isOpen={isOpen} onClose={onClose} title="Delete Secret" size="sm">
+        <div className="space-y-4">
+            {mutation.isError && (
+                <Alert
+                    type="error"
+                    title="Failed to delete secret"
+                    message={mutation.error instanceof Error ? mutation.error.message : 'An unexpected error occurred'}
+                />
+            )}
+            <p className="text-sm text-base-secondary dark:text-base-muted">
+                Are you sure you want to delete <span className="font-semibold">{secret?.name}</span>? The secret will
+                be soft-deleted and can be restored within 30 days.
+            </p>
+            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
+                <Button variant="outline" onClick={onClose} disabled={mutation.isPending}>
+                    Cancel
+                </Button>
+                <Button
+                    variant="destructive"
+                    onClick={() => secret && mutation.mutate(secret.id)}
+                    disabled={mutation.isPending}
+                >
+                    {mutation.isPending ? 'Deleting…' : 'Delete'}
+                </Button>
+            </div>
+        </div>
+    </Modal>
+);
+
+interface CreateSecretModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+    createName: string;
+    setCreateName: (v: string) => void;
+    createValue: string;
+    setCreateValue: (v: string) => void;
+    createType: SecretType;
+    setCreateType: (v: SecretType) => void;
+    createError: string;
+    createProjectId: number;
+    setCreateProjectId: (v: number) => void;
+    createEnvId: number;
+    setCreateEnvId: (v: number) => void;
+    createProjects: ReturnType<typeof useProjects>['data'];
+    createEnvironments: ReturnType<typeof useProjectEnvironments>['data'];
+    nameHint: string;
+    namePatternUnsafe: boolean;
+    mutation: ListState['createMutation'];
+}
+
+const CreateSecretModal: React.FC<CreateSecretModalProps> = ({
+    isOpen,
+    onClose,
+    onSubmit,
+    createName,
+    setCreateName,
+    createValue,
+    setCreateValue,
+    createType,
+    setCreateType,
+    createError,
+    createProjectId,
+    setCreateProjectId,
+    createEnvId,
+    setCreateEnvId,
+    createProjects,
+    createEnvironments,
+    nameHint,
+    namePatternUnsafe,
+    mutation,
+}) => (
+    <Modal isOpen={isOpen} onClose={onClose} title="Create New Secret" size="md">
+        <form onSubmit={onSubmit} className="space-y-4">
+            {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
+            <div>
+                <label
+                    htmlFor="create-secret-name"
+                    className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
+                >
+                    Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                    id="create-secret-name"
+                    type="text"
+                    required
+                    value={createName}
+                    onChange={(e) => setCreateName(e.target.value)}
+                    className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                />
+                {nameHint && <p className="mt-1 text-xs text-base-muted">Naming policy: {nameHint}.</p>}
+                {namePatternUnsafe && (
+                    <p className="mt-1 text-xs text-amber-600">
+                        This naming pattern can&apos;t be safely checked in your browser and won&apos;t be validated
+                        here; the server will still enforce it when you submit.
+                    </p>
+                )}
+            </div>
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="create-secret-value" className="block text-sm font-medium text-base-secondary">
+                        Value <span className="text-red-500">*</span>
+                    </label>
+                    <button
+                        type="button"
+                        onClick={() => setCreateValue(generateSecret())}
+                        className="text-xs font-medium transition-colors"
+                        style={{ color: 'var(--accent-text)' }}
+                    >
+                        ↻ Generate
+                    </button>
+                </div>
+                <textarea
+                    id="create-secret-value"
+                    required
+                    rows={3}
+                    value={createValue}
+                    onChange={(e) => setCreateValue(e.target.value)}
+                    className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500 resize-none"
+                    style={{
+                        backgroundColor: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        borderColor: 'var(--border-strong)',
+                    }}
+                />
+            </div>
+            <div>
+                <label
+                    htmlFor="create-secret-type"
+                    className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
+                >
+                    Type
+                </label>
+                <Select
+                    id="create-secret-type"
+                    value={createType}
+                    onChange={(e) => setCreateType(e.target.value as SecretType)}
+                    options={[
+                        { value: 'text', label: 'Generic' },
+                        { value: 'password', label: 'Password' },
+                        { value: 'api_key', label: 'API Key' },
+                        { value: 'certificate', label: 'Certificate' },
+                        { value: 'json', label: 'JSON' },
+                    ]}
+                />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+                <div>
+                    <label
+                        htmlFor="create-secret-project"
+                        className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
+                    >
+                        Project <span className="text-red-500">*</span>
+                    </label>
+                    <Select
+                        id="create-secret-project"
+                        value={String(createProjectId)}
+                        onChange={(e) => setCreateProjectId(Number(e.target.value))}
+                        options={(createProjects ?? []).map((p) => ({ value: String(p.id), label: p.name }))}
+                    />
+                </div>
+                <div>
+                    <label
+                        htmlFor="create-secret-environment"
+                        className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
+                    >
+                        Environment <span className="text-red-500">*</span>
+                    </label>
+                    <Select
+                        id="create-secret-environment"
+                        value={String(createEnvId)}
+                        onChange={(e) => setCreateEnvId(Number(e.target.value))}
+                        options={(createEnvironments ?? []).map((env) => ({
+                            value: String(env.id),
+                            label: env.name,
+                        }))}
+                    />
+                </div>
+            </div>
+            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
+                <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
+                    Cancel
+                </Button>
+                <Button data-testid="create-secret-submit" type="submit" disabled={mutation.isPending}>
+                    {mutation.isPending ? 'Creating…' : 'Create Secret'}
+                </Button>
+            </div>
+        </form>
+    </Modal>
+);
+
+interface RotateSecretModalProps {
+    isOpen: boolean;
+    secret: any;
+    onClose: () => void;
+    rotateValue: string;
+    setRotateValue: (v: string) => void;
+    mutation: ListState['rotateMutation'];
+}
+
+const RotateSecretModal: React.FC<RotateSecretModalProps> = ({
+    isOpen,
+    secret,
+    onClose,
+    rotateValue,
+    setRotateValue,
+    mutation,
+}) => (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Rotate Secret: ${secret?.name ?? ''}`} size="sm">
+        <form
+            onSubmit={(e) => {
+                e.preventDefault();
+                if (!secret) return;
+                mutation.mutate({ id: secret.id, newValue: rotateValue });
+            }}
+            className="space-y-4"
+        >
+            {mutation.isError && (
+                <Alert type="error" title="Failed to rotate secret" message={apiErrorMessage(mutation.error)} />
+            )}
+            <p className="text-sm text-base-muted">
+                A new random value has been generated. Edit it or regenerate, then click Rotate to create a new version.
+            </p>
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="rotate-secret-value" className="block text-sm font-medium text-base-secondary">
+                        New Value
+                    </label>
+                    <button
+                        type="button"
+                        onClick={() => setRotateValue(generateSecret())}
+                        className="text-xs font-medium transition-colors"
+                        style={{ color: 'var(--accent-text)' }}
+                    >
+                        ↻ Regenerate
+                    </button>
+                </div>
+                <input
+                    id="rotate-secret-value"
+                    type="text"
+                    value={rotateValue}
+                    onChange={(e) => setRotateValue(e.target.value)}
+                    className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    style={{
+                        backgroundColor: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        borderColor: 'var(--border-strong)',
+                    }}
+                />
+            </div>
+            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
+                <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
+                    Cancel
+                </Button>
+                <Button type="submit" disabled={mutation.isPending || !rotateValue.trim()}>
+                    {mutation.isPending ? 'Rotating…' : 'Rotate'}
+                </Button>
+            </div>
+        </form>
+    </Modal>
+);
+
+interface AutoRotateModalProps {
+    isOpen: boolean;
+    secret: any;
+    onClose: () => void;
+    onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void;
+    arEnabled: boolean;
+    setArEnabled: (v: boolean) => void;
+    arLength: string;
+    setArLength: (v: string) => void;
+    arCharset: string;
+    setArCharset: (v: string) => void;
+    arBackend: string;
+    setArBackend: (v: string) => void;
+    arRef: string;
+    setArRef: (v: string) => void;
+    backendRefMismatch: boolean;
+    mutation: ReturnType<typeof useSetAutoRotate>;
+}
+
+const AutoRotateModal: React.FC<AutoRotateModalProps> = ({
+    isOpen,
+    secret,
+    onClose,
+    onSubmit,
+    arEnabled,
+    setArEnabled,
+    arLength,
+    setArLength,
+    arCharset,
+    setArCharset,
+    arBackend,
+    setArBackend,
+    arRef,
+    setArRef,
+    backendRefMismatch,
+    mutation,
+}) => (
+    <Modal isOpen={isOpen} onClose={onClose} title={`Automated Rotation: ${secret?.name ?? ''}`} size="md">
+        <form onSubmit={onSubmit} className="space-y-4">
+            {mutation.isError && (
+                <Alert
+                    type="error"
+                    title="Failed to update auto-rotation"
+                    message={mutation.error instanceof Error ? mutation.error.message : 'An unexpected error occurred'}
+                />
+            )}
+            <p className="text-sm text-base-muted">
+                When enabled, Keyorix regenerates this secret on its rotation-policy schedule. Enable only for values
+                Keyorix owns — or set a backend to rotate the upstream credential in place.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-base-secondary">
+                <input
+                    type="checkbox"
+                    checked={arEnabled}
+                    onChange={(e) => setArEnabled(e.target.checked)}
+                    aria-label="Enable auto-rotation"
+                />{' '}
+                Enable automated rotation
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+                <Input
+                    label="Value length"
+                    type="number"
+                    placeholder="default 32"
+                    value={arLength}
+                    onChange={(e) => setArLength(e.target.value)}
+                />
+                <div>
+                    <label htmlFor="auto-rotate-charset" className="block text-sm font-medium text-base-secondary mb-1">
+                        Charset
+                    </label>
+                    <Select
+                        id="auto-rotate-charset"
+                        value={arCharset}
+                        onChange={(e) => setArCharset(e.target.value)}
+                        options={[
+                            { value: '', label: 'Alphanumeric (default)' },
+                            { value: 'lower_alphanumeric', label: 'Lowercase + digits' },
+                            { value: 'hex', label: 'Hex' },
+                            { value: 'alphanumeric_symbols', label: 'Alphanumeric + symbols' },
+                        ]}
+                    />
+                </div>
+            </div>
+            <div className="pt-2 border-t border-base">
+                <p className="text-xs text-base-muted mb-2">
+                    Optional — rotate an upstream credential (e.g. a DB role or cloud key) via a configured backend.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                    <Input
+                        label="Backend"
+                        placeholder="e.g. prod-postgres"
+                        value={arBackend}
+                        onChange={(e) => setArBackend(e.target.value)}
+                    />
+                    <Input
+                        label="Upstream ref"
+                        placeholder="e.g. app_svc"
+                        value={arRef}
+                        onChange={(e) => setArRef(e.target.value)}
+                    />
+                </div>
+                {backendRefMismatch && (
+                    <p className="text-xs text-red-600 mt-1">Backend and ref must be set together.</p>
+                )}
+            </div>
+            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
+                <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
+                    Cancel
+                </Button>
+                <Button type="submit" disabled={mutation.isPending || backendRefMismatch}>
+                    {mutation.isPending ? 'Saving…' : 'Save'}
+                </Button>
+            </div>
+        </form>
+    </Modal>
+);
+
+interface BulkDeleteSecretsModalProps {
+    isOpen: boolean;
+    secretIds: number[] | undefined;
+    onClose: () => void;
+    mutation: ListState['bulkDeleteMutation'];
+}
+
+const BulkDeleteSecretsModal: React.FC<BulkDeleteSecretsModalProps> = ({ isOpen, secretIds, onClose, mutation }) => (
+    <Modal isOpen={isOpen} onClose={onClose} title="Delete Selected Secrets" size="sm">
+        <div className="space-y-4">
+            <p className="text-sm text-base-secondary dark:text-base-muted">
+                Are you sure you want to delete <span className="font-semibold">{secretIds?.length}</span> secret(s)?
+                They will be soft-deleted and can be restored within 30 days.
+            </p>
+            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
+                <Button variant="outline" onClick={onClose} disabled={mutation.isPending}>
+                    Cancel
+                </Button>
+                <Button
+                    variant="destructive"
+                    onClick={() => secretIds && mutation.mutate(secretIds)}
+                    disabled={mutation.isPending}
+                >
+                    {mutation.isPending ? 'Deleting…' : `Delete ${secretIds?.length ?? ''} Secret(s)`}
+                </Button>
+            </div>
+        </div>
+    </Modal>
+);
+
+// ─── Main Page ───────────────────────────────────────────────────────────────
+
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
     const bulkClassify = useBulkClassifySecrets();
@@ -211,6 +1143,7 @@ export const SecretsListPage: React.FC = () => {
     const [arBackend, setArBackend] = React.useState('');
     const [arRef, setArRef] = React.useState('');
     const autoRotate = useSetAutoRotate(list.modalData?.secret?.id ?? 0);
+    const backendRefMismatch = (arBackend === '') !== (arRef === '');
 
     React.useEffect(() => {
         applyModalDefaults(list.activeModal, list.modalData?.secret ?? null, {
@@ -236,7 +1169,7 @@ export const SecretsListPage: React.FC = () => {
 
     const submitAutoRotate = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
-        if ((arBackend === '') !== (arRef === '')) return; // both-or-neither (UI guard)
+        if (backendRefMismatch) return; // both-or-neither (UI guard)
         autoRotate.mutate(
             {
                 enabled: arEnabled,
@@ -246,6 +1179,53 @@ export const SecretsListPage: React.FC = () => {
                 ref: arRef.trim(),
             },
             { onSuccess: () => list.closeModal() }
+        );
+    };
+
+    const resetCreateForm = () => {
+        setCreateName('');
+        setCreateValue('');
+        setCreateType('text');
+        setCreateError('');
+    };
+
+    const handleCloseCreateModal = () => {
+        list.closeModal();
+        resetCreateForm();
+    };
+
+    const handleCreateSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        setCreateError('');
+        if (!createProjectId || !createEnvId) {
+            setCreateError('Select a project and environment for the new secret.');
+            return;
+        }
+        const nameErr = secretNameError(namePolicy, createName);
+        if (nameErr) {
+            setCreateError(nameErr);
+            return;
+        }
+        list.createMutation.mutate(
+            {
+                name: createName,
+                value: createValue,
+                type: createType,
+                project_id: createProjectId,
+                environment_id: createEnvId,
+            } as any,
+            {
+                onSuccess: resetCreateForm,
+                onError: (err) => setCreateError(apiErrorMessage(err)),
+            }
+        );
+    };
+
+    const handleBulkClassify = (level: string) => {
+        const ids = Array.from(list.selectedItems);
+        bulkClassify.mutate(
+            { ids, classification: level === 'unclassified' ? '' : level },
+            { onSuccess: () => list.clearSelectedItems() }
         );
     };
 
@@ -265,664 +1245,108 @@ export const SecretsListPage: React.FC = () => {
         );
     }
 
-    const tableBodyContent =
-        displayedSecrets.length === 0 ? (
-            <div className="p-8 text-center">
-                <FunnelIcon className="h-12 w-12 mx-auto text-base-muted  mb-4" />
-                <h3 className="text-lg font-medium text-base-primary  mb-2">No secrets found</h3>
-                <p className="text-base-muted  mb-4">
-                    {list.hasActiveFilters
-                        ? 'Try adjusting your filters or search terms.'
-                        : 'Get started by creating your first secret.'}
-                </p>
-                {!list.hasActiveFilters && (
-                    <Button data-testid="create-secret-button" onClick={() => list.openModal('create-secret')}>
-                        <PlusIcon className="h-4 w-4 mr-2" />
-                        Create Secret
-                    </Button>
-                )}
-            </div>
-        ) : (
-            <div className="overflow-x-auto">
-                <table data-testid="secrets-table" className="min-w-full divide-y divide-base dark:divide-gray-700">
-                    <thead className="bg-subtle dark:bg-gray-900">
-                        <tr>
-                            <th className="px-4 py-3 text-left w-10">
-                                <input
-                                    type="checkbox"
-                                    className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-                                    checked={
-                                        displayedSecrets.length > 0 &&
-                                        displayedSecrets.every((s) => list.selectedItems.has(s.id))
-                                    }
-                                    onChange={(e) => {
-                                        if (e.target.checked)
-                                            displayedSecrets.forEach((s) => list.toggleSelectedItem(s.id));
-                                        else list.clearSelectedItems();
-                                    }}
-                                />
-                            </th>
-                            {['Name', 'Type', 'Classification', 'Environment', 'Sharing', 'Modified'].map((h) => (
-                                <th
-                                    key={h}
-                                    className="px-6 py-3 text-left text-xs font-medium text-base-muted  uppercase tracking-wider"
-                                >
-                                    {h}
-                                </th>
-                            ))}
-                            <th className="px-6 py-3 text-right text-xs font-medium text-base-muted  uppercase tracking-wider min-w-[180px]">
-                                Actions
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-surface divide-y divide-base dark:divide-gray-700">
-                        {displayedSecrets.map((secret) => (
-                            <SecretTableRow
-                                key={secret.id}
-                                secret={secret}
-                                isSelected={list.selectedItems.has(secret.id)}
-                                onToggleSelect={list.toggleSelectedItem}
-                                onView={setViewingSecret}
-                                onEdit={(s) => list.openModal('edit-secret', { secret: s })}
-                                onDelete={(s) => list.openModal('delete-secret', { secret: s })}
-                                onShare={(s) => list.openModal('share-secret', { secret: s })}
-                                onRotate={handleRotate}
-                                onAutoRotate={handleAutoRotate}
-                                onCopy={reveal.handleCopySecretValue}
-                                copyingId={reveal.copyingSecretId}
-                                copiedId={reveal.copiedSecretId}
-                                copyErrorId={reveal.copyErrorId}
-                            />
-                        ))}
-                    </tbody>
-                </table>
-
-                {list.pagination.totalPages > 1 && (
-                    <div className="px-4 py-3 border-t border-base  flex items-center justify-between">
-                        <p className="text-sm text-base-secondary dark:text-base-muted">
-                            Showing{' '}
-                            <span className="font-medium">
-                                {(list.pagination.page - 1) * list.pagination.pageSize + 1}
-                            </span>{' '}
-                            to{' '}
-                            <span className="font-medium">
-                                {Math.min(list.pagination.page * list.pagination.pageSize, list.pagination.total)}
-                            </span>{' '}
-                            of <span className="font-medium">{list.pagination.total}</span> results
-                        </p>
-                        <div className="flex items-center space-x-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => list.handlePageChange(list.pagination.page - 1)}
-                                disabled={list.pagination.page === 1}
-                            >
-                                <ChevronLeftIcon className="h-4 w-4" />
-                            </Button>
-                            <span className="text-sm text-base-secondary dark:text-base-muted">
-                                Page {list.pagination.page} of {list.pagination.totalPages}
-                            </span>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => list.handlePageChange(list.pagination.page + 1)}
-                                disabled={list.pagination.page === list.pagination.totalPages}
-                            >
-                                <ChevronRightIcon className="h-4 w-4" />
-                            </Button>
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
-
     return (
         <div className="p-6 space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-semibold text-base-primary ">Secrets</h1>
-                    <p className="mt-1 text-sm text-base-muted ">Manage your secrets and access controls</p>
-                </div>
-                <div className="flex items-center space-x-3">
-                    {list.selectedItems.size > 0 && (
-                        <div className="flex items-center space-x-2">
-                            <span className="text-sm text-base-muted">{list.selectedItems.size} selected</span>
-                            <Select
-                                aria-label="Classify selected"
-                                value=""
-                                disabled={bulkClassify.isPending}
-                                onChange={(e) => {
-                                    const level = e.target.value;
-                                    if (!level) return;
-                                    const ids = Array.from(list.selectedItems);
-                                    bulkClassify.mutate(
-                                        { ids, classification: level === 'unclassified' ? '' : level },
-                                        { onSuccess: () => list.clearSelectedItems() }
-                                    );
-                                }}
-                                options={[
-                                    { value: '', label: 'Classify as…' },
-                                    { value: 'public', label: 'Public' },
-                                    { value: 'internal', label: 'Internal' },
-                                    { value: 'confidential', label: 'Confidential' },
-                                    { value: 'restricted', label: 'Restricted' },
-                                    { value: 'unclassified', label: 'Unclassified' },
-                                ]}
-                            />
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                disabled
-                                title="Share each secret individually — bulk sharing is not supported"
-                            >
-                                <ShareIcon className="h-4 w-4 mr-1" />
-                                Share
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                    list.openModal('bulk-delete-secrets', { secretIds: Array.from(list.selectedItems) })
-                                }
-                                disabled={list.selectedItems.size === 0}
-                                className="text-red-600 hover:text-red-700"
-                            >
-                                <TrashIcon className="h-4 w-4 mr-1" />
-                                Delete
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => list.clearSelectedItems()}>
-                                Clear
-                            </Button>
-                        </div>
-                    )}
-                    <Button
-                        data-testid="create-secret-button"
-                        onClick={() => list.openModal('create-secret')}
-                        className="flex items-center"
-                    >
-                        <PlusIcon className="h-4 w-4 mr-2" />
-                        New Secret
-                    </Button>
-                </div>
-            </div>
+            <SecretsPageHeader
+                selectedItems={list.selectedItems}
+                bulkClassifyPending={bulkClassify.isPending}
+                onBulkClassify={handleBulkClassify}
+                onBulkDelete={() =>
+                    list.openModal('bulk-delete-secrets', { secretIds: Array.from(list.selectedItems) })
+                }
+                onClearSelection={list.clearSelectedItems}
+                onCreateClick={() => list.openModal('create-secret')}
+            />
 
-            {/* Filters */}
-            <div className="bg-surface rounded-lg border border-base  p-4">
-                <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-                        <div className="lg:col-span-2">
-                            <Input
-                                type="text"
-                                placeholder="Search by name, type, or tags..."
-                                value={list.searchInput}
-                                onChange={(e) => list.setSearchInput(e.target.value)}
-                                icon={MagnifyingGlassIcon}
-                            />
-                        </div>
-                        <Select
-                            value={list.filters.type}
-                            onChange={(e) => list.handleFilterChange('type', e.target.value)}
-                            options={SECRET_TYPES}
-                        />
-                        <Select
-                            value={list.filters.classification || 'all'}
-                            onChange={(e) =>
-                                list.handleFilterChange(
-                                    'classification',
-                                    e.target.value === 'all' ? '' : e.target.value
-                                )
-                            }
-                            options={[
-                                { value: 'all', label: 'All Classifications' },
-                                { value: 'unclassified', label: 'Unclassified' },
-                                { value: 'public', label: 'Public' },
-                                { value: 'internal', label: 'Internal' },
-                                { value: 'confidential', label: 'Confidential' },
-                                { value: 'restricted', label: 'Restricted' },
-                            ]}
-                        />
-                        <Select
-                            value={list.filters.environment || 'all'}
-                            onChange={(e) =>
-                                list.handleFilterChange('environment', e.target.value === 'all' ? '' : e.target.value)
-                            }
-                            options={[
-                                { value: 'all', label: 'All Environments' },
-                                ...list.environments.map((e) => ({
-                                    value: e.name,
-                                    label: e.name.charAt(0).toUpperCase() + e.name.slice(1),
-                                })),
-                            ]}
-                        />
-                        <Select
-                            value={list.sortBy}
-                            onChange={(e) => list.setSortBy(e.target.value)}
-                            options={SORT_OPTIONS}
-                            placeholder="Sort by"
-                        />
-                        <Select
-                            value={String(list.pagination.pageSize)}
-                            onChange={(e) => list.handlePageSizeChange(Number(e.target.value))}
-                            options={PAGE_SIZE_OPTIONS}
-                        />
-                        <Button
-                            variant="outline"
-                            onClick={() => list.setShowAdvancedFilters(!list.showAdvancedFilters)}
-                            className="w-full"
-                        >
-                            <FunnelIcon className="h-4 w-4 mr-2" />
-                            {list.showAdvancedFilters ? 'Hide' : 'More'} Filters
-                        </Button>
-                    </div>
-                    {list.showAdvancedFilters && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-base ">
-                            {/* Project filter — Phase 3: replace with project selector dropdown */}
-                        </div>
-                    )}
-                    {/* Tag filter hidden — tags not yet implemented on secrets */}
-                    {list.hasActiveFilters && (
-                        <div className="flex items-center justify-end pt-4 border-t border-base ">
-                            <Button variant="ghost" size="sm" onClick={list.handleClearFilters} className="text-xs">
-                                Clear all
-                            </Button>
-                        </div>
-                    )}
-                    {list.isFetching && (
-                        <div className="flex items-center justify-center py-2">
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                            <span className="ml-2 text-sm text-base-muted ">Updating results...</span>
-                        </div>
-                    )}
-                </div>
-            </div>
+            <SecretsFilterBar
+                searchInput={list.searchInput}
+                onSearchChange={list.setSearchInput}
+                filters={list.filters}
+                onFilterChange={list.handleFilterChange}
+                environments={list.environments}
+                sortBy={list.sortBy}
+                onSortChange={list.setSortBy}
+                pageSize={list.pagination.pageSize}
+                onPageSizeChange={list.handlePageSizeChange}
+                showAdvancedFilters={list.showAdvancedFilters}
+                onToggleAdvanced={() => list.setShowAdvancedFilters(!list.showAdvancedFilters)}
+                hasActiveFilters={list.hasActiveFilters}
+                onClearFilters={list.handleClearFilters}
+                isFetching={list.isFetching}
+            />
 
-            {/* Expiring filter banner */}
-            {urlFilter === 'expiring' && (
-                <div
-                    className="flex items-center justify-between px-4 py-2.5 rounded-lg border"
-                    style={{
-                        backgroundColor: 'rgba(217,119,6,0.06)',
-                        borderColor: 'rgba(217,119,6,0.30)',
-                        color: '#92400e',
-                    }}
-                >
-                    <span className="text-sm font-medium" style={{ color: 'inherit' }}>
-                        Showing secrets with expiration set
-                    </span>
-                    <button
-                        type="button"
-                        onClick={() => window.history.replaceState({}, '', window.location.pathname)}
-                        className="text-sm font-medium underline underline-offset-2 hover:opacity-75 transition-opacity ml-4"
-                        style={{ color: 'inherit' }}
-                    >
-                        ✕ Clear filter
-                    </button>
-                </div>
-            )}
+            {urlFilter === 'expiring' && <ExpiringFilterBanner />}
 
-            {/* Table */}
             <div className="bg-surface rounded-lg border border-base ">
-                {list.isLoading ? (
-                    <div className="p-8">
-                        <Loading />
-                    </div>
-                ) : (
-                    tableBodyContent
-                )}
+                <SecretsTable
+                    isLoading={list.isLoading}
+                    displayedSecrets={displayedSecrets}
+                    hasActiveFilters={list.hasActiveFilters}
+                    onCreateClick={() => list.openModal('create-secret')}
+                    selectedItems={list.selectedItems}
+                    toggleSelectedItem={list.toggleSelectedItem}
+                    clearSelectedItems={list.clearSelectedItems}
+                    onView={setViewingSecret}
+                    onEdit={(s) => list.openModal('edit-secret', { secret: s })}
+                    onDelete={(s) => list.openModal('delete-secret', { secret: s })}
+                    onShare={(s) => list.openModal('share-secret', { secret: s })}
+                    onRotate={handleRotate}
+                    onAutoRotate={handleAutoRotate}
+                    reveal={reveal}
+                    pagination={list.pagination}
+                    onPageChange={list.handlePageChange}
+                />
             </div>
 
-            {/* Modals */}
-            <Modal isOpen={viewingSecret !== null} onClose={() => setViewingSecret(null)} size="xl">
-                {viewingSecret && (
-                    <SecretDetailView
-                        secret={viewingSecret}
-                        onClose={() => setViewingSecret(null)}
-                        onEdit={(s) => {
-                            setViewingSecret(null);
-                            list.openModal('edit-secret', { secret: s });
-                        }}
-                        onShare={(s) => {
-                            setViewingSecret(null);
-                            list.openModal('share-secret', { secret: s });
-                        }}
-                        onDelete={(s) => {
-                            setViewingSecret(null);
-                            list.openModal('delete-secret', { secret: s });
-                        }}
-                    />
-                )}
-            </Modal>
+            <ViewSecretModal
+                secret={viewingSecret}
+                onClose={() => setViewingSecret(null)}
+                onEdit={(s) => list.openModal('edit-secret', { secret: s })}
+                onShare={(s) => list.openModal('share-secret', { secret: s })}
+                onDelete={(s) => list.openModal('delete-secret', { secret: s })}
+            />
 
-            <Modal
+            <EditSecretModal
                 isOpen={list.activeModal === 'edit-secret'}
+                secret={list.modalData?.secret}
                 onClose={list.closeModal}
-                title={`Edit Secret: ${list.modalData?.secret?.name ?? ''}`}
-                size="md"
-            >
-                <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        if (!list.modalData?.secret) return;
-                        list.editMutation.mutate({
-                            id: list.modalData.secret.id,
-                            name: editName,
-                            type: editType,
-                            value: editValue,
-                        });
-                    }}
-                    className="space-y-4"
-                >
-                    {list.editMutation.isError && (
-                        <Alert
-                            type="error"
-                            title="Failed to update secret"
-                            message={
-                                list.editMutation.error instanceof Error
-                                    ? list.editMutation.error.message
-                                    : 'An unexpected error occurred'
-                            }
-                        />
-                    )}
-                    <div>
-                        <label
-                            htmlFor="edit-secret-name"
-                            className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
-                        >
-                            Name
-                        </label>
-                        <input
-                            id="edit-secret-name"
-                            type="text"
-                            required
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-                    <div>
-                        <label
-                            htmlFor="edit-secret-type"
-                            className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
-                        >
-                            Type
-                        </label>
-                        <Select
-                            id="edit-secret-type"
-                            value={editType}
-                            onChange={(e) => setEditType(e.target.value as SecretType)}
-                            options={
-                                SECRET_TYPES.filter((t) => t.value !== 'all') as { value: SecretType; label: string }[]
-                            }
-                        />
-                    </div>
-                    <div>
-                        <div className="flex items-center justify-between mb-1">
-                            <label
-                                htmlFor="edit-secret-value"
-                                className="block text-sm font-medium text-base-secondary"
-                            >
-                                New Value
-                            </label>
-                            <button
-                                type="button"
-                                onClick={() => setEditValue(generateSecret())}
-                                className="text-xs font-medium transition-colors"
-                                style={{ color: 'var(--accent-text)' }}
-                            >
-                                ↻ Generate
-                            </button>
-                        </div>
-                        <input
-                            id="edit-secret-value"
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            placeholder="Leave blank to keep existing value"
-                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                borderColor: 'var(--border-strong)',
-                            }}
-                        />
-                        <p className="mt-1 text-xs text-base-muted">Leave blank to keep the existing value.</p>
-                    </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={list.closeModal}
-                            disabled={list.editMutation.isPending}
-                        >
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={list.editMutation.isPending}>
-                            {list.editMutation.isPending ? 'Saving…' : 'Save Changes'}
-                        </Button>
-                    </div>
-                </form>
-            </Modal>
+                editName={editName}
+                setEditName={setEditName}
+                editType={editType}
+                setEditType={setEditType}
+                editValue={editValue}
+                setEditValue={setEditValue}
+                mutation={list.editMutation}
+            />
 
-            <Modal
+            <DeleteSecretModal
                 isOpen={list.activeModal === 'delete-secret'}
+                secret={list.modalData?.secret}
                 onClose={list.closeModal}
-                title="Delete Secret"
-                size="sm"
-            >
-                <div className="space-y-4">
-                    {list.deleteMutation.isError && (
-                        <Alert
-                            type="error"
-                            title="Failed to delete secret"
-                            message={
-                                list.deleteMutation.error instanceof Error
-                                    ? list.deleteMutation.error.message
-                                    : 'An unexpected error occurred'
-                            }
-                        />
-                    )}
-                    <p className="text-sm text-base-secondary dark:text-base-muted">
-                        Are you sure you want to delete{' '}
-                        <span className="font-semibold">{list.modalData?.secret?.name}</span>? The secret will be
-                        soft-deleted and can be restored within 30 days.
-                    </p>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button variant="outline" onClick={list.closeModal} disabled={list.deleteMutation.isPending}>
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={() =>
-                                list.modalData?.secret && list.deleteMutation.mutate(list.modalData.secret.id)
-                            }
-                            disabled={list.deleteMutation.isPending}
-                        >
-                            {list.deleteMutation.isPending ? 'Deleting…' : 'Delete'}
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+                mutation={list.deleteMutation}
+            />
 
-            <Modal
+            <CreateSecretModal
                 isOpen={list.activeModal === 'create-secret'}
-                onClose={() => {
-                    list.closeModal();
-                    setCreateName('');
-                    setCreateValue('');
-                    setCreateType('text');
-                    setCreateError('');
-                }}
-                title="Create New Secret"
-                size="md"
-            >
-                <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        setCreateError('');
-                        if (!createProjectId || !createEnvId) {
-                            setCreateError('Select a project and environment for the new secret.');
-                            return;
-                        }
-                        const nameErr = secretNameError(namePolicy, createName);
-                        if (nameErr) {
-                            setCreateError(nameErr);
-                            return;
-                        }
-                        list.createMutation.mutate(
-                            {
-                                name: createName,
-                                value: createValue,
-                                type: createType,
-                                project_id: createProjectId,
-                                environment_id: createEnvId,
-                            } as any,
-                            {
-                                onSuccess: () => {
-                                    setCreateName('');
-                                    setCreateValue('');
-                                    setCreateType('text');
-                                    setCreateError('');
-                                },
-                                onError: (err) => setCreateError(apiErrorMessage(err)),
-                            }
-                        );
-                    }}
-                    className="space-y-4"
-                >
-                    {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
-                    <div>
-                        <label
-                            htmlFor="create-secret-name"
-                            className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
-                        >
-                            Name <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                            id="create-secret-name"
-                            type="text"
-                            required
-                            value={createName}
-                            onChange={(e) => setCreateName(e.target.value)}
-                            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                        />
-                        {nameHint && <p className="mt-1 text-xs text-base-muted">Naming policy: {nameHint}.</p>}
-                        {namePatternUnsafe && (
-                            <p className="mt-1 text-xs text-amber-600">
-                                This naming pattern can&apos;t be safely checked in your browser and won&apos;t be
-                                validated here; the server will still enforce it when you submit.
-                            </p>
-                        )}
-                    </div>
-                    <div>
-                        <div className="flex items-center justify-between mb-1">
-                            <label
-                                htmlFor="create-secret-value"
-                                className="block text-sm font-medium text-base-secondary"
-                            >
-                                Value <span className="text-red-500">*</span>
-                            </label>
-                            <button
-                                type="button"
-                                onClick={() => setCreateValue(generateSecret())}
-                                className="text-xs font-medium transition-colors"
-                                style={{ color: 'var(--accent-text)' }}
-                            >
-                                ↻ Generate
-                            </button>
-                        </div>
-                        <textarea
-                            id="create-secret-value"
-                            required
-                            rows={3}
-                            value={createValue}
-                            onChange={(e) => setCreateValue(e.target.value)}
-                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500 resize-none"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                borderColor: 'var(--border-strong)',
-                            }}
-                        />
-                    </div>
-                    <div>
-                        <label
-                            htmlFor="create-secret-type"
-                            className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
-                        >
-                            Type
-                        </label>
-                        <Select
-                            id="create-secret-type"
-                            value={createType}
-                            onChange={(e) => setCreateType(e.target.value as SecretType)}
-                            options={[
-                                { value: 'text', label: 'Generic' },
-                                { value: 'password', label: 'Password' },
-                                { value: 'api_key', label: 'API Key' },
-                                { value: 'certificate', label: 'Certificate' },
-                                { value: 'json', label: 'JSON' },
-                            ]}
-                        />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label
-                                htmlFor="create-secret-project"
-                                className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
-                            >
-                                Project <span className="text-red-500">*</span>
-                            </label>
-                            <Select
-                                id="create-secret-project"
-                                value={String(createProjectId)}
-                                onChange={(e) => setCreateProjectId(Number(e.target.value))}
-                                options={(createProjects ?? []).map((p) => ({ value: String(p.id), label: p.name }))}
-                            />
-                        </div>
-                        <div>
-                            <label
-                                htmlFor="create-secret-environment"
-                                className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1"
-                            >
-                                Environment <span className="text-red-500">*</span>
-                            </label>
-                            <Select
-                                id="create-secret-environment"
-                                value={String(createEnvId)}
-                                onChange={(e) => setCreateEnvId(Number(e.target.value))}
-                                options={(createEnvironments ?? []).map((env) => ({
-                                    value: String(env.id),
-                                    label: env.name,
-                                }))}
-                            />
-                        </div>
-                    </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                                list.closeModal();
-                                setCreateName('');
-                                setCreateValue('');
-                                setCreateType('text');
-                                setCreateError('');
-                            }}
-                            disabled={list.createMutation.isPending}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            data-testid="create-secret-submit"
-                            type="submit"
-                            disabled={list.createMutation.isPending}
-                        >
-                            {list.createMutation.isPending ? 'Creating…' : 'Create Secret'}
-                        </Button>
-                    </div>
-                </form>
-            </Modal>
+                onClose={handleCloseCreateModal}
+                onSubmit={handleCreateSubmit}
+                createName={createName}
+                setCreateName={setCreateName}
+                createValue={createValue}
+                setCreateValue={setCreateValue}
+                createType={createType}
+                setCreateType={setCreateType}
+                createError={createError}
+                createProjectId={createProjectId}
+                setCreateProjectId={setCreateProjectId}
+                createEnvId={createEnvId}
+                setCreateEnvId={setCreateEnvId}
+                createProjects={createProjects}
+                createEnvironments={createEnvironments}
+                nameHint={nameHint}
+                namePatternUnsafe={namePatternUnsafe}
+                mutation={list.createMutation}
+            />
 
             {list.activeModal === 'share-secret' && list.modalData?.secret && (
                 <ShareSecretModal
@@ -936,209 +1360,40 @@ export const SecretsListPage: React.FC = () => {
                 />
             )}
 
-            <Modal
+            <RotateSecretModal
                 isOpen={list.activeModal === 'rotate-secret'}
+                secret={list.modalData?.secret}
                 onClose={list.closeModal}
-                title={`Rotate Secret: ${list.modalData?.secret?.name ?? ''}`}
-                size="sm"
-            >
-                <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        if (!list.modalData?.secret) return;
-                        list.rotateMutation.mutate({ id: list.modalData.secret.id, newValue: rotateValue });
-                    }}
-                    className="space-y-4"
-                >
-                    {list.rotateMutation.isError && (
-                        <Alert
-                            type="error"
-                            title="Failed to rotate secret"
-                            message={apiErrorMessage(list.rotateMutation.error)}
-                        />
-                    )}
-                    <p className="text-sm text-base-muted">
-                        A new random value has been generated. Edit it or regenerate, then click Rotate to create a new
-                        version.
-                    </p>
-                    <div>
-                        <div className="flex items-center justify-between mb-1">
-                            <label
-                                htmlFor="rotate-secret-value"
-                                className="block text-sm font-medium text-base-secondary"
-                            >
-                                New Value
-                            </label>
-                            <button
-                                type="button"
-                                onClick={() => setRotateValue(generateSecret())}
-                                className="text-xs font-medium transition-colors"
-                                style={{ color: 'var(--accent-text)' }}
-                            >
-                                ↻ Regenerate
-                            </button>
-                        </div>
-                        <input
-                            id="rotate-secret-value"
-                            type="text"
-                            value={rotateValue}
-                            onChange={(e) => setRotateValue(e.target.value)}
-                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                color: 'var(--text-primary)',
-                                borderColor: 'var(--border-strong)',
-                            }}
-                        />
-                    </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={list.closeModal}
-                            disabled={list.rotateMutation.isPending}
-                        >
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={list.rotateMutation.isPending || !rotateValue.trim()}>
-                            {list.rotateMutation.isPending ? 'Rotating…' : 'Rotate'}
-                        </Button>
-                    </div>
-                </form>
-            </Modal>
+                rotateValue={rotateValue}
+                setRotateValue={setRotateValue}
+                mutation={list.rotateMutation}
+            />
 
-            <Modal
+            <AutoRotateModal
                 isOpen={list.activeModal === 'auto-rotate'}
+                secret={list.modalData?.secret}
                 onClose={list.closeModal}
-                title={`Automated Rotation: ${list.modalData?.secret?.name ?? ''}`}
-                size="md"
-            >
-                <form onSubmit={submitAutoRotate} className="space-y-4">
-                    {autoRotate.isError && (
-                        <Alert
-                            type="error"
-                            title="Failed to update auto-rotation"
-                            message={
-                                autoRotate.error instanceof Error
-                                    ? autoRotate.error.message
-                                    : 'An unexpected error occurred'
-                            }
-                        />
-                    )}
-                    <p className="text-sm text-base-muted">
-                        When enabled, Keyorix regenerates this secret on its rotation-policy schedule. Enable only for
-                        values Keyorix owns — or set a backend to rotate the upstream credential in place.
-                    </p>
-                    <label className="flex items-center gap-2 text-sm text-base-secondary">
-                        <input
-                            type="checkbox"
-                            checked={arEnabled}
-                            onChange={(e) => setArEnabled(e.target.checked)}
-                            aria-label="Enable auto-rotation"
-                        />{' '}
-                        Enable automated rotation
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                        <Input
-                            label="Value length"
-                            type="number"
-                            placeholder="default 32"
-                            value={arLength}
-                            onChange={(e) => setArLength(e.target.value)}
-                        />
-                        <div>
-                            <label
-                                htmlFor="auto-rotate-charset"
-                                className="block text-sm font-medium text-base-secondary mb-1"
-                            >
-                                Charset
-                            </label>
-                            <Select
-                                id="auto-rotate-charset"
-                                value={arCharset}
-                                onChange={(e) => setArCharset(e.target.value)}
-                                options={[
-                                    { value: '', label: 'Alphanumeric (default)' },
-                                    { value: 'lower_alphanumeric', label: 'Lowercase + digits' },
-                                    { value: 'hex', label: 'Hex' },
-                                    { value: 'alphanumeric_symbols', label: 'Alphanumeric + symbols' },
-                                ]}
-                            />
-                        </div>
-                    </div>
-                    <div className="pt-2 border-t border-base">
-                        <p className="text-xs text-base-muted mb-2">
-                            Optional — rotate an upstream credential (e.g. a DB role or cloud key) via a configured
-                            backend.
-                        </p>
-                        <div className="grid grid-cols-2 gap-3">
-                            <Input
-                                label="Backend"
-                                placeholder="e.g. prod-postgres"
-                                value={arBackend}
-                                onChange={(e) => setArBackend(e.target.value)}
-                            />
-                            <Input
-                                label="Upstream ref"
-                                placeholder="e.g. app_svc"
-                                value={arRef}
-                                onChange={(e) => setArRef(e.target.value)}
-                            />
-                        </div>
-                        {(arBackend === '') !== (arRef === '') && (
-                            <p className="text-xs text-red-600 mt-1">Backend and ref must be set together.</p>
-                        )}
-                    </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={list.closeModal}
-                            disabled={autoRotate.isPending}
-                        >
-                            Cancel
-                        </Button>
-                        <Button type="submit" disabled={autoRotate.isPending || (arBackend === '') !== (arRef === '')}>
-                            {autoRotate.isPending ? 'Saving…' : 'Save'}
-                        </Button>
-                    </div>
-                </form>
-            </Modal>
+                onSubmit={submitAutoRotate}
+                arEnabled={arEnabled}
+                setArEnabled={setArEnabled}
+                arLength={arLength}
+                setArLength={setArLength}
+                arCharset={arCharset}
+                setArCharset={setArCharset}
+                arBackend={arBackend}
+                setArBackend={setArBackend}
+                arRef={arRef}
+                setArRef={setArRef}
+                backendRefMismatch={backendRefMismatch}
+                mutation={autoRotate}
+            />
 
-            <Modal
+            <BulkDeleteSecretsModal
                 isOpen={list.activeModal === 'bulk-delete-secrets'}
+                secretIds={list.modalData?.secretIds}
                 onClose={list.closeModal}
-                title="Delete Selected Secrets"
-                size="sm"
-            >
-                <div className="space-y-4">
-                    <p className="text-sm text-base-secondary dark:text-base-muted">
-                        Are you sure you want to delete{' '}
-                        <span className="font-semibold">{list.modalData?.secretIds?.length}</span> secret(s)? They will
-                        be soft-deleted and can be restored within 30 days.
-                    </p>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button
-                            variant="outline"
-                            onClick={list.closeModal}
-                            disabled={list.bulkDeleteMutation.isPending}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={() =>
-                                list.modalData?.secretIds && list.bulkDeleteMutation.mutate(list.modalData.secretIds)
-                            }
-                            disabled={list.bulkDeleteMutation.isPending}
-                        >
-                            {list.bulkDeleteMutation.isPending
-                                ? 'Deleting…'
-                                : `Delete ${list.modalData?.secretIds?.length ?? ''} Secret(s)`}
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+                mutation={list.bulkDeleteMutation}
+            />
         </div>
     );
 };
