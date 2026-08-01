@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Slot } from 'radix-ui';
 import {
     Controller,
     FormProvider,
@@ -99,12 +100,14 @@ const FormLabel = React.forwardRef<HTMLLabelElement, React.LabelHTMLAttributes<H
 FormLabel.displayName = 'FormLabel';
 
 // ── FormControl ───────────────────────────────────────────────────────────────
-// Wraps the control with the correct id and aria attrs for the field.
+// Merges the correct id and aria attrs onto the actual control element (via
+// Slot) instead of wrapping it, so FormLabel's htmlFor resolves to a real,
+// focusable form control.
 
-const FormControl = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ ...props }, ref) => {
+const FormControl = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>(({ ...props }, ref) => {
     const { error, formItemId, formDescriptionId, formMessageId } = useFormField();
     return (
-        <div
+        <Slot.Root
             ref={ref}
             id={formItemId}
             aria-describedby={error ? `${formDescriptionId} ${formMessageId}` : formDescriptionId}

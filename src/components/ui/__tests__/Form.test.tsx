@@ -111,15 +111,12 @@ describe('Form', () => {
         const input = screen.getByTestId('username-input');
         const description = screen.getByText('Pick a unique username');
 
-        // FormControl renders its own wrapping <div> (id/aria live on the div,
-        // not forwarded onto the child control) — see the documented bug test below.
-        const controlWrapper = input.parentElement as HTMLElement;
-
-        expect(controlWrapper).not.toBeNull();
-        expect(controlWrapper.tagName).toBe('DIV');
-        expect(label).toHaveAttribute('for', controlWrapper.id);
-        expect(controlWrapper).toHaveAttribute('aria-invalid', 'false');
-        expect(controlWrapper.getAttribute('aria-describedby')).toBe(description.id);
+        // FormControl merges id/aria attrs onto the real control via Slot,
+        // instead of wrapping it in a <div> — see the label-association test below.
+        expect(input.tagName).toBe('INPUT');
+        expect(label).toHaveAttribute('for', input.id);
+        expect(input).toHaveAttribute('aria-invalid', 'false');
+        expect(input.getAttribute('aria-describedby')).toBe(description.id);
         expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
@@ -145,11 +142,10 @@ describe('Form', () => {
         expect(onSubmit).not.toHaveBeenCalled();
 
         const input = screen.getByTestId('username-input');
-        const controlWrapper = input.parentElement as HTMLElement;
         const description = screen.getByText('Pick a unique username');
 
-        expect(controlWrapper).toHaveAttribute('aria-invalid', 'true');
-        expect(controlWrapper.getAttribute('aria-describedby')).toBe(`${description.id} ${alert.id}`);
+        expect(input).toHaveAttribute('aria-invalid', 'true');
+        expect(input.getAttribute('aria-describedby')).toBe(`${description.id} ${alert.id}`);
 
         const label = screen.getByText('Username');
         expect(label.className).toContain('text-[var(--error)]');
@@ -180,12 +176,12 @@ describe('Form', () => {
     it('gives each FormItem instance a unique id so sibling fields do not collide', () => {
         render(<TwoFieldForm />);
 
-        const usernameWrapper = screen.getByTestId('username-input').parentElement as HTMLElement;
-        const emailWrapper = screen.getByTestId('email-input').parentElement as HTMLElement;
+        const usernameInput = screen.getByTestId('username-input');
+        const emailInput = screen.getByTestId('email-input');
 
-        expect(usernameWrapper.id).not.toBe(emailWrapper.id);
-        expect(screen.getByText('Username')).toHaveAttribute('for', usernameWrapper.id);
-        expect(screen.getByText('Email')).toHaveAttribute('for', emailWrapper.id);
+        expect(usernameInput.id).not.toBe(emailInput.id);
+        expect(screen.getByText('Username')).toHaveAttribute('for', usernameInput.id);
+        expect(screen.getByText('Email')).toHaveAttribute('for', emailInput.id);
     });
 
     it('throws when a form-field-aware component is rendered outside of FormField', () => {
@@ -204,17 +200,16 @@ describe('Form', () => {
         consoleErrorSpy.mockRestore();
     });
 
-    // Documented, not fixed (coverage-only PR — see house rules): FormControl
-    // renders its own wrapping <div id={formItemId} aria-*> around whatever
-    // control is passed as children, instead of forwarding those attributes
-    // onto the child itself (e.g. via a Radix Slot, as shadcn/ui's original
-    // does). FormLabel's `htmlFor` therefore points at that wrapping <div>,
-    // not at the actual <input> — so there is no native label/control
-    // association, and `getByLabelText` cannot find the input by its label.
-    it('documents a bug: the label/control id lands on FormControl wrapping div, not the input itself', () => {
+    // FormControl merges id/aria-* onto the actual control element via Radix's
+    // Slot, instead of wrapping it in its own <div>. FormLabel's `htmlFor`
+    // therefore resolves to the real, focusable <input> — giving a native
+    // label/control association that `getByLabelText` can traverse.
+    it('associates the label with the real control element via Slot, not a wrapping div', () => {
         render(<UsernameForm />);
 
-        expect(screen.queryByLabelText('Username')).not.toBeInTheDocument();
-        expect(screen.getByTestId('username-input')).not.toHaveAttribute('id');
+        const input = screen.getByLabelText('Username');
+        expect(input).toBe(screen.getByTestId('username-input'));
+        expect(input.tagName).toBe('INPUT');
+        expect(input).toHaveAttribute('id');
     });
 });
