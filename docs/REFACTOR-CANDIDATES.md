@@ -1,55 +1,98 @@
 # keyorix-web — refactor candidates (cyclomatic complexity)
 
-Functions with cyclomatic complexity (CCN) above 15, found via [`lizard`](https://github.com/terryyin/lizard) (`lizard -w -C 15 -L 1000000 -a 1000 ...`, CCN-only — length/param-count warnings suppressed). Generated 2026-07-30.
+**Regenerated 2026-08-01 — the 2026-07-30 version of this doc was wrong.** It
+was generated with [`lizard`](https://github.com/terryyin/lizard)
+(`lizard -w -C 15 -L 1000000 -a 1000`), which does naive brace-counting to
+find function boundaries — and JSX's `{expr}` interpolation isn't a code
+block, it just looks like one to a brace-counter. That made lizard massively
+misjudge JSX-returning functions' boundaries (and therefore their line counts
+and complexity): the two "worst offenders" it reported,
+`buildCreateModalContent` (claimed CCN 115, 1160 lines) and
+`renderExpiringSecretsSection` (claimed CCN 103, 793 lines), are actually 250
+and ~70 lines with real cyclomatic complexity of **12** and **4** —
+i.e. neither belongs on this list at all. Plain-TypeScript `normalize*()`
+mapper functions (no JSX, no ambiguous braces) were unaffected and are
+essentially unchanged between the two versions.
 
-**Read this as a worklist, not a mandate.** High CCN correlates with more test paths and higher change risk, but the shape matters more than the number: a long sequential migration chain or a field-by-field `normalize*()` mapper can have a very high CCN while being low-risk (each branch is independent, not nested, and rarely touched together). Prioritize functions that *mix unrelated concerns* in one place over ones that are just long dispatch/mapping tables — and refactor opportunistically, when you are already touching the function for a feature or bugfix, rather than as a dedicated sweep.
+This version uses ESLint's core `complexity` rule instead (real AST via
+`typescript-eslint`'s parser, correctly JSX-aware — the same parser
+`pnpm lint` already uses). One-off local audit, not part of the committed
+lint config:
 
-| CCN | Function | Location | NLOC | Params |
-|----:|----------|----------|-----:|-------:|
-| 115 | `buildCreateModalContent` | `src/pages/admin/AdminPage.tsx:114` | 1160 | 1 |
-| 103 | `renderExpiringSecretsSection` | `src/pages/projects/ProjectSettingsTab.tsx:439` | 793 | 5 |
-| 60 | `DashboardPage` | `src/pages/dashboard/DashboardPage.tsx:270` | 208 | 0 |
-| 58 | `SecretsListPage` | `src/pages/secrets/SecretsListPage.tsx:149` | 756 | 0 |
-| 57 | `normalizeAccessRequest` | `src/services/projectInvitations.ts:50` | 14 | 1 |
-| 55 | `normalizeConfig` | `src/services/dynamicSecrets.ts:80` | 13 | 1 |
-| 53 | `ScoreRing` | `src/pages/secrets/SecretsHealthPage.tsx:42` | 453 | 1 |
-| 52 | `SecurityTab` | `src/pages/profile/ProfilePage.tsx:136` | 499 | 0 |
-| 49 | `normalizeMachineIdentity` | `src/services/machineIdentities.ts:52` | 14 | 1 |
-| 46 | `ProjectSecretsTab` | `src/pages/projects/ProjectSecretsTab.tsx:38` | 595 | 1 |
-| 46 | `normalizeRole` | `src/services/rbac.ts:7` | 21 | 1 |
-| 45 | `AuditLogPage` | `src/pages/audit/AuditLogPage.tsx:820` | 171 | 0 |
-| 41 | `normalizeAccessReviewEntry` | `src/services/projects.ts:69` | 14 | 1 |
-| 39 | `normalizeLease` | `src/services/dynamicSecrets.ts:94` | 11 | 1 |
-| 39 | `normalize` | `src/services/projects.ts:278` | 12 | 1 |
-| 37 | `normalizeMembership` | `src/services/projectMemberships.ts:30` | 10 | 1 |
-| 37 | `normalizeInvitation` | `src/services/projectInvitations.ts:39` | 10 | 1 |
-| 35 | `MachineIdentitiesSection` | `src/features/machine-identities/MachineIdentitiesSection.tsx:57` | 207 | 1 |
-| 35 | `copyLink` | `src/pages/admin/UserDetailPage.tsx:207` | 288 | 0 |
-| 35 | `normalizeItem` | `src/services/projects.ts:142` | 13 | 1 |
-| 35 | `(anonymous)` | `src/services/secrets.ts:79` | 19 | 0 |
-| 33 | `normalizeToken` | `src/services/machineIdentities.ts:90` | 10 | 1 |
-| 31 | `MachineTokensPanel` | `src/features/machine-identities/MachineTokensPanel.tsx:20` | 152 | 3 |
-| 30 | `SharingManagementPage` | `src/pages/sharing/SharingManagementPage.tsx:75` | 442 | 0 |
-| 28 | `ProjectAccessReviewTab` | `src/pages/projects/ProjectAccessReviewTab.tsx:45` | 166 | 1 |
-| 28 | `RolesPoliciesPage` | `src/pages/admin/RolesPoliciesPage.tsx:114` | 264 | 0 |
-| 25 | `AccessRequestRow` | `src/features/invitations/PendingAccessRequestsSection.tsx:77` | 124 | 3 |
-| 25 | `normalizeCampaign` | `src/services/projects.ts:126` | 8 | 1 |
-| 23 | `issue` | `src/services/dynamicSecrets.ts:139` | 13 | 2 |
-| 23 | `issueToken` | `src/services/machineIdentities.ts:151` | 19 | 3 |
-| 21 | `GroupsPage` | `src/pages/admin/GroupsPage.tsx:119` | 220 | 0 |
-| 21 | `(anonymous)` | `src/services/projects.ts:251` | 12 | 0 |
-| 21 | `normalizeControl` | `src/services/compliance.ts:158` | 14 | 1 |
-| 21 | `normalizeException` | `src/services/compliance.ts:196` | 10 | 1 |
-| 19 | `DynamicSecretsPage` | `src/pages/secrets/DynamicSecretsPage.tsx:33` | 138 | 0 |
-| 19 | `normalizeMember` | `src/services/projects.ts:269` | 8 | 1 |
-| 18 | `SecretDependenciesSection` | `src/features/secrets/SecretDependenciesSection.tsx:17` | 95 | 1 |
-| 18 | `ProjectAccessReviewCampaigns` | `src/pages/projects/ProjectAccessReviewCampaigns.tsx:51` | 101 | 1 |
-| 18 | `parseUptime` | `src/pages/dashboard/DashboardPage.tsx:25` | 18 | 1 |
-| 18 | `eventBadge` | `src/pages/audit/AuditLogPage.tsx:182` | 20 | 2 |
-| 17 | `React.FC` | `src/features/account/MfaSection.tsx:252` | 108 | 0 |
-| 17 | `normalizeViolation` | `src/services/compliance.ts:133` | 7 | 1 |
-| 17 | `(anonymous)` | `src/services/users.ts:173` | 6 | 0 |
-| 16 | `CampaignDetail` | `src/pages/projects/ProjectAccessReviewCampaigns.tsx:197` | 140 | 3 |
-| 16 | `(anonymous)` | `src/pages/admin/OIDCFederationSection.tsx:222` | 165 | 0 |
+```
+pnpm exec eslint src --rule '{"complexity": ["warn", 1]}' --format json
+```
 
-_45 functions total._
+then filtered to `complexity >= 15` and sorted descending.
+
+**Read this as a worklist, not a mandate.** High complexity correlates with
+more test paths and higher change risk, but the shape matters more than the
+number: a long sequential migration chain or a field-by-field
+`normalize*()` mapper can have a high score while being low-risk (each
+branch is independent, not nested, and rarely touched together). Prioritize
+functions that *mix unrelated concerns* in one place over ones that are just
+long dispatch/mapping tables or large-but-flat page components — and refactor
+opportunistically, when you are already touching the function for a feature
+or bugfix, rather than as a dedicated sweep.
+
+| CCN | Function / Component | Location |
+|----:|----------|----------|
+| 70 | `DashboardPage` | `src/pages/dashboard/DashboardPage.tsx:273` |
+| 61 | `SecretsListPage` | `src/pages/secrets/SecretsListPage.tsx:149` |
+| 51 | `SecretDetailView` | `src/features/secrets/SecretDetailView.tsx:170` |
+| 47 | `ProjectSecretsTab` | `src/pages/projects/ProjectSecretsTab.tsx:38` |
+| 46 | `AdminPage` | `src/pages/admin/AdminPage.tsx:611` |
+| 42 | `normalize` (compliance posture) | `src/services/compliance.ts:65` |
+| 42 | `ServiceAccountsPage` | `src/pages/admin/ServiceAccountsPage.tsx:194` |
+| 40 | `UserDetailPage` | `src/pages/admin/UserDetailPage.tsx:93` |
+| 35 | `ProjectSettingsTab` | `src/pages/projects/ProjectSettingsTab.tsx:714` |
+| 35 | `AuditLogPage` | `src/pages/audit/AuditLogPage.tsx:862` |
+| 31 | `dynamicSecretsApi` object method | `src/services/dynamicSecrets.ts:80` |
+| 30 | `machineIdentitiesApi` object method | `src/services/machineIdentities.ts:52` |
+| 29 | `projectInvitationsApi` object method | `src/services/projectInvitations.ts:50` |
+| 29 | `SharingManagementPage` | `src/pages/sharing/SharingManagementPage.tsx:75` |
+| 27 | `GroupsPage` | `src/pages/admin/GroupsPage.tsx:126` |
+| 26 | `ProjectsListPage` | `src/pages/projects/ProjectsListPage.tsx:242` |
+| 26 | `RolesPoliciesPage` | `src/pages/admin/RolesPoliciesPage.tsx:118` |
+| 22 | `dynamicSecretsApi` object method | `src/services/dynamicSecrets.ts:94` |
+| 22 | `TokensTab` | `src/pages/profile/ProfilePage.tsx:326` |
+| 22 | `normalizePolicy` | `src/features/secrets/useRotationPolicies.ts:13` |
+| 21 | `projectsApi` object method | `src/services/projects.ts:69` |
+| 20 | `projectsApi` object method (`normalize`) | `src/services/projects.ts:278` |
+| 20 | `OIDCFederationSection` | `src/pages/admin/OIDCFederationSection.tsx:124` |
+| 20 | `queryFn` (async) | `src/features/audit/api.ts:24` |
+| 19 | `projectMembershipsApi` object method | `src/services/projectMemberships.ts:30` |
+| 19 | `projectInvitationsApi` object method | `src/services/projectInvitations.ts:39` |
+| 18 | `secretsApi.list` mapper | `src/services/secrets.ts:79` |
+| 18 | `projectsApi` object method | `src/services/projects.ts:142` |
+| 17 | `machineIdentitiesApi` object method | `src/services/machineIdentities.ts:90` |
+| 17 | `ShareSecretModal` | `src/features/sharing/ShareSecretModal.tsx:54` |
+| 17 | `MfaSection` | `src/features/account/MfaSection.tsx:262` |
+| 16 | `projectsApi` object method | `src/services/projects.ts:197` |
+| 16 | `normalizeControl` | `src/services/compliance.ts:158` |
+| 16 | `RotationPoliciesPage` | `src/pages/secrets/RotationPoliciesPage.tsx:98` |
+| 16 | `SecretsRotationPlanPanel` | `src/pages/projects/SecretsRotationPlanPanel.tsx:38` |
+| 16 | `RefGrantsPanel` | `src/pages/integrations/KeyorixConnectPage.tsx:185` |
+| 16 | `MachineIdentitiesSection` | `src/features/machine-identities/MachineIdentitiesSection.tsx:117` |
+| 16 | `Select` | `src/components/ui/Select.tsx:21` |
+| 15 | `SecretsDriftPanel` | `src/pages/projects/SecretsDriftPanel.tsx:27` |
+| 15 | `FederatedReadPanel` | `src/pages/integrations/KeyorixConnectPage.tsx:42` |
+| 15 | `eventBadge` | `src/pages/audit/AuditLogPage.tsx:182` |
+| 15 | `useSecretsHealth` | `src/features/secrets/useSecretsHealth.ts:23` |
+| 15 | `AccessRequestRow` | `src/features/invitations/PendingAccessRequestsSection.tsx:79` |
+
+_43 functions/components total (was 45 under the broken methodology — a
+near-identical count, but almost entirely different functions in a
+different order)._
+
+## Reading this list
+
+The pattern is now much clearer than the old one: the real top offenders are
+almost all **large page-level components** (`DashboardPage`,
+`SecretsListPage`, `ProjectSecretsTab`, `AdminPage`, `ServiceAccountsPage`,
+`UserDetailPage`, `ProjectSettingsTab`, `AuditLogPage`, ...) — a lot of
+hooks, local state, and conditional rendering in one function body, which is
+exactly the "mixes unrelated concerns" shape worth breaking up opportunistically.
+The `normalize*()` / API-object-method entries are the same low-risk
+field-mapping code called out in the original doc's guidance — not worth a
+dedicated pass.
