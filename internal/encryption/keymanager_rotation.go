@@ -1,6 +1,6 @@
 // keymanager_rotation.go — DEK rotation with full re-encryption sweep (ADR-010).
 //
-// RotateDEKWithSweep (preferred), RotateDEK (deprecated), CleanPendingDEK, deleteBackupFiles.
+// RotateDEKWithSweep, CleanPendingDEK, deleteBackupFiles.
 // For initialisation see keymanager_lifecycle.go. For get/validate/wipe see keymanager_io.go.
 package encryption
 
@@ -142,52 +142,4 @@ func (km *KeyManager) CleanPendingDEK() {
 		log.Printf("[WARN] found leftover pending DEK file %s — removing (previous rotation was interrupted)", pendingPath)
 		_ = os.Remove(pendingPath)
 	}
-}
-
-// RotateDEK generates a new DEK and writes it to disk without re-encrypting existing secrets.
-//
-// DEPRECATED: Use RotateDEKWithSweep instead. This method causes key proliferation —
-// existing secrets remain encrypted with the old DEK and backup files accumulate.
-// See ADR-010.
-func (km *KeyManager) RotateDEK(passphrase string) error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
-
-	kek, err := km.deriveKEK(passphrase)
-	if err != nil {
-		return fmt.Errorf("failed to derive KEK for DEK rotation: %w", err)
-	}
-	defer wipeBytes(kek)
-
-	newDEK, err := GenerateRandomKey(32)
-	if err != nil {
-		return fmt.Errorf("failed to generate new DEK: %w", err)
-	}
-
-	oldDEKPath := fmt.Sprintf("%s.backup.%d", km.dekPath, time.Now().Unix())
-	oldWrapped, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
-	if err != nil {
-		return fmt.Errorf("failed to read old DEK for backup: %w", err)
-	}
-	// Durable backup BEFORE overwriting the active DEK below, so a crash always
-	// leaves at least one recoverable wrapped DEK on disk.
-	if err := securefiles.SecureWriteFileSync(km.baseDir, oldDEKPath, oldWrapped, 0600); err != nil {
-		return fmt.Errorf("failed to backup old DEK: %w", err)
-	}
-
-	wrapped, err := wrapKey(newDEK, kek)
-	if err != nil {
-		return fmt.Errorf("failed to wrap new DEK: %w", err)
-	}
-	if err := securefiles.SecureWriteFileSync(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
-		return fmt.Errorf("failed to write new wrapped DEK: %w", err)
-	}
-
-	wipeBytes(km.currentDEK)
-	km.currentDEK = newDEK
-	km.dekSnapshot = append([]byte(nil), wrapped...)
-	km.keyVersion = fmt.Sprintf("v%d", time.Now().Unix())
-
-	fmt.Printf("✅ DEK rotated successfully. New version: %s\n", km.keyVersion)
-	return nil
 }
