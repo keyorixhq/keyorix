@@ -223,7 +223,7 @@
 
 @utility divide-base {
     /* divide-base: use for table/list row dividers */
-    & > :not([hidden]) ~ :not([hidden]) /* NOSONAR */ {
+    > :not([hidden]) ~ :not([hidden]) {
         border-color: var(--border);
     }
 }
@@ -231,13 +231,6 @@
 @utility bg-accent-subtle {
     /* accent-subtle bg for selected rows, callouts */
     background-color: var(--accent-subtle);
-}
-
-@utility placeholder-base-muted {
-    /* placeholder */
-    &::placeholder /* NOSONAR */ {
-        color: var(--text-muted);
-    }
 }
 
 @layer base {
