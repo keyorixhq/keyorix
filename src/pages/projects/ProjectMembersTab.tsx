@@ -9,7 +9,8 @@ import {
     ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import { usersApi } from '../../services/users';
-import { PROJECT_ROLES } from '../../services/projects';
+import { PROJECT_ROLES, ProjectMember } from '../../services/projects';
+import { useAuthStore } from '../../store/authStore';
 import {
     useProject,
     useProjectMembers,
@@ -198,8 +199,9 @@ const RoleLegend: React.FC = () => {
  * System-level user provisioning stays on the admin User Management page.
  */
 export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId }) => {
-    const { data: members = [], isLoading } = useProjectMembers(projectId);
+    const { data: members = [], isLoading, isError } = useProjectMembers(projectId);
     const { data: project } = useProject(projectId);
+    const { user } = useAuthStore();
     const { data: usersResp } = useQuery({
         queryKey: ['users-list-members'],
         queryFn: () => usersApi.list({ pageSize: 200 }),
@@ -220,6 +222,30 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
 
     const memberIds = useMemo(() => new Set(members.map((m) => m.userId)), [members]);
     const candidates = useMemo(() => allUsers.filter((u: any) => !memberIds.has(u.id)), [allUsers, memberIds]);
+
+    // "project_admin" is the closest analog to an "owner" role this project
+    // model has — there is no dedicated owner flag. Removing the last one
+    // would leave the project with nobody able to manage members or secrets.
+    const adminCount = useMemo(() => members.filter((m) => m.roleName === 'project_admin').length, [members]);
+
+    const handleRemoveMember = (member: ProjectMember) => {
+        const isLastAdmin = member.roleName === 'project_admin' && adminCount <= 1;
+        if (isLastAdmin) {
+            setError('Cannot remove the last admin from this project. Promote another member to Admin first.');
+            return;
+        }
+
+        const isSelf = member.userId === user?.id;
+        const confirmed = window.confirm(
+            isSelf
+                ? 'Remove yourself from this project? You will lose access immediately.'
+                : `Remove ${member.displayName || member.username || 'this member'} from this project?`
+        );
+        if (!confirmed) return;
+
+        setError('');
+        removeMember.mutate(member.userId);
+    };
 
     const handleAdd = () => {
         if (!newUserId) return;
@@ -352,6 +378,19 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                             </div>
                         );
                     }
+                    if (isError) {
+                        return (
+                            <div className="p-10 text-center">
+                                <UserCircleIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--error)' }} />
+                                <p className="text-sm font-medium" style={{ color: 'var(--error)' }}>
+                                    Failed to load members.
+                                </p>
+                                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                                    Try refreshing the page.
+                                </p>
+                            </div>
+                        );
+                    }
                     if (members.length === 0) {
                         return (
                             <div className="p-10 text-center">
@@ -436,7 +475,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                                                     type="button"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        removeMember.mutate(m.userId);
+                                                        handleRemoveMember(m);
                                                     }}
                                                     disabled={removeMember.isPending}
                                                     className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0 pointer-events-auto"
