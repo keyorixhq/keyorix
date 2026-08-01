@@ -4,7 +4,7 @@ Deferred technical work and the decisions behind it. Product/feature roadmap
 lives in the app itself (`src/pages/roadmap/RoadmapPage.tsx`); this file tracks
 internal engineering work only.
 
-_Last updated: 2026-07-31._
+_Last updated: 2026-08-01._
 
 ## Q3 2026 roadmap features — COMPLETE
 
@@ -88,25 +88,37 @@ reformatted in a standalone commit, `format:check` added as its own CI step.
 
 ## Dependency maintenance
 
-The upgrade campaign is **complete** — `pnpm outdated` is empty.
-
 - Removed as dead (declared but imported nowhere): **`date-fns`**. Re-add only
   when actually used.
-- **`jest-axe`** was re-added in PR #118 for the a11y test suite.
-- TypeScript is on 6.x; `tsconfig` was modernized (`moduleResolution: bundler`,
-  no `baseUrl`) so it is clean for the eventual TS 7.
+- **`jest-axe`** was re-added in PR #118 for the a11y test suite; bumped to
+  11.x 2026-08-01.
+- `tsconfig` was modernized (`moduleResolution: bundler`, no `baseUrl`), ready
+  for the eventual TS 7. **Deliberately staying on TypeScript 6.x for now**
+  (2026-08-01): TS 7 is the new Go-native compiler with no stable
+  programmatic API until 7.1 (still months out per Microsoft), and
+  `typescript-eslint` — which `pnpm lint` depends on — closed TS7 support as
+  "not planned" until that API ships. Revisit once it has real support.
+- 2026-07-30/31: 26 minor/patch deps updated; `jsdom` 30, `@testing-library/jest-dom`
+  7, and a pre-existing unmet `@testing-library/dom` peer (now pinned
+  explicitly at `^10.4.1`) landed 2026-08-01. Run `pnpm outdated` for current
+  state rather than trusting a "complete" snapshot here — it drifts.
 
-## Refactor candidates (cyclomatic complexity) — 2026-07-30
+## Refactor candidates (cyclomatic complexity) — regenerated 2026-08-01
 
-See [`docs/REFACTOR-CANDIDATES.md`](docs/REFACTOR-CANDIDATES.md). 45 functions
-above CCN 15 (`lizard`-generated). Worst outliers `buildCreateModalContent`
-(AdminPage.tsx, CCN 115) and `renderExpiringSecretsSection`
-(ProjectSettingsTab.tsx, CCN 103 — extracted from the parent component in
-PR #150 to fix its *cognitive* complexity, but still cyclomatically large
-itself). A cluster of `normalize*()` functions in `src/services/*.ts` also
-shows up with high CCN despite being short — field-mapping code, low risk.
-Not a dedicated-sweep item — fix opportunistically when already touching one
-of these functions.
+See [`docs/REFACTOR-CANDIDATES.md`](docs/REFACTOR-CANDIDATES.md). The
+2026-07-30 version was generated with `lizard`, which does naive
+brace-counting and badly misjudges JSX-returning functions (JSX's `{expr}`
+looks like a code block to a brace-counter, but isn't) — its two "worst
+outliers" (`buildCreateModalContent` CCN 115, `renderExpiringSecretsSection`
+CCN 103) turned out to have *real* complexity of 12 and 4. Regenerated with
+ESLint's own `complexity` rule instead (same JSX-aware parser `pnpm lint`
+already uses) — 43 functions above complexity 15, an almost entirely
+different set led by large page-level components (`DashboardPage`,
+`SecretsListPage`, `AdminPage`, ...) rather than the render-helper functions
+the old list pointed at. A cluster of `normalize*()`/API-object-method
+functions in `src/services/*.ts` also shows up despite being short —
+field-mapping code, low risk. Not a dedicated-sweep item — fix
+opportunistically when already touching one of these functions.
 
 ## Working agreement (how changes land here)
 
