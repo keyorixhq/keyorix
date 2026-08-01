@@ -270,27 +270,19 @@ describe('authStore', () => {
             expect(window.location.href).toBe('/login');
         });
 
-        it('skips the network round-trip and logs out once the absolute session ceiling has passed', async () => {
-            // BUG (documented, not fixed — see PR description): the
-            // isAbsoluteExpiryPassed() branch (authStore.ts lines 211-214) calls
-            // get().logout() and then throws *inside the same try block* that its
-            // own catch (lines 225-228) also wraps. The thrown
-            // "Session lifetime exceeded" error is therefore caught by that outer
-            // catch too, which calls get().logout() a SECOND time before
-            // rethrowing. Net effect: authService.logout() fires twice (and
-            // window.location.href is (re-)assigned twice) for a single
-            // refreshToken() call whenever the absolute ceiling has passed. This
-            // test asserts the actual (buggy) double-call behavior rather than
-            // the presumably-intended single call, so a fix will show up here as
-            // a legitimate, deliberate test change rather than a silent
-            // regression.
+        it('skips the network round-trip and logs out exactly once when the absolute session ceiling has passed', async () => {
+            // Regression test: the isAbsoluteExpiryPassed() early-exit throw lives
+            // in its own inner try/catch, separate from the one wrapping the actual
+            // authService.refreshToken() call. That keeps get().logout() from being
+            // invoked a second time by the outer catch when the thrown
+            // "Session lifetime exceeded" error propagates.
             vi.mocked(authUtils.isAbsoluteExpiryPassed).mockReturnValueOnce(true);
             vi.mocked(authService.logout).mockResolvedValue(undefined);
 
             await expect(useAuthStore.getState().refreshToken()).rejects.toThrow('Session lifetime exceeded');
 
             expect(authService.refreshToken).not.toHaveBeenCalled();
-            expect(authService.logout).toHaveBeenCalledTimes(2);
+            expect(authService.logout).toHaveBeenCalledOnce();
         });
 
         it('coalesces concurrent callers onto a single in-flight POST /auth/refresh', async () => {

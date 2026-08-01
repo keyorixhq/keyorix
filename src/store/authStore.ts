@@ -213,19 +213,21 @@ export const useAuthStore = create<AuthStore>()(
                             throw new Error('Session lifetime exceeded');
                         }
 
-                        const response = await authService.refreshToken();
-                        set({ error: null });
+                        try {
+                            const response = await authService.refreshToken();
+                            set({ error: null });
 
-                        // Advance the access window and carry the (possibly absent)
-                        // ceiling. Note: the field is expires_at to match the backend
-                        // payload — reading the old camelCase expiresAt silently stored
-                        // undefined and logged the user out on the next request.
-                        updateTokenExpiry(response.expires_at);
-                        updateAbsoluteTokenExpiry(response.absolute_expires_at);
-                    } catch (error) {
-                        // If refresh fails, logout user
-                        await get().logout();
-                        throw error;
+                            // Advance the access window and carry the (possibly absent)
+                            // ceiling. Note: the field is expires_at to match the backend
+                            // payload — reading the old camelCase expiresAt silently stored
+                            // undefined and logged the user out on the next request.
+                            updateTokenExpiry(response.expires_at);
+                            updateAbsoluteTokenExpiry(response.absolute_expires_at);
+                        } catch (error) {
+                            // If refresh fails, logout user
+                            await get().logout();
+                            throw error;
+                        }
                     } finally {
                         inFlightRefresh = null;
                     }
