@@ -81,6 +81,33 @@ function generatePassword(): string {
 
 type CreateMode = 'password' | 'setup_link' | 'one_time_password';
 
+function computeIsDark(theme: string): boolean {
+    if (theme === 'dark') return true;
+    if (theme === 'system') return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return false;
+}
+
+function parseUserListData(data: unknown): { users: APIUser[]; total: number; totalPages: number } {
+    const rawData = data as any;
+    return {
+        users: rawData?.users ?? [],
+        total: rawData?.total ?? 0,
+        totalPages: rawData?.total_pages ?? 1,
+    };
+}
+
+function getUserCountLabel(total: number): string {
+    if (total === 0) return 'No users found';
+    return `${total} user${total !== 1 ? 's' : ''}`;
+}
+
+function getCreateButtonLabel(mode: CreateMode, isPending: boolean): string {
+    if (isPending) return 'Creating…';
+    if (mode === 'setup_link') return 'Create & Send Link';
+    if (mode === 'one_time_password') return 'Create & Generate Password';
+    return 'Create User';
+}
+
 interface CreateModalProps {
     setupResult: SetupLinkResult | null;
     otpResult: string | null;
@@ -608,6 +635,389 @@ function buildUserListContent(props: UserListProps): React.ReactNode {
     );
 }
 
+interface PageHeaderProps {
+    userCountLabel: string;
+    selectedCount: number;
+    hasActive: boolean;
+    hasInactive: boolean;
+    bulkPending: boolean;
+    onBulkActivate: () => void;
+    onBulkDeactivate: () => void;
+    onBulkDelete: () => void;
+    onClearSelected: () => void;
+    onInvite: () => void;
+    onNewUser: () => void;
+}
+
+const PageHeader: React.FC<PageHeaderProps> = ({
+    userCountLabel,
+    selectedCount,
+    hasActive,
+    hasInactive,
+    bulkPending,
+    onBulkActivate,
+    onBulkDeactivate,
+    onBulkDelete,
+    onClearSelected,
+    onInvite,
+    onNewUser,
+}) => (
+    <div className="flex items-center justify-between mb-6">
+        <div>
+            <h1 className="text-2xl font-bold text-base-primary">User Management</h1>
+            <p className="text-sm text-base-muted mt-1">{userCountLabel}</p>
+        </div>
+        <div className="flex items-center gap-2">
+            {selectedCount > 0 && (
+                <>
+                    <span className="text-sm text-base-muted">{selectedCount} selected</span>
+                    {hasInactive && (
+                        <Button variant="outline" size="sm" onClick={onBulkActivate} disabled={bulkPending}>
+                            Activate
+                        </Button>
+                    )}
+                    {hasActive && (
+                        <Button variant="outline" size="sm" onClick={onBulkDeactivate} disabled={bulkPending}>
+                            Deactivate
+                        </Button>
+                    )}
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onBulkDelete}
+                        disabled={bulkPending}
+                        className="text-red-600 hover:text-red-700"
+                    >
+                        <TrashIcon className="h-4 w-4 mr-1" />
+                        Delete
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={onClearSelected}>
+                        Clear
+                    </Button>
+                </>
+            )}
+            <Button variant="outline" onClick={onInvite}>
+                <EnvelopeIcon className="h-4 w-4 mr-1.5" />
+                Invite User
+            </Button>
+            <Button variant="default" onClick={onNewUser}>
+                <PlusIcon className="h-4 w-4 mr-1.5" />
+                New User
+            </Button>
+        </div>
+    </div>
+);
+
+interface InactiveFilterBannerProps {
+    show: boolean;
+    isDark: boolean;
+    onViewLoginHistory: () => void;
+}
+
+const InactiveFilterBanner: React.FC<InactiveFilterBannerProps> = ({ show, isDark, onViewLoginHistory }) => {
+    if (!show) return null;
+    return (
+        <div
+            className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"
+            style={{
+                backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fffbeb',
+                borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d',
+                color: isDark ? '#fbbf24' : '#92400e',
+            }}
+        >
+            <span className="text-sm font-medium">
+                Showing inactive users only — no login in the last 30 days (includes accounts that have never logged
+                in).
+            </span>
+            <button
+                type="button"
+                onClick={onViewLoginHistory}
+                className="text-sm font-medium underline underline-offset-2 hover:opacity-75 transition-opacity ml-4 whitespace-nowrap"
+            >
+                View login history →
+            </button>
+        </div>
+    );
+};
+
+interface UserSearchBarProps {
+    searchInput: string;
+    setSearchInput: (v: string) => void;
+    search: string;
+    onSearchSubmit: () => void;
+    onClearSearch: () => void;
+    showDeleted: boolean;
+    onShowDeletedChange: (checked: boolean) => void;
+}
+
+const UserSearchBar: React.FC<UserSearchBarProps> = ({
+    searchInput,
+    setSearchInput,
+    search,
+    onSearchSubmit,
+    onClearSearch,
+    showDeleted,
+    onShowDeletedChange,
+}) => (
+    <div className="flex flex-col gap-3 mb-6">
+        <form
+            onSubmit={(e) => {
+                e.preventDefault();
+                onSearchSubmit();
+            }}
+            className="flex gap-2"
+        >
+            <div className="relative flex-1">
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-base-muted" />
+                <input
+                    type="text"
+                    placeholder="Search by username or email…"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    style={{
+                        backgroundColor: 'var(--bg-app)',
+                        color: 'var(--text-primary)',
+                        borderColor: 'var(--border-strong)',
+                    }}
+                />
+            </div>
+            <Button type="submit" variant="secondary">
+                Search
+            </Button>
+            {search && (
+                <Button type="button" variant="ghost" onClick={onClearSearch}>
+                    Clear
+                </Button>
+            )}
+        </form>
+        <label htmlFor="show-deleted-checkbox" className="flex items-center gap-2 cursor-pointer w-fit">
+            <input
+                id="show-deleted-checkbox"
+                type="checkbox"
+                checked={showDeleted}
+                onChange={(e) => onShowDeletedChange(e.target.checked)}
+                className="h-4 w-4 rounded-sm border-base"
+                style={{ accentColor: 'var(--accent)' }}
+            />
+            <span className="text-sm text-base-muted">Show deleted users</span>
+        </label>
+    </div>
+);
+
+interface EditUserModalProps {
+    activeModal: ActiveModal;
+    formError: string;
+    editDisplayName: string;
+    setEditDisplayName: (v: string) => void;
+    editEmail: string;
+    setEditEmail: (v: string) => void;
+    editActive: boolean;
+    setEditActive: (v: boolean) => void;
+    onSave: () => void;
+    onClose: () => void;
+    isPending: boolean;
+}
+
+const EditUserModal: React.FC<EditUserModalProps> = ({
+    activeModal,
+    formError,
+    editDisplayName,
+    setEditDisplayName,
+    editEmail,
+    setEditEmail,
+    editActive,
+    setEditActive,
+    onSave,
+    onClose,
+    isPending,
+}) => (
+    <Modal isOpen={activeModal?.type === 'edit'} onClose={onClose} title="Edit User" size="md">
+        <div className="space-y-4">
+            {formError && <Alert type="error" message={formError} />}
+            {activeModal?.type === 'edit' && (
+                <p className="text-sm text-base-muted">
+                    Editing <span className="font-medium text-base-secondary">@{activeModal.user.username}</span>
+                </p>
+            )}
+            <div>
+                <label htmlFor="edit-display-name" className="block text-sm font-medium text-base-secondary mb-1">
+                    Display Name
+                </label>
+                <input
+                    id="edit-display-name"
+                    type="text"
+                    value={editDisplayName}
+                    onChange={(e) => setEditDisplayName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                />
+            </div>
+            <div>
+                <label htmlFor="edit-email" className="block text-sm font-medium text-base-secondary mb-1">
+                    Email
+                </label>
+                <input
+                    id="edit-email"
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                />
+            </div>
+            <div>
+                <label htmlFor="edit-active" className="flex items-center gap-2 cursor-pointer">
+                    <input
+                        id="edit-active"
+                        type="checkbox"
+                        checked={editActive}
+                        onChange={(e) => setEditActive(e.target.checked)}
+                        className="h-4 w-4 rounded-sm border-base"
+                        style={{ accentColor: 'var(--accent)' }}
+                    />
+                    <span className="text-sm font-medium text-base-secondary">Active</span>
+                </label>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+                <Button variant="ghost" onClick={onClose} disabled={isPending}>
+                    Cancel
+                </Button>
+                <Button variant="default" onClick={onSave} disabled={isPending}>
+                    {isPending ? 'Saving…' : 'Save Changes'}
+                </Button>
+            </div>
+        </div>
+    </Modal>
+);
+
+interface DeleteUserModalProps {
+    activeModal: ActiveModal;
+    onDelete: () => void;
+    onClose: () => void;
+    isPending: boolean;
+}
+
+const DeleteUserModal: React.FC<DeleteUserModalProps> = ({ activeModal, onDelete, onClose, isPending }) => (
+    <Modal isOpen={activeModal?.type === 'delete'} onClose={onClose} title="Delete User" size="sm">
+        <div className="space-y-4">
+            {activeModal?.type === 'delete' && (
+                <p className="text-sm text-base-secondary">
+                    Delete <span className="font-semibold">@{activeModal.user.username}</span>? The user will be
+                    soft-deleted and can be restored within 30 days.
+                </p>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+                <Button variant="ghost" onClick={onClose} disabled={isPending}>
+                    Cancel
+                </Button>
+                <Button variant="destructive" onClick={onDelete} disabled={isPending}>
+                    {isPending ? 'Deleting…' : 'Delete User'}
+                </Button>
+            </div>
+        </div>
+    </Modal>
+);
+
+interface RestoreUserModalProps {
+    activeModal: ActiveModal;
+    onRestore: () => void;
+    onClose: () => void;
+    isPending: boolean;
+}
+
+const RestoreUserModal: React.FC<RestoreUserModalProps> = ({ activeModal, onRestore, onClose, isPending }) => (
+    <Modal isOpen={activeModal?.type === 'restore'} onClose={onClose} title="Restore User" size="sm">
+        <div className="space-y-4">
+            {activeModal?.type === 'restore' && (
+                <p className="text-sm text-base-secondary">
+                    Restore <span className="font-semibold">@{activeModal.user.username}</span>? Their account will
+                    become active again.
+                </p>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+                <Button variant="ghost" onClick={onClose} disabled={isPending}>
+                    Cancel
+                </Button>
+                <Button variant="default" onClick={onRestore} disabled={isPending}>
+                    {isPending ? 'Restoring…' : 'Restore User'}
+                </Button>
+            </div>
+        </div>
+    </Modal>
+);
+
+interface RolesModalProps {
+    activeModal: ActiveModal;
+    formError: string;
+    rolesLoading: boolean;
+    allRoles: any;
+    selectedRoleIds: Set<number>;
+    toggleRoleId: (id: number) => void;
+    onSave: () => void;
+    onClose: () => void;
+    isPending: boolean;
+}
+
+const RolesModal: React.FC<RolesModalProps> = ({
+    activeModal,
+    formError,
+    rolesLoading,
+    allRoles,
+    selectedRoleIds,
+    toggleRoleId,
+    onSave,
+    onClose,
+    isPending,
+}) => (
+    <Modal isOpen={activeModal?.type === 'roles'} onClose={onClose} title="Manage Roles" size="md">
+        <div className="space-y-4">
+            {formError && <Alert type="error" message={formError} />}
+            {activeModal?.type === 'roles' && (
+                <p className="text-sm text-base-muted">
+                    Roles for <span className="font-medium text-base-secondary">@{activeModal.user.username}</span>
+                </p>
+            )}
+            {rolesLoading ? (
+                <Loading />
+            ) : (
+                <div className="space-y-2">
+                    {((allRoles as any[]) ?? []).map((role: any) => (
+                        <label
+                            key={role.id}
+                            htmlFor={`role-checkbox-${role.id}`}
+                            className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors"
+                        >
+                            <input
+                                id={`role-checkbox-${role.id}`}
+                                type="checkbox"
+                                checked={selectedRoleIds.has(role.id)}
+                                onChange={() => toggleRoleId(role.id)}
+                                className="mt-0.5 h-4 w-4 rounded-sm border-base"
+                                style={{ accentColor: 'var(--accent)' }}
+                            />
+                            <div>
+                                <p className="text-sm font-medium text-base-primary">{role.name}</p>
+                                {role.description && (
+                                    <p className="text-xs text-base-muted mt-0.5">{role.description}</p>
+                                )}
+                            </div>
+                        </label>
+                    ))}
+                </div>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+                <Button variant="ghost" onClick={onClose} disabled={isPending}>
+                    Cancel
+                </Button>
+                <Button variant="default" onClick={onSave} disabled={isPending || rolesLoading}>
+                    {isPending ? 'Saving…' : 'Save Roles'}
+                </Button>
+            </div>
+        </div>
+    </Modal>
+);
+
+// ─── Main component ─────────────────────────────────────────────────────────
+
 export const AdminPage: React.FC = () => {
     const PAGE_SIZE = 20;
 
@@ -652,8 +1062,7 @@ export const AdminPage: React.FC = () => {
 
     const navigate = useNavigate();
     const { theme } = useUIStore();
-    const isDark =
-        theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const isDark = computeIsDark(theme);
     const { data, isLoading, isError } = useAdminUserList({
         page,
         search,
@@ -662,10 +1071,7 @@ export const AdminPage: React.FC = () => {
         inactive: filterInactive,
     });
 
-    const rawData = data as any;
-    const users: APIUser[] = rawData?.users ?? [];
-    const total: number = rawData?.total ?? 0;
-    const totalPages: number = rawData?.total_pages ?? 1;
+    const { users, total, totalPages } = parseUserListData(data);
 
     const [rolesUserId, setRolesUserId] = useState<number | null>(null);
     const [selectedRoleIds, setSelectedRoleIds] = useState<Set<number>>(new Set());
@@ -941,19 +1347,8 @@ export const AdminPage: React.FC = () => {
 
     const hasActive = users.some((u) => selected.has(u.id) && u.active);
     const hasInactive = users.some((u) => selected.has(u.id) && !u.active);
-    const userSuffix = total !== 1 ? 's' : '';
-    const userCountLabel = total > 0 ? `${total} user${userSuffix}` : 'No users found';
-
-    let createButtonLabel: string;
-    if (createMutation.isPending) {
-        createButtonLabel = 'Creating…';
-    } else if (createMode === 'setup_link') {
-        createButtonLabel = 'Create & Send Link';
-    } else if (createMode === 'one_time_password') {
-        createButtonLabel = 'Create & Generate Password';
-    } else {
-        createButtonLabel = 'Create User';
-    }
+    const userCountLabel = getUserCountLabel(total);
+    const createButtonLabel = getCreateButtonLabel(createMode, createMutation.isPending);
 
     const createModalContent = buildCreateModalContent({
         setupResult,
@@ -1007,66 +1402,22 @@ export const AdminPage: React.FC = () => {
     return (
         <>
             <div className="max-w-6xl mx-auto px-4 py-8">
-                <div className="flex items-center justify-between mb-6">
-                    <div>
-                        <h1 className="text-2xl font-bold text-base-primary">User Management</h1>
-                        <p className="text-sm text-base-muted mt-1">{userCountLabel}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {selected.size > 0 && (
-                            <>
-                                <span className="text-sm text-base-muted">{selected.size} selected</span>
-                                {hasInactive && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => bulkSetActive(true)}
-                                        disabled={bulkPending}
-                                    >
-                                        Activate
-                                    </Button>
-                                )}
-                                {hasActive && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => bulkSetActive(false)}
-                                        disabled={bulkPending}
-                                    >
-                                        Deactivate
-                                    </Button>
-                                )}
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={bulkDelete}
-                                    disabled={bulkPending}
-                                    className="text-red-600 hover:text-red-700"
-                                >
-                                    <TrashIcon className="h-4 w-4 mr-1" />
-                                    Delete
-                                </Button>
-                                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
-                                    Clear
-                                </Button>
-                            </>
-                        )}
-                        <Button variant="outline" onClick={() => setInviteOpen(true)}>
-                            <EnvelopeIcon className="h-4 w-4 mr-1.5" />
-                            Invite User
-                        </Button>
-                        <Button
-                            variant="default"
-                            onClick={() => {
-                                setFormError('');
-                                setActiveModal({ type: 'create' });
-                            }}
-                        >
-                            <PlusIcon className="h-4 w-4 mr-1.5" />
-                            New User
-                        </Button>
-                    </div>
-                </div>
+                <PageHeader
+                    userCountLabel={userCountLabel}
+                    selectedCount={selected.size}
+                    hasActive={hasActive}
+                    hasInactive={hasInactive}
+                    bulkPending={bulkPending}
+                    onBulkActivate={() => bulkSetActive(true)}
+                    onBulkDeactivate={() => bulkSetActive(false)}
+                    onBulkDelete={bulkDelete}
+                    onClearSelected={() => setSelected(new Set())}
+                    onInvite={() => setInviteOpen(true)}
+                    onNewUser={() => {
+                        setFormError('');
+                        setActiveModal({ type: 'create' });
+                    }}
+                />
 
                 {pageError && (
                     <Alert
@@ -1086,86 +1437,32 @@ export const AdminPage: React.FC = () => {
                 <OrgInventoryExport />
                 <MaintenanceSection />
 
-                {filterInactive && (
-                    <div
-                        className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"
-                        style={{
-                            backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fffbeb',
-                            borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d',
-                            color: isDark ? '#fbbf24' : '#92400e',
-                        }}
-                    >
-                        <span className="text-sm font-medium">
-                            Showing inactive users only — no login in the last 30 days (includes accounts that have
-                            never logged in).
-                        </span>
-                        <button
-                            type="button"
-                            onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=logins')}
-                            className="text-sm font-medium underline underline-offset-2 hover:opacity-75 transition-opacity ml-4 whitespace-nowrap"
-                        >
-                            View login history →
-                        </button>
-                    </div>
-                )}
+                <InactiveFilterBanner
+                    show={filterInactive}
+                    isDark={isDark}
+                    onViewLoginHistory={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=logins')}
+                />
 
-                <div className="flex flex-col gap-3 mb-6">
-                    <form
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                            setSearch(searchInput);
-                            setPage(1);
-                        }}
-                        className="flex gap-2"
-                    >
-                        <div className="relative flex-1">
-                            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-base-muted" />
-                            <input
-                                type="text"
-                                placeholder="Search by username or email…"
-                                value={searchInput}
-                                onChange={(e) => setSearchInput(e.target.value)}
-                                className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                style={{
-                                    backgroundColor: 'var(--bg-app)',
-                                    color: 'var(--text-primary)',
-                                    borderColor: 'var(--border-strong)',
-                                }}
-                            />
-                        </div>
-                        <Button type="submit" variant="secondary">
-                            Search
-                        </Button>
-                        {search && (
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={() => {
-                                    setSearchInput('');
-                                    setSearch('');
-                                    setPage(1);
-                                }}
-                            >
-                                Clear
-                            </Button>
-                        )}
-                    </form>
-                    <label htmlFor="show-deleted-checkbox" className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input
-                            id="show-deleted-checkbox"
-                            type="checkbox"
-                            checked={showDeleted}
-                            onChange={(e) => {
-                                setShowDeleted(e.target.checked);
-                                setPage(1);
-                                setSelected(new Set());
-                            }}
-                            className="h-4 w-4 rounded-sm border-base"
-                            style={{ accentColor: 'var(--accent)' }}
-                        />
-                        <span className="text-sm text-base-muted">Show deleted users</span>
-                    </label>
-                </div>
+                <UserSearchBar
+                    searchInput={searchInput}
+                    setSearchInput={setSearchInput}
+                    search={search}
+                    onSearchSubmit={() => {
+                        setSearch(searchInput);
+                        setPage(1);
+                    }}
+                    onClearSearch={() => {
+                        setSearchInput('');
+                        setSearch('');
+                        setPage(1);
+                    }}
+                    showDeleted={showDeleted}
+                    onShowDeletedChange={(checked) => {
+                        setShowDeleted(checked);
+                        setPage(1);
+                        setSelected(new Set());
+                    }}
+                />
 
                 {userListContent}
             </div>
@@ -1174,155 +1471,45 @@ export const AdminPage: React.FC = () => {
                 {createModalContent}
             </Modal>
 
-            <Modal isOpen={activeModal?.type === 'edit'} onClose={closeModal} title="Edit User" size="md">
-                <div className="space-y-4">
-                    {formError && <Alert type="error" message={formError} />}
-                    {activeModal?.type === 'edit' && (
-                        <p className="text-sm text-base-muted">
-                            Editing{' '}
-                            <span className="font-medium text-base-secondary">@{activeModal.user.username}</span>
-                        </p>
-                    )}
-                    <div>
-                        <label
-                            htmlFor="edit-display-name"
-                            className="block text-sm font-medium text-base-secondary mb-1"
-                        >
-                            Display Name
-                        </label>
-                        <input
-                            id="edit-display-name"
-                            type="text"
-                            value={editDisplayName}
-                            onChange={(e) => setEditDisplayName(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-                    <div>
-                        <label htmlFor="edit-email" className="block text-sm font-medium text-base-secondary mb-1">
-                            Email
-                        </label>
-                        <input
-                            id="edit-email"
-                            type="email"
-                            value={editEmail}
-                            onChange={(e) => setEditEmail(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-                    <div>
-                        <label htmlFor="edit-active" className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                id="edit-active"
-                                type="checkbox"
-                                checked={editActive}
-                                onChange={(e) => setEditActive(e.target.checked)}
-                                className="h-4 w-4 rounded-sm border-base"
-                                style={{ accentColor: 'var(--accent)' }}
-                            />
-                            <span className="text-sm font-medium text-base-secondary">Active</span>
-                        </label>
-                    </div>
-                    <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={updateMutation.isPending}>
-                            Cancel
-                        </Button>
-                        <Button variant="default" onClick={handleUpdate} disabled={updateMutation.isPending}>
-                            {updateMutation.isPending ? 'Saving…' : 'Save Changes'}
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+            <EditUserModal
+                activeModal={activeModal}
+                formError={formError}
+                editDisplayName={editDisplayName}
+                setEditDisplayName={setEditDisplayName}
+                editEmail={editEmail}
+                setEditEmail={setEditEmail}
+                editActive={editActive}
+                setEditActive={setEditActive}
+                onSave={handleUpdate}
+                onClose={closeModal}
+                isPending={updateMutation.isPending}
+            />
 
-            <Modal isOpen={activeModal?.type === 'delete'} onClose={closeModal} title="Delete User" size="sm">
-                <div className="space-y-4">
-                    {activeModal?.type === 'delete' && (
-                        <p className="text-sm text-base-secondary">
-                            Delete <span className="font-semibold">@{activeModal.user.username}</span>? The user will be
-                            soft-deleted and can be restored within 30 days.
-                        </p>
-                    )}
-                    <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={deleteMutation.isPending}>
-                            Cancel
-                        </Button>
-                        <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>
-                            {deleteMutation.isPending ? 'Deleting…' : 'Delete User'}
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+            <DeleteUserModal
+                activeModal={activeModal}
+                onDelete={handleDelete}
+                onClose={closeModal}
+                isPending={deleteMutation.isPending}
+            />
 
-            <Modal isOpen={activeModal?.type === 'restore'} onClose={closeModal} title="Restore User" size="sm">
-                <div className="space-y-4">
-                    {activeModal?.type === 'restore' && (
-                        <p className="text-sm text-base-secondary">
-                            Restore <span className="font-semibold">@{activeModal.user.username}</span>? Their account
-                            will become active again.
-                        </p>
-                    )}
-                    <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={restoreMutation.isPending}>
-                            Cancel
-                        </Button>
-                        <Button variant="default" onClick={handleRestore} disabled={restoreMutation.isPending}>
-                            {restoreMutation.isPending ? 'Restoring…' : 'Restore User'}
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+            <RestoreUserModal
+                activeModal={activeModal}
+                onRestore={handleRestore}
+                onClose={closeModal}
+                isPending={restoreMutation.isPending}
+            />
 
-            <Modal isOpen={activeModal?.type === 'roles'} onClose={closeModal} title="Manage Roles" size="md">
-                <div className="space-y-4">
-                    {formError && <Alert type="error" message={formError} />}
-                    {activeModal?.type === 'roles' && (
-                        <p className="text-sm text-base-muted">
-                            Roles for{' '}
-                            <span className="font-medium text-base-secondary">@{activeModal.user.username}</span>
-                        </p>
-                    )}
-                    {rolesLoading ? (
-                        <Loading />
-                    ) : (
-                        <div className="space-y-2">
-                            {((allRoles as any[]) ?? []).map((role: any) => (
-                                <label
-                                    key={role.id}
-                                    htmlFor={`role-checkbox-${role.id}`}
-                                    className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors"
-                                >
-                                    <input
-                                        id={`role-checkbox-${role.id}`}
-                                        type="checkbox"
-                                        checked={selectedRoleIds.has(role.id)}
-                                        onChange={() => toggleRoleId(role.id)}
-                                        className="mt-0.5 h-4 w-4 rounded-sm border-base"
-                                        style={{ accentColor: 'var(--accent)' }}
-                                    />
-                                    <div>
-                                        <p className="text-sm font-medium text-base-primary">{role.name}</p>
-                                        {role.description && (
-                                            <p className="text-xs text-base-muted mt-0.5">{role.description}</p>
-                                        )}
-                                    </div>
-                                </label>
-                            ))}
-                        </div>
-                    )}
-                    <div className="flex justify-end gap-3 pt-2">
-                        <Button variant="ghost" onClick={closeModal} disabled={updateRolesMutation.isPending}>
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="default"
-                            onClick={handleSaveRoles}
-                            disabled={updateRolesMutation.isPending || rolesLoading}
-                        >
-                            {updateRolesMutation.isPending ? 'Saving…' : 'Save Roles'}
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+            <RolesModal
+                activeModal={activeModal}
+                formError={formError}
+                rolesLoading={rolesLoading}
+                allRoles={allRoles}
+                selectedRoleIds={selectedRoleIds}
+                toggleRoleId={toggleRoleId}
+                onSave={handleSaveRoles}
+                onClose={closeModal}
+                isPending={updateRolesMutation.isPending}
+            />
 
             <GlobalInviteUserModal isOpen={inviteOpen} onClose={() => setInviteOpen(false)} />
         </>
