@@ -63,7 +63,7 @@ export function useCreateProject() {
     return useMutation({
         mutationFn: (payload: CreateProjectPayload) => projectsApi.create(payload),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.list() });
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
         },
     });
 }

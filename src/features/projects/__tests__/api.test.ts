@@ -279,7 +279,7 @@ describe('useAccessReviewCampaign', () => {
 // ── mutations with cache effects ────────────────────────────────────────────
 
 describe('useCreateProject', () => {
-    it('creates a project and invalidates the default (non-deleted) list', async () => {
+    it('creates a project and invalidates every projects-scoped query', async () => {
         mockProjects.create!.mockResolvedValueOnce({ id: 9, name: 'new-project' });
         const { wrapper, queryClient } = createWrapper();
         const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
@@ -291,14 +291,10 @@ describe('useCreateProject', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         expect(mockProjects.create).toHaveBeenCalledWith({ name: 'new-project' });
-        // BUG (documented, not fixed per task scope): PROJECT_KEYS.list() with no
-        // argument defaults to includeDeleted: false, so this invalidation call's
-        // queryKey is the *concrete* 3-element key ['projects','list',{includeDeleted:false}],
-        // not a broader ['projects','list'] prefix. React Query's partial-match
-        // invalidation therefore only refetches the non-deleted list; a view showing
-        // the deleted-inclusive list (useProjects(true)) is left stale after create.
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: PROJECT_KEYS.list() });
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['projects', 'list', { includeDeleted: false }] });
+        // Invalidating the broad PROJECT_KEYS.all prefix (rather than a concrete
+        // list key) ensures every list view is refetched after create — both the
+        // default non-deleted list and any deleted-inclusive list (useProjects(true)).
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: PROJECT_KEYS.all });
     });
 });
 
