@@ -99,7 +99,12 @@ For installations with large numbers of secrets, the sweep processes `secret_ver
 
 Changing `KEYORIX_MASTER_PASSWORD` is a separate concern: new salt + new PBKDF2 derivation → new KEK → re-wrap same DEK with new KEK. This does **not** require a database re-encryption sweep (the DEK is unchanged; only its wrapper changes). Implement as `RotateKEK(oldPassphrase, newPassphrase)` in `keymanager.go`. This ADR covers DEK rotation (the sweep). KEK rotation (passphrase change) is a follow-on item.
 
-### CLI surface
+### CLI surface (original proposal — superseded, see Addendum below)
+
+**This `key rotate-dek` command was never shipped.** It was superseded before
+implementation by extending the existing `keyorix encryption rotate` command
+instead — see "Addendum — CLI Wiring" below for the actual shipped surface
+and why. Kept here only as the historical record of the original proposal.
 
 ```
 keyorix-server key rotate-dek   # triggers RotateDEKWithSweep; requires KEYORIX_MASTER_PASSWORD
@@ -141,7 +146,7 @@ Alternatively exposed as a protected admin API endpoint (operator-only, no user-
 | `internal/encryption/keymanager.go` | Add `RotateDEKWithSweep` (core algorithm). Mark `RotateDEK` deprecated. Add `GetOldDEKForSweep() []byte` helper (returns copy of current DEK before rotation). |
 | `internal/encryption/service.go` | Add `RotateDEKWithSweep(passphrase string, db *gorm.DB) error`. Wire it through from `keymanager`. |
 | `internal/encryption/sweep.go` | **New file.** `SweepSecretVersions`, `SweepAuthTokens`. Handles batched re-encryption, AAD reconstruction for secret_versions, and the auth token tables. |
-| `internal/cli/system/system.go` | Add `key` subcommand with `rotate-dek` action. |
+| `internal/cli/system/system.go` | ~~Add `key` subcommand with `rotate-dek` action.~~ **Superseded** — wired to the existing `keyorix encryption rotate` command instead; see Addendum below. |
 
 ### Test plan
 
