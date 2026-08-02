@@ -259,6 +259,18 @@ func TestRemoteStorageMFAManagement_FullLifecycle_RealServer(t *testing.T) {
 	// DisableMFA: re-authenticates with a CURRENT TOTP code (same TOTP-branch
 	// reasoning as above), then clears the secret, recovery codes, and the
 	// MFAEnabled flag — all via the #524 proxies.
+	//
+	// Sleep until the next 30s TOTP period boundary first: generating this
+	// code via time.Now() only moments after regenCode's, well within the
+	// same period, would produce the IDENTICAL code (TOTP is a pure function
+	// of the time step). The server's TOTP anti-replay (mfa.go's Skew: 0 +
+	// MarkTOTPStepUsed) then correctly rejects the second use as a replay of
+	// the first, failing with "invalid code or password" -- not a product
+	// bug, but this test can't inject a fake clock into the real HTTP
+	// upstream/downstream servers the way same-package internal/core tests
+	// do via the unexported core.now field, so it advances real time instead.
+	const totpPeriod = 30 * time.Second
+	time.Sleep(time.Until(time.Now().Truncate(totpPeriod).Add(totpPeriod)))
 	disableCode, err := totp.GenerateCode(totpSecret, time.Now())
 	require.NoError(t, err)
 	require.NoError(t, downstream.DisableMFA(ctx, user.ID, disableCode),

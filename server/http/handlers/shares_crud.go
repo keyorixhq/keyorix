@@ -18,7 +18,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // ShareSecret handles POST /api/v1/secrets/{id}/share
 func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
@@ -75,7 +74,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error sharing secret: %v", shareErr)
 		if strings.Contains(shareErr.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else if strings.Contains(shareErr.Error(), errNotAuthorized) {
+		} else if strings.Contains(shareErr.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", "Not authorized to share this secret", http.StatusForbidden, nil)
 		} else if strings.Contains(shareErr.Error(), "expiry must be in the future") {
 			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)
@@ -129,7 +128,7 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 		log.Printf("Error updating share permission: %v", err)
 		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), errNotAuthorized) {
+		} else if strings.Contains(err.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", "Not authorized to update this share", http.StatusForbidden, nil)
 		} else if strings.Contains(err.Error(), "expiry must be in the future") {
 			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)
@@ -161,7 +160,7 @@ func (h *ShareHandler) RevokeShare(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error revoking share: %v", err)
 		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), errNotAuthorized) {
+		} else if strings.Contains(err.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", "Not authorized to revoke this share", http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to revoke share", http.StatusInternalServerError, nil)

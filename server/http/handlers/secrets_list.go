@@ -186,14 +186,28 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	scopeRequested := requestedScope.ProjectID != 0 || requestedScope.EnvironmentID != 0
 
 	if scopeRequested {
-		// Scoped listing: return whatever the caller can access within the
-		// requested project/environment — owned secrets + ACL-granted secrets.
-		// No RBAC gate here: ListSecretsWithSharingInfo already enforces access
-		// through ownership (OwnerID) and per-secret ACL grants, so ACL-only
-		// users (no project role) see their granted secrets and users with no
-		// access see an empty list.  A hard 403 on this path would block ACL-only
-		// principals who hold a valid per-secret grant in the requested scope.
-		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
+		// Scoped listing. Two visibility tiers, no hard 403 in either case (a
+		// blanket 403 here would block an ACL-only principal who holds a
+		// valid per-secret grant in the requested scope but no project role):
+		//
+		//  - Role-authorized for this exact scope: surface every secret the
+		//    ROLE grants visibility to, not just what this user personally
+		//    owns or holds an ACL/share grant for. Matches what per-secret
+		//    GET endpoints already grant via RequireScopedPermission --
+		//    without this, a project-scoped viewer role could read any
+		//    individual secret in their project but never discover it via
+		//    listing.
+		//  - Otherwise: owned secrets + ACL-granted secrets only (unchanged
+		//    prior behavior), so ACL-only users still see their grants and
+		//    users with no access at all see an empty list.
+		scopeOK, aerr := h.coreService.AuthorizePrincipal(
+			r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permSecretsRead, requestedScope,
+		)
+		if aerr == nil && scopeOK {
+			response, err = h.coreService.ListSecretsInScopeWithSharingInfo(r.Context(), userCtx.UserID, filter)
+		} else {
+			response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
+		}
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)
 			h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)
@@ -258,7 +272,12 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 		} else {
 			scopeFilter.EnvironmentID = nil
 		}
-		resp, rerr := h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, &scopeFilter)
+		// scopes are already known role-granted scopes (from GetReadableScopes
+		// above), so this surfaces every secret each scope's role grants
+		// visibility to -- not just what the user personally owns or holds an
+		// ACL/share grant for -- same reasoning as the scopeRequested branch
+		// above.
+		resp, rerr := h.coreService.ListSecretsInScopeWithSharingInfo(r.Context(), userCtx.UserID, &scopeFilter)
 		if rerr != nil {
 			log.Printf("Error listing secrets for scope {project:%d env:%d}: %v", scope.ProjectID, scope.EnvironmentID, rerr)
 			continue

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -85,6 +86,34 @@ func TestScopedRBACEnforcement(t *testing.T) {
 		return resp.StatusCode
 	}
 
+	// listSecretCount performs a GET and returns (status, len(data.secrets)) --
+	// used for the scoped-listing path, which by design (see secrets_list.go's
+	// doc comment on ListSecrets, and core.TestListSecretsWithSharingInfo_
+	// ProjectFilter_HonoursACL) returns 200 with an empty result for a scope
+	// the caller can't see into, rather than 403 -- a hard 403 there would
+	// incorrectly block an ACL-only principal who holds a valid per-secret
+	// grant in the requested scope. What actually matters for this test is
+	// that no out-of-scope secret is ever returned in the body, not the
+	// status code.
+	listSecretCount := func(t *testing.T, path, token string) (int, int) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, server.URL+path, nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		var body struct {
+			Data struct {
+				Secrets []struct {
+					ID uint `json:"ID"`
+				} `json:"secrets"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		return resp.StatusCode, len(body.Data.Secrets)
+	}
+
 	// Per-secret reads: viewer-A may read project-A's secret, not project-B's.
 	// /risk avoids decrypting the value while still exercising ScopeFromSecretParam,
 	// and (unlike /shares, which is owner-only by design — see #246) has no
@@ -99,13 +128,25 @@ func TestScopedRBACEnforcement(t *testing.T) {
 	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/1/risk", "admin-tok"))
 	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/2/risk", "admin-tok"))
 
-	// Listing: viewer-A may list scoped to project A, not project B, and not unscoped.
-	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets?project_id=1", "viewerA-tok"),
-		"viewer-A lists project A")
-	assert.Equal(t, http.StatusForbidden, do(t, "GET", "/api/v1/secrets?project_id=2", "viewerA-tok"),
-		"viewer-A cannot list project B")
-	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets", "viewerA-tok"),
+	// Listing: viewer-A's project-scoped viewer role (secrets.read at project
+	// A) now makes ListSecrets surface project A's secret even though
+	// viewer-A neither owns it nor holds an ACL/share grant on it -- matching
+	// what /risk (per-secret GET) already granted via RequireScopedPermission
+	// (core.ListSecretsInScopeWithSharingInfo). viewer-A must NEVER see
+	// project B's secret in the body regardless of query scope, since
+	// viewer-A holds no role/ownership/ACL grant there at all.
+	statusA, countA := listSecretCount(t, "/api/v1/secrets?project_id=1", "viewerA-tok")
+	assert.Equal(t, http.StatusOK, statusA, "viewer-A lists project A")
+	assert.Equal(t, 1, countA, "viewer-A's project-A role grant surfaces project A's secret in the list")
+
+	statusB, countB := listSecretCount(t, "/api/v1/secrets?project_id=2", "viewerA-tok")
+	assert.Equal(t, http.StatusOK, statusB, "viewer-A querying project B gets 200, not an error")
+	assert.Equal(t, 0, countB, "viewer-A must never see project B's secret in the response body")
+
+	statusUnscoped, countUnscoped := listSecretCount(t, "/api/v1/secrets", "viewerA-tok")
+	assert.Equal(t, http.StatusOK, statusUnscoped,
 		"viewer-A unscoped list returns union of accessible project-A secrets (scoped-union, not 403)")
+	assert.Equal(t, 1, countUnscoped, "viewer-A's unscoped list also surfaces project A's role-visible secret")
 
 	// Admin lists globally.
 	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets", "admin-tok"))
