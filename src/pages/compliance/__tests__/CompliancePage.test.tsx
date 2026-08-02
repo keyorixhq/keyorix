@@ -231,6 +231,12 @@ describe('CompliancePage posture panel', () => {
         expect(screen.getByText('temporary')).toBeInTheDocument();
     });
 
+    // NOTE (LegalHoldBanner's `if (!reason.trim()) return;` inside the "Confirm
+    // hold" onClick): unreachable through the UI. The button's own `disabled`
+    // attribute (`place.isPending || !reason.trim()`) mirrors this guard exactly,
+    // and a disabled native <button> never dispatches click events, so the branch
+    // can't be exercised by a real (or fireEvent) click. Left uncovered.
+
     it('places a legal hold and clears the form on success', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);
         (complianceApi.placeLegalHold as any).mockResolvedValue({});
@@ -446,6 +452,15 @@ describe('CompliancePage posture panel', () => {
         expect(await screen.findByText(/No controls mapped to/i)).toBeInTheDocument();
     });
 
+    // NOTE (visibleControls filter, `(c.frameworks[fw] ?? []).length`): the `?? []`
+    // fallback is unreachable through the rendered UI. `complianceApi.getControls`
+    // (src/services/compliance.ts) always normalizes every framework key to `[]`
+    // via its own `??`, and the control type requires all five keys as string[], so
+    // a control can never actually reach this component missing one. Forcing a
+    // missing key in test data to exercise the fallback instead crashes `refLine`
+    // just above (`c.frameworks.iso27001.length` with no guard), which assumes the
+    // same invariant. Left uncovered as defensive-only dead code.
+
     it('uses the warning color for a mid-range per-framework compliance score', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);
         (complianceApi.getControls as any).mockResolvedValue({
@@ -532,6 +547,12 @@ describe('CompliancePage posture panel', () => {
         expect(await screen.findByText(/2 controls with gaps require remediation/i)).toBeInTheDocument();
         expect(screen.getByText('N/A')).toBeInTheDocument();
     });
+
+    // NOTE (RiskRegisterPanel's `submit`, `if (!form.title.trim() || ...) return;`):
+    // unreachable through the UI for the same reason as the legal-hold guard above
+    // — the "Record exception" button's `disabled` attribute is the identical
+    // condition, so a disabled button never fires the click that would reach the
+    // guard. Left uncovered.
 
     it('opens the add-exception form and keeps submit disabled until the required fields are filled', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);

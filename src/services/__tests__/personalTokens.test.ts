@@ -1,5 +1,28 @@
-import { describe, it, expect } from 'vitest';
-import { buildCreateTokenBody } from '../personalTokens';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock the shared axios instance before importing the service under test.
+vi.mock('../client', () => ({
+    apiClient: {
+        get: vi.fn(),
+        post: vi.fn(),
+        delete: vi.fn(),
+    },
+}));
+
+import { apiClient } from '../client';
+import { buildCreateTokenBody, personalTokensApi } from '../personalTokens';
+
+const mocked = apiClient as unknown as {
+    get: ReturnType<typeof vi.fn>;
+    post: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
+};
+
+function ok<T>(data: T) {
+    return { data: { data } };
+}
+
+beforeEach(() => vi.clearAllMocks());
 
 // buildCreateTokenBody applies the ADR-042 least-privilege rules when assembling
 // the create-token payload from the My Account form state.
@@ -91,5 +114,47 @@ describe('buildCreateTokenBody', () => {
         expect(body.scopes).toBeUndefined();
         expect(body.project_scope).toBeUndefined();
         expect(body).toEqual({ name: 't' });
+    });
+});
+
+// ── personalTokensApi ─────────────────────────────────────────────────────────
+
+describe('personalTokensApi.listTokens', () => {
+    it('GETs the tokens route and returns the flat array', async () => {
+        const tokens = [{ id: 1, name: 'ci', token_prefix: 'pat_abc' }];
+        mocked.get.mockResolvedValueOnce(ok(tokens));
+
+        const result = await personalTokensApi.listTokens();
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/auth/tokens');
+        expect(result).toEqual(tokens);
+    });
+
+    it('returns [] when the response payload is not an array', async () => {
+        mocked.get.mockResolvedValueOnce(ok(null));
+
+        await expect(personalTokensApi.listTokens()).resolves.toEqual([]);
+    });
+});
+
+describe('personalTokensApi.createToken', () => {
+    it('POSTs the body and returns the one-time token plus its metadata', async () => {
+        const pat = { id: 1, name: 'ci', token_prefix: 'pat_abc' };
+        mocked.post.mockResolvedValueOnce(ok({ token: 'pat_abc123secret', pat }));
+
+        const result = await personalTokensApi.createToken({ name: 'ci' });
+
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/auth/tokens', { name: 'ci' });
+        expect(result).toEqual({ token: 'pat_abc123secret', pat });
+    });
+});
+
+describe('personalTokensApi.revokeToken', () => {
+    it('DELETEs the token endpoint', async () => {
+        mocked.delete.mockResolvedValueOnce({});
+
+        await personalTokensApi.revokeToken(7);
+
+        expect(mocked.delete).toHaveBeenCalledWith('/api/v1/auth/tokens/7');
     });
 });

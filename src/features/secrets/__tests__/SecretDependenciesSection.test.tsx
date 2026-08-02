@@ -104,4 +104,106 @@ describe('SecretDependenciesSection', () => {
         fireEvent.click(screen.getByText('Add'));
         expect(addMutateAsync).toHaveBeenCalledWith({ dependsOnId: 2 });
     });
+
+    it('trims and includes a note when adding a dependency', () => {
+        listData = {
+            data: [makeSecret({ id: 2, name: 'db-password' })],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
+        };
+        render(<SecretDependenciesSection secret={makeSecret()} />);
+
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } });
+        fireEvent.change(screen.getByPlaceholderText('Note (optional)'), { target: { value: '  derives from  ' } });
+        fireEvent.click(screen.getByText('Add'));
+
+        expect(addMutateAsync).toHaveBeenCalledWith({ dependsOnId: 2, note: 'derives from' });
+    });
+
+    it('shows a validation error and does not call the mutation when the selected id is falsy', () => {
+        // A candidate with id 0 makes the <select> value the non-empty string "0" (so
+        // the Add button isn't disabled by !dependsOnId), while Number("0") is falsy —
+        // exercising handleAdd's `if (!target)` guard.
+        listData = {
+            data: [makeSecret({ id: 0, name: 'zero-id-secret' })],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
+        };
+        render(<SecretDependenciesSection secret={makeSecret()} />);
+
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '0' } });
+        fireEvent.click(screen.getByText('Add'));
+
+        expect(screen.getByText('Select a secret this one depends on.')).toBeInTheDocument();
+        expect(addMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it('shows the server-provided error message when adding a dependency fails', async () => {
+        addMutateAsync.mockRejectedValueOnce({ response: { data: { error: { message: 'already linked' } } } });
+        listData = {
+            data: [makeSecret({ id: 2, name: 'db-password' })],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
+        };
+        render(<SecretDependenciesSection secret={makeSecret()} />);
+
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } });
+        fireEvent.click(screen.getByText('Add'));
+
+        expect(await screen.findByText('already linked')).toBeInTheDocument();
+    });
+
+    it('falls back to the error message, then a generic message, when the response shape lacks one', async () => {
+        addMutateAsync.mockRejectedValueOnce(new Error('boom'));
+        listData = {
+            data: [makeSecret({ id: 2, name: 'db-password' })],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
+        };
+        render(<SecretDependenciesSection secret={makeSecret()} />);
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } });
+        fireEvent.click(screen.getByText('Add'));
+        expect(await screen.findByText('boom')).toBeInTheDocument();
+
+        addMutateAsync.mockRejectedValueOnce({});
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } });
+        fireEvent.click(screen.getByText('Add'));
+        expect(await screen.findByText('Failed to add dependency.')).toBeInTheDocument();
+    });
+
+    it('treats missing dependency/impact data as empty (optional chaining fallbacks)', () => {
+        depsData = undefined;
+        impactData = undefined;
+        listData = undefined;
+        render(<SecretDependenciesSection secret={makeSecret()} />);
+
+        expect(screen.getByText(/Rotating this secret affects no other secrets/i)).toBeInTheDocument();
+        expect(screen.getByText(/this secret stands alone/i)).toBeInTheDocument();
+        expect(screen.getByText(/No other secret depends on this one/i)).toBeInTheDocument();
+        expect(screen.getByText(/No eligible secrets in this project/i)).toBeInTheDocument();
+    });
+
+    it('pluralizes the blast-radius count and each hop count correctly', () => {
+        impactData = {
+            secret_id: 1,
+            secret_name: 'app-token',
+            affected: [
+                { secret_id: 2, secret_name: 'one-hop', depth: 1 },
+                { secret_id: 3, secret_name: 'two-hop', depth: 2 },
+            ],
+        };
+        render(<SecretDependenciesSection secret={makeSecret()} />);
+
+        expect(screen.getByText(/affects 2 other secrets:/i)).toBeInTheDocument();
+        expect(screen.getByTitle('1 hop away')).toBeInTheDocument();
+        expect(screen.getByTitle('2 hops away')).toBeInTheDocument();
+    });
 });

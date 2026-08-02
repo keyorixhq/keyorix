@@ -99,4 +99,83 @@ describe('MachineIdentitiesPage', () => {
             })
         );
     });
+
+    it('shows a loading spinner while the report is loading', () => {
+        mockReport.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+        render(<MachineIdentitiesPage />);
+        expect(document.querySelector('.animate-spin')).toBeTruthy();
+    });
+
+    it('renders a revoked status badge, revoked stat tone, and a dash for missing created_at', () => {
+        mockReport.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: {
+                generated_at: '2026-07-01T00:00:00Z',
+                total_count: 1,
+                stale_count: 0,
+                revoked_count: 1,
+                machines: [
+                    {
+                        machine_id: 3,
+                        name: 'legacy-runner',
+                        description: '',
+                        credential_count: 0,
+                        last_used_at: null,
+                        is_stale: false,
+                        is_revoked: true,
+                        created_at: null,
+                    },
+                ],
+            },
+        });
+
+        render(<MachineIdentitiesPage />);
+        expect(screen.getByText('legacy-runner')).toBeInTheDocument();
+        // "Revoked" appears both as the summary stat label and the row status badge.
+        expect(screen.getAllByText('Revoked').length).toBeGreaterThanOrEqual(2);
+        expect(screen.getByText('—')).toBeInTheDocument();
+    });
+
+    it('surfaces the server-provided message when the CSV export fails', async () => {
+        mockReport.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: { generated_at: '', total_count: 0, stale_count: 0, revoked_count: 0, machines: [] },
+        });
+        getMock.mockRejectedValue({ response: { data: { message: 'Export disabled' } } });
+
+        render(<MachineIdentitiesPage />);
+        fireEvent.click(screen.getByRole('button', { name: /export csv/i }));
+
+        expect(await screen.findByText('Export disabled')).toBeInTheDocument();
+    });
+
+    it('falls back to the server error field when there is no message', async () => {
+        mockReport.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: { generated_at: '', total_count: 0, stale_count: 0, revoked_count: 0, machines: [] },
+        });
+        getMock.mockRejectedValue({ response: { data: { error: 'Not authorized' } } });
+
+        render(<MachineIdentitiesPage />);
+        fireEvent.click(screen.getByRole('button', { name: /export csv/i }));
+
+        expect(await screen.findByText('Not authorized')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic export error message when the server gives no detail', async () => {
+        mockReport.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: { generated_at: '', total_count: 0, stale_count: 0, revoked_count: 0, machines: [] },
+        });
+        getMock.mockRejectedValue(new Error('network down'));
+
+        render(<MachineIdentitiesPage />);
+        fireEvent.click(screen.getByRole('button', { name: /export csv/i }));
+
+        expect(await screen.findByText('Failed to export.')).toBeInTheDocument();
+    });
 });

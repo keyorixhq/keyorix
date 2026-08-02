@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '../../../test/test-utils';
 import { APITokensPage } from '../APITokensPage';
 import { formatDateShort } from '../../../utils';
+import { useUIStore } from '../../../store/uiStore';
 
 const { useServiceAccounts, revokeTokenMutate, listTokensMock, revokeState } = vi.hoisted(() => ({
     useServiceAccounts: vi.fn(),
@@ -238,5 +239,58 @@ describe('APITokensPage — revoke flow', () => {
         fireEvent.click(within(row).getByRole('button', { name: 'Revoke' }));
 
         expect(await screen.findByText('Network Error')).toBeInTheDocument();
+    });
+
+    it('falls back to the generic message when the error has neither a response nor a message', async () => {
+        revokeTokenMutate.mockImplementation((_vars, opts) => opts.onError({}));
+        render(<APITokensPage />);
+        const row = (await screen.findByText('#101')).closest('tr')!;
+
+        fireEvent.click(within(row).getByRole('button', { name: 'Revoke' }));
+        fireEvent.click(within(row).getByRole('button', { name: 'Revoke' }));
+
+        expect(await screen.findByText('Failed to revoke token')).toBeInTheDocument();
+    });
+});
+
+describe('APITokensPage — theme resolution', () => {
+    const initialTheme = useUIStore.getState().theme;
+
+    beforeEach(() => {
+        useServiceAccounts.mockReturnValue({ data: [saOne], isLoading: false, isError: false });
+        listTokensMock.mockResolvedValue([activeToken]);
+    });
+
+    afterEach(() => {
+        useUIStore.setState({ theme: initialTheme });
+    });
+
+    it('resolves to light colors when the theme is explicitly light', async () => {
+        useUIStore.setState({ theme: 'light' });
+        render(<APITokensPage />);
+        expect(await screen.findByText('#101')).toBeInTheDocument();
+    });
+
+    it('resolves a system theme as light when matchMedia does not match', async () => {
+        useUIStore.setState({ theme: 'system' });
+        render(<APITokensPage />);
+        expect(await screen.findByText('#101')).toBeInTheDocument();
+        expect(window.matchMedia).toHaveBeenCalledWith('(prefers-color-scheme: dark)');
+    });
+
+    it('resolves a system theme as dark when matchMedia matches', async () => {
+        useUIStore.setState({ theme: 'system' });
+        vi.mocked(window.matchMedia).mockReturnValueOnce({
+            matches: true,
+            media: '(prefers-color-scheme: dark)',
+            onchange: null,
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+        } as unknown as MediaQueryList);
+        render(<APITokensPage />);
+        expect(await screen.findByText('#101')).toBeInTheDocument();
     });
 });

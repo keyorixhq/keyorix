@@ -391,4 +391,299 @@ describe('ProjectSecretsTab — drift & rotation plan reports', () => {
         fireEvent.click(screen.getByRole('button', { name: /rotation plan/i }));
         expect(screen.getByText('Rotation Plan Content')).toBeInTheDocument();
     });
+
+    it('closes the drift report from its Close control', () => {
+        render(<ProjectSecretsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /check drift/i }));
+        expect(screen.getByText('Drift Panel Content')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByText('Drift Panel Content')).not.toBeInTheDocument();
+    });
+
+    it('closes the rotation plan report from its Close control', () => {
+        render(<ProjectSecretsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /rotation plan/i }));
+        expect(screen.getByText('Rotation Plan Content')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByText('Rotation Plan Content')).not.toBeInTheDocument();
+    });
 });
+
+describe('ProjectSecretsTab — filtered-empty state', () => {
+    it('shows a filter-specific empty message when a type filter excludes everything', () => {
+        listState.typeFilter = 'password';
+        render(<ProjectSecretsTab projectId={1} />);
+        expect(screen.getByText('No secrets match your filters')).toBeInTheDocument();
+        expect(screen.queryByText('Create your first secret in this environment.')).not.toBeInTheDocument();
+    });
+
+    it('opens the create modal from the empty-state New Secret button', () => {
+        render(<ProjectSecretsTab projectId={1} />);
+        const newSecretButtons = screen.getAllByRole('button', { name: /new secret/i });
+        // Index 1 is the empty-state's own New Secret action (index 0 is the toolbar's).
+        fireEvent.click(newSecretButtons[1]!);
+        expect(screen.getByRole('heading', { name: 'New Secret' })).toBeInTheDocument();
+    });
+});
+
+describe('ProjectSecretsTab — bulk selection (toggle off, select-all uncheck)', () => {
+    it('deselects a row by clicking its checkbox again', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        const checkbox = screen.getByLabelText('select db-pass');
+        fireEvent.click(checkbox);
+        expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+        fireEvent.click(checkbox);
+        expect(screen.queryByText('1 selected')).not.toBeInTheDocument();
+    });
+
+    it('clears all selections by unchecking the header checkbox', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        const headerCheckbox = within(screen.getByRole('table')).getAllByRole('checkbox')[0]!;
+        fireEvent.click(headerCheckbox); // select all
+        expect(screen.getByText('2 selected')).toBeInTheDocument();
+
+        fireEvent.click(headerCheckbox); // uncheck -> clearSelected()
+        expect(screen.queryByText('2 selected')).not.toBeInTheDocument();
+    });
+});
+
+describe('ProjectSecretsTab — pagination (previous page)', () => {
+    it('navigates to the previous page', () => {
+        listState.secrets = secretsFixture;
+        listState.pagination = { page: 2, pageSize: 20, total: 40, totalPages: 2 };
+        render(<ProjectSecretsTab projectId={1} />);
+
+        const [prevButton] = screen.getAllByRole('button', { name: '' });
+        expect(prevButton).not.toBeDisabled();
+        fireEvent.click(prevButton);
+        expect(handlePageChangeMock).toHaveBeenCalledWith(1);
+    });
+});
+
+describe('ProjectSecretsTab — view modal share/delete/close wiring', () => {
+    it('closes the view modal detail from its own Close control', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('View db-pass'));
+        expect(screen.getByText('Detail: db-pass')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Detail Close'));
+        expect(screen.queryByText('Detail: db-pass')).not.toBeInTheDocument();
+    });
+
+    it('shares a secret from the view modal', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('View db-pass'));
+        fireEvent.click(screen.getByText('Detail Share'));
+
+        expect(screen.getByText('Share: db-pass')).toBeInTheDocument();
+        expect(screen.queryByText('Detail: db-pass')).not.toBeInTheDocument();
+    });
+
+    it('deletes a secret from the view modal', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('View db-pass'));
+        fireEvent.click(screen.getByText('Detail Delete'));
+
+        expect(screen.getByText('Delete Secret')).toBeInTheDocument();
+        expect(screen.queryByText('Detail: db-pass')).not.toBeInTheDocument();
+    });
+});
+
+describe('ProjectSecretsTab — create modal extras', () => {
+    it('generates a value and lets the type be changed', () => {
+        render(<ProjectSecretsTab projectId={1} />);
+        fireEvent.click(screen.getAllByRole('button', { name: /new secret/i })[0]!);
+
+        fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+        expect(screen.getByLabelText(/^Value/)).not.toHaveValue('');
+
+        // Scoped by label, not position — the toolbar's own type-filter combobox is also
+        // on the page while this modal is open.
+        const typeSelect = screen.getByLabelText('Type');
+        fireEvent.change(typeSelect, { target: { value: 'password' } });
+        expect(typeSelect).toHaveValue('password');
+    });
+
+    it('does not include environment_id when there is no active environment', () => {
+        envState.data = [];
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getAllByRole('button', { name: /new secret/i })[0]!);
+        fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'no-env-secret' } });
+        fireEvent.change(screen.getByLabelText(/^Value/), { target: { value: 'value-here' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create Secret' }));
+
+        expect(createMutate).toHaveBeenCalledWith(
+            { name: 'no-env-secret', value: 'value-here', type: 'text', project_id: 1 },
+            expect.any(Object)
+        );
+    });
+
+    it('does not call create when the form is submitted blank', () => {
+        render(<ProjectSecretsTab projectId={1} />);
+        fireEvent.click(screen.getAllByRole('button', { name: /new secret/i })[0]!);
+
+        const form = screen.getByRole('button', { name: 'Create Secret' }).closest('form')!;
+        fireEvent.submit(form);
+
+        expect(createMutate).not.toHaveBeenCalled();
+    });
+
+    it('shows the create error as a message and reflects the pending "Creating…" state', () => {
+        listState.createMutation = { isPending: true, isError: true, error: new Error('name already exists') };
+        render(<ProjectSecretsTab projectId={1} />);
+        fireEvent.click(screen.getAllByRole('button', { name: /new secret/i })[0]!);
+
+        expect(screen.getByText('Failed to create secret')).toBeInTheDocument();
+        expect(screen.getByText('name already exists')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Creating…' })).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the create error is not an Error instance', () => {
+        listState.createMutation = { isPending: false, isError: true, error: 'raw string error' };
+        render(<ProjectSecretsTab projectId={1} />);
+        fireEvent.click(screen.getAllByRole('button', { name: /new secret/i })[0]!);
+
+        expect(screen.getByText('Unexpected error')).toBeInTheDocument();
+    });
+});
+
+describe('ProjectSecretsTab — edit modal extras', () => {
+    it('lets the name, type and value be edited manually, and includes a Generate control', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'db-pass-renamed' } });
+
+        // Scoped by label, not position — the toolbar's own type-filter combobox is also
+        // on the page while this modal is open.
+        const typeSelect = screen.getByLabelText('Type');
+        fireEvent.change(typeSelect, { target: { value: 'api_key' } });
+
+        fireEvent.change(screen.getByLabelText('New Value'), { target: { value: 'manual-value' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+        expect(editMutate).toHaveBeenCalledWith({
+            id: 1,
+            name: 'db-pass-renamed',
+            type: 'api_key',
+            value: 'manual-value',
+        });
+    });
+
+    it('generates a new value in the edit form', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+        expect(screen.getByLabelText('New Value')).not.toHaveValue('');
+    });
+
+    it('shows the edit error and reflects the pending "Saving…" state', () => {
+        listState.secrets = secretsFixture;
+        listState.editMutation = { isPending: true, isError: true, error: new Error('conflict') };
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        expect(screen.getByText('Failed to update secret')).toBeInTheDocument();
+        expect(screen.getByText('conflict')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Saving…' })).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the edit error is not an Error instance', () => {
+        listState.secrets = secretsFixture;
+        listState.editMutation = { isPending: false, isError: true, error: { weird: true } };
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        expect(screen.getByText('Unexpected error')).toBeInTheDocument();
+    });
+});
+
+describe('ProjectSecretsTab — delete modal extras', () => {
+    it('shows the delete error and reflects the pending "Deleting…" state', () => {
+        listState.secrets = secretsFixture;
+        listState.deleteMutation = { isPending: true, isError: true, error: new Error('in use') };
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Delete db-pass'));
+        expect(screen.getByText('Failed to delete secret')).toBeInTheDocument();
+        expect(screen.getByText('in use')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Deleting…' })).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the delete error is not an Error instance', () => {
+        listState.secrets = secretsFixture;
+        listState.deleteMutation = { isPending: false, isError: true, error: null };
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Delete db-pass'));
+        expect(screen.getByText('Unexpected error')).toBeInTheDocument();
+    });
+});
+
+describe('ProjectSecretsTab — rotate modal extras', () => {
+    it('lets the rotate value be edited manually and regenerated', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Rotate db-pass'));
+        const valueInput = screen.getByLabelText('New Value') as HTMLInputElement;
+
+        fireEvent.change(valueInput, { target: { value: 'manual-rotate-value' } });
+        expect(valueInput).toHaveValue('manual-rotate-value');
+
+        // generateSecret() is deterministic under the test-suite's crypto mock (see
+        // src/test/setup.ts), so we only assert Regenerate overwrites the manual edit —
+        // not that it differs from a prior generated value.
+        fireEvent.click(screen.getByRole('button', { name: /regenerate/i }));
+        expect(valueInput.value).not.toBe('manual-rotate-value');
+    });
+
+    it('shows the rotate error and reflects the pending "Rotating…" state', () => {
+        listState.secrets = secretsFixture;
+        listState.rotateMutation = { isPending: true, isError: true, error: new Error('locked') };
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Rotate db-pass'));
+        expect(screen.getByText('Failed to rotate secret')).toBeInTheDocument();
+        expect(screen.getByText('locked')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Rotating…' })).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the rotate error is not an Error instance', () => {
+        listState.secrets = secretsFixture;
+        listState.rotateMutation = { isPending: false, isError: true, error: 42 };
+        render(<ProjectSecretsTab projectId={1} />);
+
+        fireEvent.click(screen.getByText('Rotate db-pass'));
+        expect(screen.getByText('Unexpected error')).toBeInTheDocument();
+    });
+});
+
+// Note: `defaultEnvName`'s innermost `environments[0]?.name ?? 'production'` fallback
+// (ProjectSecretsTab.tsx ~line 708) is not exercised beyond what the two "environment
+// selection" tests above already hit. Reaching it requires `environments.length > 0`
+// with `environments[0].name` nullish, but `defaultEnvName`'s own `.find(e =>
+// e.name.toLowerCase() === ...)` unconditionally calls `.toLowerCase()` on every
+// environment's name first — an environment with a null/undefined name would throw
+// there before the fallback chain is ever reached, and `??` (unlike `||`) doesn't
+// treat an empty-string name as missing. So the literal `'production'` default is
+// dead code given the component's own invariants; a genuine test would need a
+// malformed environment record that also crashes an earlier line, which is not a
+// meaningful case to fabricate.

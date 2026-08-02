@@ -32,6 +32,12 @@ describe('notificationsApi', () => {
         expect(res).toEqual({ notifications: [], unread_count: 0 });
     });
 
+    it('list falls back to the {} default when response.data itself is falsy', async () => {
+        mocked.get.mockResolvedValue({ data: null });
+        const res = await notificationsApi.list();
+        expect(res).toEqual({ notifications: [], unread_count: 0 });
+    });
+
     it('markRead and markAllRead post to the right paths', async () => {
         mocked.post.mockResolvedValue({ data: {} });
         await notificationsApi.markRead(7);

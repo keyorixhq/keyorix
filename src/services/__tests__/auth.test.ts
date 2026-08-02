@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // authApi is a private axios instance created via axios.create() inside auth.ts.
 // vi.hoisted() runs before the vi.mock() factory so the stubs are in scope there.
-const { mockGet, mockPost } = vi.hoisted(() => ({
+const { mockGet, mockPost, mockRequestUse } = vi.hoisted(() => ({
     mockGet: vi.fn(),
     mockPost: vi.fn(),
+    mockRequestUse: vi.fn(),
 }));
 
 vi.mock('axios', async () => {
@@ -16,7 +17,7 @@ vi.mock('axios', async () => {
             create: vi.fn(() => ({
                 get: mockGet,
                 post: mockPost,
-                interceptors: { request: { use: vi.fn() } },
+                interceptors: { request: { use: mockRequestUse } },
             })),
             isAxiosError: actual.isAxiosError,
         },
@@ -24,7 +25,30 @@ vi.mock('axios', async () => {
     };
 });
 
+// auth.ts also reads the CSRF double-submit cookie via getCsrfToken() from
+// utils/auth. Mock just that function; keep the real CSRF_HEADER_NAME /
+// CSRF_PROTECTED_METHODS constants since they're plain values the interceptor
+// branches on (mirrors the client.test.ts convention for the same interceptor
+// shape).
+const { mockGetCsrfToken } = vi.hoisted(() => ({
+    mockGetCsrfToken: vi.fn(),
+}));
+
+vi.mock('../../utils/auth', async () => {
+    const actual = await vi.importActual<typeof import('../../utils/auth')>('../../utils/auth');
+    return {
+        ...actual,
+        getCsrfToken: mockGetCsrfToken,
+    };
+});
+
 import { authService } from '../auth';
+
+// The module registers exactly one request interceptor as a side effect of the
+// import above — capture it once, into a module-scope constant. It must NOT be
+// re-read from mock.calls inside a test/beforeEach: vi.clearAllMocks() clears
+// recorded calls on this same spy, which would wipe this one-time registration.
+const [requestOnFulfilled] = mockRequestUse.mock.calls[0];
 
 function ok<T>(data: T) {
     return { data: { data, message: 'ok' } };
@@ -39,6 +63,7 @@ function axiosErr(status: number, payload: object) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mockGetCsrfToken.mockReturnValue(undefined);
 });
 
 // ── login ─────────────────────────────────────────────────────────────────────
@@ -239,5 +264,81 @@ describe('authService.endImpersonation', () => {
     it('propagates server errors (does not swallow them)', async () => {
         mockPost.mockRejectedValueOnce(new Error('forbidden'));
         await expect(authService.endImpersonation()).rejects.toThrow('forbidden');
+    });
+});
+
+// ── refreshToken / getProfile / password-reset default error messages ────────
+// These four handlers share the `error.response?.data?.error || ...message ||
+// '<default>'` catch-block pattern. The 401/422/410-with-a-message tests above
+// only exercise the first two operands; hit the final default by rejecting
+// with an axios error that carries neither field.
+
+describe('default error messages when the server sends neither error nor message', () => {
+    it('refreshToken falls back to "Token refresh failed"', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(500, {}));
+        await expect(authService.refreshToken()).rejects.toThrow('Token refresh failed');
+    });
+
+    it('getProfile falls back to "Failed to get profile"', async () => {
+        mockGet.mockRejectedValueOnce(axiosErr(500, {}));
+        await expect(authService.getProfile()).rejects.toThrow('Failed to get profile');
+    });
+
+    it('requestPasswordReset falls back to "Password reset request failed"', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(500, {}));
+        await expect(authService.requestPasswordReset({ email: 'a@x.io' })).rejects.toThrow(
+            'Password reset request failed'
+        );
+    });
+
+    it('confirmPasswordReset falls back to "Password reset failed"', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(500, {}));
+        await expect(authService.confirmPasswordReset({ token: 'tok', password: 'x' })).rejects.toThrow(
+            'Password reset failed'
+        );
+    });
+});
+
+// ── request interceptor (CSRF double-submit + X-Request-ID) ─────────────────
+// The interceptor callback registered via authApi.interceptors.request.use is
+// never invoked by the mocked axios instance itself, so it needs to be called
+// directly with a fake config (mirrors client.test.ts's convention for the
+// analogous interceptor in services/client.ts).
+
+describe('auth request interceptor', () => {
+    it('attaches the CSRF header on a state-changing method when a token is available', () => {
+        mockGetCsrfToken.mockReturnValue('csrf-abc');
+        const config = { headers: {} as Record<string, string>, method: 'post' };
+
+        const result = requestOnFulfilled(config);
+
+        expect(result.headers['X-CSRF-Token']).toBe('csrf-abc');
+    });
+
+    it('does not attach a CSRF header on a state-changing method when no token is available', () => {
+        mockGetCsrfToken.mockReturnValue(undefined);
+        const config = { headers: {} as Record<string, string>, method: 'post' };
+
+        const result = requestOnFulfilled(config);
+
+        expect(result.headers['X-CSRF-Token']).toBeUndefined();
+    });
+
+    it('never attaches a CSRF header on a safe method (GET), even when a token is available', () => {
+        mockGetCsrfToken.mockReturnValue('csrf-abc');
+        const config = { headers: {} as Record<string, string>, method: 'get' };
+
+        const result = requestOnFulfilled(config);
+
+        expect(result.headers['X-CSRF-Token']).toBeUndefined();
+        expect(mockGetCsrfToken).not.toHaveBeenCalled();
+    });
+
+    it('stamps every request with a unique X-Request-ID header', () => {
+        const config = { headers: {} as Record<string, string>, method: 'get' };
+
+        const result = requestOnFulfilled(config);
+
+        expect(result.headers['X-Request-ID']).toMatch(/^req_\d+_.{1,8}$/);
     });
 });

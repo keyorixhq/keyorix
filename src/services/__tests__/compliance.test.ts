@@ -137,6 +137,27 @@ describe('complianceApi.getControls', () => {
         const matrix = await complianceApi.getControls();
         expect(matrix.controls).toEqual([]);
     });
+
+    it('defaults every control field, including per-framework arrays, when a control is sparse', async () => {
+        mock.get.mockResolvedValueOnce({
+            data: { data: { controls: [{ id: 'c2' }] } },
+        });
+        const matrix = await complianceApi.getControls();
+        expect(matrix.controls[0]).toEqual({
+            id: 'c2',
+            name: '',
+            area: '',
+            status: 'not_configured',
+            detail: '',
+            frameworks: { iso27001: [], soc2: [], nis2: [], dora: [], ens: [] },
+        });
+    });
+
+    it('falls back to response.data when there is no data.data wrapper', async () => {
+        mock.get.mockResolvedValueOnce({ data: { generated_at: '2026-03-01T00:00:00Z', controls: [] } });
+        const matrix = await complianceApi.getControls();
+        expect(matrix.generatedAt).toBe('2026-03-01T00:00:00Z');
+    });
 });
 
 // ── getRiskExceptions ────────────────────────────────────────────────────────
@@ -162,6 +183,12 @@ describe('complianceApi.getRiskExceptions', () => {
         mock.get.mockResolvedValueOnce({ data: {} });
         await expect(complianceApi.getRiskExceptions()).resolves.toEqual([]);
     });
+
+    it('defaults id and title when a sparse exception omits them', async () => {
+        mock.get.mockResolvedValueOnce({ data: { data: { exceptions: [{ status: 'expired' }] } } });
+        const exceptions = await complianceApi.getRiskExceptions();
+        expect(exceptions[0]).toMatchObject({ id: 0, title: '', status: 'expired' });
+    });
 });
 
 // ── getDigest ─────────────────────────────────────────────────────────────────
@@ -177,6 +204,11 @@ describe('complianceApi.getDigest', () => {
     it('defaults to empty strings when fields are missing', async () => {
         mock.get.mockResolvedValueOnce({ data: { data: {} } });
         await expect(complianceApi.getDigest()).resolves.toEqual({ title: '', body: '' });
+    });
+
+    it('falls back to response.data when there is no data.data wrapper', async () => {
+        mock.get.mockResolvedValueOnce({ data: { title: 'Fallback digest', body: 'From bare data.' } });
+        await expect(complianceApi.getDigest()).resolves.toEqual({ title: 'Fallback digest', body: 'From bare data.' });
     });
 });
 

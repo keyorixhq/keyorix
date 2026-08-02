@@ -328,6 +328,15 @@ describe('SecretsListPage — search / filter / sort / page-size controls', () =
         expect(setShowAdvancedFiltersMock).toHaveBeenCalledWith(true);
     });
 
+    it('shows the advanced filters panel and a "Hide Filters" label when already expanded', () => {
+        listState.showAdvancedFilters = true;
+        render(<SecretsListPage />);
+        const toggleButton = screen.getByRole('button', { name: /hide filters/i });
+        expect(toggleButton).toBeInTheDocument();
+        fireEvent.click(toggleButton);
+        expect(setShowAdvancedFiltersMock).toHaveBeenCalledWith(false);
+    });
+
     it('shows a "Clear all" action when filters are active and reports the click', () => {
         listState.hasActiveFilters = true;
         render(<SecretsListPage />);
@@ -355,6 +364,17 @@ describe('SecretsListPage — pagination', () => {
         fireEvent.click(nextButton!);
         expect(handlePageChangeMock).toHaveBeenCalledWith(2);
     });
+
+    it('reports previous-page clicks when not on the first page', () => {
+        listState.secrets = secretsFixture;
+        listState.pagination = { page: 2, pageSize: 20, total: 40, totalPages: 2 };
+        render(<SecretsListPage />);
+
+        const [prevButton] = screen.getAllByRole('button', { name: '' });
+        expect(prevButton).not.toBeDisabled();
+        fireEvent.click(prevButton!);
+        expect(handlePageChangeMock).toHaveBeenCalledWith(1);
+    });
 });
 
 describe('SecretsListPage — bulk selection', () => {
@@ -374,6 +394,18 @@ describe('SecretsListPage — bulk selection', () => {
         expect(screen.getByText('2 selected')).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+        expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it('unchecking the header checkbox clears the selection', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        const headerCheckbox = within(screen.getByTestId('secrets-table')).getAllByRole('checkbox')[0]!;
+        fireEvent.click(headerCheckbox);
+        expect(screen.getByText('2 selected')).toBeInTheDocument();
+
+        fireEvent.click(headerCheckbox);
         expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
     });
 });
@@ -397,6 +429,21 @@ describe('SecretsListPage — bulk classify / bulk delete', () => {
             { ids: [1, 2], classification: '' },
             expect.objectContaining({ onSuccess: expect.any(Function) })
         );
+
+        const onSuccess = bulkClassifyMutate.mock.calls[0][1].onSuccess;
+        act(() => onSuccess());
+        expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it('ignores a Classify-selected change with no value', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        const headerCheckbox = within(screen.getByTestId('secrets-table')).getAllByRole('checkbox')[0]!;
+        fireEvent.click(headerCheckbox);
+
+        fireEvent.change(screen.getByLabelText('Classify selected'), { target: { value: '' } });
+        expect(bulkClassifyMutate).not.toHaveBeenCalled();
     });
 
     it('deletes selected secrets after confirming in the bulk-delete modal', () => {
@@ -410,6 +457,18 @@ describe('SecretsListPage — bulk classify / bulk delete', () => {
         expect(screen.getByText('Delete Selected Secrets')).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Delete 2 Secret(s)' }));
         expect(bulkDeleteMutate).toHaveBeenCalledWith([1, 2]);
+    });
+
+    it('shows a busy label while the bulk-delete mutation is pending', () => {
+        listState.secrets = secretsFixture;
+        listState.bulkDeleteMutation = { isPending: true, isError: false, error: null };
+        render(<SecretsListPage />);
+
+        const headerCheckbox = within(screen.getByTestId('secrets-table')).getAllByRole('checkbox')[0]!;
+        fireEvent.click(headerCheckbox);
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(screen.getByRole('button', { name: 'Deleting…' })).toBeDisabled();
     });
 });
 
@@ -438,6 +497,35 @@ describe('SecretsListPage — create secret: project/environment defaulting', ()
         createEnvironmentsState.data = [{ id: 200, name: 'staging' }];
         rerender(<SecretsListPage />);
         expect(screen.getByLabelText(/^Environment/)).toHaveValue('200');
+    });
+
+    it('reports manual project/environment selection changes', () => {
+        createProjectsState.data = [
+            { id: 7, name: 'Proj A' },
+            { id: 8, name: 'Proj B' },
+        ];
+        createEnvironmentsState.data = [
+            { id: 70, name: 'dev' },
+            { id: 71, name: 'staging' },
+        ];
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getAllByTestId('create-secret-button')[0]!);
+        fireEvent.change(screen.getByLabelText(/^Project/), { target: { value: '8' } });
+        expect(screen.getByLabelText(/^Project/)).toHaveValue('8');
+
+        fireEvent.change(screen.getByLabelText(/^Environment/), { target: { value: '71' } });
+        expect(screen.getByLabelText(/^Environment/)).toHaveValue('71');
+    });
+
+    it('renders no project/environment options and skips the env-validity effect when neither has loaded yet', () => {
+        createProjectsState.data = undefined as unknown as any[];
+        createEnvironmentsState.data = undefined as unknown as any[];
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getAllByTestId('create-secret-button')[0]!);
+        expect(screen.getByLabelText(/^Project/)).toHaveDisplayValue([]);
+        expect(screen.getByLabelText(/^Environment/)).toHaveDisplayValue([]);
     });
 
     it('blocks submission with an inline error when no project/environment is available', () => {
@@ -470,6 +558,21 @@ describe('SecretsListPage — create secret: naming policy validation', () => {
         fireEvent.click(screen.getByTestId('create-secret-submit'));
 
         expect(screen.getByText('Name must match the pattern ^[a-z]+$.')).toBeInTheDocument();
+        expect(createMutate).not.toHaveBeenCalled();
+    });
+
+    it('shows only the max-length hint and blocks submission for a name exceeding it, with no pattern configured', () => {
+        secretPolicyState.data = { name: { enabled: true, max_length: 5 } };
+        render(<SecretsListPage />);
+        fireEvent.click(screen.getAllByTestId('create-secret-button')[0]!);
+
+        expect(screen.getByText('Naming policy: max 5 chars.')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'way-too-long-name' } });
+        fireEvent.change(screen.getByLabelText(/^Value/), { target: { value: 'super-secret' } });
+        fireEvent.click(screen.getByTestId('create-secret-submit'));
+
+        expect(screen.getByText('Name exceeds the 5-character maximum.')).toBeInTheDocument();
         expect(createMutate).not.toHaveBeenCalled();
     });
 
@@ -542,6 +645,26 @@ describe('SecretsListPage — create secret: submission outcomes', () => {
         expect(screen.getByLabelText(/^Name/)).toHaveValue('');
     });
 
+    it('generates a value via the Generate button and reports a type change', () => {
+        render(<SecretsListPage />);
+        fireEvent.click(screen.getAllByTestId('create-secret-button')[0]!);
+
+        fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+        const valueField = screen.getByLabelText(/^Value/) as HTMLTextAreaElement;
+        expect(valueField.value.length).toBeGreaterThan(0);
+
+        fireEvent.change(screen.getByLabelText(/^Type/), { target: { value: 'api_key' } });
+        expect(screen.getByLabelText(/^Type/)).toHaveValue('api_key');
+    });
+
+    it('shows a busy label while the create mutation is pending', () => {
+        listState.createMutation = { isPending: true, isError: false, error: null };
+        render(<SecretsListPage />);
+        fireEvent.click(screen.getAllByTestId('create-secret-button')[0]!);
+
+        expect(screen.getByRole('button', { name: 'Creating…' })).toBeDisabled();
+    });
+
     it('shows a server error message when the create mutation fails', () => {
         render(<SecretsListPage />);
         fireEvent.click(screen.getAllByTestId('create-secret-button')[0]!);
@@ -580,6 +703,57 @@ describe('SecretsListPage — view / edit / delete / rotate / share', () => {
         expect(editMutate).toHaveBeenCalledWith({ id: 1, name: 'db-pass', type: 'password', value: '' });
     });
 
+    it('edits the name, type, and value fields, including via the Generate button', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'renamed-secret' } });
+        fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'api_key' } });
+        fireEvent.change(screen.getByLabelText('New Value'), { target: { value: 'manual-value' } });
+        fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+
+        const valueInput = screen.getByLabelText('New Value') as HTMLInputElement;
+        expect(valueInput.value).not.toBe('manual-value');
+        expect(valueInput.value.length).toBeGreaterThan(0);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+        expect(editMutate).toHaveBeenCalledWith({
+            id: 1,
+            name: 'renamed-secret',
+            type: 'api_key',
+            value: valueInput.value,
+        });
+    });
+
+    it('shows the edit-mutation error message', () => {
+        listState.secrets = secretsFixture;
+        listState.editMutation = { isPending: false, isError: true, error: new Error('edit failed') };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        expect(screen.getByText('Failed to update secret')).toBeInTheDocument();
+        expect(screen.getByText('edit failed')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic edit-error message for a non-Error value', () => {
+        listState.secrets = secretsFixture;
+        listState.editMutation = { isPending: false, isError: true, error: 'nope' };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
+    });
+
+    it('shows a busy label while the edit is saving', () => {
+        listState.secrets = secretsFixture;
+        listState.editMutation = { isPending: true, isError: false, error: null };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        expect(screen.getByRole('button', { name: 'Saving…' })).toBeInTheDocument();
+    });
+
     it('deletes a secret after confirming', () => {
         listState.secrets = secretsFixture;
         render(<SecretsListPage />);
@@ -589,6 +763,34 @@ describe('SecretsListPage — view / edit / delete / rotate / share', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
         expect(deleteMutate).toHaveBeenCalledWith(1);
+    });
+
+    it('shows the delete-mutation error message', () => {
+        listState.secrets = secretsFixture;
+        listState.deleteMutation = { isPending: false, isError: true, error: new Error('cannot delete') };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Delete db-pass'));
+        expect(screen.getByText('Failed to delete secret')).toBeInTheDocument();
+        expect(screen.getByText('cannot delete')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic delete-error message for a non-Error value', () => {
+        listState.secrets = secretsFixture;
+        listState.deleteMutation = { isPending: false, isError: true, error: 'nope' };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Delete db-pass'));
+        expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
+    });
+
+    it('shows a busy label while the delete is pending', () => {
+        listState.secrets = secretsFixture;
+        listState.deleteMutation = { isPending: true, isError: false, error: null };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Delete db-pass'));
+        expect(screen.getByRole('button', { name: 'Deleting…' })).toBeInTheDocument();
     });
 
     it('rotates a secret with a pre-generated value', () => {
@@ -605,6 +807,41 @@ describe('SecretsListPage — view / edit / delete / rotate / share', () => {
         expect(rotateMutate).toHaveBeenCalledWith({ id: 1, newValue: valueInput.value });
     });
 
+    it('allows manually editing or regenerating the rotate value', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Rotate db-pass'));
+        fireEvent.change(screen.getByLabelText('New Value'), { target: { value: 'manual-rotate-value' } });
+        expect(screen.getByLabelText('New Value')).toHaveValue('manual-rotate-value');
+
+        fireEvent.click(screen.getByRole('button', { name: /regenerate/i }));
+        const valueInput = screen.getByLabelText('New Value') as HTMLInputElement;
+        expect(valueInput.value).not.toBe('manual-rotate-value');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Rotate' }));
+        expect(rotateMutate).toHaveBeenCalledWith({ id: 1, newValue: valueInput.value });
+    });
+
+    it('shows the rotate-mutation error message', () => {
+        listState.secrets = secretsFixture;
+        listState.rotateMutation = { isPending: false, isError: true, error: new Error('rotation failed') };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Rotate db-pass'));
+        expect(screen.getByText('Failed to rotate secret')).toBeInTheDocument();
+        expect(screen.getByText('rotation failed')).toBeInTheDocument();
+    });
+
+    it('shows a busy label and disables Rotate while pending', () => {
+        listState.secrets = secretsFixture;
+        listState.rotateMutation = { isPending: true, isError: false, error: null };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Rotate db-pass'));
+        expect(screen.getByRole('button', { name: 'Rotating…' })).toBeDisabled();
+    });
+
     it('shares a secret and refetches on success', () => {
         listState.secrets = secretsFixture;
         render(<SecretsListPage />);
@@ -615,6 +852,28 @@ describe('SecretsListPage — view / edit / delete / rotate / share', () => {
         fireEvent.click(screen.getByText('Share Success'));
         expect(refetchMock).toHaveBeenCalled();
         expect(screen.queryByText('Share: db-pass')).not.toBeInTheDocument();
+    });
+
+    it('opens the share modal from the view-detail modal', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('View db-pass'));
+        fireEvent.click(screen.getByText('Detail Share'));
+
+        expect(screen.getByText('Share: db-pass')).toBeInTheDocument();
+        expect(screen.queryByText('Detail: db-pass')).not.toBeInTheDocument();
+    });
+
+    it('opens the delete-confirmation modal from the view-detail modal', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('View db-pass'));
+        fireEvent.click(screen.getByText('Detail Delete'));
+
+        expect(screen.getByText('Delete Secret')).toBeInTheDocument();
+        expect(screen.queryByText('Detail: db-pass')).not.toBeInTheDocument();
     });
 });
 
@@ -645,5 +904,66 @@ describe('SecretsListPage — automated rotation', () => {
         const onSuccess = autoRotateMutate.mock.calls[0][1].onSuccess;
         act(() => onSuccess());
         expect(screen.queryByText('Automated Rotation: db-pass')).not.toBeInTheDocument();
+    });
+
+    it('toggles auto-rotation off and submits with length defaulting to 0 when left blank', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Auto-rotate db-pass'));
+        const enabledCheckbox = screen.getByLabelText('Enable auto-rotation');
+        expect(enabledCheckbox).toBeChecked();
+
+        fireEvent.click(enabledCheckbox);
+        expect(enabledCheckbox).not.toBeChecked();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+        expect(autoRotateMutate).toHaveBeenCalledWith(
+            { enabled: false, length: 0, charset: '', backend: '', ref: '' },
+            expect.objectContaining({ onSuccess: expect.any(Function) })
+        );
+    });
+
+    it('does not submit when the backend/ref mismatch guard is hit on form submit', () => {
+        listState.secrets = secretsFixture;
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Auto-rotate db-pass'));
+        fireEvent.change(screen.getByLabelText('Backend'), { target: { value: 'prod-postgres' } });
+
+        const form = screen.getByLabelText('Backend').closest('form')!;
+        fireEvent.submit(form);
+        expect(autoRotateMutate).not.toHaveBeenCalled();
+    });
+
+    it('shows the auto-rotate mutation error message', () => {
+        listState.secrets = secretsFixture;
+        autoRotateState.isPending = false;
+        autoRotateState.isError = true;
+        autoRotateState.error = new Error('auto-rotate failed');
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Auto-rotate db-pass'));
+        expect(screen.getByText('Failed to update auto-rotation')).toBeInTheDocument();
+        expect(screen.getByText('auto-rotate failed')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic auto-rotate error message for a non-Error value', () => {
+        listState.secrets = secretsFixture;
+        autoRotateState.isError = true;
+        autoRotateState.error = 'nope';
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Auto-rotate db-pass'));
+        expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
+    });
+
+    it('shows a busy label while the auto-rotate mutation is pending', () => {
+        listState.secrets = secretsFixture;
+        autoRotateState.isPending = true;
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Auto-rotate db-pass'));
+        expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
     });
 });

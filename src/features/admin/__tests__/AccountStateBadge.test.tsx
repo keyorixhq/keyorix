@@ -24,4 +24,9 @@ describe('AccountStateBadge', () => {
         render(<AccountStateBadge />);
         expect(screen.getByText('Active')).toBeInTheDocument();
     });
+
+    it('falls back to the raw state string for a state with no known label/style', () => {
+        render(<AccountStateBadge state="some_new_state" />);
+        expect(screen.getByText('some_new_state')).toBeInTheDocument();
+    });
 });

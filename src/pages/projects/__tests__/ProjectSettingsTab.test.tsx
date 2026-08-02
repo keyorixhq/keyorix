@@ -99,6 +99,17 @@ describe('ProjectSettingsTab — promote environment', () => {
         promptSpy.mockRestore();
     });
 
+    it('defaults the promoted counts to 0 when the server omits them', async () => {
+        mockPost.mockResolvedValue({ data: {} });
+        const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('3');
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getAllByTitle(/Promote/i)[0]);
+
+        expect(await screen.findByText(/Promoted: 0 copied, 0 skipped/i)).toBeInTheDocument();
+        promptSpy.mockRestore();
+    });
+
     it('refuses to promote an environment into itself', () => {
         const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('2');
 
@@ -162,6 +173,22 @@ describe('ProjectSettingsTab — promote environment', () => {
         expect(await screen.findByText(/renewed 1 secret/i)).toBeInTheDocument();
     });
 
+    it('defaults the extended count to 0 when the server omits it', async () => {
+        mockGet.mockImplementation((url: string) =>
+            url.includes('/secrets/expiring')
+                ? Promise.resolve({
+                      data: { data: { expiring: [{ id: 9, name: 'db', type: 'password', expired: true }] } },
+                  })
+                : Promise.resolve({ data: { data: {} } })
+        );
+        mockPost.mockResolvedValue({ data: {} });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(await screen.findByRole('button', { name: /extend all/i }));
+
+        expect(await screen.findByText(/renewed 0 secret\(s\) for 90 days/i)).toBeInTheDocument();
+    });
+
     it('fetches the inventory CSV as a blob when Export inventory is clicked', async () => {
         mockGet.mockResolvedValue({ data: new Blob(['id,name\n'], { type: 'text/csv' }) });
 
@@ -186,6 +213,30 @@ describe('ProjectSettingsTab — promote environment', () => {
 
         expect(await screen.findByText('Export temporarily unavailable.')).toBeInTheDocument();
         expect((URL as any).createObjectURL).not.toHaveBeenCalled();
+    });
+
+    it('falls back to response.data.error when the inventory export failure has no message', async () => {
+        mockGet.mockImplementation((url: string) =>
+            url.includes('inventory.csv')
+                ? Promise.reject({ response: { data: { error: 'Inventory generation failed.' } } })
+                : Promise.resolve({ data: { data: {} } })
+        );
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /export inventory/i }));
+
+        expect(await screen.findByText('Inventory generation failed.')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the inventory export failure has neither', async () => {
+        mockGet.mockImplementation((url: string) =>
+            url.includes('inventory.csv') ? Promise.reject({}) : Promise.resolve({ data: { data: {} } })
+        );
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /export inventory/i }));
+
+        expect(await screen.findByText('Failed to export inventory.')).toBeInTheDocument();
     });
 
     it('shows naming-policy violations with their reason when the policy flags a name', async () => {
@@ -329,6 +380,31 @@ describe('ProjectSettingsTab — promote environment', () => {
         expect(
             await screen.findByText(/0 secret\(s\), 1 skipped.*does not match the required pattern/i)
         ).toBeInTheDocument();
+    });
+
+    it('defaults the rename counts and skip list when the server response omits them', async () => {
+        mockGet.mockImplementation((url: string) =>
+            url.includes('/secrets/name-conformance')
+                ? Promise.resolve({
+                      data: {
+                          data: {
+                              policy_enabled: true,
+                              total_secrets: 1,
+                              violations: [{ id: 8, name: 'db-pass', type: 'password', reason: 'bad pattern' }],
+                          },
+                      },
+                  })
+                : Promise.resolve({ data: { data: {} } })
+        );
+        mockPost.mockResolvedValue({ data: {} });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.change(await screen.findByDisplayValue('db-pass'), { target: { value: 'DB_PASS' } });
+        fireEvent.click(screen.getByRole('button', { name: /Apply renames/i }));
+
+        // No "renamed"/"skipped"/"outcomes" in the response -> all fall back to 0/[]
+        // and there's no trailing "Skipped: ..." detail.
+        expect(await screen.findByText('Renamed 0 secret(s), 0 skipped.')).toBeInTheDocument();
     });
 
     it('leaves Apply disabled when a rename input is edited back to empty', async () => {
@@ -504,6 +580,39 @@ describe('ProjectSettingsTab — General section', () => {
     });
 });
 
+describe('ProjectSettingsTab — field fallbacks when the server omits optional project fields', () => {
+    beforeEach(() => {
+        mockPost.mockReset();
+        mockGet.mockReset();
+        mockGet.mockResolvedValue({ data: { data: {} } });
+    });
+
+    it('defaults description to empty and requireMfa to false when the project omits them', () => {
+        mockUseProject.mockReturnValue({ data: { id: 1, name: 'web' }, isLoading: false });
+
+        render(<ProjectSettingsTab projectId={1} />);
+
+        expect(screen.getByLabelText(/description/i)).toHaveValue('');
+        expect(screen.getByLabelText(/Require MFA for this project/)).not.toBeChecked();
+    });
+
+    it('sends an empty name in the MFA-toggle save when there is no loaded project', async () => {
+        mockUseProject.mockReturnValue({ data: undefined, isLoading: false });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByLabelText(/Require MFA for this project/));
+        fireEvent.click(screen.getAllByRole('button', { name: /^save$/i })[1]);
+
+        await waitFor(() =>
+            expect(mockPut).toHaveBeenCalledWith('/api/v1/projects/1', {
+                name: '',
+                description: undefined,
+                require_mfa: true,
+            })
+        );
+    });
+});
+
 describe('ProjectSettingsTab — Environments', () => {
     beforeEach(() => {
         mockPost.mockReset();
@@ -598,6 +707,17 @@ describe('ProjectSettingsTab — Environments', () => {
         fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
 
         expect(await screen.findByText('Environment already exists.')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when adding an environment fails with no server error/message', async () => {
+        mockPost.mockRejectedValue({});
+
+        render(<ProjectSettingsTab projectId={1} />);
+
+        fireEvent.change(screen.getByPlaceholderText('New environment name…'), { target: { value: 'staging2' } });
+        fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+        expect(await screen.findByText('Failed to create environment.')).toBeInTheDocument();
     });
 
     it('opens the delete-environment modal with the default-environment note and deletes on confirm', async () => {
@@ -696,6 +816,25 @@ describe('ProjectSettingsTab — Incident response', () => {
 
         await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/v1/projects/1/secrets/resume-all', {}));
         expect(await screen.findByText(/resumed 3 secret\(s\)/i)).toBeInTheDocument();
+    });
+
+    it('defaults the frozen count to 0 when the server omits it', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockPost.mockResolvedValue({ data: {} });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /freeze all secrets/i }));
+
+        expect(await screen.findByText(/froze 0 secret\(s\)/i)).toBeInTheDocument();
+    });
+
+    it('defaults the resumed count to 0 when the server omits it', async () => {
+        mockPost.mockResolvedValue({ data: {} });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /resume all/i }));
+
+        expect(await screen.findByText(/resumed 0 secret\(s\)/i)).toBeInTheDocument();
     });
 
     it('shows a generic error alert when freezing secrets fails', async () => {
@@ -861,6 +1000,18 @@ describe('ProjectSettingsTab — Orphaned secrets', () => {
         promptSpy.mockRestore();
     });
 
+    it('defaults the reassigned count to 0 when the server omits it', async () => {
+        withOrphans();
+        mockPost.mockResolvedValue({ data: {} });
+        const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('42');
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(await screen.findByText(/reassign all from former owner #99/i));
+
+        expect(await screen.findByText(/reassigned 0 secret\(s\)/i)).toBeInTheDocument();
+        promptSpy.mockRestore();
+    });
+
     it('surfaces an error alert when reassignment fails', async () => {
         withOrphans();
         mockPost.mockRejectedValue(new Error('failed'));
@@ -954,6 +1105,28 @@ describe('ProjectSettingsTab — Danger zone', () => {
 
         expect(await screen.findByText('Cannot delete: active secrets exist.')).toBeInTheDocument();
         expect(navigateMock).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the error.message when the response has no response.data.error', async () => {
+        mockDelete.mockRejectedValueOnce(new Error('native failure message'));
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /^delete project$/i }));
+        fireEvent.change(screen.getByPlaceholderText('web'), { target: { value: 'web' } });
+        fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
+        expect(await screen.findByText('native failure message')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the error has neither a response nor a message', async () => {
+        mockDelete.mockRejectedValueOnce({});
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /^delete project$/i }));
+        fireEvent.change(screen.getByPlaceholderText('web'), { target: { value: 'web' } });
+        fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
+        expect(await screen.findByText('Could not delete the project.')).toBeInTheDocument();
     });
 
     it('shows a pending state while deleting the project', async () => {

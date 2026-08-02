@@ -64,6 +64,55 @@ describe('projectInvitationsApi.listInvitations', () => {
         mocked.get.mockResolvedValue({ data: { data: {} } });
         expect(await projectInvitationsApi.listInvitations(1)).toEqual([]);
     });
+
+    it('normalizes snake_case/camelCase fields and defaults a sparse invitation', async () => {
+        mocked.get.mockResolvedValue({
+            data: {
+                data: {
+                    invitations: [
+                        {
+                            id: 8,
+                            project_id: 4,
+                            email: 'sam@x.io',
+                            role: 'project_viewer',
+                            state: 'accepted',
+                            invitedBy: 2,
+                            expiresAt: '2026-07-01T00:00:00Z',
+                            createdAt: '2026-06-01T00:00:00Z',
+                        },
+                        {},
+                    ],
+                },
+            },
+        });
+
+        const out = await projectInvitationsApi.listInvitations(4);
+
+        expect(out[0]).toMatchObject({
+            id: 8,
+            projectId: 4,
+            email: 'sam@x.io',
+            role: 'project_viewer',
+            state: 'accepted',
+            invitedBy: 2,
+            expiresAt: '2026-07-01T00:00:00Z',
+            createdAt: '2026-06-01T00:00:00Z',
+        });
+        expect(out[1]).toMatchObject({
+            email: '',
+            role: '',
+            state: '',
+            invitedBy: 0,
+            expiresAt: undefined,
+            createdAt: undefined,
+        });
+    });
+
+    it('falls back to bare data.invitations when data.data is absent', async () => {
+        mocked.get.mockResolvedValue({ data: { invitations: [{ id: 1, email: 'bare@x.io' }] } });
+        const out = await projectInvitationsApi.listInvitations(1);
+        expect(out[0]).toMatchObject({ id: 1, email: 'bare@x.io' });
+    });
 });
 
 describe('projectInvitationsApi.createInvitation', () => {
@@ -83,6 +132,18 @@ describe('projectInvitationsApi.createInvitation', () => {
             role: 'project_viewer',
         });
         expect(inv).toMatchObject({ id: 9, email: 'a@b.com', role: 'project_viewer' });
+    });
+
+    it('falls back to data.data when the invitation key is absent', async () => {
+        mocked.post.mockResolvedValue({ data: { data: { ID: 10, Email: 'no-wrapper@b.com' } } });
+        const inv = await projectInvitationsApi.createInvitation(2, 'no-wrapper@b.com', 'project_viewer');
+        expect(inv).toMatchObject({ id: 10, email: 'no-wrapper@b.com' });
+    });
+
+    it('falls back to bare response.data when data.data is absent', async () => {
+        mocked.post.mockResolvedValue({ data: { ID: 11, Email: 'bare@b.com' } });
+        const inv = await projectInvitationsApi.createInvitation(2, 'bare@b.com', 'project_viewer');
+        expect(inv).toMatchObject({ id: 11, email: 'bare@b.com' });
     });
 });
 
@@ -136,6 +197,22 @@ describe('projectInvitationsApi.createGlobal', () => {
         expect(res.setup_link).toBeUndefined();
         expect(res.delivery_error).toBe('base_url unset');
     });
+
+    it('falls back to bare response.data when data.data is absent', async () => {
+        mocked.post.mockResolvedValue({ data: { ID: 15, Email: 'bare@x.io', State: 'pending' } });
+
+        const res = await projectInvitationsApi.createGlobal('bare@x.io', '', []);
+
+        expect(res.invitation).toMatchObject({ id: 15, email: 'bare@x.io' });
+    });
+
+    it('defaults to {} (empty invitation) when response.data itself is absent', async () => {
+        mocked.post.mockResolvedValue({});
+
+        const res = await projectInvitationsApi.createGlobal('none@x.io', '', []);
+
+        expect(res.invitation).toMatchObject({ email: '', state: '' });
+    });
 });
 
 describe('projectInvitationsApi.listAccessRequests', () => {
@@ -168,6 +245,47 @@ describe('projectInvitationsApi.listAccessRequests', () => {
             state: 'pending',
             reason: 'need read access',
         });
+    });
+
+    it('normalizes snake_case fields (no PascalCase present) and defaults unset fields', async () => {
+        mocked.get.mockResolvedValue({
+            data: {
+                data: {
+                    access_requests: [
+                        {
+                            id: 10,
+                            project_id: 3,
+                            user_id: 42,
+                            suggested_role: 'project_viewer',
+                            granted_role: 'project_developer',
+                            state: 'approved',
+                            reason: 'ok',
+                        },
+                    ],
+                },
+            },
+        });
+
+        const out = await projectInvitationsApi.listAccessRequests(3);
+
+        expect(out[0]).toMatchObject({
+            id: 10,
+            projectId: 3,
+            userId: 42,
+            suggestedRole: 'project_viewer',
+            grantedRole: 'project_developer',
+            state: 'approved',
+            reason: 'ok',
+        });
+    });
+
+    it('falls back to bare data.access_requests, and to [] when neither wrapper is present', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { access_requests: [{ id: 1 }] } });
+        const bare = await projectInvitationsApi.listAccessRequests(3);
+        expect(bare).toHaveLength(1);
+
+        mocked.get.mockResolvedValueOnce({ data: {} });
+        await expect(projectInvitationsApi.listAccessRequests(3)).resolves.toEqual([]);
     });
 });
 

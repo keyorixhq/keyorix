@@ -112,6 +112,29 @@ describe('ErrorBoundary', () => {
             expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
         });
 
+        it('skips the dev-only console.error log when import.meta.env.DEV is false', () => {
+            const originalDev = import.meta.env.DEV;
+            (import.meta.env as { DEV: boolean }).DEV = false;
+
+            try {
+                render(
+                    <ErrorBoundary>
+                        <Bomb />
+                    </ErrorBoundary>
+                );
+
+                expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+                expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+                    'ErrorBoundary caught:',
+                    expect.any(Error),
+                    expect.anything()
+                );
+                expect(screen.queryByText('Error details (dev only)')).not.toBeInTheDocument();
+            } finally {
+                (import.meta.env as { DEV: boolean }).DEV = originalDev;
+            }
+        });
+
         it('reloads the page when clicking "Reload page"', () => {
             const reloadMock = vi.fn();
             const originalLocation = window.location;
@@ -211,6 +234,28 @@ describe('RouteErrorBoundary', () => {
 
             expect(screen.getByText('Recovered route content')).toBeInTheDocument();
             expect(screen.queryByText('Page failed to load')).not.toBeInTheDocument();
+        });
+
+        it('skips the dev-only console.error log when import.meta.env.DEV is false', () => {
+            const originalDev = import.meta.env.DEV;
+            (import.meta.env as { DEV: boolean }).DEV = false;
+
+            try {
+                render(
+                    <RouteErrorBoundary>
+                        <Bomb />
+                    </RouteErrorBoundary>
+                );
+
+                expect(screen.getByText('Page failed to load')).toBeInTheDocument();
+                expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+                    'RouteErrorBoundary caught:',
+                    expect.any(Error),
+                    expect.anything()
+                );
+            } finally {
+                (import.meta.env as { DEV: boolean }).DEV = originalDev;
+            }
         });
     });
 });

@@ -86,4 +86,51 @@ describe('SecretsDriftPanel', () => {
         render(<SecretsDriftPanel projectId={1} />);
         expect(screen.getByText(/Need at least two environments/i)).toBeInTheDocument();
     });
+
+    it('shows a loading skeleton while the query is in flight', () => {
+        mockUseProjectDrift.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+        const { container } = render(<SecretsDriftPanel projectId={1} />);
+
+        expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+        expect(screen.queryByText(/Need at least two environments/i)).not.toBeInTheDocument();
+    });
+
+    it('shows an error message when the query fails', () => {
+        mockUseProjectDrift.mockReturnValue({ isLoading: false, isError: true, data: undefined });
+        render(<SecretsDriftPanel projectId={1} />);
+        expect(screen.getByText('Failed to load drift report.')).toBeInTheDocument();
+    });
+
+    it('falls back to empty environments and keys when data is undefined', () => {
+        mockUseProjectDrift.mockReturnValue({ isLoading: false, isError: false, data: undefined });
+        render(<SecretsDriftPanel projectId={1} />);
+        // No environments means the "too few" prompt wins over the empty-drift state.
+        expect(screen.getByText(/Need at least two environments/i)).toBeInTheDocument();
+    });
+
+    it('falls back to the default badge for an unmapped drift status', () => {
+        mockUseProjectDrift.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: {
+                projectId: 1,
+                environments: threeEnvs,
+                driftedKeys: [
+                    {
+                        name: 'ODD_KEY',
+                        presentIn: [1, 2, 3],
+                        missingFrom: [],
+                        status: 'some_unmapped_status',
+                        driftFields: [],
+                    },
+                ],
+                summary: { environmentCount: 3, totalKeys: 1, consistentKeys: 0, missingInSome: 0, metadataDrift: 0 },
+            },
+        });
+
+        render(<SecretsDriftPanel projectId={1} />);
+        expect(screen.getByText('ODD_KEY')).toBeInTheDocument();
+        // "Settings differ" appears both as a summary stat label and as the row's fallback badge.
+        expect(screen.getAllByText('Settings differ').length).toBeGreaterThanOrEqual(2);
+    });
 });

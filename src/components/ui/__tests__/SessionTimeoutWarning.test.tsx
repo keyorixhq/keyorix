@@ -195,4 +195,63 @@ describe('SessionTimeoutWarning', () => {
         rerender(<SessionTimeoutWarning />);
         expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
+
+    it('updates and restores the close button color on hover', () => {
+        setAuth({ sessionTimeLeftMs: 60000 });
+        render(<SessionTimeoutWarning />);
+        const closeButton = screen.getByRole('button', { name: 'Close' });
+
+        fireEvent.mouseEnter(closeButton);
+        expect(closeButton.style.color).toBe('var(--text-primary)');
+
+        fireEvent.mouseLeave(closeButton);
+        expect(closeButton.style.color).toBe('var(--text-muted)');
+    });
+
+    it('updates the Extend Session button background on hover while idle, and ignores hover mid-extend', async () => {
+        let resolveRefresh!: () => void;
+        const refreshToken = vi.fn(
+            () =>
+                new Promise<void>((resolve) => {
+                    resolveRefresh = resolve;
+                })
+        );
+        setAuth({ refreshToken });
+        render(<SessionTimeoutWarning />);
+        const extendButton = screen.getByRole('button', { name: 'Extend Session' });
+
+        fireEvent.mouseEnter(extendButton);
+        expect(extendButton.style.backgroundColor).toBe('var(--accent-hover)');
+
+        fireEvent.mouseLeave(extendButton);
+        expect(extendButton.style.backgroundColor).toBe('var(--accent)');
+
+        fireEvent.click(extendButton);
+        await screen.findByText('Loading...');
+        const pendingButton = screen.getByRole('button', { name: /Loading/ });
+        expect(pendingButton.style.backgroundColor).toBe('var(--bg-muted)');
+
+        // While extending, the `if (!isExtending)` guard makes hover a no-op.
+        fireEvent.mouseEnter(pendingButton);
+        expect(pendingButton.style.backgroundColor).toBe('var(--bg-muted)');
+        fireEvent.mouseLeave(pendingButton);
+        expect(pendingButton.style.backgroundColor).toBe('var(--bg-muted)');
+
+        await act(async () => {
+            resolveRefresh();
+            await Promise.resolve();
+        });
+    });
+
+    it('updates and restores the Logout button background on hover', () => {
+        setAuth();
+        render(<SessionTimeoutWarning />);
+        const logoutButton = screen.getByRole('button', { name: 'Logout' });
+
+        fireEvent.mouseEnter(logoutButton);
+        expect(logoutButton.style.backgroundColor).toBe('var(--bg-subtle)');
+
+        fireEvent.mouseLeave(logoutButton);
+        expect(logoutButton.style.backgroundColor).toBe('var(--bg-surface)');
+    });
 });

@@ -335,4 +335,55 @@ describe('CmdKSearch', () => {
         expect(screen.queryByRole('list')).not.toBeInTheDocument();
         expect(screen.getByText('navigate')).toBeInTheDocument();
     });
+
+    it('falls back to an empty description when a project has none at all (undefined, not just empty string)', async () => {
+        mockUseProjects.mockReturnValue({
+            data: [{ id: 9, name: 'NoDescription Project' }],
+        });
+        render(<CmdKSearch onClose={onClose} />);
+        const input = screen.getByPlaceholderText('Search projects and secrets…');
+
+        await typeAndWaitForSettle(input, 'nodescription');
+
+        await waitFor(() => expect(screen.getByText('NoDescription Project')).toBeInTheDocument());
+    });
+
+    it('treats a missing secrets payload (no data.data) as an empty result set', async () => {
+        mockGet.mockResolvedValue({ data: {} });
+
+        render(<CmdKSearch onClose={onClose} />);
+        const input = screen.getByPlaceholderText('Search projects and secrets…');
+
+        await typeAndWaitForSettle(input, 'alpha');
+
+        await waitFor(() => expect(screen.getByText('Alpha Project')).toBeInTheDocument());
+        expect(screen.queryByText('secret')).not.toBeInTheDocument();
+    });
+
+    it('falls back to an empty sub-label when a secret has neither environment_name nor environment', async () => {
+        mockGet.mockResolvedValue({
+            data: { data: { secrets: [{ ID: 20, Name: 'NO_ENV_SECRET', ProjectID: 1 }] } },
+        });
+
+        render(<CmdKSearch onClose={onClose} />);
+        const input = screen.getByPlaceholderText('Search projects and secrets…');
+
+        await typeAndWaitForSettle(input, 'no_env');
+
+        await waitFor(() => expect(screen.getByText('NO_ENV_SECRET')).toBeInTheDocument());
+        const row = screen.getByText('NO_ENV_SECRET').closest('button') as HTMLElement;
+        // No sub-label paragraph renders when `sub` resolves to an empty string.
+        expect(row.querySelectorAll('p')).toHaveLength(1);
+    });
+
+    it('shows a spinner while the secrets search is in flight', async () => {
+        mockGet.mockImplementation(() => new Promise(() => {}));
+
+        const { container } = render(<CmdKSearch onClose={onClose} />);
+        const input = screen.getByPlaceholderText('Search projects and secrets…');
+
+        await typeAndWaitForSettle(input, 'alpha');
+
+        expect(container.querySelector('.animate-spin.rounded-full')).toBeInTheDocument();
+    });
 });

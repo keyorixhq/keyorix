@@ -255,4 +255,31 @@ describe('createAuthAwareNavigate', () => {
 
         expect(navigate).toHaveBeenCalledWith(ROUTES.ADMIN);
     });
+
+    // Coverage note: createAuthAwareNavigate's `else if (redirectTo)` guard has a
+    // false-side (canAccess is false but redirectTo is falsy) that is NOT
+    // reachable through the public API. canAccessRoute's every `canAccess: false`
+    // return (unauthenticated -> LOGIN, wrong role on an admin route -> fallback)
+    // always sets redirectTo alongside it; there's no code path back to
+    // `{ canAccess: false }` alone. The test below pins that invariant down, so
+    // if canAccessRoute is ever changed to violate it, this test — not a
+    // silently-never-taken branch in createAuthAwareNavigate — is what catches
+    // it. Deliberately left uncovered rather than faked: the only way to
+    // actually execute the false side would be to mock canAccessRoute itself,
+    // which is called as a same-module, non-injected reference from
+    // createAuthAwareNavigate and so cannot be substituted from outside without
+    // changing production code.
+    it('invariant: whenever canAccessRoute denies access, it always supplies a redirectTo', () => {
+        const denials = [
+            canAccessRoute(ROUTES.DASHBOARD, false),
+            canAccessRoute(ROUTES.ADMIN, true, 'viewer'),
+            canAccessRoute(ROUTES.ADMIN, true),
+            canAccessRoute('/projects/1', false),
+        ];
+
+        for (const denial of denials) {
+            expect(denial.canAccess).toBe(false);
+            expect(denial.redirectTo).toBeTruthy();
+        }
+    });
 });

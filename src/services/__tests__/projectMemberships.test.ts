@@ -117,6 +117,20 @@ describe('projectMembershipsApi.list', () => {
         await expect(projectMembershipsApi.list(1)).resolves.toEqual([]);
     });
 
+    it('falls back to bare camelCase projectId/userId when neither PascalCase nor snake_case is present', async () => {
+        mocked.get.mockResolvedValue({
+            data: {
+                data: {
+                    memberships: [{ id: 9, projectId: 4, userId: 44, role: 'project_admin', state: 'active' }],
+                },
+            },
+        });
+
+        const result = await projectMembershipsApi.list(4);
+
+        expect(result[0]).toMatchObject({ id: 9, projectId: 4, userId: 44 });
+    });
+
     it('defaults role to empty string and state to "invited" when both are missing', async () => {
         mocked.get.mockResolvedValue({
             data: { data: { memberships: [{ ID: 8, ProjectID: 1, UserID: 2 }] } },

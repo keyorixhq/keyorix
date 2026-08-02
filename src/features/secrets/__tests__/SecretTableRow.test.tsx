@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within, fireEvent } from '../../../test/test-utils';
 import { SecretTableRow } from '../SecretTableRow';
 import { Secret } from '../../../types';
+import { useUIStore } from '../../../store/uiStore';
 
 // Mirrors the component's own formatDate() so the assertion is correct
 // regardless of the timezone the test runs in.
@@ -54,6 +55,12 @@ const renderRow = (props: Partial<React.ComponentProps<typeof SecretTableRow>> =
 };
 
 describe('SecretTableRow', () => {
+    afterEach(() => {
+        // The uiStore is a real Zustand singleton (persist+devtools); restore the
+        // default theme so tests below don't leak the override made above.
+        useUIStore.setState({ theme: 'dark' });
+    });
+
     it('renders name, type badge, environment, and modified date/owner cell', () => {
         renderRow();
         const row = screen.getByRole('row');
@@ -240,5 +247,24 @@ describe('SecretTableRow', () => {
     ] as const)('renders the %s type badge with label "%s"', (type, label) => {
         renderRow({ secret: { ...baseSecret, type } });
         expect(screen.getByText(label)).toBeInTheDocument();
+    });
+
+    it('falls back to a generic badge (label = the raw type) for an unrecognized secret type', () => {
+        renderRow({ secret: { ...baseSecret, type: 'mystery-type' as unknown as Secret['type'] } });
+        expect(screen.getByText('mystery-type')).toBeInTheDocument();
+    });
+
+    it('uses the light-theme colors for the type badge when the theme is light', () => {
+        useUIStore.setState({ theme: 'light' });
+        renderRow({ secret: { ...baseSecret, type: 'password' } });
+        const badge = screen.getByText('password');
+        expect(badge.getAttribute('style')).toContain('rgb(224, 231, 255)'); // password's lightBg (#e0e7ff)
+    });
+
+    it('uses the dark-theme colors for the type badge when the theme is dark', () => {
+        useUIStore.setState({ theme: 'dark' });
+        renderRow({ secret: { ...baseSecret, type: 'password' } });
+        const badge = screen.getByText('password');
+        expect(badge.getAttribute('style')).toContain('rgba(99, 102, 241, 0.15)'); // password's darkBg
     });
 });

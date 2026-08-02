@@ -65,6 +65,27 @@ describe('rbacApi.getGroupSharedSecrets', () => {
         mocked.get.mockResolvedValue({ data: { data: { secrets: [] } } });
         expect(await rbacApi.getGroupSharedSecrets(7)).toEqual([]);
     });
+
+    it('normalizes lowercase id/name/type and defaults a sparse row', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { secrets: [{ id: 3, name: 'gamma', type: 'ssh_key' }, {}] } },
+        });
+        const out = await rbacApi.getGroupSharedSecrets(7);
+        expect(out).toEqual([
+            { id: 3, name: 'gamma', type: 'ssh_key' },
+            { id: 0, name: '', type: '' },
+        ]);
+    });
+
+    it('returns [] when the secrets field is not an array', async () => {
+        mocked.get.mockResolvedValue({ data: { data: { secrets: 'not-an-array' } } });
+        expect(await rbacApi.getGroupSharedSecrets(7)).toEqual([]);
+    });
+
+    it('returns [] when data.data itself is absent', async () => {
+        mocked.get.mockResolvedValue({ data: {} });
+        expect(await rbacApi.getGroupSharedSecrets(7)).toEqual([]);
+    });
 });
 
 // ── getRoles ──────────────────────────────────────────────────────────────────
@@ -126,6 +147,60 @@ describe('rbacApi.getRoles', () => {
         });
         const roles = await rbacApi.getRoles();
         expect(roles[0].permissions[0]).toMatchObject({ name: 'secrets.read', resource: 'secrets', action: 'read' });
+    });
+
+    it('defaults the resource/action split when a string permission has no dot', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { data: [{ id: 1, name: 'admin', permissions: ['adminonly'], created_at: '', updated_at: '' }] },
+        });
+        const roles = await rbacApi.getRoles();
+        expect(roles[0].permissions[0]).toMatchObject({ name: 'adminonly', resource: 'adminonly', action: '' });
+    });
+
+    it('normalizes object permissions with Go-serialized (PascalCase) fields', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: [
+                    {
+                        id: 1,
+                        name: 'admin',
+                        permissions: [
+                            { ID: 5, Name: 'secrets.read', Description: 'read', Resource: 'secrets', Action: 'read' },
+                        ],
+                        created_at: '',
+                        updated_at: '',
+                    },
+                ],
+            },
+        });
+        const roles = await rbacApi.getRoles();
+        expect(roles[0].permissions[0]).toEqual({
+            id: 5,
+            name: 'secrets.read',
+            description: 'read',
+            resource: 'secrets',
+            action: 'read',
+        });
+    });
+
+    it('defaults every role field, including object permissions, on a sparse role', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { data: [{ permissions: [{}] }] },
+        });
+        const roles = await rbacApi.getRoles();
+        expect(roles[0]).toEqual({
+            id: 0,
+            name: '',
+            description: '',
+            permissions: [{ id: 0, name: '', description: '', resource: '', action: '' }],
+            created_at: '',
+            updated_at: '',
+        });
+    });
+
+    it('returns [] when data.data is neither an array nor a {roles} wrapper', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { data: {} } });
+        await expect(rbacApi.getRoles()).resolves.toEqual([]);
     });
 });
 
@@ -211,6 +286,39 @@ describe('rbacApi.getPermissions', () => {
         const perms = [{ id: 2, name: 'admin.write' }];
         mocked.get.mockResolvedValueOnce({ data: { data: { permissions: perms } } });
         await expect(rbacApi.getPermissions()).resolves.toEqual(perms);
+    });
+
+    it('returns [] when data.data is neither an array nor a {permissions} wrapper', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { data: {} } });
+        await expect(rbacApi.getPermissions()).resolves.toEqual([]);
+    });
+});
+
+// ── getRolePermissions ────────────────────────────────────────────────────────
+
+describe('rbacApi.getRolePermissions', () => {
+    it('fetches the role-permissions view and unwraps data.data', async () => {
+        const payload = { role_id: 2, role_name: 'admin', permissions: [{ id: 1, name: 'secrets.read' }] };
+        mocked.get.mockResolvedValueOnce({ data: { data: payload } });
+
+        const result = await rbacApi.getRolePermissions(2);
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/roles/2/permissions');
+        expect(result).toEqual(payload);
+    });
+});
+
+// ── getGroupRoles ─────────────────────────────────────────────────────────────
+
+describe('rbacApi.getGroupRoles', () => {
+    it('fetches the group-roles view and unwraps data.data', async () => {
+        const payload = { roles: [{ id: 1, name: 'project_admin' }] };
+        mocked.get.mockResolvedValueOnce({ data: { data: payload } });
+
+        const result = await rbacApi.getGroupRoles(7);
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/groups/7/roles');
+        expect(result).toEqual(payload);
     });
 });
 

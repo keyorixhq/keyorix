@@ -27,6 +27,7 @@ let mockTags: string[] = [];
 const setTagsMutate = vi.fn();
 let mockDescription = '';
 const setDescriptionMutate = vi.fn();
+let mockDescriptionState: { isPending: boolean } = { isPending: false };
 let mockRotateState: { isPending: boolean; isError: boolean } = { isPending: false, isError: false };
 let mockRollbackState: { isPending: boolean; isError: boolean; error: unknown } = {
     isPending: false,
@@ -68,7 +69,7 @@ vi.mock('../api', () => ({
     useSecretTags: () => ({ data: mockTags }),
     useSetSecretTags: () => ({ mutate: setTagsMutate, isPending: false }),
     useSecretDescription: () => ({ data: mockDescription }),
-    useSetSecretDescription: () => ({ mutate: setDescriptionMutate, isPending: false }),
+    useSetSecretDescription: () => ({ mutate: setDescriptionMutate, isPending: mockDescriptionState.isPending }),
     useCopySecret: () => ({ mutate: mockCopyMutate, isPending: mockCopyState.isPending }),
     useSecretRisk: () => ({ data: mockRisk }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
@@ -112,6 +113,11 @@ describe('SecretDetailView classification', () => {
 
     it('renders Unclassified when the secret has no classification', () => {
         render(<SecretDetailView secret={makeSecret({ classification: '' })} />);
+        expect(screen.getByTestId('classification-badge')).toHaveTextContent('Unclassified');
+    });
+
+    it('renders Unclassified when the secret classification is undefined (nullish fallback)', () => {
+        render(<SecretDetailView secret={makeSecret({ classification: undefined })} />);
         expect(screen.getByTestId('classification-badge')).toHaveTextContent('Unclassified');
     });
 
@@ -437,6 +443,7 @@ describe('SecretDetailView description', () => {
         mockTags = [];
         mockDescription = 'the prod DB';
         setDescriptionMutate.mockClear();
+        mockDescriptionState = { isPending: false };
     });
 
     it('shows the current description and saves an edit', () => {
@@ -460,6 +467,20 @@ describe('SecretDetailView description', () => {
         expect(screen.getByDisplayValue('the prod DB')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
         expect(setDescriptionMutate).not.toHaveBeenCalled();
+    });
+
+    it('shows a "Saving…" label on the Save button while the description mutation is pending', () => {
+        // Type the draft while the mutation is idle (the textarea is disabled while
+        // pending, so the edit must happen first); then flip to pending and re-render
+        // to pick up the new mocked mutation state.
+        const { rerender } = render(<SecretDetailView secret={makeSecret()} />);
+        const box = screen.getByDisplayValue('the prod DB');
+        fireEvent.change(box, { target: { value: 'a different draft' } });
+
+        mockDescriptionState = { isPending: true };
+        rerender(<SecretDetailView secret={makeSecret()} />);
+
+        expect(screen.getByRole('button', { name: /Saving…/i })).toBeInTheDocument();
     });
 });
 
@@ -513,6 +534,13 @@ describe('SecretDetailView header details and actions', () => {
         render(<SecretDetailView secret={makeSecret()} onClose={onClose} />);
         fireEvent.click(screen.getByRole('button', { name: /^Close$/i }));
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the "text" type color for an unrecognized secret type', () => {
+        const weirdType = 'weird-type' as unknown as Secret['type'];
+        render(<SecretDetailView secret={makeSecret({ type: weirdType })} />);
+        const badge = screen.getByText('weird-type');
+        expect(badge.className).toContain('bg-blue-100'); // TYPE_COLORS['text']
     });
 });
 

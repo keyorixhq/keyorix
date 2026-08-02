@@ -141,4 +141,19 @@ describe('useAuth session timeout', () => {
         const { result } = renderHook(() => useAuth(), { wrapper });
         expect(result.current.sessionTimeLeftMs).toBeNull();
     });
+
+    it('clears the pending timeout and removes activity listeners on unmount', () => {
+        vi.useFakeTimers();
+        storeState.isAuthenticated = true;
+        const { unmount } = renderHook(() => useAuth(), { wrapper });
+
+        unmount();
+
+        // If the cleanup didn't clear the scheduled timeout/listeners, advancing
+        // past the full session timeout would still fire the inactivity logout.
+        act(() => {
+            vi.advanceTimersByTime(3_600_000);
+        });
+        expect(logout).not.toHaveBeenCalled();
+    });
 });

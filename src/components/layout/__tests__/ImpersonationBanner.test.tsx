@@ -76,6 +76,15 @@ describe('ImpersonationBanner', () => {
         expect(screen.getByText('another user')).toBeInTheDocument();
     });
 
+    it('omits the "signed in as" clause entirely when neither admin name field is available', () => {
+        authState.user = { displayName: 'Target User' };
+        authState.impersonatedBy = { adminId: 1, adminUsername: '' };
+        render(<ImpersonationBanner />);
+
+        expect(screen.getByText('Target User')).toBeInTheDocument();
+        expect(screen.queryByText(/signed in as/)).not.toBeInTheDocument();
+    });
+
     it('ends impersonation and redirects to the dashboard on success', async () => {
         authState.user = { displayName: 'Target User' };
         authState.impersonatedBy = { adminId: 1, adminUsername: 'admin1' };

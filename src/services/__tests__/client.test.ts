@@ -63,6 +63,20 @@ vi.mock('../../utils/auth', async () => {
     };
 });
 
+// client.ts also calls getEnvConfig() — once at module load for the axios
+// instance's timeout, and again on every error inside logError() to gate the
+// [API Error] console.error behind ENABLE_DEBUG. Mock it so a single test can
+// flip ENABLE_DEBUG on without depending on real import.meta.env values.
+const { mockGetEnvConfig } = vi.hoisted(() => ({
+    // Real default so the module-load call (`const config = getEnvConfig();`
+    // at the top of client.ts) succeeds before the first beforeEach runs.
+    mockGetEnvConfig: vi.fn(() => ({ ENABLE_DEBUG: false, API_TIMEOUT: 30000 })),
+}));
+
+vi.mock('../../utils', () => ({
+    getEnvConfig: mockGetEnvConfig,
+}));
+
 import type { AxiosError } from 'axios';
 import { makeAuthenticatedRequest, handleApiError } from '../client';
 
@@ -98,13 +112,14 @@ beforeEach(() => {
     // mockRejectedValueOnce left queued on mockRequest by a test doesn't leak
     // into the next one. This only touches vi.fn() spies (mockRequest,
     // mockRequestUse, mockResponseUse, mockGetState, mockShouldRefreshToken,
-    // mockIsTokenExpired, mockGetCsrfToken) — the captured interceptor
-    // closures above are plain functions, unaffected by mock resets.
+    // mockIsTokenExpired, mockGetCsrfToken, mockGetEnvConfig) — the captured
+    // interceptor closures above are plain functions, unaffected by mock resets.
     vi.resetAllMocks();
     mockShouldRefreshToken.mockReturnValue(false);
     mockIsTokenExpired.mockReturnValue(false);
     mockGetCsrfToken.mockReturnValue(undefined);
     mockGetState.mockReturnValue(makeAuthStore());
+    mockGetEnvConfig.mockReturnValue({ ENABLE_DEBUG: false, API_TIMEOUT: 30000 });
 });
 
 // ── request interceptor ─────────────────────────────────────────────────────
@@ -266,6 +281,18 @@ describe('response interceptor (error): 401 handling', () => {
         expect(result).toBe(retriedResponse);
     });
 
+    it('refreshes the token but does not retry when the error carries no config to replay', async () => {
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ config: undefined, response: { status: 401, data: {} } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+
+        expect(store.refreshToken).toHaveBeenCalledTimes(1);
+        expect(store.logout).not.toHaveBeenCalled();
+        expect(mockRequest).not.toHaveBeenCalled();
+    });
+
     it('logs out when the refresh attempt itself fails, and rethrows the original error', async () => {
         const store = makeAuthStore({ isAuthenticated: true });
         store.refreshToken.mockRejectedValueOnce(new Error('refresh failed'));
@@ -365,6 +392,38 @@ describe('response interceptor (error): other statuses', () => {
     });
 });
 
+// ── logError debug logging ──────────────────────────────────────────────────
+
+describe('logError (gated behind ENABLE_DEBUG)', () => {
+    it('logs the request method/url and error details to console when ENABLE_DEBUG is on', async () => {
+        mockGetEnvConfig.mockReturnValue({ ENABLE_DEBUG: true, API_TIMEOUT: 30000 });
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const store = makeAuthStore({ isAuthenticated: false });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ response: { status: 400, data: { foo: 'bar' } } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+
+        expect(consoleSpy).toHaveBeenCalledWith(
+            '[API Error] GET /api/foo',
+            expect.objectContaining({ status: 400, data: { foo: 'bar' }, message: 'Request failed' })
+        );
+        consoleSpy.mockRestore();
+    });
+
+    it('does not log to console when ENABLE_DEBUG is off', async () => {
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const store = makeAuthStore({ isAuthenticated: false });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ response: { status: 400, data: {} } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+
+        expect(consoleSpy).not.toHaveBeenCalled();
+        consoleSpy.mockRestore();
+    });
+});
+
 // ── makeAuthenticatedRequest ────────────────────────────────────────────────
 
 describe('makeAuthenticatedRequest', () => {
@@ -406,6 +465,12 @@ describe('handleApiError', () => {
         const err = axiosErr({ response: { status: 500, data: {} } });
 
         expect(handleApiError(err)).toBe('Request failed');
+    });
+
+    it('falls through to the plain-Error message when the axios error message is itself empty', () => {
+        const err = axiosErr({ message: '', response: { status: 500, data: {} } });
+
+        expect(handleApiError(err)).toBe('');
     });
 
     it('handles a plain (non-axios) Error', () => {

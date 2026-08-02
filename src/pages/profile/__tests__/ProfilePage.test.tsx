@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '../../../test/test-utils';
+import { render, screen, fireEvent, within, waitFor } from '../../../test/test-utils';
 import { ProfilePage } from '../ProfilePage';
 import type { AccountSession } from '../../../services/account';
 import type { PersonalAccessToken } from '../../../services/personalTokens';
@@ -426,3 +426,278 @@ describe('ProfilePage — tab navigation', () => {
         expect(screen.getByText(/Devices currently signed in to your account/)).toBeInTheDocument();
     });
 });
+
+// ── Additional coverage: fallbacks, pending states, and modal controls ────────
+
+describe('ProfilePage — Basic Info tab additional coverage', () => {
+    it('falls back to empty fields and skips updating the auth store when there is no signed-in user', () => {
+        const originalUser = mocks.user;
+        (mocks as { user: unknown }).user = null;
+        mocks.updateProfileMutate.mockImplementation((_body: unknown, opts: { onSuccess: (p: unknown) => void }) =>
+            opts.onSuccess({ display_name: 'X', email: 'x@example.com' })
+        );
+        render(<ProfilePage />);
+        expect(screen.getByLabelText('Display Name')).toHaveValue('');
+        expect(screen.getByLabelText('Email')).toHaveValue('');
+        fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+        expect(mocks.setUser).not.toHaveBeenCalled();
+        (mocks as { user: unknown }).user = originalUser;
+    });
+
+    it('falls back to a generic message when the update error has no message', () => {
+        mocks.updateProfileState.isError = true;
+        mocks.updateProfileState.error = new Error();
+        render(<ProfilePage />);
+        expect(screen.getByText('Please try again.')).toBeInTheDocument();
+    });
+
+    it('shows a spinner and disables the button while the profile update is pending', () => {
+        mocks.updateProfileState.isPending = true;
+        render(<ProfilePage />);
+        const submit = screen.getByRole('button', { name: /Save Changes/ });
+        expect(submit).toBeDisabled();
+        expect(submit.querySelector('svg.animate-spin')).toBeInTheDocument();
+    });
+});
+
+describe('ProfilePage — Security tab additional coverage', () => {
+    it('falls back to a generic message when the change-password error has no message', () => {
+        mocks.changePasswordState.isError = true;
+        mocks.changePasswordState.error = new Error();
+        render(<ProfilePage />);
+        goToTab('Security');
+        expect(screen.getByText('Please try again.')).toBeInTheDocument();
+    });
+
+    it('shows a spinner and disables the button while the password change is pending', () => {
+        mocks.changePasswordState.isPending = true;
+        render(<ProfilePage />);
+        goToTab('Security');
+        const submit = screen.getByRole('button', { name: /Change Password/ });
+        expect(submit).toBeDisabled();
+        expect(submit.querySelector('svg.animate-spin')).toBeInTheDocument();
+    });
+});
+
+describe('ProfilePage — Active Sessions tab additional coverage', () => {
+    it('treats undefined sessions data as an empty list', () => {
+        (mocks.sessionsState as { data: unknown }).data = undefined;
+        render(<ProfilePage />);
+        goToTab('Active Sessions');
+        expect(screen.getByText('No active sessions.')).toBeInTheDocument();
+    });
+
+    it('shows fallback text for a session missing a user agent and IP, and an invalid last-seen date', () => {
+        mocks.sessionsState.data = [
+            {
+                id: 1,
+                user_agent: '',
+                ip_address: '',
+                created_at: '2026-01-01T00:00:00Z',
+                expires_at: null,
+                last_seen_at: 'not-a-real-date',
+                current: false,
+            },
+        ];
+        render(<ProfilePage />);
+        goToTab('Active Sessions');
+        expect(screen.getByText('Unknown device')).toBeInTheDocument();
+        expect(screen.getByText(/unknown IP/)).toBeInTheDocument();
+        expect(screen.getByText(/last active —/)).toBeInTheDocument();
+    });
+});
+
+describe('ProfilePage — API Tokens tab additional coverage', () => {
+    it('treats undefined tokens data as an empty list', () => {
+        (mocks.tokensState as { data: unknown }).data = undefined;
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        expect(screen.getByText('You have no personal access tokens yet.')).toBeInTheDocument();
+    });
+
+    it('renders an environment scope chip for a token scoped to an environment', () => {
+        mocks.tokensState.data = [
+            {
+                id: 4,
+                name: 'env-token',
+                token_prefix: 'kx_env',
+                revoked: false,
+                created_at: '2026-01-01T00:00:00Z',
+                expires_at: null,
+                last_used_at: null,
+                scopes: [],
+                project_scope: 0,
+                environment_scope: 7,
+            },
+        ];
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        expect(screen.getByText('⬢ env #7')).toBeInTheDocument();
+    });
+
+    it('falls back to a placeholder label when a scoped project cannot be found', () => {
+        mocks.projects = [];
+        mocks.tokensState.data = [
+            {
+                id: 5,
+                name: 'orphan-token',
+                token_prefix: 'kx_orf',
+                revoked: false,
+                created_at: '2026-01-01T00:00:00Z',
+                expires_at: null,
+                last_used_at: null,
+                scopes: [],
+                project_scope: 42,
+                environment_scope: 0,
+            },
+        ];
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        expect(screen.getByText('▣ project #42')).toBeInTheDocument();
+    });
+
+    it('shows an expiry date for a token that has one', () => {
+        mocks.tokensState.data = [
+            {
+                id: 6,
+                name: 'expiring',
+                token_prefix: 'kx_exp',
+                revoked: false,
+                created_at: '2026-01-01T00:00:00Z',
+                expires_at: '2027-01-01T00:00:00Z',
+                last_used_at: null,
+                scopes: [],
+                project_scope: 0,
+                environment_scope: 0,
+            },
+        ];
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        expect(screen.getByText(/expires/)).toBeInTheDocument();
+    });
+
+    it('closes the create-token modal via its close (X) control', () => {
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        expect(screen.getByText('New Personal Access Token')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByText('New Personal Access Token')).not.toBeInTheDocument();
+    });
+
+    it('closes the create form via Cancel without creating a token', () => {
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByText('New Personal Access Token')).not.toBeInTheDocument();
+        expect(mocks.createTokenMutate).not.toHaveBeenCalled();
+    });
+
+    it('closes the modal via the Done button after creating a token', () => {
+        mocks.createTokenMutate.mockImplementation(
+            (_body: unknown, opts: { onSuccess: (r: { token: string }) => void }) =>
+                opts.onSuccess({ token: 'kx_live_secret' })
+        );
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.change(screen.getByLabelText('Token name'), { target: { value: 'ci-pipeline' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create Token' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+        expect(screen.queryByText('kx_live_secret')).not.toBeInTheDocument();
+    });
+
+    it('shows a check icon after copying the token', async () => {
+        mocks.createTokenMutate.mockImplementation(
+            (_body: unknown, opts: { onSuccess: (r: { token: string }) => void }) =>
+                opts.onSuccess({ token: 'kx_live_secret' })
+        );
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.change(screen.getByLabelText('Token name'), { target: { value: 'ci-pipeline' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create Token' }));
+
+        const copyButton = screen.getByRole('button', { name: 'Copy token' });
+        const before = copyButton.innerHTML;
+        fireEvent.click(copyButton);
+        await waitFor(() => expect(copyButton.innerHTML).not.toBe(before));
+    });
+
+    it('falls back to a generic message when the create-token error has no message', () => {
+        mocks.createTokenState.isError = true;
+        mocks.createTokenState.error = new Error();
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        expect(screen.getByText('Please try again.')).toBeInTheDocument();
+    });
+
+    it('shows a spinner and disables submit while a token is being created', () => {
+        mocks.createTokenState.isPending = true;
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.change(screen.getByLabelText('Token name'), { target: { value: 'x' } });
+        const submit = screen.getByRole('button', { name: /Create Token/ });
+        expect(submit).toBeDisabled();
+        expect(submit.querySelector('svg.animate-spin')).toBeInTheDocument();
+    });
+
+    it('unchecks a previously selected permission', () => {
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.click(screen.getByRole('radio', { name: /Limited access/ }));
+        const checkbox = screen.getByRole('checkbox', { name: /Read secrets/ });
+        fireEvent.click(checkbox);
+        expect(checkbox).toBeChecked();
+        fireEvent.click(checkbox);
+        expect(checkbox).not.toBeChecked();
+    });
+
+    it('accepts an expiry date and extra permissions, then reverts to full access before submitting', () => {
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.change(screen.getByLabelText('Token name'), { target: { value: 'x' } });
+        fireEvent.change(screen.getByLabelText('Expires (optional)'), { target: { value: '2030-01-01' } });
+        fireEvent.click(screen.getByRole('radio', { name: /Limited access/ }));
+        fireEvent.change(screen.getByLabelText(/Additional permissions/), { target: { value: 'rotation.write' } });
+        fireEvent.click(screen.getByRole('radio', { name: /^Full access/ }));
+        fireEvent.click(screen.getByRole('button', { name: 'Create Token' }));
+
+        expect(mocks.createTokenMutate).toHaveBeenCalledWith(
+            expect.objectContaining({ name: 'x', expires_at: expect.any(String) }),
+            expect.any(Object)
+        );
+        const [body] = mocks.createTokenMutate.mock.calls[0];
+        expect(body).not.toHaveProperty('scopes');
+    });
+
+    it('handles an undefined projects list when rendering the scope selector', () => {
+        (mocks as { projects: unknown }).projects = undefined;
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.click(screen.getByRole('radio', { name: /Limited access/ }));
+        expect(screen.getByLabelText('Project')).toBeInTheDocument();
+    });
+
+    it('handles an undefined environments list once a project is scoped', () => {
+        mocks.projects = [{ id: 5, name: 'Payments' }];
+        (mocks as { environments: unknown }).environments = undefined;
+        render(<ProfilePage />);
+        goToTab('API Tokens');
+        fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+        fireEvent.click(screen.getByRole('radio', { name: /Limited access/ }));
+        fireEvent.change(screen.getByLabelText('Project'), { target: { value: '5' } });
+        expect(screen.getByLabelText('Environment')).toBeInTheDocument();
+    });
+});
+
+// NOTE: TokensTab's `copy()` guard (`if (!newToken) return;`) is intentionally not
+// exercised — the "Copy token" button that invokes `copy` only renders inside the
+// `newToken ? (...) : (...)` branch, so `newToken` is always truthy when `copy` is
+// called. It's purely defensive and unreachable through the UI.

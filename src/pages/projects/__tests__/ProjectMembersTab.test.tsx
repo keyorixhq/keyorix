@@ -191,6 +191,18 @@ describe('ProjectMembersTab', () => {
             fireEvent.click(screen.getByRole('button', { name: /Collapse Alice Anderson/i }));
             expect(screen.queryByText('Read secrets')).not.toBeInTheDocument();
         });
+
+        it('falls back to no capabilities/description for a role outside the known set', () => {
+            mockMembers([makeMember({ roleName: 'legacy_owner' })]);
+            render(<ProjectMembersTab projectId={1} />);
+
+            fireEvent.click(screen.getByRole('button', { name: /Expand Alice Anderson/i }));
+
+            // The role heading renders with an empty description, and there are no
+            // granted/denied capability rows since ROLE_CAPABILITIES has no entry for it.
+            expect(screen.getByText('Legacy_owner role', { exact: false })).toBeInTheDocument();
+            expect(screen.queryByText('Read secrets')).not.toBeInTheDocument();
+        });
     });
 
     describe('role change', () => {
@@ -208,6 +220,16 @@ describe('ProjectMembersTab', () => {
             render(<ProjectMembersTab projectId={1} />);
 
             expect(screen.getByDisplayValue('Legacy_owner')).toBeInTheDocument();
+        });
+
+        it('stops a click on the role select from bubbling up and toggling the row', () => {
+            mockMembers([makeMember()]);
+            render(<ProjectMembersTab projectId={1} />);
+
+            fireEvent.click(screen.getByDisplayValue('Developer'));
+
+            expect(screen.getByRole('button', { name: /Expand Alice Anderson/i })).toBeInTheDocument();
+            expect(screen.queryByText('Read secrets')).not.toBeInTheDocument();
         });
     });
 
@@ -270,6 +292,31 @@ describe('ProjectMembersTab', () => {
             confirmSpy.mockRestore();
         });
 
+        it('falls back through displayName to username, then to a generic label/initial', () => {
+            const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+            mockMembers([
+                makeMember({ userId: 3, displayName: '', username: 'dave', roleName: 'project_developer' }),
+                makeMember({ userId: 4, displayName: '', username: '', roleName: 'project_developer' }),
+            ]);
+            render(<ProjectMembersTab projectId={1} />);
+
+            // displayName empty -> falls back to username for the avatar initial and aria-label.
+            expect(screen.getByRole('button', { name: /Expand dave/i })).toBeInTheDocument();
+            // Both empty -> avatar initial falls back to '?' and aria-label's name segment is
+            // empty (the accessible name computation trims the resulting trailing space).
+            expect(screen.getByText('?')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /^Expand$/i })).toBeInTheDocument();
+
+            const removeButtons = screen.getAllByTitle('Remove from project');
+            fireEvent.click(removeButtons[0]); // dave: displayName empty, username set
+            expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/remove dave from this project/i));
+
+            fireEvent.click(removeButtons[1]); // both empty -> generic "this member"
+            expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/remove this member from this project/i));
+
+            confirmSpy.mockRestore();
+        });
+
         it('allows removing an admin when another admin remains', () => {
             const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
             mockMembers([
@@ -321,6 +368,21 @@ describe('ProjectMembersTab', () => {
             render(<ProjectMembersTab projectId={1} />);
 
             expect(screen.getByRole('button', { name: /^Add$/i })).toBeDisabled();
+        });
+
+        it('falls back to username and omits the email parenthetical for a candidate with neither', async () => {
+            // displayName uses `??`, which only falls through on null/undefined (not '').
+            usersApiListMock.mockResolvedValue({
+                data: [{ ...otherUser, id: 6, username: 'eve', displayName: undefined, email: '' }],
+                total: 1,
+                page: 1,
+                pageSize: 200,
+                totalPages: 1,
+            });
+            mockMembers([]);
+            render(<ProjectMembersTab projectId={1} />);
+
+            expect(await screen.findByRole('option', { name: /^eve$/i })).toBeInTheDocument();
         });
 
         it('clears the selected user on a successful add', async () => {

@@ -212,4 +212,34 @@ describe('Form', () => {
         expect(input.tagName).toBe('INPUT');
         expect(input).toHaveAttribute('id');
     });
+
+    // Covers the `error.message ?? ''` fallback: a manually-set error with no
+    // message resolves to an empty body, so FormMessage renders nothing at all
+    // (the `!body` early-return), distinct from the "no error" case above which
+    // is reached through a different branch (`children` being undefined).
+    it('renders nothing when the field error has no message', () => {
+        function ErrorNoMessageForm() {
+            const form = useForm<{ username: string }>({ defaultValues: { username: '' } });
+            React.useEffect(() => {
+                form.setError('username', { type: 'manual' });
+            }, [form]);
+
+            return (
+                <Form {...form}>
+                    <FormField
+                        control={form.control}
+                        name="username"
+                        render={() => (
+                            <FormItem>
+                                <FormMessage />
+                            </FormItem>
+                        )}
+                    />
+                </Form>
+            );
+        }
+
+        render(<ErrorNoMessageForm />);
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
 });

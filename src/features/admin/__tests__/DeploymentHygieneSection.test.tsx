@@ -52,6 +52,22 @@ describe('DeploymentHygieneSection', () => {
         expect(screen.getByText('1 total')).toBeInTheDocument();
     });
 
+    it('treats missing signal counts as 0 (totals, per-signal tiles, and per-project rows)', () => {
+        mockData = {
+            // Totals omit some keys entirely (not just zeroed) to exercise the `?? 0` fallback.
+            totals: { orphaned_secrets: 1 },
+            projects: [
+                // This project omits every signal key, so its row shows no detail text
+                // and a "0 total" chip via the same fallback.
+                { project_id: 4, project_name: 'empty-signals' },
+            ],
+        };
+        render(<DeploymentHygieneSection />);
+        expect(screen.getByText(/debt across 1 project/i)).toBeInTheDocument();
+        expect(screen.getByText('empty-signals')).toBeInTheDocument();
+        expect(screen.getByText('0 total')).toBeInTheDocument();
+    });
+
     it('can be dismissed', () => {
         mockData = {
             totals: { ...ZERO, orphaned_secrets: 1 },

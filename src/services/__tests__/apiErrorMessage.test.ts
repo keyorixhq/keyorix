@@ -28,6 +28,13 @@ describe('apiErrorMessage', () => {
         expect(apiErrorMessage(axiosErr(undefined))).toBe('Request failed with status code 400');
     });
 
+    it('returns an empty string when the axios error has no response data and an empty message', () => {
+        const e = new AxiosError('');
+        // @ts-expect-error minimal response shape for the test
+        e.response = { data: undefined };
+        expect(apiErrorMessage(e)).toBe('');
+    });
+
     it('handles a plain Error', () => {
         expect(apiErrorMessage(new Error('boom'))).toBe('boom');
     });

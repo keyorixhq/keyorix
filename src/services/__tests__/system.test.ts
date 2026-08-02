@@ -34,3 +34,23 @@ describe('systemApi.getMetrics', () => {
         expect(result).toEqual(metrics);
     });
 });
+
+describe('systemApi.getAuthConfig', () => {
+    it('returns the auth config payload', async () => {
+        const authConfig = { require_mfa: true, session: { access_ttl: '15m', absolute_ttl: '24h' } };
+        mock.get.mockResolvedValueOnce({ data: { data: authConfig } });
+        const result = await systemApi.getAuthConfig();
+        expect(mock.get).toHaveBeenCalledWith('/api/v1/system/auth-config');
+        expect(result).toEqual(authConfig);
+    });
+});
+
+describe('systemApi.getEncryptionConfig', () => {
+    it('returns the encryption config payload', async () => {
+        const encryptionConfig = { enabled: true, key_provider: { type: 'shamir', fallback_count: 2 } };
+        mock.get.mockResolvedValueOnce({ data: { data: encryptionConfig } });
+        const result = await systemApi.getEncryptionConfig();
+        expect(mock.get).toHaveBeenCalledWith('/api/v1/system/encryption-config');
+        expect(result).toEqual(encryptionConfig);
+    });
+});

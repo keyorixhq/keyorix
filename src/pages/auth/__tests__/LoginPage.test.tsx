@@ -203,4 +203,25 @@ describe('LoginPage', () => {
         expect(screen.queryByText('Forgot password?')).not.toBeInTheDocument();
         expect(screen.queryByText('Reset Password')).not.toBeInTheDocument();
     });
+
+    // NOTE: handlePasswordReset (lines 56-67) and the onBack callback passed to
+    // PasswordResetForm (lines 146-149) are unreachable for the same reason as the
+    // BUG documented above — mode never becomes 'reset', so PasswordResetForm (and
+    // its callback props) never mount. Left uncovered deliberately.
+
+    it('ignores a late SSO providers response after the component unmounts', async () => {
+        let resolveProviders: (value: string[]) => void = () => {};
+        const pending = new Promise<string[]>((resolve) => {
+            resolveProviders = resolve;
+        });
+        getSSOProvidersMock.mockReturnValue(pending);
+
+        const { unmount } = render(<LoginPage />);
+        unmount();
+        resolveProviders(['google']);
+
+        // Resolves without updating state on the unmounted component (the effect's
+        // cleanup flips `active` to false, so the .then callback is a no-op).
+        await pending;
+    });
 });

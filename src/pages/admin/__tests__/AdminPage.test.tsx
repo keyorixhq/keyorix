@@ -281,6 +281,40 @@ describe('AdminPage — bulk actions', () => {
         expect(screen.queryByText('Bulk delete blew up')).not.toBeInTheDocument();
     });
 
+    it('falls back to err.message when the bulk delete error has no response error field', async () => {
+        deleteMutateAsync.mockRejectedValue({ message: 'Network Error' });
+        render(<AdminPage />);
+        const rows = screen.getAllByRole('row').slice(1);
+        fireEvent.click(within(rows[0]!).getByRole('checkbox'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(await screen.findByText('Network Error')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the bulk delete error has neither a response nor a message', async () => {
+        deleteMutateAsync.mockRejectedValue({});
+        render(<AdminPage />);
+        const rows = screen.getAllByRole('row').slice(1);
+        fireEvent.click(within(rows[0]!).getByRole('checkbox'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        expect(await screen.findByText('Bulk delete failed')).toBeInTheDocument();
+    });
+
+    it('deselects a single user by clicking its row checkbox a second time', () => {
+        render(<AdminPage />);
+        const rows = screen.getAllByRole('row').slice(1);
+        const checkbox = within(rows[0]!).getByRole('checkbox');
+
+        fireEvent.click(checkbox);
+        expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+        fireEvent.click(checkbox);
+        expect(screen.queryByText('1 selected')).not.toBeInTheDocument();
+    });
+
     it('selects and deselects every user via the header checkbox', () => {
         render(<AdminPage />);
         const headerRow = screen.getAllByRole('row')[0]!;
@@ -344,6 +378,28 @@ describe('AdminPage — bulk actions', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
 
         expect(await screen.findByText('Bulk update blew up')).toBeInTheDocument();
+    });
+
+    it('falls back to err.message when the bulk activate/deactivate error has no response error field', async () => {
+        updateMutateAsync.mockRejectedValue({ message: 'Network Error' });
+        render(<AdminPage />);
+        const rows = screen.getAllByRole('row').slice(1);
+        fireEvent.click(within(rows[0]!).getByRole('checkbox'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+
+        expect(await screen.findByText('Network Error')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the bulk activate/deactivate error has neither a response nor a message', async () => {
+        updateMutateAsync.mockRejectedValue({});
+        render(<AdminPage />);
+        const rows = screen.getAllByRole('row').slice(1);
+        fireEvent.click(within(rows[0]!).getByRole('checkbox'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+
+        expect(await screen.findByText('Bulk action failed')).toBeInTheDocument();
     });
 });
 
@@ -727,6 +783,24 @@ describe('AdminPage — edit user', () => {
         expect(await screen.findByText('Email already in use')).toBeInTheDocument();
     });
 
+    it('falls back to err.message when the update error has no response error field', async () => {
+        updateMutate.mockImplementation((_vars, opts) => opts.onError({ message: 'Network Error' }));
+        render(<AdminPage />);
+        fireEvent.click(within(aliceRow()).getByTitle('Edit user'));
+        fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+        expect(await screen.findByText('Network Error')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the update error has neither a response nor a message', async () => {
+        updateMutate.mockImplementation((_vars, opts) => opts.onError({}));
+        render(<AdminPage />);
+        fireEvent.click(within(aliceRow()).getByTitle('Edit user'));
+        fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+        expect(await screen.findByText('Failed to update user')).toBeInTheDocument();
+    });
+
     it('shows a Saving… label and disables the buttons while pending', () => {
         useAdminUpdateUser.mockReturnValue({ mutate: updateMutate, mutateAsync: updateMutateAsync, isPending: true });
         render(<AdminPage />);
@@ -757,6 +831,24 @@ describe('AdminPage — delete user', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Delete User' }));
 
         expect(await screen.findByText('Cannot delete the last admin')).toBeInTheDocument();
+    });
+
+    it('falls back to err.message when the delete error has no response error field', async () => {
+        deleteMutate.mockImplementation((_id, opts) => opts.onError({ message: 'Network Error' }));
+        render(<AdminPage />);
+        fireEvent.click(within(aliceRow()).getByTitle('Delete user'));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete User' }));
+
+        expect(await screen.findByText('Network Error')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the delete error has neither a response nor a message', async () => {
+        deleteMutate.mockImplementation((_id, opts) => opts.onError({}));
+        render(<AdminPage />);
+        fireEvent.click(within(aliceRow()).getByTitle('Delete user'));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete User' }));
+
+        expect(await screen.findByText('Failed to delete user')).toBeInTheDocument();
     });
 
     it('shows a Deleting… label and disables the buttons while pending', () => {
@@ -791,6 +883,28 @@ describe('AdminPage — restore user', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Restore User' }));
 
         expect(await screen.findByText('Restore window has expired')).toBeInTheDocument();
+    });
+
+    it('falls back to err.message when the restore error has no response error field', async () => {
+        restoreMutate.mockImplementation((_id, opts) => opts.onError({ message: 'Network Error' }));
+        mockUserList([deletedUser]);
+        render(<AdminPage />);
+
+        fireEvent.click(screen.getByTitle('Restore user'));
+        fireEvent.click(screen.getByRole('button', { name: 'Restore User' }));
+
+        expect(await screen.findByText('Network Error')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the restore error has neither a response nor a message', async () => {
+        restoreMutate.mockImplementation((_id, opts) => opts.onError({}));
+        mockUserList([deletedUser]);
+        render(<AdminPage />);
+
+        fireEvent.click(screen.getByTitle('Restore user'));
+        fireEvent.click(screen.getByRole('button', { name: 'Restore User' }));
+
+        expect(await screen.findByText('Failed to restore user')).toBeInTheDocument();
     });
 
     it('shows a Restoring… label and disables the buttons while pending', () => {
@@ -855,6 +969,30 @@ describe('AdminPage — roles', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Save Roles' }));
 
         expect(await screen.findByText('Role update rejected')).toBeInTheDocument();
+    });
+
+    it('falls back to err.message when the role-save error has no response error field', async () => {
+        useUserRoles.mockReturnValue({ data: [], isLoading: false });
+        updateRolesMutate.mockImplementation((_vars, opts) => opts.onError({ message: 'Network Error' }));
+        render(<AdminPage />);
+        fireEvent.click(within(aliceRow()).getByTitle('Manage roles'));
+
+        fireEvent.click(await screen.findByRole('checkbox', { name: /admin/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Save Roles' }));
+
+        expect(await screen.findByText('Network Error')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the role-save error has neither a response nor a message', async () => {
+        useUserRoles.mockReturnValue({ data: [], isLoading: false });
+        updateRolesMutate.mockImplementation((_vars, opts) => opts.onError({}));
+        render(<AdminPage />);
+        fireEvent.click(within(aliceRow()).getByTitle('Manage roles'));
+
+        fireEvent.click(await screen.findByRole('checkbox', { name: /admin/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Save Roles' }));
+
+        expect(await screen.findByText('Failed to update roles')).toBeInTheDocument();
     });
 
     it('renders a role with no description', async () => {

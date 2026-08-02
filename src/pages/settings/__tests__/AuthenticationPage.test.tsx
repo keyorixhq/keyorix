@@ -130,4 +130,57 @@ describe('AuthenticationPage — success state', () => {
         const requireMfaRow = screen.getByText('Require MFA (org-wide)').closest('div');
         expect(within(requireMfaRow as HTMLElement).getByText('No')).toBeInTheDocument();
     });
+
+    it('shows "No" for login lockout when disabled and "Yes" when org-wide MFA is required', () => {
+        useAuthConfig.mockReturnValue({
+            data: {
+                ...baseAuthConfig,
+                login_lockout: { ...baseAuthConfig.login_lockout, enabled: false },
+                require_mfa: true,
+            },
+            isLoading: false,
+            isError: false,
+        });
+        render(<AuthenticationPage />);
+
+        // "Enabled" is also the SSO section's row label; Login lockout renders first.
+        const [lockoutEnabledLabel] = screen.getAllByText('Enabled');
+        const lockoutRow = lockoutEnabledLabel.closest('div');
+        expect(within(lockoutRow as HTMLElement).getByText('No')).toBeInTheDocument();
+
+        const requireMfaRow = screen.getByText('Require MFA (org-wide)').closest('div');
+        expect(within(requireMfaRow as HTMLElement).getByText('Yes')).toBeInTheDocument();
+    });
+
+    it('falls back to an em dash for missing WebAuthn relying-party details', () => {
+        useAuthConfig.mockReturnValue({
+            data: { ...baseAuthConfig, webauthn: { ...baseAuthConfig.webauthn, rp_id: '', rp_display_name: '' } },
+            isLoading: false,
+            isError: false,
+        });
+        render(<AuthenticationPage />);
+
+        const rpIdRow = screen.getByText('Relying party ID').closest('div');
+        expect(within(rpIdRow as HTMLElement).getByText('—')).toBeInTheDocument();
+        const rpNameRow = screen.getByText('Relying party name').closest('div');
+        expect(within(rpNameRow as HTMLElement).getByText('—')).toBeInTheDocument();
+    });
+
+    it('shows a Group sync pill when an SSO provider has group sync enabled', () => {
+        useAuthConfig.mockReturnValue({
+            data: {
+                ...baseAuthConfig,
+                sso: {
+                    enabled: true,
+                    providers: [{ name: 'okta', type: 'oidc', auto_provision: false, group_sync: true }],
+                },
+            },
+            isLoading: false,
+            isError: false,
+        });
+        render(<AuthenticationPage />);
+
+        expect(screen.getByText('Group sync')).toBeInTheDocument();
+        expect(screen.queryByText('Auto-provision')).not.toBeInTheDocument();
+    });
 });

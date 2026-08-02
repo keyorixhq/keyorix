@@ -102,4 +102,48 @@ describe('SecretsRotationPlanPanel', () => {
         render(<SecretsRotationPlanPanel projectId={1} />);
         expect(screen.getByText(/Failed to load the rotation plan/i)).toBeInTheDocument();
     });
+
+    it('shows a loading skeleton while the query is in flight', () => {
+        mockUseRotationPlan.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+        const { container } = render(<SecretsRotationPlanPanel projectId={1} />);
+
+        expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+        expect(screen.queryByText(/Nothing to rotate/i)).not.toBeInTheDocument();
+    });
+
+    it('falls back to an em dash when a secret has no risk band', () => {
+        mockUseRotationPlan.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: {
+                projectId: 1,
+                totalSecrets: 1,
+                overdueCount: 1,
+                dueSoonCount: 0,
+                waves: [
+                    {
+                        index: 0,
+                        secrets: [
+                            {
+                                secretId: 21,
+                                secretName: 'no-risk-secret',
+                                status: 'overdue',
+                                daysOverdue: 5,
+                                riskScore: 0,
+                                riskBand: '',
+                                urgency: 1005,
+                                autoRotate: false,
+                                afterSecretIds: [],
+                                reasons: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        });
+
+        render(<SecretsRotationPlanPanel projectId={1} />);
+        expect(screen.getByText('no-risk-secret')).toBeInTheDocument();
+        expect(screen.getByText('—')).toBeInTheDocument();
+    });
 });

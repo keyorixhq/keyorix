@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
 import { SecretExpiryPage } from '../SecretExpiryPage';
 import { Secret } from '../../../types';
+import { useUIStore } from '../../../store/uiStore';
 
 const { listMock } = vi.hoisted(() => ({
     listMock: vi.fn(),
@@ -93,6 +94,7 @@ describe('SecretExpiryPage', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+        useUIStore.setState({ theme: 'dark' });
     });
 
     it('shows a loading state while the query is in flight', async () => {
@@ -232,5 +234,88 @@ describe('SecretExpiryPage', () => {
 
         await screen.findByText('No secrets with expiration');
         expect(listMock).toHaveBeenCalledWith({ pageSize: 500 });
+    });
+
+    it('shows the 1-7 day amber bucket for a secret expiring within the week', async () => {
+        const dueSoonSecret = makeSecret({
+            id: 6,
+            name: 'due-in-3-days',
+            Expiration: '2024-01-18T00:00:00.000Z', // 3 days out
+        });
+        listMock.mockResolvedValue(listResponse([dueSoonSecret]));
+        render(<SecretExpiryPage />);
+
+        await screen.findByText('due-in-3-days');
+        expect(screen.getByText('3d')).toHaveStyle({ color: '#fbbf24' });
+    });
+
+    it('falls back to "production" when a secret has no environment set', async () => {
+        const noEnvSecret = makeSecret({
+            id: 7,
+            name: 'no-env-secret',
+            environment: '',
+            Expiration: '2024-02-15T00:00:00.000Z',
+        });
+        listMock.mockResolvedValue(listResponse([noEnvSecret]));
+        render(<SecretExpiryPage />);
+
+        await screen.findByText('no-env-secret');
+        expect(screen.getByText('production')).toBeInTheDocument();
+    });
+
+    it('filters the table via the summary cards for expired/soon/future', async () => {
+        listMock.mockResolvedValue(listResponse([expiredSecret, soonSecret, futureSecret]));
+        render(<SecretExpiryPage />);
+
+        await screen.findByText('expired-api-key');
+
+        fireEvent.click(screen.getByText('Expired', { selector: 'p' }));
+        expect(screen.getByText('expired-api-key')).toBeInTheDocument();
+        expect(screen.queryByText('soon-cert')).not.toBeInTheDocument();
+        expect(screen.queryByText('future-json-blob')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Expiring within 30 days'));
+        expect(screen.getByText('soon-cert')).toBeInTheDocument();
+        expect(screen.queryByText('expired-api-key')).not.toBeInTheDocument();
+        expect(screen.queryByText('future-json-blob')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Future expirations'));
+        expect(screen.getByText('future-json-blob')).toBeInTheDocument();
+        expect(screen.queryByText('expired-api-key')).not.toBeInTheDocument();
+        expect(screen.queryByText('soon-cert')).not.toBeInTheDocument();
+    });
+
+    it('uses light-theme colors for status/type badges when the theme is light', async () => {
+        useUIStore.setState({ theme: 'light' });
+        listMock.mockResolvedValue(listResponse([expiredSecret]));
+        render(<SecretExpiryPage />);
+
+        await screen.findByText('expired-api-key');
+        const rows = screen.getAllByRole('row').slice(1);
+        expect(within(rows[0]!).getByText('Expired')).toHaveStyle({ backgroundColor: '#fee2e2', color: '#991b1b' });
+        expect(within(rows[0]!).getByText('api_key')).toHaveStyle({ backgroundColor: '#dcfce7', color: '#166534' });
+    });
+
+    it('resolves the system theme via matchMedia and uses dark colors when the system prefers dark', async () => {
+        useUIStore.setState({ theme: 'system' });
+        (window.matchMedia as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+            matches: true,
+            media: '',
+            onchange: null,
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+        });
+        listMock.mockResolvedValue(listResponse([expiredSecret]));
+        render(<SecretExpiryPage />);
+
+        await screen.findByText('expired-api-key');
+        const rows = screen.getAllByRole('row').slice(1);
+        expect(within(rows[0]!).getByText('Expired')).toHaveStyle({
+            backgroundColor: 'rgba(239,68,68,0.15)',
+            color: '#f87171',
+        });
     });
 });

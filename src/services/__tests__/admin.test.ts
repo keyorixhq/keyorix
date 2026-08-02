@@ -76,6 +76,12 @@ describe('adminApi.getRoles', () => {
         mock.get.mockResolvedValueOnce(ok(null));
         await expect(adminApi.getRoles()).resolves.toEqual([]);
     });
+
+    it('defaults id/name/description when a role row has none of the recognized fields', async () => {
+        mock.get.mockResolvedValueOnce(ok([{}]));
+        const roles = await adminApi.getRoles();
+        expect(roles).toEqual([{ id: 0, name: '', description: '' }]);
+    });
 });
 
 // ── getUserRoles ──────────────────────────────────────────────────────────────
@@ -96,6 +102,16 @@ describe('adminApi.getUserRoles', () => {
 
     it('returns [] for an empty roles list', async () => {
         mock.get.mockResolvedValueOnce(ok({ roles: [] }));
+        await expect(adminApi.getUserRoles(7)).resolves.toEqual([]);
+    });
+
+    it('returns [] for null/missing data', async () => {
+        mock.get.mockResolvedValueOnce(ok(null));
+        await expect(adminApi.getUserRoles(7)).resolves.toEqual([]);
+    });
+
+    it('returns [] when the unwrapped payload is a non-array object with no roles key', async () => {
+        mock.get.mockResolvedValueOnce(ok({ notRoles: 'x' }));
         await expect(adminApi.getUserRoles(7)).resolves.toEqual([]);
     });
 });
@@ -127,6 +143,11 @@ describe('adminApi.getUserPermissions', () => {
 
     it('returns [] for null data', async () => {
         mock.get.mockResolvedValueOnce(ok(null));
+        await expect(adminApi.getUserPermissions(7)).resolves.toEqual([]);
+    });
+
+    it('returns [] when the unwrapped payload is a non-array object with no permissions key', async () => {
+        mock.get.mockResolvedValueOnce(ok({ foo: 1 }));
         await expect(adminApi.getUserPermissions(7)).resolves.toEqual([]);
     });
 });

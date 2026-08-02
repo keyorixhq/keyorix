@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useAuthStore } from '../authStore';
-import { useUIStore } from '../uiStore';
+import { useUIStore, applyTheme } from '../uiStore';
 import { useProjectMruStore } from '../projectMruStore';
 import { authService } from '../../services/auth';
 import { mockUser } from '../../test/mocks';
@@ -158,6 +158,53 @@ describe('uiStore', () => {
         expect(useUIStore.getState().sidebarExpanded.secrets).toBe(false);
         // other groups untouched
         expect(useUIStore.getState().sidebarExpanded.access).toBe(true);
+    });
+
+    describe('applyTheme resolving "system"', () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        it('resolves to dark when the OS prefers a dark color scheme', () => {
+            vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+            applyTheme('system');
+            expect(document.documentElement.dataset.theme).toBe('dark');
+        });
+
+        it('resolves to light when the OS does not prefer a dark color scheme', () => {
+            vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false } as MediaQueryList);
+            applyTheme('system');
+            expect(document.documentElement.dataset.theme).toBe('light');
+        });
+    });
+
+    describe('onRehydrateStorage (persist middleware option)', () => {
+        it('applies the persisted theme once rehydration resolves', () => {
+            const onRehydrateStorage = (
+                useUIStore.persist.getOptions() as {
+                    onRehydrateStorage?: () => (state?: { theme?: string }) => void;
+                }
+            ).onRehydrateStorage;
+            expect(onRehydrateStorage).toBeDefined();
+
+            vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false } as MediaQueryList);
+            onRehydrateStorage!()({ theme: 'light' } as never);
+            expect(document.documentElement.dataset.theme).toBe('light');
+
+            vi.restoreAllMocks();
+        });
+
+        it('is a no-op when the rehydrated state has no theme (or rehydration failed)', () => {
+            const onRehydrateStorage = (
+                useUIStore.persist.getOptions() as {
+                    onRehydrateStorage?: () => (state?: { theme?: string }) => void;
+                }
+            ).onRehydrateStorage;
+
+            document.documentElement.dataset.theme = 'sentinel';
+            expect(() => onRehydrateStorage!()(undefined)).not.toThrow();
+            expect(document.documentElement.dataset.theme).toBe('sentinel');
+        });
     });
 });
 

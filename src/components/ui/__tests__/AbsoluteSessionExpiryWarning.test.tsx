@@ -191,4 +191,30 @@ describe('AbsoluteSessionExpiryWarning', () => {
         // No further polling should happen once unmounted.
         expect(mockGetTimeUntilAbsoluteExpiry.mock.calls.length).toBe(callsBeforeUnmount);
     });
+
+    it('updates and restores the "Sign in again" button background on hover', () => {
+        setAuth(true);
+        mockGetTimeUntilAbsoluteExpiry.mockReturnValue(2 * 60 * 1000);
+        render(<AbsoluteSessionExpiryWarning />);
+        const signInButton = screen.getByRole('button', { name: /sign in again/i });
+
+        fireEvent.mouseEnter(signInButton);
+        expect(signInButton.style.backgroundColor).toBe('var(--accent-hover)');
+
+        fireEvent.mouseLeave(signInButton);
+        expect(signInButton.style.backgroundColor).toBe('var(--accent)');
+    });
+
+    it('updates and restores the dismiss button color on hover', () => {
+        setAuth(true);
+        mockGetTimeUntilAbsoluteExpiry.mockReturnValue(2 * 60 * 1000);
+        render(<AbsoluteSessionExpiryWarning />);
+        const dismissButton = screen.getByRole('button', { name: /dismiss/i });
+
+        fireEvent.mouseEnter(dismissButton);
+        expect(dismissButton.style.color).toBe('var(--text-primary)');
+
+        fireEvent.mouseLeave(dismissButton);
+        expect(dismissButton.style.color).toBe('var(--text-muted)');
+    });
 });

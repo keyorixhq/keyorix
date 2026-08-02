@@ -62,4 +62,27 @@ describe('CertificatePanel', () => {
         const { container } = render(<CertificatePanel secretId={7} />);
         expect(container).toBeEmptyDOMElement();
     });
+
+    it('shows a loading skeleton while the certificate is being fetched', () => {
+        mockUseCert.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+        const { container } = render(<CertificatePanel secretId={7} />);
+        expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+        expect(screen.queryByText('CN=example.com')).not.toBeInTheDocument();
+    });
+
+    it('marks a certificate authority', () => {
+        mockUseCert.mockReturnValue({ data: { ...baseCert, is_ca: true }, isLoading: false, isError: false });
+        render(<CertificatePanel secretId={7} />);
+        expect(screen.getByText(/Certificate Authority/)).toBeInTheDocument();
+    });
+
+    it('falls back to the raw string when a validity date fails to parse', () => {
+        mockUseCert.mockReturnValue({
+            data: { ...baseCert, not_before: 'not-a-date' },
+            isLoading: false,
+            isError: false,
+        });
+        render(<CertificatePanel secretId={7} />);
+        expect(screen.getByText(/not-a-date/)).toBeInTheDocument();
+    });
 });

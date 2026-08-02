@@ -34,4 +34,22 @@ describe('OrgInventoryExport', () => {
 
         expect(await screen.findByText(/forbidden/i)).toBeInTheDocument();
     });
+
+    it('prefers the response message over the error field when both are present', async () => {
+        mockGet.mockRejectedValue({ response: { data: { message: 'quota exceeded', error: 'forbidden' } } });
+
+        render(<OrgInventoryExport />);
+        fireEvent.click(screen.getByRole('button', { name: /export inventory/i }));
+
+        expect(await screen.findByText(/quota exceeded/i)).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the error has no response payload', async () => {
+        mockGet.mockRejectedValue(new Error('network down'));
+
+        render(<OrgInventoryExport />);
+        fireEvent.click(screen.getByRole('button', { name: /export inventory/i }));
+
+        expect(await screen.findByText('Failed to export inventory.')).toBeInTheDocument();
+    });
 });

@@ -181,6 +181,13 @@ describe('SharingManagementPage — loading / empty / error states', () => {
         fireEvent.change(permissionSelect!, { target: { value: 'write' } });
         expect(screen.getByText('Try adjusting your filters.')).toBeInTheDocument();
     });
+
+    it('renders the empty state without crashing when data is undefined (e.g. before the first successful fetch)', () => {
+        sharesState.data = undefined;
+        render(<SharingManagementPage />);
+        expect(screen.getByText('No shares found')).toBeInTheDocument();
+        expect(screen.getByText('No secrets have been shared yet.')).toBeInTheDocument();
+    });
 });
 
 describe('SharingManagementPage — table rendering', () => {
@@ -336,6 +343,26 @@ describe('SharingManagementPage — pagination', () => {
         expect(lastCall).toEqual({ page: 3, pageSize: 20 });
     });
 
+    it('moves back a page via both the mobile and desktop Previous buttons, and forward via the desktop Next button', () => {
+        sharesState.data = makeResponse(allShares, { total: 45, totalPages: 3 });
+        render(<SharingManagementPage />);
+
+        fireEvent.click(screen.getByRole('button', { name: '2' }));
+        expect(sharesQueryMock.mock.calls.at(-1)![0]).toEqual({ page: 2, pageSize: 20 });
+
+        const prevButtons = screen.getAllByRole('button', { name: 'Previous' });
+        fireEvent.click(prevButtons[0]!); // mobile Previous
+        expect(sharesQueryMock.mock.calls.at(-1)![0]).toEqual({ page: 1, pageSize: 20 });
+
+        fireEvent.click(screen.getByRole('button', { name: '2' }));
+        fireEvent.click(prevButtons[1]!); // desktop Previous
+        expect(sharesQueryMock.mock.calls.at(-1)![0]).toEqual({ page: 1, pageSize: 20 });
+
+        const nextButtons = screen.getAllByRole('button', { name: 'Next' });
+        fireEvent.click(nextButtons[1]!); // desktop Next
+        expect(sharesQueryMock.mock.calls.at(-1)![0]).toEqual({ page: 2, pageSize: 20 });
+    });
+
     it('does not render pagination controls for a single page', () => {
         render(<SharingManagementPage />);
         expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
@@ -411,6 +438,18 @@ describe('SharingManagementPage — bulk selection and bulk revoke', () => {
         expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('toggles a row checkbox off again on a second click', () => {
+        render(<SharingManagementPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+
+        const aliceCheckbox = within(rowFor('Alice Anderson')).getByRole('checkbox');
+        fireEvent.click(aliceCheckbox);
+        expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+        fireEvent.click(aliceCheckbox);
+        expect(screen.getByText('0 selected')).toBeInTheDocument();
     });
 
     it('the Revoke bulk action is disabled with nothing selected', () => {
@@ -547,6 +586,20 @@ describe('SharingManagementPage — edit share modal', () => {
         expect(expiresAtFromPresetMock).toHaveBeenCalledWith('24h');
         expect(updateMutate).toHaveBeenCalledWith(
             { id: 1, permission: 'read', expiresAt: 'iso-24h' },
+            expect.objectContaining({ onSuccess: expect.any(Function) })
+        );
+    });
+
+    it('omits expiresAt from the mutation payload when expiresAtFromPreset resolves to a falsy value', () => {
+        expiresAtFromPresetMock.mockImplementationOnce(() => undefined);
+        render(<SharingManagementPage />);
+        fireEvent.click(within(rowFor('Alice Anderson')).getByTitle('Edit permissions'));
+        fireEvent.change(screen.getByLabelText('Access expires'), { target: { value: '24h' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+        expect(expiresAtFromPresetMock).toHaveBeenCalledWith('24h');
+        expect(updateMutate).toHaveBeenCalledWith(
+            { id: 1, permission: 'read' },
             expect.objectContaining({ onSuccess: expect.any(Function) })
         );
     });

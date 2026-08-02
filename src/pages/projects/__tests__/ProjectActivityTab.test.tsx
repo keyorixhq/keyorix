@@ -147,6 +147,14 @@ describe('ProjectActivityTab', () => {
         expect(screen.queryByText(/Page \d+ of \d+/)).not.toBeInTheDocument();
     });
 
+    it('falls back to empty events and a single page when data is undefined', () => {
+        useAuditLog.mockReturnValue({ data: undefined, isLoading: false, isError: false });
+        render(<ProjectActivityTab projectId={1} />);
+
+        expect(screen.getByText('No activity yet')).toBeInTheDocument();
+        expect(screen.queryByText(/Page \d+ of \d+/)).not.toBeInTheDocument();
+    });
+
     describe('pagination', () => {
         beforeEach(() => {
             mockAuditLog({ totalPages: 3 });

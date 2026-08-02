@@ -376,4 +376,114 @@ describe('ProjectsListPage', () => {
         expect(restoreButtons[0]).toBeDisabled(); // deleted-one, id 11 — the pending restore
         expect(restoreButtons[1]).not.toBeDisabled(); // deleted-two, id 12 — unaffected
     });
+
+    it('evaluates the restoring flag for non-deleted rows shown in Recent too', () => {
+        // Recent never shows a Restore button (only deleted rows do), but the `restoring`
+        // prop expression is still evaluated per-row there; exercise both outcomes.
+        hookState.projects = [
+            makeProject({ id: 20, name: 'recent-a', updatedAt: '2026-01-02T00:00:00Z' }),
+            makeProject({ id: 21, name: 'recent-b', updatedAt: '2026-01-01T00:00:00Z' }),
+        ];
+        hookState.restorePending = true;
+        hookState.restoreVariables = 20;
+        render(<ProjectsListPage />);
+
+        expect(screen.getByText('recent-a')).toBeInTheDocument();
+        expect(screen.getByText('recent-b')).toBeInTheDocument();
+    });
+
+    it('shows relative last-activity time when a project has one', () => {
+        hookState.projects = [makeProject({ id: 13, name: 'active-project', lastActivity: '2026-01-01T00:00:00Z' })];
+        render(<ProjectsListPage />);
+
+        const row = screen.getByText('active-project').closest('.group') as HTMLElement;
+        expect(within(row).getByTitle(/Last activity:/)).toBeInTheDocument();
+    });
+
+    it('falls back to an empty description when filtering and a candidate has none', () => {
+        hookState.projects = [makeProject({ id: 14, name: 'no-description-project', description: undefined })];
+        render(<ProjectsListPage />);
+
+        fireEvent.change(screen.getByPlaceholderText('Search projects…'), { target: { value: 'zzz-no-match' } });
+        expect(screen.getByText(/No projects match/)).toBeInTheDocument();
+    });
+
+    it('sorts recent projects with a missing updatedAt to the end', () => {
+        hookState.projects = [
+            makeProject({ id: 15, name: 'has-date', updatedAt: '2026-01-01T00:00:00Z' }),
+            makeProject({ id: 16, name: 'no-date', updatedAt: undefined }),
+        ];
+        render(<ProjectsListPage />);
+
+        const recentSection = screen.getByText('Recent').closest('section') as HTMLElement;
+        expect(within(recentSection).getByText('has-date')).toBeInTheDocument();
+        expect(within(recentSection).getByText('no-date')).toBeInTheDocument();
+    });
+
+    it('does not navigate on a non-Enter/Space key, and does not navigate on any key for a deleted row', () => {
+        hookState.projects = [
+            makeProject({ id: 17, name: 'active-row' }),
+            makeProject({ id: 18, name: 'deleted-row', deleted: true }),
+        ];
+        render(<ProjectsListPage />);
+
+        const activeRow = screen.getByText('active-row').closest('.group') as HTMLElement;
+        fireEvent.keyDown(activeRow, { key: 'a' });
+        expect(navigateMock).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(activeRow, { key: ' ' });
+        expect(navigateMock).toHaveBeenCalledWith('/projects/17');
+
+        navigateMock.mockClear();
+        const deletedRow = screen.getByText('deleted-row').closest('.group') as HTMLElement;
+        fireEvent.keyDown(deletedRow, { key: 'Enter' });
+        expect(navigateMock).not.toHaveBeenCalled();
+    });
+
+    it('only highlights the row background on hover for a non-deleted project', () => {
+        hookState.projects = [
+            makeProject({ id: 19, name: 'hoverable-row' }),
+            makeProject({ id: 22, name: 'deleted-hover-row', deleted: true }),
+        ];
+        render(<ProjectsListPage />);
+
+        const activeRow = screen.getByText('hoverable-row').closest('.group') as HTMLElement;
+        fireEvent.mouseEnter(activeRow);
+        expect(activeRow.style.backgroundColor).toBe('var(--bg-subtle)');
+        fireEvent.mouseLeave(activeRow);
+        expect(activeRow.style.backgroundColor).toBe('var(--bg-surface)');
+
+        const deletedRow = screen.getByText('deleted-hover-row').closest('.group') as HTMLElement;
+        fireEvent.mouseEnter(deletedRow);
+        expect(deletedRow.style.backgroundColor).toBe('var(--bg-surface)');
+    });
+
+    it('does not submit the create form on Enter when the name field is blank', () => {
+        hookState.projects = [];
+        render(<ProjectsListPage />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'New Project' }));
+        fireEvent.keyDown(screen.getByLabelText(/Project name/), { key: 'Enter' });
+
+        expect(createMutateAsync).not.toHaveBeenCalled();
+        expect(screen.getByRole('heading', { name: 'New Project' })).toBeInTheDocument();
+    });
+
+    it('shows "Creating…" on the submit button while the create mutation is pending', () => {
+        hookState.projects = [];
+        hookState.createPending = true;
+        render(<ProjectsListPage />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'New Project' }));
+        expect(screen.getByRole('button', { name: 'Creating…' })).toBeInTheDocument();
+    });
+
+    it('shows "Deleting…" on the confirm button while the delete mutation is pending', () => {
+        hookState.projects = [makeProject({ id: 23, name: 'deleting-project' })];
+        hookState.deletePending = true;
+        render(<ProjectsListPage />);
+
+        fireEvent.click(screen.getByTitle('Delete project'));
+        expect(screen.getByRole('button', { name: 'Deleting…' })).toBeInTheDocument();
+    });
 });

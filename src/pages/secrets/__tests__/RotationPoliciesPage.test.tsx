@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, waitFor } from '../../../test/test-utils';
+import { render, screen, fireEvent, within, waitFor, act } from '../../../test/test-utils';
 import { RotationPoliciesPage } from '../RotationPoliciesPage';
 
 const { createMutate, updateMutate, deleteMutate, refetchMock, deleteResetMock } = vi.hoisted(() => ({
@@ -411,6 +411,34 @@ describe('RotationPoliciesPage — create policy', () => {
 });
 
 describe('RotationPoliciesPage — edit policy', () => {
+    it('prefills the form from a project-scoped policy without a description', async () => {
+        projListMock.mockResolvedValue(projFixture);
+        const projectPolicyNoDesc = {
+            id: 3,
+            name: 'No-Desc Policy',
+            description: undefined,
+            scope: 'project' as const,
+            project_id: 5,
+            environment_id: null,
+            interval_days: 60,
+            alert_days_before: 7,
+            notify_on_breach: false,
+            is_active: true,
+            created_by: 'carol@co',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+        };
+        policiesState.policies = [projectPolicyNoDesc as unknown as (typeof policiesFixture)[number]];
+        render(<RotationPoliciesPage />);
+
+        const row = screen.getByText('No-Desc Policy').closest('tr')!;
+        fireEvent.click(within(row).getByTitle('Edit'));
+
+        expect(screen.getByLabelText('Description')).toHaveValue('');
+        expect(screen.getByLabelText(/^Scope/)).toHaveValue('project');
+        await waitFor(() => expect(screen.getByLabelText(/^Project/)).toHaveValue('5'));
+    });
+
     it('prefills the form from the selected policy', async () => {
         envListMock.mockResolvedValue(envFixture);
         policiesState.policies = policiesFixture;
@@ -465,6 +493,34 @@ describe('RotationPoliciesPage — edit policy', () => {
         const row = screen.getByText('DB Rotation Policy').closest('tr')!;
         fireEvent.click(within(row).getByTitle('Edit'));
         expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    });
+
+    it('shows the mutation error message when an update fails', async () => {
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        updateMutate.mockImplementation((_payload, opts) => opts.onError(new Error('policy locked')));
+        render(<RotationPoliciesPage />);
+
+        const row = screen.getByText('DB Rotation Policy').closest('tr')!;
+        fireEvent.click(within(row).getByTitle('Edit'));
+        await waitFor(() => expect(screen.getByLabelText(/^Environment/)).toHaveValue('2'));
+        fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+        expect(screen.getByText('policy locked')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic error message when an update fails with a non-Error value', async () => {
+        envListMock.mockResolvedValue(envFixture);
+        policiesState.policies = policiesFixture;
+        updateMutate.mockImplementation((_payload, opts) => opts.onError('nope'));
+        render(<RotationPoliciesPage />);
+
+        const row = screen.getByText('DB Rotation Policy').closest('tr')!;
+        fireEvent.click(within(row).getByTitle('Edit'));
+        await waitFor(() => expect(screen.getByLabelText(/^Environment/)).toHaveValue('2'));
+        fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+        expect(screen.getByText('Failed to update policy.')).toBeInTheDocument();
     });
 });
 
@@ -529,5 +585,44 @@ describe('RotationPoliciesPage — delete policy', () => {
 
         expect(screen.getByRole('button', { name: 'Deleting…' })).toBeDisabled();
         expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    });
+
+    it('closes and resets the mutation state via the modal close (X) button', () => {
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+
+        const row = screen.getByText('DB Rotation Policy').closest('tr')!;
+        fireEvent.click(within(row).getByTitle('Delete'));
+        expect(screen.getByText('Delete Policy')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+        expect(deleteResetMock).toHaveBeenCalled();
+        expect(screen.queryByText('Delete Policy')).not.toBeInTheDocument();
+    });
+
+    it('closes the confirmation once the delete mutation succeeds', () => {
+        policiesState.policies = policiesFixture;
+        render(<RotationPoliciesPage />);
+
+        const row = screen.getByText('DB Rotation Policy').closest('tr')!;
+        fireEvent.click(within(row).getByTitle('Delete'));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+        const onSuccess = deleteMutate.mock.calls[0]![1].onSuccess;
+        act(() => onSuccess());
+
+        expect(screen.queryByText('Delete Policy')).not.toBeInTheDocument();
+    });
+
+    it('falls back to a generic error message when deletion fails with a non-Error value', () => {
+        policiesState.policies = policiesFixture;
+        policiesState.deleteMutation = { isPending: false, isError: true, error: 'nope' };
+        render(<RotationPoliciesPage />);
+
+        const row = screen.getByText('DB Rotation Policy').closest('tr')!;
+        fireEvent.click(within(row).getByTitle('Delete'));
+
+        expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
     });
 });

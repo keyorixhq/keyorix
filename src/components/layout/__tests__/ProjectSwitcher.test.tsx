@@ -213,4 +213,57 @@ describe('ProjectSwitcher', () => {
         fireEvent.mouseDown(searchInput);
         expect(screen.getByPlaceholderText('Search projects…')).toBeInTheDocument();
     });
+
+    it('shows a singular "secret" label (no trailing "s") when secretCount is exactly 1', () => {
+        useProjectsMock.mockReturnValue({
+            data: [{ id: 4, name: 'Solo', secretCount: 1 }],
+            isLoading: false,
+        });
+        render(<ProjectSwitcher />);
+        fireEvent.click(screen.getByRole('button', { name: 'Select project' }));
+        expect(screen.getByText('1 secret')).toBeInTheDocument();
+    });
+
+    it('applies a hover background on the trigger only while the dropdown is closed', () => {
+        render(<ProjectSwitcher />);
+        const trigger = screen.getByRole('button', { name: 'Select project' });
+
+        // Closed: hover sets the subtle background, then clears it on leave.
+        // (Checked via the raw style property rather than toHaveStyle — jsdom
+        // normalizes the 'transparent' keyword to an rgba() value on read-back.)
+        fireEvent.mouseEnter(trigger);
+        expect(trigger.style.backgroundColor).toBe('var(--bg-subtle)');
+        fireEvent.mouseLeave(trigger);
+        expect(trigger.style.backgroundColor).toBe('transparent');
+
+        // Open: hover/leave must not touch the trigger's background.
+        fireEvent.click(trigger);
+        fireEvent.mouseEnter(trigger);
+        expect(trigger.style.backgroundColor).toBe('var(--bg-subtle)');
+        fireEvent.mouseLeave(trigger);
+        expect(trigger.style.backgroundColor).toBe('var(--bg-subtle)');
+    });
+
+    it('applies and clears a hover background on project rows, the "All projects" link, and "New project"', () => {
+        render(<ProjectSwitcher />);
+        fireEvent.click(screen.getByRole('button', { name: 'Select project' }));
+
+        const row = screen.getByRole('button', { name: /Payments/ });
+        fireEvent.mouseEnter(row);
+        expect(row).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        fireEvent.mouseLeave(row);
+        expect(row).toHaveStyle({ backgroundColor: '' });
+
+        const allProjectsLink = screen.getByRole('link', { name: /All projects/i });
+        fireEvent.mouseEnter(allProjectsLink);
+        expect(allProjectsLink).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        fireEvent.mouseLeave(allProjectsLink);
+        expect(allProjectsLink).toHaveStyle({ backgroundColor: '' });
+
+        const newProjectButton = screen.getByRole('button', { name: /New project/i });
+        fireEvent.mouseEnter(newProjectButton);
+        expect(newProjectButton).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        fireEvent.mouseLeave(newProjectButton);
+        expect(newProjectButton).toHaveStyle({ backgroundColor: '' });
+    });
 });

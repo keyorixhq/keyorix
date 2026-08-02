@@ -82,4 +82,29 @@ describe('projectsApi.drift', () => {
         expect(report.driftedKeys).toEqual([]);
         expect(report.summary.totalKeys).toBe(0);
     });
+
+    it('defaults projectId to 0, and normalizes environments/drifted-key fields via their fallbacks when sparse', async () => {
+        mocked.get.mockResolvedValue({
+            data: {
+                data: {
+                    environments: [{ ID: 1, Name: 'production' }],
+                    driftedKeys: [{ presentIn: [1], missingFrom: [] }],
+                },
+            },
+        });
+
+        const report = await projectsApi.drift(0);
+
+        expect(report.projectId).toBe(0);
+        expect(report.environments).toEqual([{ id: 1, name: 'production' }]);
+        expect(report.driftedKeys).toEqual([
+            { name: '', presentIn: [1], missingFrom: [], status: undefined, driftFields: [] },
+        ]);
+    });
+
+    it('falls back to response.data when there is no data.data wrapper', async () => {
+        mocked.get.mockResolvedValue({ data: { project_id: 6 } });
+        const report = await projectsApi.drift(6);
+        expect(report.projectId).toBe(6);
+    });
 });

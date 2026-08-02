@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within, fireEvent } from '../../../test/test-utils';
 import { SecretsHealthPage } from '../SecretsHealthPage';
+import { useUIStore } from '../../../store/uiStore';
 
 const { mockUseSecretsHealth, navigateMock } = vi.hoisted(() => ({
     mockUseSecretsHealth: vi.fn(),
@@ -67,6 +68,7 @@ function makeHealth(overrides: Partial<typeof baseHealth> = {}) {
 describe('SecretsHealthPage', () => {
     afterEach(() => {
         navigateMock.mockReset();
+        useUIStore.setState({ theme: 'dark' });
     });
 
     // ── loading / error ────────────────────────────────────────────────────
@@ -84,6 +86,25 @@ describe('SecretsHealthPage', () => {
         expect(screen.getByText('Failed to load health data')).toBeInTheDocument();
         expect(screen.getByText(/Could not fetch secrets or dashboard stats/i)).toBeInTheDocument();
         expect(screen.getByText('Retry')).toBeInTheDocument();
+    });
+
+    it('reloads the page when the Retry action is clicked', () => {
+        mockUseSecretsHealth.mockReturnValue(makeHealth({ error: new Error('boom') }));
+        const reloadMock = vi.fn();
+        const originalLocation = window.location;
+        Object.defineProperty(window, 'location', {
+            configurable: true,
+            value: { ...originalLocation, reload: reloadMock },
+        });
+
+        render(<SecretsHealthPage />);
+        fireEvent.click(screen.getByText('Retry'));
+        expect(reloadMock).toHaveBeenCalledOnce();
+
+        Object.defineProperty(window, 'location', {
+            configurable: true,
+            value: originalLocation,
+        });
     });
 
     // ── header + overall score ─────────────────────────────────────────────
@@ -378,5 +399,71 @@ describe('SecretsHealthPage', () => {
         );
         render(<SecretsHealthPage />);
         expect(screen.getAllByText('N/A').length).toBeGreaterThan(0);
+    });
+
+    // ── theme-driven colors ─────────────────────────────────────────────────
+    // The default store theme is 'dark', so every other test above only exercises
+    // the isDark-true branch of each card's inline styles. These cover the
+    // isDark-false (light) path, and the system-theme resolution itself.
+
+    it('uses light-theme colors across the expiry/rotation/access/anomaly cards when the theme is light', () => {
+        useUIStore.setState({ theme: 'light' });
+        mockUseSecretsHealth.mockReturnValue(
+            makeHealth({
+                expiry: { ...baseHealth.expiry, expired: 2 },
+                rotation: {
+                    available: true,
+                    pct: 10,
+                    covered: 1,
+                    overdue: 1,
+                    dueSoon: 0,
+                    ok: 0,
+                    items: [
+                        {
+                            policy_id: 1,
+                            secret_id: 1,
+                            secret_name: 'DB_PASSWORD',
+                            status: 'overdue',
+                            days_overdue: 5,
+                            interval_days: 30,
+                            auto_rotate: true,
+                            rotation_backend: 'vault',
+                        },
+                    ],
+                },
+                access: { ...baseHealth.access, failedAuth24h: 7 },
+                anomalies: {
+                    count: 1,
+                    items: [{ ID: 1, AlertType: 'frequency_spike', SecretName: 'S', AccessedBy: 'u@example.com' }],
+                },
+            })
+        );
+        render(<SecretsHealthPage />);
+
+        expect(screen.getByText(/2 secrets have already expired/)).toHaveStyle({ color: '#991b1b' });
+        expect(screen.getByText('DB_PASSWORD')).toHaveStyle({ color: '#991b1b' });
+        expect(screen.getByText('Auto: vault')).toHaveStyle({ backgroundColor: '#dbeafe', color: '#1e40af' });
+        expect(screen.getByText(/High number of failed auth attempts/)).toHaveStyle({ color: '#991b1b' });
+        expect(screen.getByText('1 active anomaly')).toHaveStyle({ color: '#991b1b' });
+        expect(screen.getByText('Frequency spike')).toHaveStyle({ color: '#991b1b' });
+        expect(screen.getByText(/^S ·/)).toHaveStyle({ color: '#b91c1c' });
+    });
+
+    it('resolves the system theme via matchMedia and uses dark colors when the system prefers dark', () => {
+        useUIStore.setState({ theme: 'system' });
+        (window.matchMedia as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+            matches: true,
+            media: '',
+            onchange: null,
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+        });
+        mockUseSecretsHealth.mockReturnValue(makeHealth({ expiry: { ...baseHealth.expiry, expired: 2 } }));
+        render(<SecretsHealthPage />);
+
+        expect(screen.getByText(/2 secrets have already expired/)).toHaveStyle({ color: '#f87171' });
     });
 });

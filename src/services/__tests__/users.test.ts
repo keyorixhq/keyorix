@@ -24,6 +24,47 @@ beforeEach(() => {
     vi.clearAllMocks();
 });
 
+describe('usersApi.list', () => {
+    it('passes params through and unwraps data.data', async () => {
+        const page = { items: [{ id: 1, username: 'alice' }], total: 1, page: 1, pageSize: 20 };
+        mocked.get.mockResolvedValue({ data: { data: page } });
+
+        const result = await usersApi.list({ page: 1, pageSize: 20, search: 'ali' });
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/users', { params: { page: 1, pageSize: 20, search: 'ali' } });
+        expect(result).toEqual(page);
+    });
+});
+
+describe('usersApi.get', () => {
+    it('fetches a single user and unwraps data.data', async () => {
+        mocked.get.mockResolvedValue({ data: { data: { id: 9, username: 'bob' } } });
+
+        const result = await usersApi.get(9);
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/9');
+        expect(result).toEqual({ id: 9, username: 'bob' });
+    });
+});
+
+describe('usersApi.search', () => {
+    it('queries with q param and maps rows to Recipient shape', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { users: [{ id: 1, username: 'carol', email: 'c@x.io' }] } },
+        });
+
+        const result = await usersApi.search('car');
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/search', { params: { q: 'car' } });
+        expect(result).toEqual([{ id: 1, name: 'carol', type: 'user', email: 'c@x.io' }]);
+    });
+
+    it('returns [] when data.data.users is absent', async () => {
+        mocked.get.mockResolvedValue({ data: { data: {} } });
+        await expect(usersApi.search('x')).resolves.toEqual([]);
+    });
+});
+
 describe('usersApi.create', () => {
     it('classic path posts the password and unwraps {data:user}', async () => {
         mocked.post.mockResolvedValue({
@@ -175,6 +216,18 @@ describe('usersApi ADR-025 lifecycle + views', () => {
         expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/require-password-reset');
     });
 
+    it('unlock clears an active login lockout', async () => {
+        mocked.post.mockResolvedValue({ data: {} });
+        await usersApi.unlock(7);
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/unlock');
+    });
+
+    it('revokeSessions force-logs-out the user', async () => {
+        mocked.post.mockResolvedValue({ data: {} });
+        await usersApi.revokeSessions(7);
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/revoke-sessions');
+    });
+
     it('resendSetupLink unwraps the delivery outcome', async () => {
         mocked.post.mockResolvedValue({
             data: {
@@ -189,6 +242,12 @@ describe('usersApi ADR-025 lifecycle + views', () => {
         const res = await usersApi.resendSetupLink(7);
         expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/resend-setup-link');
         expect(res.link_for_admin).toBe('https://app/setup/abc');
+    });
+
+    it('resendSetupLink falls back to bare response.data when data.data is absent', async () => {
+        mocked.post.mockResolvedValue({ data: { email: 'e@x.io', channel: 'smtp', delivered: true } });
+        const res = await usersApi.resendSetupLink(7);
+        expect(res).toEqual({ email: 'e@x.io', channel: 'smtp', delivered: true });
     });
 
     it('getMemberships normalizes snake/Pascal keys', async () => {
@@ -206,6 +265,28 @@ describe('usersApi ADR-025 lifecycle + views', () => {
         expect(rows).toEqual([{ project_id: 3, project_name: 'payments', role: 'project_developer', state: 'active' }]);
     });
 
+    it('getMemberships normalizes PascalCase keys and defaults a sparse row', async () => {
+        mocked.get.mockResolvedValue({
+            data: {
+                data: {
+                    memberships: [{ ProjectID: 4, ProjectName: 'infra', Role: 'project_viewer', State: 'active' }, {}],
+                },
+            },
+        });
+        const rows = await usersApi.getMemberships(42);
+        expect(rows[0]).toEqual({ project_id: 4, project_name: 'infra', role: 'project_viewer', state: 'active' });
+        expect(rows[1]).toEqual({ project_id: 0, project_name: '', role: '', state: '' });
+    });
+
+    it('getMemberships falls back to bare data.memberships, and to [] when neither wrapper is present', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { memberships: [{ project_id: 1 }] } });
+        const bare = await usersApi.getMemberships(42);
+        expect(bare).toHaveLength(1);
+
+        mocked.get.mockResolvedValueOnce({ data: {} });
+        await expect(usersApi.getMemberships(42)).resolves.toEqual([]);
+    });
+
     it('getStale passes params and unwraps users', async () => {
         mocked.get.mockResolvedValue({
             data: {
@@ -218,5 +299,43 @@ describe('usersApi ADR-025 lifecycle + views', () => {
         });
         expect(rows).toHaveLength(1);
         expect(rows[0].username).toBe('stale');
+    });
+
+    it('getStale falls back to bare data.users, and to [] when neither wrapper is present', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { users: [{ id: 1, username: 'bare' }] } });
+        const bare = await usersApi.getStale();
+        expect(bare[0]).toMatchObject({ username: 'bare' });
+
+        mocked.get.mockResolvedValueOnce({ data: {} });
+        await expect(usersApi.getStale()).resolves.toEqual([]);
+    });
+});
+
+describe('usersApi.update / delete / restore', () => {
+    it('update PUTs the body and returns the raw response data', async () => {
+        mocked.put.mockResolvedValue({ data: { id: 3, username: 'updated' } });
+        const result = await usersApi.update(3, { display_name: 'New Name' });
+        expect(mocked.put).toHaveBeenCalledWith('/api/v1/users/3', { display_name: 'New Name' });
+        expect(result).toEqual({ id: 3, username: 'updated' });
+    });
+
+    it('delete DELETEs the user by id', async () => {
+        mocked.delete.mockResolvedValue({});
+        await usersApi.delete(3);
+        expect(mocked.delete).toHaveBeenCalledWith('/api/v1/users/3');
+    });
+
+    it('restore POSTs to the restore sub-route', async () => {
+        mocked.post.mockResolvedValue({});
+        await usersApi.restore(3);
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/3/restore');
+    });
+});
+
+describe('usersApi.create response fallback', () => {
+    it('falls back to bare response.data when data.data is absent', async () => {
+        mocked.post.mockResolvedValue({ data: { id: 20, username: 'bare' } });
+        const res = await usersApi.create({ username: 'bare', email: 'bare@x.io', display_name: 'Bare' });
+        expect(res).toMatchObject({ id: 20, username: 'bare' });
     });
 });

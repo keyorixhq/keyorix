@@ -81,4 +81,26 @@ describe('EncryptionPage — success state', () => {
         render(<EncryptionPage />);
         expect(screen.getByText('2')).toBeInTheDocument();
     });
+
+    it('shows "No" when encryption is disabled', () => {
+        useEncryptionConfig.mockReturnValue({
+            data: { ...baseEncryptionConfig, enabled: false },
+            isLoading: false,
+            isError: false,
+        });
+        render(<EncryptionPage />);
+        expect(screen.getByText('No')).toBeInTheDocument();
+        expect(screen.queryByText('Yes')).not.toBeInTheDocument();
+    });
+
+    it('falls back to an em dash when the key-provider type is missing', () => {
+        useEncryptionConfig.mockReturnValue({
+            data: { ...baseEncryptionConfig, key_provider: { ...baseEncryptionConfig.key_provider, type: '' } },
+            isLoading: false,
+            isError: false,
+        });
+        render(<EncryptionPage />);
+        expect(screen.getByText('—')).toBeInTheDocument();
+        expect(screen.queryByText('aws-kms')).not.toBeInTheDocument();
+    });
 });

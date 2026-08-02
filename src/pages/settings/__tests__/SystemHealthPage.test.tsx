@@ -162,3 +162,74 @@ describe('SystemHealthPage — success state', () => {
         expect(screen.getByText('Audit')).toBeInTheDocument(); // shown even though inactive
     });
 });
+
+describe('SystemHealthPage — fallback branches when nested structures are entirely missing', () => {
+    it('falls back to dashes/false and uses sysInfo.uptime when metrics substructures are undefined', () => {
+        useSystemMetrics.mockReturnValue({
+            data: { ...metrics, uptime: undefined, memory: undefined, gc: undefined },
+            isLoading: false,
+            isError: false,
+        });
+        useSystemInfo.mockReturnValue({
+            data: { ...sysInfo, database: undefined, security: undefined, features: undefined },
+            isLoading: false,
+            isError: false,
+        });
+        render(<SystemHealthPage />);
+
+        // metrics.uptime ?? sysInfo.uptime falls back to sysInfo.uptime.
+        expect(screen.getByText('2h 34m')).toBeInTheDocument();
+        // formatBytes(0) for all three memory rows.
+        expect(screen.getAllByText('0 B')).toHaveLength(3);
+        // gc undefined -> num_gc dash, pause 0.0ms, last GC dash.
+        expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+        expect(screen.getByText('0.0ms')).toBeInTheDocument();
+        // database undefined -> dashes for type/pool rows.
+        expect(screen.getByText('Type')).toBeInTheDocument();
+        // security/features undefined -> encryption method dash and all pills inactive.
+        expect(screen.getByText('Encryption method')).toBeInTheDocument();
+    });
+
+    it('falls back to dashes/false when nested fields are present but empty or falsy', () => {
+        useSystemMetrics.mockReturnValue({
+            data: {
+                ...metrics,
+                memory: { ...metrics.memory, heap_inuse: 500, heap_alloc: 0, total_alloc: 0 },
+                gc: { ...metrics.gc, num_gc: undefined, pause_total: undefined, last_gc: 0 },
+            },
+            isLoading: false,
+            isError: false,
+        });
+        useSystemInfo.mockReturnValue({
+            data: {
+                ...sysInfo,
+                environment: '',
+                version: '',
+                git_commit: '',
+                go_version: '',
+                os: '',
+                arch: '',
+                build_time: '',
+                database: { type: '', pool: undefined },
+                security: { tls_enabled: undefined, audit_enabled: undefined, encryption_method: '' },
+                features: {
+                    encryption_enabled: undefined,
+                    rbac_enabled: undefined,
+                    grpc_enabled: undefined,
+                    metrics_enabled: undefined,
+                },
+            },
+            isLoading: false,
+            isError: false,
+        });
+        render(<SystemHealthPage />);
+
+        // Small byte count takes the non-toFixed branch of formatBytes.
+        expect(screen.getByText('500 B')).toBeInTheDocument();
+        expect(screen.getAllByText('0 B')).toHaveLength(2);
+        // Every falsy string field renders its dash fallback.
+        expect(screen.getAllByText('—').length).toBeGreaterThan(5);
+        expect(screen.getByText('— / —')).toBeInTheDocument();
+        expect(screen.getByText('0.0ms')).toBeInTheDocument();
+    });
+});

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { isPatternSafe, testPatternSafely, MAX_REGEX_TEST_INPUT_LENGTH } from '../safeRegex';
 
 // A worst-case input for the classic `(a+)+$` catastrophic-backtracking
@@ -71,5 +71,44 @@ describe('testPatternSafely', () => {
 
     it('skips rather than throws for a pattern that fails to compile', () => {
         expect(testPatternSafely('(unclosed', 'anything')).toEqual({ skipped: true });
+    });
+});
+
+// Both of the tests below cover a defensive `catch` block that the top-level
+// `safe-regex` library never actually exercises in practice: its own exported
+// function already swallows every internal error and resolves to a plain
+// `false` (see node_modules/safe-regex/index.js and lib/analyzer.js), so
+// isPatternSafe's own try/catch and the second `new RegExp(...)` compile step
+// in testPatternSafely can't be reached through any real pattern. We mock the
+// `safe-regex` module itself to simulate those "should never happen, but
+// don't trust a third-party analyzer blindly" failure modes.
+describe('defensive catches around the safe-regex analyzer', () => {
+    afterEach(() => {
+        vi.doUnmock('safe-regex');
+        vi.resetModules();
+    });
+
+    it('isPatternSafe treats a thrown error from the analyzer library as unsafe rather than propagating it', async () => {
+        vi.resetModules();
+        vi.doMock('safe-regex', () => ({
+            default: () => {
+                throw new Error('analyzer blew up');
+            },
+        }));
+
+        const { isPatternSafe: isPatternSafeWithFailingAnalyzer } = await import('../safeRegex');
+        expect(() => isPatternSafeWithFailingAnalyzer('a+')).not.toThrow();
+        expect(isPatternSafeWithFailingAnalyzer('a+')).toBe(false);
+    });
+
+    it('testPatternSafely skips when the analyzer approves a pattern that then fails to compile as a RegExp', async () => {
+        vi.resetModules();
+        // Force the safety check to (incorrectly) approve every pattern, so we
+        // reach the real `new RegExp(pattern)` compile step in testPatternSafely
+        // with a pattern that is not valid regex syntax.
+        vi.doMock('safe-regex', () => ({ default: () => true }));
+
+        const { testPatternSafely: testPatternSafelyWithPermissiveAnalyzer } = await import('../safeRegex');
+        expect(testPatternSafelyWithPermissiveAnalyzer('(unclosed', 'anything')).toEqual({ skipped: true });
     });
 });

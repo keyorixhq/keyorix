@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
     // group id -> role grants assigned to that group (drives both the row badges
     // and the Manage Roles modal's checked state).
     groupRolesByGroupId: {} as Record<number, any[]>,
+    // group ids for which the per-row roles query hasn't resolved yet (data undefined).
+    groupRolesUndefinedIds: new Set<number>(),
     sharedSecrets: { data: undefined as any, isLoading: false },
     createMutation: { isPending: false, isError: false },
     updateMutation: { isPending: false, isError: false },
@@ -30,9 +32,10 @@ const state = vi.hoisted(() => ({
 vi.mock('../../../features/admin', () => ({
     useGroups: () => state.groups,
     useRoles: () => state.roles,
-    useGroupRoles: (groupId: number | null) => ({
-        data: groupId === null ? undefined : { group_id: groupId, roles: state.groupRolesByGroupId[groupId] ?? [] },
-    }),
+    useGroupRoles: (groupId: number | null) => {
+        if (groupId === null || state.groupRolesUndefinedIds.has(groupId)) return { data: undefined };
+        return { data: { group_id: groupId, roles: state.groupRolesByGroupId[groupId] ?? [] } };
+    },
     useGroupSharedSecrets: (groupId: number | null) =>
         groupId === null ? { data: undefined, isLoading: false } : state.sharedSecrets,
     useCreateGroup: () => ({ mutate: mocks.createMutate, reset: mocks.createReset, ...state.createMutation }),
@@ -66,6 +69,7 @@ function resetState() {
     state.groups = { data: undefined, isLoading: false, error: null };
     state.roles = { data: undefined, isLoading: false };
     state.groupRolesByGroupId = {};
+    state.groupRolesUndefinedIds = new Set();
     state.sharedSecrets = { data: undefined, isLoading: false };
     state.createMutation = { isPending: false, isError: false };
     state.updateMutation = { isPending: false, isError: false };
@@ -115,6 +119,43 @@ describe('GroupsPage — groups list', () => {
         // No description and no member_count -> em-dash placeholders; no roles -> "None".
         expect(securityRow.getAllByText('—').length).toBeGreaterThanOrEqual(2);
         expect(securityRow.getByText('None')).toBeInTheDocument();
+    });
+
+    it('shows "None" when the per-row roles query has not resolved yet', () => {
+        state.groups.data = { data: [platformGroup] };
+        state.groupRolesUndefinedIds.add(1);
+        render(<GroupsPage />);
+        const row = within(screen.getAllByRole('row')[1]!);
+        expect(row.getByText('None')).toBeInTheDocument();
+    });
+
+    it('swaps the row action buttons to their hover colors on mouse enter and back on leave', () => {
+        state.groups.data = { data: [platformGroup] };
+        render(<GroupsPage />);
+
+        const manageRolesButton = screen.getByTitle('Manage roles');
+        fireEvent.mouseEnter(manageRolesButton);
+        expect(manageRolesButton.style.color).toBe('var(--text-primary)');
+        fireEvent.mouseLeave(manageRolesButton);
+        expect(manageRolesButton.style.color).toBe('var(--text-muted)');
+
+        const sharedSecretsButton = screen.getByTitle('Shared secrets');
+        fireEvent.mouseEnter(sharedSecretsButton);
+        expect(sharedSecretsButton.style.color).toBe('var(--text-primary)');
+        fireEvent.mouseLeave(sharedSecretsButton);
+        expect(sharedSecretsButton.style.color).toBe('var(--text-muted)');
+
+        const editButton = screen.getByTitle('Edit group');
+        fireEvent.mouseEnter(editButton);
+        expect(editButton.style.color).toBe('var(--text-primary)');
+        fireEvent.mouseLeave(editButton);
+        expect(editButton.style.color).toBe('var(--text-muted)');
+
+        const deleteButton = screen.getByTitle('Delete group');
+        fireEvent.mouseEnter(deleteButton);
+        expect(deleteButton.style.color).toBe('rgb(239, 68, 68)');
+        fireEvent.mouseLeave(deleteButton);
+        expect(deleteButton.style.color).toBe('var(--text-muted)');
     });
 });
 
@@ -172,6 +213,16 @@ describe('GroupsPage — create group', () => {
         // Opening the modal always resets the mutation state too.
         expect(mocks.createReset).toHaveBeenCalledTimes(2);
     });
+
+    it('closes the create modal via the dialog close button without submitting', () => {
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByRole('button', { name: /new group/i }));
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'draft-name' } });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(mocks.createMutate).not.toHaveBeenCalled();
+    });
 });
 
 describe('GroupsPage — edit group', () => {
@@ -211,6 +262,26 @@ describe('GroupsPage — edit group', () => {
         render(<GroupsPage />);
         fireEvent.click(screen.getByTitle('Edit group'));
         expect(screen.getByText('Failed to update group. Please try again.')).toBeInTheDocument();
+    });
+
+    it('lets the description be edited and closes on Cancel without submitting', () => {
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Edit group'));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'updated description' } });
+        expect(within(dialog).getByLabelText('Description')).toHaveValue('updated description');
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(mocks.updateMutate).not.toHaveBeenCalled();
+    });
+
+    it('closes the edit modal via the dialog close button', () => {
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Edit group'));
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 });
 
@@ -255,6 +326,16 @@ describe('GroupsPage — delete group', () => {
         render(<GroupsPage />);
         fireEvent.click(screen.getByTitle('Delete group'));
         fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+        expect(mocks.deleteMutate).not.toHaveBeenCalled();
+        expect(mocks.deleteReset).toHaveBeenCalled();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('closes the delete modal via the dialog close button and resets mutation state', () => {
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Delete group'));
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
         expect(mocks.deleteMutate).not.toHaveBeenCalled();
         expect(mocks.deleteReset).toHaveBeenCalled();
@@ -344,6 +425,30 @@ describe('GroupsPage — manage roles', () => {
         const dialog = screen.getByRole('dialog');
         expect(within(dialog).getByRole('checkbox', { name: /admin/i })).toBeDisabled();
     });
+
+    it('closes the manage roles modal from its own footer Close button', () => {
+        state.roles.data = [adminRole];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        const dialog = screen.getByRole('dialog');
+        // The modal has two elements named "Close": the header's icon-only Dialog.Close
+        // (sr-only text) and the explicit footer Button — the footer one is the second match.
+        const closeButtons = within(dialog).getAllByRole('button', { name: 'Close' });
+        fireEvent.click(closeButtons[1]!);
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('closes the manage roles modal via the dialog close (X) button', () => {
+        state.roles.data = [adminRole];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        const dialog = screen.getByRole('dialog');
+        const closeButtons = within(dialog).getAllByRole('button', { name: 'Close' });
+        fireEvent.click(closeButtons[0]!);
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
 });
 
 describe('GroupsPage — shared secrets', () => {
@@ -381,5 +486,29 @@ describe('GroupsPage — shared secrets', () => {
         expect(within(dialog).getByText('db-password')).toBeInTheDocument();
         expect(within(dialog).getByText('password')).toBeInTheDocument();
         expect(within(dialog).getByText('api-key')).toBeInTheDocument();
+    });
+
+    it('closes the shared secrets modal from its own footer Close button', () => {
+        state.sharedSecrets = { data: [], isLoading: false };
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Shared secrets'));
+
+        const dialog = screen.getByRole('dialog');
+        // The modal has two elements named "Close": the header's icon-only Dialog.Close
+        // (sr-only text) and the explicit footer Button — the footer one is the second match.
+        const closeButtons = within(dialog).getAllByRole('button', { name: 'Close' });
+        fireEvent.click(closeButtons[1]!);
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('closes the shared secrets modal via the dialog close (X) button', () => {
+        state.sharedSecrets = { data: [], isLoading: false };
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Shared secrets'));
+
+        const dialog = screen.getByRole('dialog');
+        const closeButtons = within(dialog).getAllByRole('button', { name: 'Close' });
+        fireEvent.click(closeButtons[0]!);
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 });

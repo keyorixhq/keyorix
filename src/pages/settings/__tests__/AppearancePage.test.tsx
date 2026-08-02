@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppearancePage } from '../AppearancePage';
 import { useUIStore } from '../../../store/uiStore';
@@ -113,5 +113,23 @@ describe('AppearancePage', () => {
         await user.click(screen.getByRole('radio', { name: /^light/i }));
 
         expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    });
+
+    it("resets an unselected option's hover background on mouse leave, but leaves the selected option's style alone", () => {
+        render(<AppearancePage />);
+        const lightLabel = screen.getByRole('radio', { name: /^light/i }).closest('label') as HTMLElement;
+        const darkLabel = screen.getByRole('radio', { name: /^dark/i }).closest('label') as HTMLElement; // selected by default
+
+        fireEvent.mouseEnter(lightLabel);
+        expect(lightLabel.style.backgroundColor).toBe('var(--bg-subtle)');
+        fireEvent.mouseLeave(lightLabel);
+        expect(lightLabel.style.backgroundColor).toBe('');
+
+        // The selected option's hover handlers early-return, so its React-controlled
+        // inline background is never touched by mouseenter/mouseleave.
+        const before = darkLabel.style.backgroundColor;
+        fireEvent.mouseEnter(darkLabel);
+        fireEvent.mouseLeave(darkLabel);
+        expect(darkLabel.style.backgroundColor).toBe(before);
     });
 });

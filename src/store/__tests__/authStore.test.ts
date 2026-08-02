@@ -130,6 +130,19 @@ describe('authStore', () => {
             expect(user).not.toHaveProperty('accountState');
             expect(user?.passwordChangeRequired).toBe(false);
         });
+
+        it("falls back to a generic 'Login failed' message when the rejection isn't an Error instance", async () => {
+            // authService.login can reject with whatever the underlying axios/error
+            // path throws; the store's `error instanceof Error ? ... : 'Login failed'`
+            // fallback only fires for the non-Error shape, which no other test drives.
+            vi.mocked(authService.login).mockRejectedValueOnce('network exploded');
+
+            await expect(useAuthStore.getState().login({ username: 'bob', password: 'pw' } as never)).rejects.toBe(
+                'network exploded'
+            );
+
+            expect(useAuthStore.getState().error).toBe('Login failed');
+        });
     });
 
     describe('completeSetup (ADR-028: land a setup-link consume response without re-authenticating)', () => {
@@ -161,6 +174,20 @@ describe('authStore', () => {
                     absoluteExpiresAt: '2030-06-01T00:00:00Z',
                 })
             );
+        });
+
+        it('carries account_state through onto the user when the response includes it', () => {
+            const response: LoginResponse = {
+                expires_at: '2030-01-01T00:00:00Z',
+                user_id: 10,
+                username: 'dana',
+                email: 'dana@example.com',
+                account_state: 'pending_review',
+            };
+
+            useAuthStore.getState().completeSetup(response);
+
+            expect(useAuthStore.getState().user?.accountState).toBe('pending_review');
         });
     });
 
@@ -340,6 +367,36 @@ describe('authStore', () => {
             expect(useAuthStore.getState().hasCheckedAuth).toBe(true);
         });
 
+        it('applies field defaults (role/roles/permissions/preferences/lastLogin) when the profile omits them', async () => {
+            vi.mocked(authService.getProfile).mockResolvedValueOnce({
+                id: 42,
+                username: 'minimal',
+                email: 'minimal@example.com',
+                // role, roles, permissions, preferences, lastLogin, passwordChangeRequired,
+                // impersonation all deliberately omitted.
+            } as never);
+
+            const before = Date.now();
+            await useAuthStore.getState().checkAuth();
+            const after = Date.now();
+
+            const user = useAuthStore.getState().user;
+            expect(user?.role).toBe('user');
+            expect(user?.roles).toEqual([]);
+            expect(user?.permissions).toEqual([]);
+            expect(user?.preferences).toEqual({
+                language: 'en',
+                timezone: 'UTC',
+                theme: 'system',
+                notifications: { email: true, browser: true, sharing: true, security: true },
+            });
+            expect(user?.passwordChangeRequired).toBe(false);
+            // lastLogin defaults to "now" when the profile omits it.
+            const lastLoginMs = new Date(user!.lastLogin).getTime();
+            expect(lastLoginMs).toBeGreaterThanOrEqual(before);
+            expect(lastLoginMs).toBeLessThanOrEqual(after);
+        });
+
         it('re-entrancy guard: a checkAuth() call in flight makes a concurrent call a no-op', async () => {
             let resolveProfile!: (value: ReturnType<typeof profileFixture>) => void;
             const pending = new Promise<ReturnType<typeof profileFixture>>((resolve) => {
@@ -391,6 +448,61 @@ describe('authStore', () => {
         it('is false when the token has more than 5 minutes left', () => {
             vi.mocked(authUtils.getTimeUntilExpiry).mockReturnValueOnce(10 * 60 * 1000);
             expect(shouldRefreshToken()).toBe(false);
+        });
+    });
+
+    describe('multi-tab storage listener', () => {
+        // Mirrors the backing-map technique from multiTabSync.test.ts: the global
+        // localStorage mock (src/test/setup.ts) is a bare vi.fn() with no backing
+        // store, so getItem needs to actually reflect what setItem wrote for the
+        // rehydrate-on-storage-event listener under test to have anything to read.
+        function mkStorageEvent(key: string | null): Event {
+            return Object.assign(new Event('storage'), { key });
+        }
+
+        beforeEach(() => {
+            const backing = new Map<string, string>();
+            vi.mocked(localStorage.getItem).mockImplementation((key: string) => backing.get(key) ?? null);
+            vi.mocked(localStorage.setItem).mockImplementation((key: string, value: string) => {
+                backing.set(key, value);
+            });
+        });
+
+        it('ignores a storage event for an unrelated key (neither auth-storage nor a clear signal)', () => {
+            useAuthStore.setState({ isAuthenticated: true, user: makeUser({ username: 'kept' }) });
+
+            window.dispatchEvent(mkStorageEvent('some-other-key'));
+
+            // Synchronous: no rehydrate/checkAuth should have been triggered.
+            expect(authService.getProfile).not.toHaveBeenCalled();
+            expect(useAuthStore.getState().user?.username).toBe('kept');
+        });
+
+        it('re-validates with the server after accepting cross-tab state written under auth-storage', async () => {
+            vi.mocked(authService.getProfile).mockResolvedValueOnce(
+                profileFixture(makeUser({ username: 'other-tab' }))
+            );
+            localStorage.setItem('auth-storage', JSON.stringify({ state: { isAuthenticated: true }, version: 0 }));
+
+            window.dispatchEvent(mkStorageEvent('auth-storage'));
+            // The listener chains persist.rehydrate().then(() => checkAuth()); flush both.
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(authService.getProfile).toHaveBeenCalled();
+        });
+
+        it('re-validates on a storage.clear() signal (key: null)', async () => {
+            vi.mocked(authService.getProfile).mockResolvedValueOnce(profileFixture(makeUser({ username: 'cleared' })));
+            useAuthStore.setState({ isAuthenticated: true });
+
+            window.dispatchEvent(mkStorageEvent(null));
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(authService.getProfile).toHaveBeenCalled();
         });
     });
 

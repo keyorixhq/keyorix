@@ -56,4 +56,9 @@ describe('Select', () => {
         render(<Select ref={ref} options={OPTIONS} />);
         expect(ref.current).toBeInstanceOf(HTMLSelectElement);
     });
+
+    it('applies auto-width classes to both the wrapper and the select when fullWidth is false', () => {
+        render(<Select label="Type" options={OPTIONS} fullWidth={false} />);
+        expect(screen.getByLabelText('Type')).toHaveClass('w-auto');
+    });
 });

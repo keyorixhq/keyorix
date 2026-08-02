@@ -7,33 +7,40 @@ const transitionMutate = vi.fn();
 const classifyMutate = vi.fn();
 let isAdmin = true;
 
+let identitiesData: any[] = [];
+let identitiesLoading = false;
+
+const defaultIdentities = [
+    {
+        id: 1,
+        projectId: 3,
+        name: 'ci-runner',
+        identityType: 'ci',
+        state: 'active',
+        description: 'builds',
+        classification: 'restricted',
+    },
+    {
+        id: 2,
+        projectId: 3,
+        name: 'paused-bot',
+        identityType: 'automation',
+        state: 'suspended',
+        description: '',
+        classification: '',
+    },
+];
+
 vi.mock('../api', () => ({
-    useMachineIdentities: () => ({
-        data: [
-            {
-                id: 1,
-                projectId: 3,
-                name: 'ci-runner',
-                identityType: 'ci',
-                state: 'active',
-                description: 'builds',
-                classification: 'restricted',
-            },
-            {
-                id: 2,
-                projectId: 3,
-                name: 'paused-bot',
-                identityType: 'automation',
-                state: 'suspended',
-                description: '',
-                classification: '',
-            },
-        ],
-        isLoading: false,
-    }),
+    useMachineIdentities: () => ({ data: identitiesData, isLoading: identitiesLoading }),
     useCreateMachineIdentity: () => ({ mutate: createMutate, isPending: false }),
     useTransitionMachineIdentity: () => ({ mutate: transitionMutate, isPending: false }),
     useClassifyMachineIdentity: () => ({ mutate: classifyMutate, isPending: false }),
+    // MachineTokensPanel (rendered when a row is expanded) shares this same api module.
+    useMachineTokens: () => ({ data: [], isLoading: false }),
+    useIssueMachineToken: () => ({ mutate: vi.fn(), isPending: false }),
+    useRevokeMachineToken: () => ({ mutate: vi.fn(), isPending: false }),
+    useClassifyMachineToken: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock('../../auth', () => ({
@@ -41,9 +48,11 @@ vi.mock('../../auth', () => ({
 }));
 
 beforeEach(() => {
-    createMutate.mockClear();
-    transitionMutate.mockClear();
-    classifyMutate.mockClear();
+    identitiesData = defaultIdentities;
+    identitiesLoading = false;
+    createMutate.mockReset();
+    transitionMutate.mockReset();
+    classifyMutate.mockReset();
     isAdmin = true;
 });
 
@@ -70,6 +79,13 @@ describe('MachineIdentitiesSection', () => {
         expect(transitionMutate).toHaveBeenCalledWith({ machineId: 2, action: 'activate' }, expect.anything());
     });
 
+    it('revokes an active machine identity', () => {
+        render(<MachineIdentitiesSection projectId={3} />);
+        // Both the active and the suspended identity offer a revoke action; target the first (ci-runner).
+        fireEvent.click(screen.getAllByTitle('Revoke')[0]);
+        expect(transitionMutate).toHaveBeenCalledWith({ machineId: 1, action: 'revoke' }, expect.anything());
+    });
+
     it('creates a machine identity with the selected type', () => {
         render(<MachineIdentitiesSection projectId={3} />);
 
@@ -83,6 +99,32 @@ describe('MachineIdentitiesSection', () => {
             name: 'deploy-key',
             identityType: 'ci',
         });
+    });
+
+    it('creates via the Enter key using the chosen identity type', () => {
+        render(<MachineIdentitiesSection projectId={3} />);
+        const nameInput = screen.getByPlaceholderText('Machine identity name…');
+
+        fireEvent.change(nameInput, { target: { value: 'k8s-node' } });
+        fireEvent.change(screen.getByDisplayValue('CI'), { target: { value: 'k8s' } });
+        fireEvent.keyDown(nameInput, { key: 'Enter' });
+
+        expect(createMutate).toHaveBeenCalledTimes(1);
+        expect(createMutate.mock.calls[0][0]).toMatchObject({ name: 'k8s-node', identityType: 'k8s' });
+    });
+
+    it('a non-Enter keypress on the name field does not create', () => {
+        render(<MachineIdentitiesSection projectId={3} />);
+        const nameInput = screen.getByPlaceholderText('Machine identity name…');
+        fireEvent.change(nameInput, { target: { value: 'k8s-node' } });
+        fireEvent.keyDown(nameInput, { key: 'a' });
+        expect(createMutate).not.toHaveBeenCalled();
+    });
+
+    it('pressing Enter with a blank name does not create', () => {
+        render(<MachineIdentitiesSection projectId={3} />);
+        fireEvent.keyDown(screen.getByPlaceholderText('Machine identity name…'), { key: 'Enter' });
+        expect(createMutate).not.toHaveBeenCalled();
     });
 
     it('hides management controls (create + lifecycle) for non-admins', () => {
@@ -109,6 +151,13 @@ describe('MachineIdentitiesSection', () => {
         );
     });
 
+    it('reclassifying to the same value is a no-op', () => {
+        render(<MachineIdentitiesSection projectId={3} />);
+        const picker = screen.getByLabelText('Classification for ci-runner') as HTMLSelectElement;
+        fireEvent.change(picker, { target: { value: 'restricted' } });
+        expect(classifyMutate).not.toHaveBeenCalled();
+    });
+
     it('non-admins see a read-only classification badge, no picker', () => {
         isAdmin = false;
         render(<MachineIdentitiesSection projectId={3} />);
@@ -116,5 +165,90 @@ describe('MachineIdentitiesSection', () => {
         const badges = screen.getAllByTestId('mi-classification-badge');
         expect(badges[0]).toHaveTextContent('Restricted');
         expect(screen.queryByLabelText('Classification for ci-runner')).not.toBeInTheDocument();
+    });
+
+    it('shows pending and revoked state styling; revoked identities offer no lifecycle actions', () => {
+        identitiesData = [
+            {
+                id: 5,
+                projectId: 3,
+                name: 'pending-svc',
+                identityType: 'service',
+                state: 'pending',
+                description: '',
+                classification: '',
+            },
+            {
+                id: 6,
+                projectId: 3,
+                name: 'retired-bot',
+                identityType: 'other',
+                state: 'revoked',
+                description: '',
+                classification: '',
+            },
+        ];
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        expect(screen.getByText('pending')).toBeInTheDocument();
+        expect(screen.getByText('revoked')).toBeInTheDocument();
+        // A pending identity offers Activate (not Reactivate).
+        expect(screen.getByTitle('Activate')).toBeInTheDocument();
+        // Only the pending identity has lifecycle actions (the revoked one has none).
+        expect(screen.getAllByTitle('Revoke')).toHaveLength(1);
+    });
+
+    it('renders a loading skeleton and shows an empty state with no identities', () => {
+        identitiesLoading = true;
+        const { container, rerender } = render(<MachineIdentitiesSection projectId={3} />);
+        expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+        expect(screen.queryByText('ci-runner')).not.toBeInTheDocument();
+
+        identitiesLoading = false;
+        identitiesData = [];
+        rerender(<MachineIdentitiesSection projectId={3} />);
+        expect(screen.getByText('No machine identities yet.')).toBeInTheDocument();
+    });
+
+    it('expands and collapses the token panel for a machine identity', () => {
+        render(<MachineIdentitiesSection projectId={3} />);
+        const toggle = screen.getByLabelText('Toggle tokens for ci-runner');
+
+        fireEvent.click(toggle);
+        expect(screen.getByText('No tokens issued yet.')).toBeInTheDocument();
+
+        fireEvent.click(toggle);
+        expect(screen.queryByText('No tokens issued yet.')).not.toBeInTheDocument();
+    });
+
+    it('surfaces the server error message when creating an identity fails', () => {
+        createMutate.mockImplementation((_vars, opts) =>
+            opts.onError({ response: { data: { message: 'name taken' } } })
+        );
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        fireEvent.change(screen.getByPlaceholderText('Machine identity name…'), { target: { value: 'dup' } });
+        fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+        expect(screen.getByText('name taken')).toBeInTheDocument();
+    });
+
+    it('shows a fallback error message when a lifecycle transition fails without server detail', () => {
+        transitionMutate.mockImplementation((_vars, opts) => opts.onError({}));
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        fireEvent.click(screen.getByRole('button', { name: /^suspend$/i }));
+
+        expect(screen.getByText('Failed to suspend machine identity.')).toBeInTheDocument();
+    });
+
+    it('shows the error.error field when reclassifying fails', () => {
+        classifyMutate.mockImplementation((_vars, opts) => opts.onError({ response: { data: { error: 'nope' } } }));
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        const picker = screen.getByLabelText('Classification for ci-runner') as HTMLSelectElement;
+        fireEvent.change(picker, { target: { value: 'confidential' } });
+
+        expect(screen.getByText('nope')).toBeInTheDocument();
     });
 });

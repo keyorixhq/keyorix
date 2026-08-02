@@ -38,4 +38,8 @@ describe('isStaleMachineIdentity', () => {
     it('does not flag when there is no timestamp at all', () => {
         expect(isStaleMachineIdentity(mk({}), now)).toBe(false);
     });
+
+    it('does not flag when the timestamp is unparsable', () => {
+        expect(isStaleMachineIdentity(mk({ lastSeenAt: 'not-a-date' }), now)).toBe(false);
+    });
 });

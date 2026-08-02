@@ -238,6 +238,12 @@ describe('projectsApi.listEnvironments', () => {
 
         expect(result).toEqual([{ id: 3, name: 'dev', projectId: 9, deleted: false }]);
     });
+
+    it('returns [] when neither the wrapped nor bare shape is present', async () => {
+        mocked.get.mockResolvedValueOnce({ data: {} });
+
+        await expect(projectsApi.listEnvironments(9)).resolves.toEqual([]);
+    });
 });
 
 describe('projectsApi.listMembers', () => {
@@ -278,6 +284,16 @@ describe('projectsApi.listMembers', () => {
         mocked.get.mockResolvedValueOnce({ data: { data: {} } });
 
         await expect(projectsApi.listMembers(9)).resolves.toEqual([]);
+    });
+
+    it('defaults every member field on a sparse row', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { data: { members: [{}] } } });
+
+        const result = await projectsApi.listMembers(9);
+
+        expect(result).toEqual([
+            { userId: undefined, username: '', displayName: '', email: '', roleId: 0, roleName: '' },
+        ]);
     });
 });
 
@@ -386,6 +402,53 @@ describe('projectsApi.rotationPlan', () => {
             waves: [],
         });
     });
+
+    it('defaults projectId to 0 and wave index/secrets fields when a wave/secret is sparse', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { data: { waves: [{ secrets: [{}] }] } },
+        });
+
+        const plan = await projectsApi.rotationPlan(9);
+
+        expect(plan.projectId).toBe(0);
+        expect(plan.waves).toEqual([
+            {
+                index: 0,
+                secrets: [
+                    {
+                        secretId: 0,
+                        secretName: '',
+                        status: '',
+                        daysOverdue: 0,
+                        riskScore: 0,
+                        riskBand: '',
+                        urgency: 0,
+                        autoRotate: false,
+                        afterSecretIds: [],
+                        reasons: [],
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('defaults a wave to [] secrets when the wave omits the secrets key', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { data: { project_id: 3, waves: [{ index: 1 }] } },
+        });
+
+        const plan = await projectsApi.rotationPlan(3);
+
+        expect(plan.waves).toEqual([{ index: 1, secrets: [] }]);
+    });
+
+    it('falls back to bare response.data when data.data is absent', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { project_id: 4 } });
+
+        const plan = await projectsApi.rotationPlan(4);
+
+        expect(plan.projectId).toBe(4);
+    });
 });
 
 describe('projectsApi.accessReview', () => {
@@ -438,6 +501,29 @@ describe('projectsApi.accessReview', () => {
         mocked.get.mockResolvedValueOnce({ data: { data: {} } });
 
         await expect(projectsApi.accessReview(9)).resolves.toEqual([]);
+    });
+
+    it('defaults every field on a sparse access-review entry', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { data: { entries: [{ source: 'owner' }] } } });
+
+        const result = await projectsApi.accessReview(9);
+
+        expect(result).toEqual([
+            {
+                principalType: undefined,
+                principalId: 0,
+                principalName: '',
+                email: '',
+                source: 'owner',
+                roleId: 0,
+                roleName: '',
+                accessLevel: '',
+                environmentId: 0,
+                secretId: 0,
+                secretName: '',
+                lastUsedAt: undefined,
+            },
+        ]);
     });
 });
 
@@ -529,6 +615,31 @@ describe('projectsApi.listCampaigns', () => {
 
         await expect(projectsApi.listCampaigns(9)).resolves.toEqual([]);
     });
+
+    it('falls back to normalizing the row itself when it is not wrapped under a campaign key', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: {
+                    campaigns: [{ id: 1, name: 'Q1 review', progress: { total: 1 } }],
+                },
+            },
+        });
+
+        const result = await projectsApi.listCampaigns(9);
+
+        expect(result[0].campaign.id).toBe(1);
+        expect(result[0].campaign.name).toBe('Q1 review');
+    });
+
+    it('defaults the campaign id to 0 when neither id nor ID is present', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { data: { campaigns: [{ campaign: { name: 'unnamed' }, progress: {} }] } },
+        });
+
+        const result = await projectsApi.listCampaigns(9);
+
+        expect(result[0].campaign.id).toBe(0);
+    });
 });
 
 describe('projectsApi.openCampaign', () => {
@@ -548,6 +659,16 @@ describe('projectsApi.openCampaign', () => {
         expect(result.campaign.id).toBe(2);
         expect(result.campaign.name).toBe('Q2 review');
         expect(result.progress).toEqual({ total: 0, pending: 0, attested: 0, revoked: 0 });
+    });
+
+    it('falls back to bare response.data when data.data is absent', async () => {
+        mocked.post.mockResolvedValueOnce({
+            data: { campaign: { id: 3, name: 'bare' }, progress: { total: 0 } },
+        });
+
+        const result = await projectsApi.openCampaign(9, 'bare');
+
+        expect(result.campaign.id).toBe(3);
     });
 });
 
@@ -612,6 +733,40 @@ describe('projectsApi.getCampaign', () => {
         const result = await projectsApi.getCampaign(9, 3);
 
         expect(result.items).toEqual([]);
+    });
+
+    it('defaults every item field on a sparse row', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { data: { campaign: { id: 3 }, items: [{}], progress: {} } },
+        });
+
+        const result = await projectsApi.getCampaign(9, 3);
+
+        expect(result.items).toEqual([
+            {
+                id: 0,
+                principalType: undefined,
+                principalId: 0,
+                principalName: '',
+                email: '',
+                source: undefined,
+                roleName: '',
+                accessLevel: '',
+                secretName: '',
+                lastUsedAt: undefined,
+                decision: 'pending',
+            },
+        ]);
+    });
+
+    it('falls back to bare response.data when data.data is absent', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: { campaign: { id: 4, name: 'bare' }, items: [], progress: {} },
+        });
+
+        const result = await projectsApi.getCampaign(9, 4);
+
+        expect(result.campaign.id).toBe(4);
     });
 });
 

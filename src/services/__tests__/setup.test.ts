@@ -62,6 +62,11 @@ describe('setupService.describe', () => {
         mockGet.mockRejectedValueOnce(new Error('network down'));
         await expect(setupService.describe('bad')).rejects.toThrow('This setup link is no longer valid');
     });
+
+    it('falls back to the default message when the axios error body has neither .error nor .message', async () => {
+        mockGet.mockRejectedValueOnce(axiosErr({}));
+        await expect(setupService.describe('bad')).rejects.toThrow('This setup link is no longer valid');
+    });
 });
 
 // ── consume ───────────────────────────────────────────────────────────────────

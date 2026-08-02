@@ -186,6 +186,67 @@ describe('useSecretsList', () => {
 
             expect(result.current.secrets.map((s) => s.name)).toEqual(secretsFixture.map((s) => s.name));
         });
+
+        it('sorts by type ascending and descending', async () => {
+            mocks.secretsList.mockResolvedValue({
+                data: [
+                    { id: 1, name: 'a', type: 'password', lastModified: '2024-01-01T00:00:00Z' },
+                    { id: 2, name: 'b', type: 'api_key', lastModified: '2024-01-02T00:00:00Z' },
+                    { id: 3, name: 'c', type: 'text', lastModified: '2024-01-03T00:00:00Z' },
+                ],
+                total: 3,
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+            });
+            const { wrapper } = createWrapper();
+            const { result } = renderHook(() => useSecretsList(), { wrapper });
+            await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+            act(() => result.current.setSortBy('type_asc'));
+            expect(result.current.secrets.map((s) => s.type)).toEqual(['api_key', 'password', 'text']);
+
+            act(() => result.current.setSortBy('type_desc'));
+            expect(result.current.secrets.map((s) => s.type)).toEqual(['text', 'password', 'api_key']);
+        });
+
+        it('treats equal sort-field values as a tie (returns 0, order unchanged)', async () => {
+            mocks.secretsList.mockResolvedValue({
+                data: [
+                    { id: 1, name: 'first', type: 'password', lastModified: '2024-01-01T00:00:00Z' },
+                    { id: 2, name: 'second', type: 'password', lastModified: '2024-01-02T00:00:00Z' },
+                ],
+                total: 2,
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+            });
+            const { wrapper } = createWrapper();
+            const { result } = renderHook(() => useSecretsList(), { wrapper });
+            await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+            act(() => result.current.setSortBy('type_asc'));
+            expect(result.current.secrets.map((s) => s.name)).toEqual(['first', 'second']);
+        });
+
+        it('sorts expiry with both entries null as a tie (returns 0)', async () => {
+            mocks.secretsList.mockResolvedValue({
+                data: [
+                    { id: 1, name: 'first', type: 'text', lastModified: '2024-01-01T00:00:00Z', Expiration: null },
+                    { id: 2, name: 'second', type: 'text', lastModified: '2024-01-02T00:00:00Z', Expiration: null },
+                ],
+                total: 2,
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+            });
+            const { wrapper } = createWrapper();
+            const { result } = renderHook(() => useSecretsList(), { wrapper });
+            await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+            act(() => result.current.setSortBy('expiry_asc'));
+            expect(result.current.secrets.map((s) => s.name)).toEqual(['first', 'second']);
+        });
     });
 
     describe('filters', () => {

@@ -45,6 +45,22 @@ describe('PATHygieneSection', () => {
         expect(screen.getByText(/user #9 · used 5 days ago/i)).toBeInTheDocument();
     });
 
+    it('flags a token that is both expired and stale', () => {
+        mockTokens = [
+            {
+                id: 3,
+                name: 'both',
+                token_prefix: 'kx_pat_both',
+                user_id: 4,
+                last_used_at: null,
+                expired: true,
+                stale: true,
+            },
+        ];
+        render(<PATHygieneSection />);
+        expect(screen.getByText('expired · stale')).toBeInTheDocument();
+    });
+
     it('can be dismissed', () => {
         mockTokens = [
             {

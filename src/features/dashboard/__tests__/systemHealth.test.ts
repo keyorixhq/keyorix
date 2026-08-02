@@ -129,8 +129,16 @@ describe('parseUptime', () => {
         expect(parseUptime('2h34m12.456s')).toBe('2h 34m');
     });
 
+    it('defaults minutes to 0 when only hours are present', () => {
+        expect(parseUptime('2h')).toBe('2h 0m');
+    });
+
     it('formats minutes and seconds when there are no hours', () => {
         expect(parseUptime('45m3s')).toBe('45m 3s');
+    });
+
+    it('defaults seconds to 0 when only minutes are present', () => {
+        expect(parseUptime('45m')).toBe('45m 0s');
     });
 
     it('formats seconds only when there are no hours or minutes', () => {

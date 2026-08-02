@@ -154,6 +154,38 @@ describe('RolesPoliciesPage — roles list states', () => {
         fireEvent.click(within(adminCard).getByTitle('Built-in roles cannot be deleted'));
         expect(screen.queryByText(/this action cannot be undone/i)).not.toBeInTheDocument();
     });
+
+    it('does not show "No roles found" when the roles query has no data yet (not loading, not errored)', () => {
+        useRoles.mockReturnValue({ data: undefined, isLoading: false, error: null });
+        render(<RolesPoliciesPage />);
+        expect(screen.queryByText('No roles found.')).not.toBeInTheDocument();
+        expect(screen.queryByText('developer')).not.toBeInTheDocument();
+    });
+
+    it('swaps the edit and delete buttons to their hover colors on mouse enter and back on leave', () => {
+        render(<RolesPoliciesPage />);
+        const devCard = getRoleCard('developer');
+
+        const editButton = within(devCard).getByTitle('Edit role');
+        fireEvent.mouseEnter(editButton);
+        expect(editButton.style.color).toBe('var(--text-primary)');
+        fireEvent.mouseLeave(editButton);
+        expect(editButton.style.color).toBe('var(--text-muted)');
+
+        const deleteButton = within(devCard).getByTitle('Delete role');
+        fireEvent.mouseEnter(deleteButton);
+        expect(deleteButton.style.color).toBe('rgb(239, 68, 68)');
+        fireEvent.mouseLeave(deleteButton);
+        expect(deleteButton.style.color).toBe('var(--text-muted)');
+    });
+
+    it('does not tint the built-in role delete button on hover', () => {
+        render(<RolesPoliciesPage />);
+        const adminCard = getRoleCard('admin');
+        const deleteButton = within(adminCard).getByTitle('Built-in roles cannot be deleted');
+        fireEvent.mouseEnter(deleteButton);
+        expect(deleteButton.style.color).toBe('var(--text-muted)');
+    });
 });
 
 describe('RolesPoliciesPage — create role', () => {
@@ -204,6 +236,16 @@ describe('RolesPoliciesPage — create role', () => {
         fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
         expect(screen.getByText('Failed to create role. Please try again.')).toBeInTheDocument();
     });
+
+    it('closes the create modal via the dialog close button without submitting', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
+        fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'draft-role' } });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(createMutate).not.toHaveBeenCalled();
+    });
 });
 
 describe('RolesPoliciesPage — edit role', () => {
@@ -241,6 +283,26 @@ describe('RolesPoliciesPage — edit role', () => {
         fireEvent.click(within(getRoleCard('admin')).getByTitle('Edit role'));
         expect(screen.getByText('Failed to update role. Please try again.')).toBeInTheDocument();
     });
+
+    it('lets the name be edited directly and closes on Cancel without submitting', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'developer-renamed' } });
+        expect((within(dialog).getByLabelText('Name') as HTMLInputElement).value).toBe('developer-renamed');
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(updateMutate).not.toHaveBeenCalled();
+    });
+
+    it('closes the edit modal via the dialog close button', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
 });
 
 describe('RolesPoliciesPage — delete role', () => {
@@ -277,6 +339,16 @@ describe('RolesPoliciesPage — delete role', () => {
         render(<RolesPoliciesPage />);
         fireEvent.click(within(getRoleCard('developer')).getByTitle('Delete role'));
         expect(screen.getByText('Failed to delete role. Please try again.')).toBeInTheDocument();
+    });
+
+    it('closes the delete modal via the dialog close button and resets mutation state', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Delete role'));
+        fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+        expect(deleteMutate).not.toHaveBeenCalled();
+        expect(deleteReset).toHaveBeenCalled();
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 });
 
@@ -369,5 +441,24 @@ describe('RolesPoliciesPage — manage role permissions', () => {
         const closeButtons = within(dialog).getAllByRole('button', { name: 'Close' });
         fireEvent.click(closeButtons[1]!);
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('closes via the dialog close (X) button', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByRole('button', { name: /permissions/i }));
+
+        const dialog = screen.getByRole('dialog');
+        const closeButtons = within(dialog).getAllByRole('button', { name: 'Close' });
+        fireEvent.click(closeButtons[0]!);
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('shows "No permissions available" when the permissions list is empty', () => {
+        usePermissions.mockReturnValue({ data: [], isLoading: false });
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByRole('button', { name: /permissions/i }));
+
+        const dialog = screen.getByRole('dialog');
+        expect(within(dialog).getByText('No permissions available.')).toBeInTheDocument();
     });
 });

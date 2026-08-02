@@ -10,12 +10,19 @@ const projects = [
     { id: 9, name: 'Archived', deleted: true },
 ];
 
+let mockUseProjects: { data: typeof projects | undefined; isLoading: boolean; isError: boolean } = {
+    data: projects,
+    isLoading: false,
+    isError: false,
+};
+
 vi.mock('../../projects/api', () => ({
-    useProjects: () => ({ data: projects, isLoading: false, isError: false }),
+    useProjects: () => mockUseProjects,
 }));
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mockUseProjects = { data: projects, isLoading: false, isError: false };
 });
 
 describe('ProjectAssignmentsPicker', () => {
@@ -47,15 +54,43 @@ describe('ProjectAssignmentsPicker', () => {
         expect(screen.getByText(/no matching projects/i)).toBeInTheDocument();
     });
 
-    it('changes an assignment role and removes a row', () => {
+    it('changes an assignment role and removes a row, leaving other rows untouched', () => {
         const onChange = vi.fn();
-        const assignments: ProjectAssignment[] = [{ project_id: 1, project_name: 'Payments', role: 'project_viewer' }];
+        const assignments: ProjectAssignment[] = [
+            { project_id: 1, project_name: 'Payments', role: 'project_viewer' },
+            { project_id: 2, project_name: 'Platform', role: 'project_viewer' },
+        ];
         render(<ProjectAssignmentsPicker assignments={assignments} onChange={onChange} />);
 
-        fireEvent.change(screen.getByDisplayValue('Viewer'), { target: { value: 'project_admin' } });
-        expect(onChange).toHaveBeenLastCalledWith([{ project_id: 1, project_name: 'Payments', role: 'project_admin' }]);
+        fireEvent.change(screen.getAllByDisplayValue('Viewer')[0], { target: { value: 'project_admin' } });
+        // Only the first row's role changes; the second is mapped through unchanged.
+        expect(onChange).toHaveBeenLastCalledWith([
+            { project_id: 1, project_name: 'Payments', role: 'project_admin' },
+            { project_id: 2, project_name: 'Platform', role: 'project_viewer' },
+        ]);
 
-        fireEvent.click(screen.getByTitle(/remove assignment/i));
-        expect(onChange).toHaveBeenLastCalledWith([]);
+        fireEvent.click(screen.getAllByTitle(/remove assignment/i)[0]);
+        expect(onChange).toHaveBeenLastCalledWith([
+            { project_id: 2, project_name: 'Platform', role: 'project_viewer' },
+        ]);
+    });
+
+    it('falls back to "Project #<id>" when an assignment has no project_name', () => {
+        const assignments: ProjectAssignment[] = [{ project_id: 5, project_name: '', role: 'project_viewer' }];
+        render(<ProjectAssignmentsPicker assignments={assignments} onChange={vi.fn()} />);
+        expect(screen.getByText('Project #5')).toBeInTheDocument();
+    });
+
+    it('shows a loading placeholder and disables the input while projects load', () => {
+        mockUseProjects = { data: undefined, isLoading: true, isError: false };
+        render(<ProjectAssignmentsPicker assignments={[]} onChange={vi.fn()} />);
+        expect(screen.getByPlaceholderText(/loading projects/i)).toBeDisabled();
+    });
+
+    it('shows an error message in the results dropdown when the project list fails to load', () => {
+        mockUseProjects = { data: undefined, isLoading: false, isError: true };
+        render(<ProjectAssignmentsPicker assignments={[]} onChange={vi.fn()} />);
+        fireEvent.change(screen.getByPlaceholderText(/search projects/i), { target: { value: 'pay' } });
+        expect(screen.getByText(/couldn.t load projects/i)).toBeInTheDocument();
     });
 });

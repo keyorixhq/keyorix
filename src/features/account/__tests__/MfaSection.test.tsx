@@ -1,16 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '../../../test/test-utils';
+import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { MfaSection } from '../MfaSection';
 
-let recoveryStatus: { remaining: number; total: number };
+let recoveryStatus: { remaining: number; total: number } | undefined;
+let statusLoading = false;
+let statusError = false;
+let enrollPending = false;
+
 const enrollMutate = vi.fn();
 const activateMutate = vi.fn();
 const disableMutate = vi.fn();
 const regenerateMutate = vi.fn();
 
 vi.mock('../index', () => ({
-    useMfaRecoveryStatus: () => ({ data: recoveryStatus, isLoading: false, isError: false }),
-    useEnrollMfa: () => ({ mutate: enrollMutate, isPending: false }),
+    useMfaRecoveryStatus: () => ({ data: recoveryStatus, isLoading: statusLoading, isError: statusError }),
+    useEnrollMfa: () => ({ mutate: enrollMutate, isPending: enrollPending }),
     useActivateMfa: () => ({ mutate: activateMutate, isPending: false }),
     useDisableMfa: () => ({ mutateAsync: disableMutate, isPending: false }),
     useRegenerateRecoveryCodes: () => ({ mutateAsync: regenerateMutate, isPending: false }),
@@ -18,10 +22,13 @@ vi.mock('../index', () => ({
 
 beforeEach(() => {
     recoveryStatus = { remaining: 0, total: 0 };
-    enrollMutate.mockClear();
-    activateMutate.mockClear();
-    disableMutate.mockClear();
-    regenerateMutate.mockClear();
+    statusLoading = false;
+    statusError = false;
+    enrollPending = false;
+    enrollMutate.mockReset();
+    activateMutate.mockReset();
+    disableMutate.mockReset();
+    regenerateMutate.mockReset();
 });
 
 describe('MfaSection', () => {
@@ -72,5 +79,186 @@ describe('MfaSection', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
         expect(screen.getByText('Disable two-factor authentication')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Disable 2FA' })).toBeInTheDocument();
+    });
+
+    it('shows a spinner instead of enable/disable while status is loading, defaulting counts safely', () => {
+        recoveryStatus = undefined;
+        statusLoading = true;
+        render(<MfaSection />);
+        expect(screen.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Disable' })).not.toBeInTheDocument();
+        expect(screen.queryByText('Enabled')).not.toBeInTheDocument();
+    });
+
+    it('shows an error message when status fails to load', () => {
+        statusError = true;
+        render(<MfaSection />);
+        expect(screen.getByText('Could not load two-factor status.')).toBeInTheDocument();
+    });
+});
+
+describe('MfaSection enrolment flow', () => {
+    it('walks enrol → verify → recovery codes, with copy-all and Done', async () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/test' });
+        });
+        activateMutate.mockImplementation((code, opts) => {
+            expect(code).toBe('123456');
+            opts.onSuccess(['code-1', 'code-2']);
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+
+        expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /open in authenticator app/i })).toHaveAttribute(
+            'href',
+            'otpauth://totp/test'
+        );
+
+        fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+
+        expect(screen.getByText('code-1')).toBeInTheDocument();
+        expect(screen.getByText('code-2')).toBeInTheDocument();
+
+        // Copy-all toggles from "Copy all" to "Copied".
+        fireEvent.click(screen.getByRole('button', { name: 'Copy all' }));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument());
+
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+        expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+    });
+
+    it('shows an error message (Error.message) when starting enrolment fails', () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onError(new Error('network down'));
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+
+        expect(screen.getByText('network down')).toBeInTheDocument();
+    });
+
+    it('shows a fallback error when verification is rejected with no detail, and omits the auth link when uri is empty', () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'SECRET', otpauth_uri: '' });
+        });
+        activateMutate.mockImplementation((_code, opts) => {
+            opts.onError({});
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        expect(screen.queryByRole('link', { name: /open in authenticator app/i })).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '654321' } });
+        fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+
+        expect(screen.getByText('Invalid code. Try again.')).toBeInTheDocument();
+    });
+
+    it('Cancel resets and closes the enrolment modal', () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
+        });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        expect(screen.getByText('SECRET')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+    });
+
+    it('shows a spinner while enrolment begins, before the setup key is available', () => {
+        enrollPending = true;
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        expect(screen.queryByLabelText('6-digit code')).not.toBeInTheDocument();
+    });
+});
+
+describe('MfaSection regenerate flow', () => {
+    beforeEach(() => {
+        recoveryStatus = { remaining: 5, total: 10 };
+    });
+
+    it('submits a 6-digit code as `code`, shows returned codes, and Done closes the modal', async () => {
+        regenerateMutate.mockResolvedValue(['new-1', 'new-2']);
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+
+        await waitFor(() => expect(regenerateMutate).toHaveBeenCalledWith({ code: '123456' }));
+        expect(await screen.findByText('new-1')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+        expect(screen.queryByText('Regenerate recovery codes')).not.toBeInTheDocument();
+    });
+
+    it('treats non-6-digit input as a password, and closes immediately when no codes are returned', async () => {
+        regenerateMutate.mockResolvedValue(undefined);
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: 'hunter2' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+
+        await waitFor(() => expect(regenerateMutate).toHaveBeenCalledWith({ password: 'hunter2' }));
+        await waitFor(() => expect(screen.queryByText('Regenerate recovery codes')).not.toBeInTheDocument());
+    });
+
+    it('shows the server error message when the reauth proof is rejected', async () => {
+        regenerateMutate.mockRejectedValue({ response: { data: { message: 'Invalid TOTP code' } } });
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '000000' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+
+        expect(await screen.findByText('Invalid TOTP code')).toBeInTheDocument();
+    });
+
+    it('Cancel closes the modal without submitting', () => {
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+        expect(regenerateMutate).not.toHaveBeenCalled();
+        expect(screen.queryByText('Regenerate recovery codes')).not.toBeInTheDocument();
+    });
+});
+
+describe('MfaSection disable flow', () => {
+    beforeEach(() => {
+        recoveryStatus = { remaining: 5, total: 10 };
+    });
+
+    it('submits proof and closes on success', async () => {
+        disableMutate.mockResolvedValue(undefined);
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
+
+        await waitFor(() => expect(disableMutate).toHaveBeenCalledWith({ code: '123456' }));
+        await waitFor(() => expect(screen.queryByText('Disable two-factor authentication')).not.toBeInTheDocument());
+    });
+
+    it('shows a fallback error message when the rejection carries no detail', async () => {
+        disableMutate.mockRejectedValue({});
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
+
+        expect(await screen.findByText('Invalid code or password.')).toBeInTheDocument();
     });
 });

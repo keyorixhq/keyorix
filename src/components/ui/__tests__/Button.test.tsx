@@ -48,4 +48,25 @@ describe('Button', () => {
         render(<Button className="custom-class">Custom</Button>);
         expect(screen.getByRole('button')).toHaveClass('custom-class');
     });
+
+    // BUG (documented, not fixed per task scope): Button always renders
+    // `{loading && (<svg .../>)}` as a sibling of `children`. When `asChild` is
+    // true that pair is passed straight through as the children of Radix's
+    // `Slot.Root`, which requires `React.Children.count(children) === 1` to
+    // accept a single slotted element. `Children.count` (unlike
+    // `Children.toArray`) does NOT filter out boolean children, so the count
+    // is always 2 (the `false`/`<svg>` plus the real child) and Slot throws -
+    // `asChild` is therefore unusable on Button as currently written. This is
+    // not user-visible today because no call site in the app passes asChild.
+    it('throws when asChild is used, because the conditional spinner leaves an extra boolean child for Slot', () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        expect(() =>
+            render(
+                <Button asChild>
+                    <a href="/foo">Link button</a>
+                </Button>
+            )
+        ).toThrow(/Slot/);
+        consoleErrorSpy.mockRestore();
+    });
 });

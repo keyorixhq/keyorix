@@ -603,6 +603,14 @@ describe('secretsApi usage analytics', () => {
         });
     });
 
+    it('mostAccessed defaults to an empty array when the payload has no secrets key', async () => {
+        mocked.get.mockResolvedValue({ data: { data: {} } });
+
+        const out = await secretsApi.mostAccessed({ days: 30 });
+
+        expect(out).toEqual([]);
+    });
+
     it('unused unwraps secrets and defaults to an empty array', async () => {
         mocked.get.mockResolvedValue({ data: { data: { secrets: null, days: 30 } } });
 

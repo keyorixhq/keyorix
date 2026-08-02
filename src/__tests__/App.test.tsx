@@ -39,6 +39,9 @@ vi.mock('../pages/admin/ServiceAccountsPage', () => ({
     ServiceAccountsPage: () => <div>Service Accounts</div>,
 }));
 vi.mock('../pages/admin/APITokensPage', () => ({ APITokensPage: () => <div>API Tokens</div> }));
+vi.mock('../pages/admin/MachineIdentitiesPage', () => ({
+    MachineIdentitiesPage: () => <div>Machine Identities</div>,
+}));
 vi.mock('../pages/admin/NotificationChannelsPage', () => ({
     NotificationChannelsPage: () => <div>Notification Channels</div>,
 }));
@@ -185,6 +188,66 @@ describe('App', () => {
             renderAt('/integrations/sdks');
             expect(await screen.findByText('SDKs & CLI')).toBeInTheDocument();
         });
+
+        it('renders /secrets/rotation for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/secrets/rotation');
+            expect(await screen.findByText('Rotation Policies')).toBeInTheDocument();
+        });
+
+        it('renders /secrets/expiry for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/secrets/expiry');
+            expect(await screen.findByText('Secret Expiry')).toBeInTheDocument();
+        });
+
+        it('renders /secrets/health for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/secrets/health');
+            expect(await screen.findByText('Secrets Health')).toBeInTheDocument();
+        });
+
+        it('renders /secrets/usage for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/secrets/usage');
+            expect(await screen.findByText('Usage Analytics')).toBeInTheDocument();
+        });
+
+        it('renders /projects for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/projects');
+            expect(await screen.findByText('Projects Page')).toBeInTheDocument();
+        });
+
+        it('renders /projects/:id for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/projects/42');
+            expect(await screen.findByText('Project Detail')).toBeInTheDocument();
+        });
+
+        it('renders /sharing for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/sharing');
+            expect(await screen.findByText('Sharing Page')).toBeInTheDocument();
+        });
+
+        it('renders /settings/appearance for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/settings/appearance');
+            expect(await screen.findByText('Appearance')).toBeInTheDocument();
+        });
+
+        it('renders /compliance for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/compliance');
+            expect(await screen.findByText('Compliance')).toBeInTheDocument();
+        });
+
+        it('renders /integrations/connect for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/integrations/connect');
+            expect(await screen.findByText('Keyorix Connect')).toBeInTheDocument();
+        });
     });
 
     describe('admin routes', () => {
@@ -263,6 +326,54 @@ describe('App', () => {
         it('redirects a non-admin to the dashboard from /settings/encryption', async () => {
             setAuth({ isAuthenticated: true, user: { role: 'user' } });
             renderAt('/settings/encryption');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
+        });
+
+        it('renders /admin/users/:id for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/admin/users/42');
+            expect(await screen.findByText('User Detail')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /admin/users/:id', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/admin/users/42');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
+        });
+
+        it('renders /admin/service-accounts for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/admin/service-accounts');
+            expect(await screen.findByText('Service Accounts')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /admin/service-accounts', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/admin/service-accounts');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
+        });
+
+        it('renders /admin/api-tokens for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/admin/api-tokens');
+            expect(await screen.findByText('API Tokens')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /admin/api-tokens', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/admin/api-tokens');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
+        });
+
+        it('renders /admin/machine-identities for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/admin/machine-identities');
+            expect(await screen.findByText('Machine Identities')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /admin/machine-identities', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/admin/machine-identities');
             expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
         });
     });

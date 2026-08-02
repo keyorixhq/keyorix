@@ -136,6 +136,44 @@ describe('UsageAnalyticsPage', () => {
         }
     });
 
+    it('covers the today / N-days / multi-year relative-time buckets', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-15T12:00:00.000Z'));
+        try {
+            unusedMock.mockReturnValue(
+                unusedState({
+                    secrets: [
+                        { secret_id: 20, secret_name: 'read-today', last_read: '2026-01-15T12:00:00.000Z' },
+                        { secret_id: 21, secret_name: 'read-5-days-ago', last_read: '2026-01-10T12:00:00.000Z' },
+                        { secret_id: 22, secret_name: 'read-over-a-year-ago', last_read: '2024-12-01T12:00:00.000Z' },
+                    ],
+                })
+            );
+            render(<UsageAnalyticsPage />);
+
+            const card = getSectionCard('Unused Secrets');
+            expect(within(card).getByText('last read today')).toBeInTheDocument();
+            expect(within(card).getByText('last read 5d ago')).toBeInTheDocument();
+            expect(within(card).getByText('last read 1y ago')).toBeInTheDocument();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('renders a 0% progress bar when every secret in the window has zero reads', () => {
+        mostAccessedMock.mockReturnValue(
+            mostAccessedState({
+                secrets: [{ secret_id: 30, secret_name: 'flat-secret', read_count: 0, last_read: null }],
+            })
+        );
+        render(<UsageAnalyticsPage />);
+
+        const card = getSectionCard('Most Accessed');
+        const row = within(card).getByText('flat-secret').closest('.space-y-1')!;
+        const bar = row.querySelector('.h-full') as HTMLElement;
+        expect(bar).toHaveStyle({ width: '0%' });
+    });
+
     it('shows independent empty states when one section has data and the other does not', () => {
         mostAccessedMock.mockReturnValue(
             mostAccessedState({

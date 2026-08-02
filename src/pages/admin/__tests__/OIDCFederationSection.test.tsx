@@ -90,6 +90,19 @@ describe('OIDCFederationSection — list states', () => {
         expect(screen.getByText(/15.*2026/)).toBeInTheDocument();
     });
 
+    it('shows an em dash for a config with no created_at date', async () => {
+        mockGet.mockResolvedValue({ data: { data: [{ ...trustConfig, created_at: '' }] } });
+        render(<OIDCFederationSection serviceAccounts={serviceAccounts} />);
+        expect(await screen.findByText('github-deploy')).toBeInTheDocument();
+        expect(screen.getByText('—')).toBeInTheDocument();
+    });
+
+    it('falls back to an empty list when the response has no data field', async () => {
+        mockGet.mockResolvedValue({ data: {} });
+        render(<OIDCFederationSection serviceAccounts={serviceAccounts} />);
+        expect(await screen.findByText(/no trust configurations yet/i)).toBeInTheDocument();
+    });
+
     it('shows a generic error state when the fetch fails without a 404/501', async () => {
         mockGet.mockRejectedValue(jsonError(500));
         render(<OIDCFederationSection serviceAccounts={serviceAccounts} />);
@@ -258,6 +271,36 @@ describe('OIDCFederationSection — add trust config', () => {
         fireEvent.click(dialog.getByRole('button', { name: 'Add Trust Configuration' }));
 
         expect(await dialog.findByText('Failed to create trust configuration.')).toBeInTheDocument();
+    });
+
+    it('lets the subject pattern be edited directly', async () => {
+        const dialog = await openAddModal();
+        fireEvent.change(dialog.getByLabelText(/subject pattern/i), { target: { value: 'repo:acme/*:ref:*' } });
+        expect(dialog.getByLabelText(/subject pattern/i)).toHaveValue('repo:acme/*:ref:*');
+    });
+
+    it('resets the bound service account to unselected when the blank option is chosen', async () => {
+        const dialog = await openAddModal();
+        fireEvent.change(dialog.getByLabelText(/^name/i), { target: { value: 'my-trust' } });
+
+        const select = dialog.getByLabelText(/bind to service account/i) as HTMLSelectElement;
+        fireEvent.change(select, { target: { value: '1' } });
+        expect(select).toHaveValue('1');
+
+        fireEvent.change(select, { target: { value: '' } });
+        expect(select).toHaveValue('');
+
+        fireEvent.click(dialog.getByRole('button', { name: 'Add Trust Configuration' }));
+        expect(await dialog.findByText('Select a service account to bind.')).toBeInTheDocument();
+    });
+
+    it('closes the add modal via the dialog close button without submitting', async () => {
+        const dialog = await openAddModal();
+        fireEvent.change(dialog.getByLabelText(/^name/i), { target: { value: 'temp-name' } });
+
+        fireEvent.click(dialog.getByRole('button', { name: 'Close' }));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
     it('resets the form and clears prior errors each time the modal is reopened', async () => {

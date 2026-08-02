@@ -60,4 +60,10 @@ describe('AlertList', () => {
         fireEvent.click(firstBtn);
         expect(onDismiss).toHaveBeenCalledWith('a1');
     });
+
+    it('forwards a message on to the underlying Alert when the entry has one', () => {
+        const alerts = [{ id: 'a1', type: 'info' as const, title: 'Heads up', message: 'Extra detail here' }];
+        render(<AlertList alerts={alerts} />);
+        expect(screen.getByText('Extra detail here')).toBeInTheDocument();
+    });
 });

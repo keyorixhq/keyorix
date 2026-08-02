@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '../../../test/test-utils';
-import { Layout } from '../Layout';
+import { Layout, Page } from '../Layout';
 
 // Layout composes Header/Sidebar/Footer/Breadcrumb/ImpersonationBanner/CmdKSearch.
 // Sibling agents are covering those components' own internals in parallel, so
@@ -254,5 +254,110 @@ describe('Layout', () => {
 
         expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
         removeEventListenerSpy.mockRestore();
+    });
+});
+
+describe('Page', () => {
+    it('renders its children', () => {
+        render(
+            <Page>
+                <div data-testid="page-child">child content</div>
+            </Page>
+        );
+
+        expect(screen.getByTestId('page-child')).toBeInTheDocument();
+    });
+
+    it('renders no header block at all when title, subtitle, and actions are all omitted', () => {
+        const { container } = render(
+            <Page>
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(container.querySelector('h1')).not.toBeInTheDocument();
+        expect(container.querySelector('.mb-8')).not.toBeInTheDocument();
+    });
+
+    it('renders the title as an h1 when provided', () => {
+        render(
+            <Page title="Page Title">
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(screen.getByRole('heading', { level: 1, name: 'Page Title' })).toBeInTheDocument();
+    });
+
+    it('does not render an h1 when title is omitted', () => {
+        render(
+            <Page subtitle="Just a subtitle">
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+        expect(screen.getByText('Just a subtitle')).toBeInTheDocument();
+    });
+
+    it('renders the subtitle when provided', () => {
+        render(
+            <Page title="Title" subtitle="A helpful subtitle">
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(screen.getByText('A helpful subtitle')).toBeInTheDocument();
+    });
+
+    it('does not render a subtitle paragraph when omitted', () => {
+        render(
+            <Page title="Title only">
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(screen.queryByText(/subtitle/i)).not.toBeInTheDocument();
+    });
+
+    it('renders actions when provided, alongside the header', () => {
+        render(
+            <Page title="Title" actions={<button type="button">Do Thing</button>}>
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(screen.getByRole('button', { name: 'Do Thing' })).toBeInTheDocument();
+    });
+
+    it('renders a header block for actions alone, even without a title or subtitle', () => {
+        const { container } = render(
+            <Page actions={<button type="button">Only Action</button>}>
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(screen.getByRole('button', { name: 'Only Action' })).toBeInTheDocument();
+        expect(container.querySelector('.mb-8')).toBeInTheDocument();
+    });
+
+    it('does not render an actions wrapper when actions are omitted', () => {
+        const { container } = render(
+            <Page title="Title">
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(container.querySelector('.md\\:ml-4')).not.toBeInTheDocument();
+    });
+
+    it('applies a custom className to the outer wrapper', () => {
+        const { container } = render(
+            <Page className="custom-page-class">
+                <div>child content</div>
+            </Page>
+        );
+
+        expect(container.firstChild).toHaveClass('custom-page-class');
     });
 });

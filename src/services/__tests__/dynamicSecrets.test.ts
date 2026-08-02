@@ -108,6 +108,20 @@ describe('dynamicSecretsApi.list', () => {
 
         await expect(dynamicSecretsApi.list(1)).resolves.toEqual([]);
     });
+
+    it('defaults id to 0 when a config row has neither id nor ID', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { data: [{}] } });
+
+        const result = await dynamicSecretsApi.list(1);
+
+        expect(result[0]).toMatchObject({ id: 0 });
+    });
+
+    it('returns [] when the response has no .data at all (unwrap falls through to undefined)', async () => {
+        mocked.get.mockResolvedValueOnce({});
+
+        await expect(dynamicSecretsApi.list(1)).resolves.toEqual([]);
+    });
 });
 
 // ── create ───────────────────────────────────────────────────────────────────
@@ -314,6 +328,20 @@ describe('dynamicSecretsApi.listLeases', () => {
 
         await expect(dynamicSecretsApi.listLeases(4)).resolves.toEqual([]);
     });
+
+    it('defaults all lease fields when a row has neither snake_case nor PascalCase keys', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { data: [{}] } });
+
+        const result = await dynamicSecretsApi.listLeases(4);
+
+        expect(result[0]).toMatchObject({ leaseId: '', configId: 0, roleName: '', status: 'active' });
+    });
+
+    it('returns [] when the response has no .data at all (unwrap falls through to undefined)', async () => {
+        mocked.get.mockResolvedValueOnce({});
+
+        await expect(dynamicSecretsApi.listLeases(4)).resolves.toEqual([]);
+    });
 });
 
 // ── revokeLease ──────────────────────────────────────────────────────────────
@@ -342,6 +370,14 @@ describe('dynamicSecretsApi.revokeAll', () => {
 
     it('defaults revoked/failed to 0 when the response body is empty', async () => {
         mocked.post.mockResolvedValueOnce({ data: {} });
+
+        const result = await dynamicSecretsApi.revokeAll(4);
+
+        expect(result).toEqual({ revoked: 0, failed: 0 });
+    });
+
+    it('defaults revoked/failed to 0 when the response has no .data at all (unwrap falls through to undefined)', async () => {
+        mocked.post.mockResolvedValueOnce({});
 
         const result = await dynamicSecretsApi.revokeAll(4);
 

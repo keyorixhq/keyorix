@@ -195,6 +195,57 @@ describe('Sidebar', () => {
         expect(window.location.pathname).toBe('/');
     });
 
+    it('does not apply a hover background to a "soon" leaf, since it is disabled', () => {
+        render(
+            <Leaf
+                item={{ kind: 'leaf', name: 'Test Feature', href: '/test-feature', soon: true }}
+                isActive={() => false}
+                onClose={vi.fn()}
+            />
+        );
+
+        const soonLink = screen.getByRole('link', { name: /Test Feature/ });
+        fireEvent.mouseEnter(soonLink);
+        expect(soonLink).not.toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+    });
+
+    it('applies and clears a hover background on a non-active leaf, but not on the active one', () => {
+        window.history.pushState({}, '', '/dashboard');
+        renderSidebar();
+
+        const projectsLink = screen.getByRole('link', { name: 'Projects' }); // inactive
+        fireEvent.mouseEnter(projectsLink);
+        expect(projectsLink).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        fireEvent.mouseLeave(projectsLink);
+        expect(projectsLink).toHaveStyle({ backgroundColor: '' });
+
+        const dashboardLink = screen.getByRole('link', { name: 'Dashboard' }); // active
+        fireEvent.mouseEnter(dashboardLink);
+        expect(dashboardLink).not.toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        fireEvent.mouseLeave(dashboardLink);
+        expect(dashboardLink).toHaveStyle({ backgroundColor: 'var(--accent-subtle)' });
+    });
+
+    it('applies and clears a hover background on a group header button', () => {
+        renderSidebar();
+
+        const secretsButton = screen.getByRole('button', { name: 'Secrets' });
+        fireEvent.mouseEnter(secretsButton);
+        expect(secretsButton).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        fireEvent.mouseLeave(secretsButton);
+        expect(secretsButton).toHaveStyle({ backgroundColor: '' });
+    });
+
+    it('treats a group with no entry at all in sidebarExpanded as collapsed by default (unless active)', () => {
+        uiState.sidebarExpanded = {};
+        renderSidebar();
+
+        // Secrets isn't active on '/', and has no key in sidebarExpanded at all
+        // (as opposed to an explicit `false`) — the `?? false` fallback should
+        // still collapse it rather than throw or default open.
+        expect(screen.queryByRole('link', { name: 'All Secrets' })).not.toBeInTheDocument();
+    });
+
     it('renders SDKs & CLI as a real, clickable link now that it has shipped', () => {
         uiState.sidebarExpanded = { ...uiState.sidebarExpanded, integrations: true };
         renderSidebar();

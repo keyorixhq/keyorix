@@ -45,6 +45,11 @@ describe('serviceAccountsApi.listServiceAccounts', () => {
         mock.get.mockResolvedValueOnce(ok(null));
         await expect(serviceAccountsApi.listServiceAccounts()).resolves.toEqual([]);
     });
+
+    it('returns [] for a truthy object with neither service_accounts nor tokens arrays', async () => {
+        mock.get.mockResolvedValueOnce(ok({ foo: 1 }));
+        await expect(serviceAccountsApi.listServiceAccounts()).resolves.toEqual([]);
+    });
 });
 
 // ── createServiceAccount ──────────────────────────────────────────────────────
@@ -152,6 +157,13 @@ describe('serviceAccountsApi.createToken', () => {
         mock.post.mockResolvedValueOnce(ok({ token: {}, token_value: 'x' }));
         await serviceAccountsApi.createToken(7, body);
         expect(mock.post).toHaveBeenCalledWith('/api/v1/service-accounts/7/tokens', body);
+    });
+
+    it('falls back to the whole response body as the token when there is no .token field', async () => {
+        mock.post.mockResolvedValueOnce(ok({ access_token: 'tok-jkl' }));
+        const result = await serviceAccountsApi.createToken(1, body);
+        expect(result.token).toEqual({ access_token: 'tok-jkl' });
+        expect(result.access_token).toBe('tok-jkl');
     });
 });
 
