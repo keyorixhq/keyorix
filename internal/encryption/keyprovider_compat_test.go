@@ -128,7 +128,9 @@ func TestKeyProvider_DEKRotationUnderProvider(t *testing.T) {
 	require.NoError(t, km.Initialize(""))
 	before := append([]byte(nil), km.GetDEK()...)
 
-	require.NoError(t, km.RotateDEK("")) // deprecated path, but exercises re-wrap under a provider
+	require.NoError(t, km.RotateDEKWithSweep("", func(_, _ *EncryptionService, _ string) error {
+		return nil
+	})) // exercises re-wrap under a provider
 	after := km.GetDEK()
 	assert.NotEqual(t, before, after, "rotation must produce a new DEK")
 

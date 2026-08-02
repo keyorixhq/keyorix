@@ -1065,28 +1065,6 @@ func TestKeyManager_RotateDEKWithSweep_UnreadableDEKFile_Error(t *testing.T) {
 	svc.Shutdown()
 }
 
-// ─── RotateDEK (deprecated): unreadable DEK file → SafeReadFile error ─────────
-
-func TestKeyManager_RotateDEK_UnreadableDEKFile_Error(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root can read any file")
-	}
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	svc := NewService(cfg, dir)
-	require.NoError(t, svc.Initialize("pass-s25"))
-
-	// Make the dek.key file unreadable.
-	dekPath := filepath.Join(dir, "dek.key")
-	require.NoError(t, os.Chmod(dekPath, 0000))
-	t.Cleanup(func() { _ = os.Chmod(dekPath, 0600) })
-
-	err := svc.keyManager.RotateDEK("pass-s25")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read old DEK")
-	svc.Shutdown()
-}
-
 // ─── sweepSessions: Updates() error (DB closed mid-sweep) ────────────────────
 
 func TestSweepSessions_UpdatesError(t *testing.T) {

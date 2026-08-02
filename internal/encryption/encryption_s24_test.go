@@ -12,7 +12,6 @@
 //   - Service.EncryptSecret/EncryptSecretWithAAD not-initialized guard
 //   - Service.DecryptSecretWithAAD: legacy (no AADVersion) fallback path
 //   - NewKeyProviderFromConfig: file, env, exec, shamir, tpm, unknown-type branches
-//   - KeyManager.RotateDEK error paths (bad passphrase)
 //   - deleteBackupFiles: glob match removes files
 //   - KeyManager.RewrapDEK: nil provider, wrong-size KEK, stale snapshot
 //   - AuthEncryption: disabled service paths
@@ -676,17 +675,6 @@ func TestNewKeyProviderFromConfig_PasswordExplicit(t *testing.T) {
 	assert.NotNil(t, p)
 }
 
-// ─── Service.RotateDEK: not initialized ──────────────────────────────────────
-
-func TestService_RotateDEK_NotInitialized_Error(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	svc := NewService(cfg, dir)
-	err := svc.RotateDEK("any-pass")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
-}
-
 // ─── KeyManager.deleteBackupFiles: removes matching backup files ──────────────
 
 func TestKeyManager_DeleteBackupFiles_RemovesMatches(t *testing.T) {
@@ -1181,26 +1169,6 @@ func TestSweepMFASecrets_SkipsEmptySecret(t *testing.T) {
 	swept, _, err := sweepMFASecrets(db, es, es, "v1", false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, swept)
-}
-
-// ─── RotateDEK (deprecated): round-trip happy path ───────────────────────────
-
-func TestService_RotateDEK_HappyPath(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
-	svc := NewService(cfg, dir)
-	require.NoError(t, svc.Initialize("pass"))
-
-	oldVersion := svc.GetKeyVersion()
-	require.NoError(t, svc.RotateDEK("pass"))
-	newVersion := svc.GetKeyVersion()
-	assert.NotEqual(t, oldVersion, newVersion)
-
-	// Check backup file was created
-	backups, err := filepath.Glob(filepath.Join(dir, "dek.key.backup.*"))
-	require.NoError(t, err)
-	assert.NotEmpty(t, backups)
-	svc.Shutdown()
 }
 
 // ─── SecretAAD format ─────────────────────────────────────────────────────────

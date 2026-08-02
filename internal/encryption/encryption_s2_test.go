@@ -889,26 +889,6 @@ func TestService_PreviewRotationSweep(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-func TestService_RotateDEK_NotInitialized(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.EncryptionConfig{
-		Enabled:  true,
-		DEKPath:  "dek.key",
-		SaltPath: "salt.key",
-	}
-	svc := NewService(cfg, dir)
-	err := svc.RotateDEK("passphrase")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not initialized")
-}
-
-func TestService_RotateDEK_Initialized(t *testing.T) {
-	svc := newInitializedService(t)
-	// RotateDEK without a sweep — must succeed.
-	err := svc.RotateDEK("test-passphrase-service")
-	require.NoError(t, err)
-}
-
 // TestService_RotateDEKWithSweep_AuthTables verifies that sweepSessions,
 // sweepAPITokens, and sweepPasswordResets re-encrypt seeded rows correctly
 // (exercising the inner loop bodies that are at 17.9% coverage).

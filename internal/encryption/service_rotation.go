@@ -1,6 +1,6 @@
 // service_rotation.go — DEK rotation, key ops, and shutdown for Service.
 //
-// RotateDEKWithSweep, RotateDEK, ValidateKeyFiles, FixKeyFilePermissions,
+// RotateDEKWithSweep, ValidateKeyFiles, FixKeyFilePermissions,
 // GetKeyVersion, CleanPendingDEK, Shutdown.
 // For encrypt/decrypt see service.go.
 package encryption
@@ -196,27 +196,6 @@ func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
 	log.Printf("✅ AAD upgrade committed: %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases re-encrypted (%d legacy AAD upgraded)",
 		result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept, result.LegacyAADUpgraded)
 	return result, nil
-}
-
-// RotateDEK rotates the DEK without re-encrypting existing secrets.
-// DEPRECATED: Use RotateDEKWithSweep instead. See ADR-010.
-func (s *Service) RotateDEK(passphrase string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.initialized {
-		return fmt.Errorf("encryption service not initialized")
-	}
-	if err := s.keyManager.RotateDEK(passphrase); err != nil {
-		return fmt.Errorf("failed to rotate DEK: %w", err)
-	}
-	dek := s.keyManager.GetDEK()
-	encSvc, err := NewEncryptionService(dek)
-	if err != nil {
-		return fmt.Errorf("failed to recreate encryption service: %w", err)
-	}
-	s.encryptionService = encSvc
-	return nil
 }
 
 // RotateKEKPassphrase changes the master passphrase without re-encrypting the

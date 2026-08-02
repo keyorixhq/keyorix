@@ -44,7 +44,7 @@ type KeyManager struct {
 	baseDir    string
 	currentDEK []byte
 	// dekSnapshot is the raw wrapped-DEK bytes read from disk at the moment
-	// currentDEK was last set (Initialize/RotateDEKWithSweep/RotateDEK). It
+	// currentDEK was last set (Initialize/RotateDEKWithSweep). It
 	// lets RewrapDEK detect — under the exclusive key lock — whether another
 	// process has changed dek.key since, so it never overwrites a
 	// concurrently-completed rotation with a stale value (#195).
