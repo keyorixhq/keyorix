@@ -165,7 +165,7 @@ export const SdksPage: React.FC = () => (
                 >
                     /swagger
                 </a>
-                .
+                {'.'}
             </p>
         </SectionCard>
     </div>
