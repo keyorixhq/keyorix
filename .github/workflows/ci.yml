@@ -136,7 +136,7 @@ jobs:
           go test -race -timeout ${{ matrix.timeout }}s -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@43fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
