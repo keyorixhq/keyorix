@@ -190,18 +190,79 @@ describe('LoginPage', () => {
         expect(screen.queryByRole('link', { name: /Sign in with/ })).not.toBeInTheDocument();
     });
 
-    // BUG (not fixed here — coverage-only PR): LoginPage never passes an
-    // `onForgotPassword` prop to <LoginForm />, so LoginForm's "Forgot
-    // password?" button (which only renders when that prop is provided) never
-    // appears. Since nothing else in LoginPage ever calls `setMode('reset')`,
-    // the 'reset' / 'reset-success' branch and the whole PasswordResetForm
-    // integration are unreachable through the rendered UI.
-    it('never renders a way to reach the password-reset form (see BUG note above)', async () => {
+    it('switches to the password-reset form via the "Forgot password?" link', async () => {
         render(<LoginPage />);
 
         await waitFor(() => expect(getSSOProvidersMock).toHaveBeenCalled());
-        expect(screen.queryByText('Forgot password?')).not.toBeInTheDocument();
-        expect(screen.queryByText('Reset Password')).not.toBeInTheDocument();
+        fireEvent.click(screen.getByText('Forgot password?'));
+
+        expect(screen.getByText('Reset Password')).toBeInTheDocument();
+        expect(screen.queryByTestId('username-input')).not.toBeInTheDocument();
+    });
+
+    it('requests a password reset and shows the success state', async () => {
+        requestPasswordResetMock.mockResolvedValue(undefined);
+        render(<LoginPage />);
+
+        fireEvent.click(screen.getByText('Forgot password?'));
+        fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dana@example.com' } });
+        fireEvent.click(screen.getByText('Send Reset Link'));
+
+        await waitFor(() => expect(requestPasswordResetMock).toHaveBeenCalledWith({ email: 'dana@example.com' }));
+        expect(await screen.findByText('Reset Link Sent')).toBeInTheDocument();
+    });
+
+    it('surfaces the Error message when the password-reset request fails', async () => {
+        requestPasswordResetMock.mockRejectedValue(new Error('No account with that email'));
+        render(<LoginPage />);
+
+        fireEvent.click(screen.getByText('Forgot password?'));
+        fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dana@example.com' } });
+        fireEvent.click(screen.getByText('Send Reset Link'));
+
+        expect(await screen.findByText('No account with that email')).toBeInTheDocument();
+    });
+
+    it('falls back to a generic message when the password-reset rejection is not an Error', async () => {
+        requestPasswordResetMock.mockRejectedValue('network down');
+        render(<LoginPage />);
+
+        fireEvent.click(screen.getByText('Forgot password?'));
+        fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dana@example.com' } });
+        fireEvent.click(screen.getByText('Send Reset Link'));
+
+        expect(await screen.findByText('Password reset failed')).toBeInTheDocument();
+    });
+
+    it('returns to the login form via "Back to Login", clearing any reset error', async () => {
+        requestPasswordResetMock.mockRejectedValue(new Error('No account with that email'));
+        render(<LoginPage />);
+
+        fireEvent.click(screen.getByText('Forgot password?'));
+        fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'dana@example.com' } });
+        fireEvent.click(screen.getByText('Send Reset Link'));
+        expect(await screen.findByText('No account with that email')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Back to Login'));
+
+        expect(screen.getByTestId('username-input')).toBeInTheDocument();
+        expect(screen.queryByText('No account with that email')).not.toBeInTheDocument();
+    });
+
+    it('ignores a late SSO providers response after the component unmounts', async () => {
+        let resolveProviders: (value: string[]) => void = () => {};
+        const pending = new Promise<string[]>((resolve) => {
+            resolveProviders = resolve;
+        });
+        getSSOProvidersMock.mockReturnValue(pending);
+
+        const { unmount } = render(<LoginPage />);
+        unmount();
+        resolveProviders(['google']);
+
+        // Resolves without updating state on the unmounted component (the effect's
+        // cleanup flips `active` to false, so the .then callback is a no-op).
+        await pending;
     });
 
     // NOTE: handlePasswordReset (lines 56-67) and the onBack callback passed to

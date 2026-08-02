@@ -107,7 +107,12 @@ export const LoginPage: React.FC = () => {
                                     SSO sign-in failed: {ssoError}
                                 </div>
                             )}
-                            <LoginForm onSubmit={handleLogin} isLoading={isLoading} error={error} />
+                            <LoginForm
+                                onSubmit={handleLogin}
+                                isLoading={isLoading}
+                                error={error}
+                                onForgotPassword={() => setMode('reset')}
+                            />
                             {ssoProviders.length > 0 && (
                                 <div className="mt-6">
                                     <div className="relative flex items-center my-4">
