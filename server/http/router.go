@@ -403,6 +403,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// so they sit here alongside /dashboard/stats at system.read instead.
 		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system/auth-config", handlers.MakeAuthConfigHandler(cfg))
 		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system/encryption-config", handlers.MakeEncryptionConfigHandler(cfg))
+		// Same reasoning as auth-config/encryption-config above: server version/
+		// build/runtime info and memory/GC/HTTP/DB metrics are human-facing reads,
+		// not RemoteStorage proxy traffic, so they don't belong behind the /system
+		// group's system.write gate either — moved out to system.read here
+		// (previously squatted inside that group; see its own comment for why that
+		// group itself stays system.write).
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system/info", handlers.MakeSystemInfoHandler(cfg))
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system"+pathMetrics, handlers.GetMetrics)
 
 		// Catalog endpoints (projects, environments).
 		// List endpoints need global read (browse everything); accessing a
@@ -1013,8 +1021,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// global admin roster, and setup-token data to all authenticated users (#r124).
 		r.Route("/system", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission(permSystemWrite))
-			r.Get("/info", handlers.MakeSystemInfoHandler(cfg))
-			r.Get(pathMetrics, handlers.GetMetrics)
 			// Per-scheduler last-run/last-success timestamps (Prometheus exposition
 			// format), deliberately kept off the public, unauthenticated /metrics
 			// endpoint — see server/middleware/scheduler_metrics.go — since an exact
