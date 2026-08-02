@@ -35,9 +35,12 @@ env:
 
 jobs:
   # Fast compile gate (~30s). Catches redeclarations, type errors, and build
-  # failures before any expensive job starts. Jobs that require the main module
-  # to compile declare `needs: [preflight]`; unrelated jobs (operator, gitleaks,
-  # helm-*, openapi-lint) keep running in parallel.
+  # failures before the expensive test-suite/static-analysis jobs start -- those
+  # declare `needs: [preflight]`. Cheaper jobs (lint, licenses, fuzz-targets,
+  # operator, gitleaks, helm-*, openapi-lint) run their own independent
+  # compile/analysis and so run fully in parallel with preflight instead of
+  # waiting on it -- on a broken build they each fail on their own terms
+  # instead of via the shared gate, but nothing waits an extra ~30s to start.
   preflight:
     runs-on: ubuntu-latest
     steps:
@@ -70,7 +73,79 @@ jobs:
       - name: go build
         run: go build ./...
 
-  build-and-test:
+  # Runs the two `go test` legs (root minus known-excluded/handlers packages,
+  # and server/http/handlers on its own longer timeout, see the step comment
+  # below) as parallel matrix runners instead of two sequential steps in one
+  # job -- server/http/handlers alone can take up to 1200s (ADR-048), so
+  # running it back-to-back with everything else was the single largest
+  # contributor to this workflow's wall-clock time. `build-and-test` below
+  # aggregates both legs' results and does the coverage-floor check, keeping
+  # that exact job name for branch protection's required status check.
+  test-suite:
+    needs: [preflight]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: root
+            timeout: 600
+            coverage-file: coverage.out
+          - leg: handlers
+            # server/http/handlers (167 test files, each opening its own
+            # SQLite DB) gets its own longer -timeout (ADR-048): under -race,
+            # modernc.org/sqlite is ~3.6x slower here than the mattn/go-sqlite3
+            # CGO driver it replaced (112s -> 406s locally), which crossed the
+            # 600s budget used for the root leg. -race is dev/CI-only
+            # instrumentation; production binaries are unaffected. 1200s
+            # leaves ample margin above the measured runtime.
+            timeout: 1200
+            coverage-file: coverage_handlers.out
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+
+      - name: go test (${{ matrix.leg }})
+        run: |
+          case "${{ matrix.leg }}" in
+            root)
+              # Excludes packages with documented pre-existing failures that
+              # require a running server or have known mock mismatches (see
+              # `git log -S "internal/cli\$" -- .github/workflows/ci.yml` for
+              # the commits that introduced each exclusion) -- do not
+              # re-include without fixing the underlying test first.
+              # server/http/handlers is excluded here because it runs as its
+              # own matrix leg (below).
+              pkgs=$(go list ./... | grep -v \
+                -e 'internal/cli$' \
+                -e 'internal/core$' \
+                -e 'internal/storage/remote' \
+                -e 'server/http$' \
+                -e 'server/http/handlers$' \
+                -e 'server/middleware$' \
+                -e 'server/proto/pb$')
+              ;;
+            handlers)
+              pkgs=./server/http/handlers/...
+              ;;
+          esac
+          go test -race -timeout ${{ matrix.timeout }}s -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ matrix.leg }}
+          path: ${{ matrix.coverage-file }}
+          retention-days: 1
+
+  # Independent of test execution/coverage -- both tools statically analyze
+  # source, so this runs in parallel with test-suite instead of waiting for it
+  # (as it did when both lived inside one sequential build-and-test job).
+  static-analysis:
     needs: [preflight]
     runs-on: ubuntu-latest
     steps:
@@ -81,27 +156,63 @@ jobs:
         with:
           go-version: '1.26.5'
 
-      - name: go test
-        run: |
-          go test -race -timeout 600s -coverprofile=coverage.out -covermode=atomic \
-            $(go list ./... | grep -v \
-              -e 'internal/cli$' \
-              -e 'internal/core$' \
-              -e 'internal/storage/remote' \
-              -e 'server/http$' \
-              -e 'server/http/handlers$' \
-              -e 'server/middleware$' \
-              -e 'server/proto/pb$')
+      - name: Cache govulncheck/gosec binaries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/bin/govulncheck
+            ~/go/bin/gosec
+          key: static-analysis-tools-v1.1.4-${{ env.GOSEC_VERSION }}-${{ runner.os }}
 
-      # server/http/handlers (167 test files, each opening its own SQLite DB)
-      # runs in its own step with a longer -timeout (ADR-048): under -race,
-      # modernc.org/sqlite is ~3.6x slower here than the mattn/go-sqlite3 CGO
-      # driver it replaced (112s -> 406s locally), which crossed the shared
-      # 600s budget on the CI runner. -race is dev/CI-only instrumentation;
-      # production binaries are unaffected. 1200s leaves ample margin above
-      # the measured runtime.
-      - name: go test (server/http/handlers)
-        run: go test -race -timeout 1200s -coverprofile=coverage_handlers.out -covermode=atomic ./server/http/handlers/...
+      - name: govulncheck
+        run: |
+          [ -x ~/go/bin/govulncheck ] || go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 # NOSONAR githubactions:S8545 -- version is pinned to v1.1.4
+          govulncheck ./...
+
+      - name: gosec
+        run: |
+          [ -x ~/go/bin/gosec ] || go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          # -exclude-generated skips files with the "DO NOT EDIT" header
+          # (generated protobuf code), whose *_FullMethodName string constants
+          # otherwise trip G101 (hardcoded-credential) false positives.
+          gosec -severity medium -exclude-generated ./...
+
+  # Aggregates test-suite (both matrix legs) and static-analysis: merges the
+  # two coverage profiles and checks the floor. Kept as its own job named
+  # exactly `build-and-test` because branch protection requires that exact
+  # status-check context by name -- a matrix or renamed job would report as
+  # e.g. "build-and-test (root)" and never satisfy it.
+  build-and-test:
+    needs: [preflight, test-suite, static-analysis]
+    if: always()
+    runs-on: ubuntu-latest
+    # download-artifact needs actions: read beyond the workflow-level
+    # contents: read default, even for same-run artifacts.
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check upstream job results
+        run: |
+          if [ "${{ needs.test-suite.result }}" != "success" ] || [ "${{ needs.static-analysis.result }}" != "success" ]; then
+            echo "::error::test-suite=${{ needs.test-suite.result }} static-analysis=${{ needs.static-analysis.result }}"
+            exit 1
+          fi
+
+      # go tool cover -func (below) reads the actual source files to attribute
+      # coverage ranges to functions, not just the coverage profile text.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: coverage-*
+          merge-multiple: true
 
       - name: Merge coverage profiles
         run: |
@@ -120,21 +231,7 @@ jobs:
             print "OK: coverage " pct "% meets the " floor "% floor"
           }'
 
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 # NOSONAR githubactions:S8545 -- version is pinned to v1.1.4
-          govulncheck ./...
-
-      - name: gosec
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
-          # -exclude-generated skips files with the "DO NOT EDIT" header
-          # (generated protobuf code), whose *_FullMethodName string constants
-          # otherwise trip G101 (hardcoded-credential) false positives.
-          gosec -severity medium -exclude-generated ./...
-
   lint:
-    needs: [preflight]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -186,9 +283,20 @@ jobs:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           working-directory: operator
 
+      - name: Cache gosec binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/gosec
+          # Deliberately a distinct key from static-analysis's combined
+          # govulncheck+gosec cache -- sharing one key across a job that caches
+          # 2 binaries and one that caches 1 would let whichever job's save
+          # step wins the race archive only its own (narrower) path set,
+          # silently dropping govulncheck from the other job's restore.
+          key: operator-gosec-${{ env.GOSEC_VERSION }}-${{ runner.os }}
+
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          [ -x ~/go/bin/gosec ] || go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           gosec -severity medium -exclude-generated ./...
 
   # scripts/fuzzing/targets.conf is a hand-maintained list consumed by the
@@ -205,7 +313,6 @@ jobs:
   #     entry (e.g. after a rename/removal) that run-rotation.sh would fail
   #     to run every cycle.
   fuzz-targets:
-    needs: [preflight]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -303,7 +410,6 @@ jobs:
   # program. No GPL/AGPL/LGPL/SSPL/BSL/Commons-Clause/Elastic/Unknown licenses
   # were found in either module's real dependency tree.
   licenses:
-    needs: [preflight]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -313,8 +419,15 @@ jobs:
         with:
           go-version: '1.26.5'
 
+      - name: Cache go-licenses binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/go-licenses
+          key: go-licenses-${{ env.GO_LICENSES_VERSION }}-${{ runner.os }}
+
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses@${GO_LICENSES_VERSION} # NOSONAR -- go:S8545: version is pinned via GO_LICENSES_VERSION env
+        run: |
+          [ -x ~/go/bin/go-licenses ] || go install github.com/google/go-licenses@${GO_LICENSES_VERSION} # NOSONAR -- go:S8545: version is pinned via GO_LICENSES_VERSION env
 
       # `--ignore` excludes each module's OWN code from the license check --
       # this repo is itself AGPL-3.0, which is expected and not a dependency
