@@ -69,6 +69,83 @@ func (c *KeyorixCore) ListSecretsInScope(ctx context.Context, filter *models.Sec
 	}, nil
 }
 
+// ListSecretsInScopeWithSharingInfo lists every secret in the filter's
+// project/environment scope — like ListSecretsInScope — but additionally
+// attaches per-secret sharing metadata (ownership / share / ACL status) for
+// userID where applicable.
+//
+// Use this instead of ListSecretsWithSharingInfo when userID holds a
+// role-based secrets.read grant covering the requested scope: unlike
+// ListSecretsWithSharingInfo (which only ever surfaces secrets the user
+// personally owns or holds a per-secret ACL/share grant for), this surfaces
+// every secret the ROLE itself grants visibility to. Without it, a
+// project-scoped viewer role could GET any individual secret in their
+// project (RequireScopedPermission's middleware honors the role) but never
+// discover it via listing, since the list path checked ownership/ACL/shares
+// only and ignored the role entirely.
+func (c *KeyorixCore) ListSecretsInScopeWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
+	resp, err := c.ListSecretsInScope(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Secrets) == 0 {
+		return resp, nil
+	}
+
+	// Sharing-info lookup, built from the same three sources
+	// ListSecretsWithSharingInfo merges, mirroring its semantics exactly
+	// (including "shared secrets excluded when filtering by project"). These
+	// are raw, UNPAGINATED calls used only to attach metadata onto the
+	// already-paginated base set above — never to replace it or its
+	// pagination, which reflects the full role-visible scope, not just the
+	// owned/ACL/shared subset.
+	owned, err := c.getOwnedSecretsWithSharingInfo(ctx, userID, filter)
+	if err != nil {
+		return nil, err
+	}
+	var shared []*models.SecretWithSharingInfo
+	if filter.ProjectID == nil {
+		shared, err = c.getSharedSecretsWithSharingInfo(ctx, userID, filter)
+		if err != nil {
+			return nil, err
+		}
+	}
+	aclGranted, err := c.getACLGrantedSecretsWithSharingInfo(ctx, userID, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// Precedence matches ListSecretsWithSharingInfo's own merge order
+	// (owned, then shared, then ACL-granted) so a secret that is e.g. both
+	// owned and ACL-granted reports as owned, not ACL-granted.
+	byID := make(map[uint]*models.SecretWithSharingInfo, len(owned)+len(shared)+len(aclGranted))
+	for _, s := range aclGranted {
+		byID[s.ID] = s
+	}
+	for _, s := range shared {
+		byID[s.ID] = s
+	}
+	for _, s := range owned {
+		byID[s.ID] = s
+	}
+
+	for _, s := range resp.Secrets {
+		info, ok := byID[s.ID]
+		if !ok {
+			continue // visible via role only -- no owned/shared/ACL relationship
+		}
+		s.IsShared = info.IsShared
+		s.IsOwnedByUser = info.IsOwnedByUser
+		s.OwnerUsername = info.OwnerUsername
+		s.UserPermission = info.UserPermission
+		s.ShareCount = info.ShareCount
+		s.SharedAt = info.SharedAt
+		s.SharedBy = info.SharedBy
+		s.SharingIndicators = info.SharingIndicators
+	}
+	return resp, nil
+}
+
 // ListSecretsWithSharingInfo lists secrets with sharing information for a specific user.
 func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
 	if filter == nil {

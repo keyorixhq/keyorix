@@ -47,10 +47,11 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 		&models.GroupRole{},
 		&models.SecretNode{},
 		&models.SecretVersion{},
+		&models.SecretACL{},
+		&models.SecretAccessSchedule{}, // DeleteSecret's cleanup step queries this table
 		&models.SecretAccessLog{},
 		&models.SecretMetadataHistory{},
 		&models.ShareRecord{},
-		&models.SecretACL{},
 		&models.Session{},
 		&models.PasswordReset{},
 		&models.Tag{},
@@ -110,6 +111,14 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	// grant (UserRole.ProjectID), not the global grant above. Without this, every
 	// "Share Secret" step below fails with "permission denied".
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error)
+
+	// Same project-1 membership grant for the bulk-seeded users 10-69 (used as
+	// share recipients by TestSharingHTTPConcurrency) -- without it,
+	// core.ShareSecret's IsProjectMember cross-project check rejects every one
+	// of them with "permission denied", the same gap fixed above for user 2.
+	for i := 10; i < 70; i++ {
+		require.NoError(t, db.Create(&models.UserRole{UserID: uint(i), RoleID: 2, ProjectID: 1}).Error)
+	}
 
 	// Seed sessions for "valid-token" and "owner-token" (user 1, admin), "recipient-token" (user 2, reader).
 	seedSession(t, db, 1, "valid-token")
