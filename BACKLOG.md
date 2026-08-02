@@ -6,7 +6,20 @@ section. For architectural rationale see the ADRs (`docs/` and
 
 ## In progress / next
 
-_(nothing claimed)_
+- **Investigate: `stunit` on-disk SQLite leak + suspected connection-pool
+  unbounded growth** — `server/http/handlers/secret_templates_unit_test.go:83`
+  constructs `file:stunit<N>?mode=memory&cache=private`, but a run left an
+  on-disk SQLite file named `stunit` (no counter suffix) containing table
+  `secret_templates`. Two defects to investigate under ADR-069:
+  (a) the DSN is materializing to disk despite `mode=memory`, and the counter
+  suffix is absent from the produced filename;
+  (b) `cache=private` gives each pooled connection a separate, empty database,
+  so without `SetMaxOpenConns(1)` the pool can grow unbounded — candidate root
+  cause for the `server/http` connection-pool leak seen elsewhere this
+  session (see `server/grpc/services`' `:memory:` connection-pool test
+  flakiness, same underlying class of bug, fixed there via `SetMaxOpenConns(1)`
+  rather than diagnosed at the SQLite-driver level).
+  Not fixed here — investigation only.
 
 ## Done
 
