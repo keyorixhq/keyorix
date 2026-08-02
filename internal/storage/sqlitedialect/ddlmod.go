@@ -220,7 +220,7 @@ func compileConstraintRegexp(name string) *regexp.Regexp {
 	return regexp.MustCompile("^(?i:CONSTRAINT)\\s+[\"`]?" + regexp.QuoteMeta(name) + "[\"`\\s]")
 }
 
-func (d *ddl) addConstraint(name string, sql string) {
+func (d *ddl) addConstraint(name, sql string) {
 	reg := compileConstraintRegexp(name)
 
 	for i := 0; i < len(d.fields); i++ {

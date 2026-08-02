@@ -25,6 +25,7 @@ const (
 	cacheNoCache = "no-cache" // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	hdrCacheControl = "Cache-Control"
 	hdrContentType = "Content-Type"
+	contentTypeHTML = "text/html"
 	pathEnvironmentsID = "/environments/{id}"
 	pathGroups = "/groups"
 	pathGroupsID = "/groups/{id}"
@@ -234,7 +235,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		if webDir != "" {
 			statusPath := filepath.Join(webDir, "status.html")
 			if _, err := os.Stat(statusPath); err == nil {
-				w.Header().Set(hdrContentType, "text/html")
+				w.Header().Set(hdrContentType, contentTypeHTML)
 				w.Header().Set(hdrCacheControl, cacheNoCache)
 				http.ServeFile(w, r, statusPath)
 				return
@@ -250,7 +251,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		if webDir != "" {
 			statusPath := filepath.Join(webDir, "status-es.html")
 			if _, err := os.Stat(statusPath); err == nil {
-				w.Header().Set(hdrContentType, "text/html")
+				w.Header().Set(hdrContentType, contentTypeHTML)
 				w.Header().Set(hdrCacheControl, cacheNoCache)
 				http.ServeFile(w, r, statusPath)
 				return
@@ -2118,7 +2119,7 @@ func registerWebUI(r chi.Router, fsys http.FileSystem) {
 		// "Unexpected Content-Type"). Real browsers always include text/html
 		// or */* in Accept; a client that names application/json and nothing
 		// else never accepted an HTML response.
-		if accept := req.Header.Get("Accept"); accept != "" && !strings.Contains(accept, "text/html") && !strings.Contains(accept, "*/*") {
+		if accept := req.Header.Get("Accept"); accept != "" && !strings.Contains(accept, contentTypeHTML) && !strings.Contains(accept, "*/*") {
 			writeJSONNotFound(w)
 			return
 		}
