@@ -1019,8 +1019,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// format), deliberately kept off the public, unauthenticated /metrics
 			// endpoint — see server/middleware/scheduler_metrics.go — since an exact
 			// tick timestamp would let an anonymous caller predict a security-relevant
-			// job's next execution to sub-second precision. Gated behind system.read
-			// like the rest of this group.
+			// job's next execution to sub-second precision. Gated behind system.write,
+			// like every other route in this group (there is no system.read tier
+			// here — see the group header comment above).
 			r.Get("/scheduler-metrics", customMiddleware.SchedulerMetricsHandler().ServeHTTP)
 
 			// Login/password-reset rate-limit counter proxy (#452 follow-up). Lets a
@@ -1034,8 +1035,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// storage.Storage primitives the local /auth/login path already uses
 			// (ADR-040) via a thin passthrough — no new policy decision is made here,
 			// the caller's own core.KeyorixCore still decides the threshold/window.
-			// Read is baseline system.read; the two mutating operations require
-			// system.write, matching every other admin-level mutation in this group.
+			// Every route here — including the count read — requires system.write;
+			// there is no separate system.read tier in this group (see the group
+			// header comment above).
 			r.Get("/login-attempts/count", authHandler.CountLoginAttemptsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/login-attempts", authHandler.RecordLoginAttemptProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/login-attempts/prune", authHandler.PruneLoginAttemptsProxy)
@@ -1051,12 +1053,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// proxy above: a thin passthrough onto storage.Storage (no invitation
 			// POLICY decision made here — the calling server's own core.KeyorixCore
 			// still decides that, exactly as it does against a local backend), reusing
-			// the SAME system.read/system.write tier rather than the project-scoped
-			// roles.assign the human-facing /projects/{id}/invitations routes use,
+			// the group's existing system.write baseline (not a system.read/
+			// system.write tier — see the group header comment above) rather than
+			// the project-scoped roles.assign the human-facing
+			// /projects/{id}/invitations routes use,
 			// since a RemoteStorage credential already needs system.write for the
-			// login-attempts proxy — no new privilege class. Read is baseline
-			// system.read; create/update require system.write, matching every other
-			// admin-level mutation in this group.
+			// login-attempts proxy — no new privilege class. Every route here,
+			// including the reads, requires system.write; there is no separate
+			// system.read tier in this group.
 			r.Get("/invitations/{id}", catalogHandler.GetInvitationProxy)
 			r.Get(pathInvitations, catalogHandler.ListInvitationsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathInvitations, catalogHandler.CreateInvitationProxy)
@@ -1082,8 +1086,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// notifications, actor resolved from THIS server's own request context)
 			// which would double-apply and misattribute to the hub's own service
 			// credential rather than the real requester/approver; see
-			// access_request_proxy.go's package doc. Reuses the SAME
-			// system.read/system.write tier as every other proxy in this group — no
+			// access_request_proxy.go's package doc. Reuses the group's existing
+			// system.write baseline (not a system.read/system.write tier — see the
+			// group header comment above) as every other proxy in this group — no
 			// new privilege class. UpdateAccessRequestProxy inherits
 			// local_invitations.go's conditional `WHERE id = ? AND state =
 			// 'pending'` write verbatim, and CreateAccessRequestApprovalProxy
@@ -1092,9 +1097,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// atomicity analysis (every method already resolves in one
 			// storage.Storage call server-side, so proxying it as one HTTP round
 			// trip preserves the #277 approve/reject/withdraw race guarantee
-			// unchanged). Read is baseline system.read; create/update require
-			// system.write, matching every other admin-level mutation in this
-			// group.
+			// unchanged). Every route here, reads included, requires system.write;
+			// there is no separate system.read tier in this group.
 			r.Get("/access-requests/{id}", catalogHandler.GetAccessRequestProxy)
 			r.Get("/access-requests", catalogHandler.ListAccessRequestsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-requests", catalogHandler.CreateAccessRequestProxy)
@@ -1117,8 +1121,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// POLICY decision — admin-authority checks, TTL/lease-count clamping, the
 			// admin-DSN/credential encrypt-decrypt — is made here; that stays
 			// entirely in the CALLING server's own core.KeyorixCore, exactly as it
-			// does against a local backend), reusing the SAME system.read/
-			// system.write tier — no new privilege class. See
+			// does against a local backend), reusing the SAME system.write baseline
+			// (not a system.read/system.write tier — see the group header comment
+			// above) — no new privilege class. See
 			// dynamic_secrets_proxy.go's package doc for why the admin-DSN/
 			// credential ciphertext crossing this boundary is safe (it is already
 			// opaque ciphertext by the time it reaches here, encrypted with the
@@ -1153,12 +1158,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// validation, audit-log events, the escalation-by-proxy admin ceilings —
 			// is made here; that stays entirely in the CALLING server's own
 			// internal/core.KeyorixCore, exactly as it does against a local backend),
-			// reusing the SAME system.read/system.write tier rather than the
-			// users.write/roles.assign the human-facing /groups routes use, since a
+			// reusing the group's existing system.write baseline (not a
+			// system.read/system.write tier — see the group header comment above)
+			// rather than the users.write/roles.assign the human-facing /groups
+			// routes use, since a
 			// RemoteStorage credential already needs system.write for the two proxies
-			// above — no new privilege class. Read is baseline system.read;
-			// create/update/delete/restore/membership-mutation require system.write,
-			// matching every other admin-level mutation in this group. The static
+			// above — no new privilege class. Every route here, reads included,
+			// requires system.write; there is no separate system.read tier in this
+			// group. The static
 			// "/page" and "/members-by-ids" routes are registered ahead of "/{id}" so
 			// chi's router (which prefers a static path segment over a wildcard at the
 			// same position) never mistakes either literal segment for a group ID.
@@ -1198,11 +1205,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// legality, role-grant authorization, token issuance/hashing, OIDC
 			// federation policy — is made here; that stays entirely in the CALLING
 			// server's own internal/core.KeyorixCore, exactly as it does against a
-			// local backend), reusing the SAME system.read/system.write tier rather
-			// than the project-scoped roles.assign the human-facing
+			// local backend), reusing the group's existing system.write baseline
+			// (not a system.read/system.write tier — see the group header comment
+			// above) rather than the project-scoped roles.assign the human-facing
 			// /projects/{id}/machine-identities routes use — no new privilege class.
-			// Read is baseline system.read; every mutating operation requires
-			// system.write, matching every other admin-level mutation in this group.
+			// Every route here, reads included, requires system.write; there is no
+			// separate system.read tier in this group.
 			//
 			// TransitionMachineIdentityState is a dedicated conditional-write route
 			// (NOT a generic Update), preserving #388's "revoked is terminal"
@@ -1257,10 +1265,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// the invitations proxy above: a thin passthrough onto storage.Storage (no
 			// setup-token POLICY decision made here — the calling server's own
 			// core.KeyorixCore still decides that), reusing the SAME
-			// system.read/system.write tier — no new privilege class. Read is baseline
-			// system.read; every mutating operation (including the single-use
-			// consume) requires system.write, matching every other admin-level
-			// mutation in this group.
+			// system.write baseline (not a system.read/system.write tier — see the
+			// group header comment above) — no new privilege class. Every route
+			// here, including the reads, requires system.write; there is no
+			// separate system.read tier in this group.
 			r.Get("/setup-tokens/by-hash/{hash}", authHandler.GetSetupTokenByHashProxy)
 			r.Get("/setup-tokens/count", authHandler.CountSetupTokensSinceProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
@@ -1282,9 +1290,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// decision — role resolution, prefix/glob matching, expiry — made here;
 			// that stays entirely in the CALLING server's own core.KeyorixCore, exactly
 			// as it does against a local backend), reusing the SAME
-			// system.read/system.write tier — no new privilege class. Read is baseline
-			// system.read; create/delete require system.write, matching every other
-			// admin-level mutation in this group.
+			// system.write baseline (not a system.read/system.write tier — see the
+			// group header comment above) — no new privilege class. Every route
+			// here, reads included, requires system.write; there is no separate
+			// system.read tier in this group.
 			r.Get("/connect-grants/by-connector/{connector}", authHandler.ListConnectRefGrantsByConnectorProxy)
 			r.Get("/connect-grants", authHandler.ListConnectRefGrantsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
@@ -1300,9 +1309,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Exactly the same pattern as the setup-token proxy above: a thin
 			// passthrough onto storage.Storage (no SSO policy decision made here —
 			// the calling server's own core.KeyorixCore still decides that), reusing
-			// the SAME system.read/system.write tier — no new privilege class. Both
-			// create and the single-use consume are mutations and require
-			// system.write.
+			// the group's existing system.write baseline (not a system.read/
+			// system.write tier — see the group header comment above) — no new
+			// privilege class. Both create and the single-use consume are
+			// mutations and require system.write.
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
 
@@ -1322,8 +1332,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// calling server's own core.KeyorixCore still decides which state a new
 			// invite starts in, which transitions are legal, and when the backing role
 			// grant is applied/reverted, exactly as it does against a local backend),
-			// reusing the SAME system.read/system.write tier — no new privilege class.
-			// Static literal segments ("active", "stale", "counts", "by-user/{userID}")
+			// reusing the group's existing system.write baseline (not a
+			// system.read/system.write tier — see the group header comment above)
+			// — no new privilege class. Static literal segments ("active",
+			// "stale", "counts", "by-user/{userID}")
 			// take priority over the "{id}" wildcard at the same route depth (chi's
 			// router always matches a static child before a param child), so they
 			// coexist safely regardless of registration order.
@@ -1351,8 +1363,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// dependency-graph POLICY decision — same-project/same-environment
 			// scoping, audit logging — is made here; that stays entirely in the
 			// CALLING server's own internal/core.KeyorixCore, exactly as it does
-			// against a local backend), reusing the SAME system.read/system.write
-			// tier — no new privilege class. The ONE exception is
+			// against a local backend), reusing the SAME system.write baseline
+			// (not a system.read/system.write tier — see the group header comment
+			// above) — no new privilege class. The ONE exception is
 			// CreateSecretDependencyExclusiveProxy: it DOES evaluate the
 			// duplicate/cycle invariant server-side, because no real transaction can
 			// span this HTTP hop (RemoteStorage.WithTransaction is a no-op
@@ -1384,8 +1397,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// state are not secret, so this is an ordinary CRUD passthrough — no
 			// WebAuthn ceremony/ownership/reauth POLICY decision is made here; that
 			// stays entirely in the CALLING server's own internal/core.KeyorixCore,
-			// exactly as it does against a local backend. Reuses the SAME
-			// system.read/system.write tier — no new privilege class. See
+			// exactly as it does against a local backend. Reuses the group's
+			// existing system.write baseline (not a system.read/system.write tier
+			// — see the group header comment above) — no new privilege class. See
 			// webauthn_proxy.go's package doc for the signature-counter race fix:
 			// AdvanceWebAuthnCredentialCounter is the one route here that performs
 			// a full locked compare-and-swap in a single request rather than a
@@ -1418,8 +1432,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// failure threshold, the exponential cooldown, WHEN to trip or clear — is made
 			// here; that stays entirely in the CALLING server's own
 			// internal/core.KeyorixCore, exactly as it does against a local backend),
-			// reusing the SAME system.read/system.write tier — no new privilege class.
-			// This is a single unconditional column UPDATE, not a compare-and-swap (see
+			// reusing the group's existing system.write baseline (not a
+			// system.read/system.write tier — see the group header comment above)
+			// — no new privilege class. This is a single unconditional column
+			// UPDATE, not a compare-and-swap (see
 			// login_lockout_proxy.go's package doc for the atomicity analysis): every
 			// caller already computes the final values itself under its own
 			// LockUserForUpdate + WithTransaction + per-user mutex-shard serialization, so
@@ -1443,8 +1459,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// placement gate, the placer-or-admin-tier lift gate, the required-reason
 			// validation, the audit events — is made here; that stays entirely in the
 			// CALLING server's own internal/core.KeyorixCore, exactly as it does
-			// against a local backend), reusing the SAME system.read/system.write
-			// tier — no new privilege class. There is no competing GET "{id}" route
+			// against a local backend), reusing the SAME system.write baseline
+			// (not a system.read/system.write tier — see the group header comment
+			// above) — no new privilege class. There is no competing GET "{id}" route
 			// at this depth (unlike groups/project-memberships, this subsystem has
 			// only ever one active row, looked up by "active" rather than by ID), so
 			// route registration order here is purely cosmetic.
@@ -1471,12 +1488,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// revoking the underlying grant on a "revoke" decision — is made
 			// here; that stays entirely in the CALLING server's own
 			// internal/core.KeyorixCore, exactly as it does against a local
-			// backend), reusing the SAME system.read/system.write tier rather
-			// than the project-scoped roles.read/roles.assign the human-facing
+			// backend), reusing the group's existing system.write baseline (not a
+			// system.read/system.write tier — see the group header comment above)
+			// rather than the project-scoped roles.read/roles.assign the
+			// human-facing
 			// /projects/{id}/access-review/campaigns routes use — no new
-			// privilege class. Read is baseline system.read; create/update
-			// require system.write, matching every other admin-level mutation
-			// in this group. Static sub-paths ("open", "latest-closed",
+			// privilege class. Every route here, reads included, requires
+			// system.write; there is no separate system.read tier in this group.
+			// Static sub-paths ("open", "latest-closed",
 			// "items/{itemID}", "items/pending-count") are registered ahead of
 			// the "/{id}" wildcard, the same static-vs-wildcard precedence
 			// project-memberships' "active"/"stale"/"counts"/"by-user" above
@@ -1511,14 +1530,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// project-affiliation, emergency-role containment, TTL clamping, the
 			// actual JIT role grant — is made here; that stays entirely in the
 			// CALLING server's own internal/core.KeyorixCore, exactly as it does
-			// against a local backend), reusing the SAME system.read/system.write
-			// tier — no new privilege class. Critically, CreateBreakGlassActivationProxy
+			// against a local backend), reusing the SAME system.write baseline
+			// (not a system.read/system.write tier — see the group header comment
+			// above) — no new privilege class. Critically, CreateBreakGlassActivationProxy
 			// and RevokeBreakGlassActivationProxy call storage.Storage's own
 			// unique-index-backed create and conditional `WHERE state = 'active'`
 			// update DIRECTLY (see break_glass_proxy.go's package doc), preserving
 			// the #104/PR #670 concurrent-activation race fix across this HTTP hop.
-			// Read is baseline system.read; create/update/revoke require
-			// system.write, matching every other admin-level mutation in this group.
+			// Every route here, reads included, requires system.write; there is no
+			// separate system.read tier in this group.
 			r.Get("/break-glass/{id}", catalogHandler.GetBreakGlassActivationProxy)
 			r.Get("/break-glass", catalogHandler.ListBreakGlassActivationsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
@@ -1539,8 +1559,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// effective-status computation from the revoked flag + expiry — is made
 			// here; that stays entirely in the CALLING server's own
 			// internal/core.KeyorixCore, exactly as it does against a local
-			// backend), reusing the SAME system.read/system.write tier rather than
-			// the audit.read the human-facing /risk-exceptions routes use, since a
+			// backend), reusing the group's existing system.write baseline (not a
+			// system.read/system.write tier — see the group header comment above)
+			// rather than the audit.read the human-facing /risk-exceptions routes
+			// use, since a
 			// RemoteStorage credential already needs system.write for the
 			// project-memberships proxy above — no new privilege class.
 			r.Get(pathRiskExceptionsID, dashboardHandler.GetRiskExceptionProxy)
@@ -1561,12 +1583,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// decision — name/permission-pair validation, the audit-log event, the
 			// violation-detection scan itself — is made here; that stays entirely in
 			// the CALLING server's own internal/core.KeyorixCore, exactly as it does
-			// against a local backend), reusing the SAME system.read/system.write
-			// tier rather than the human-facing /sod/policies routes' calibration,
+			// against a local backend), reusing the SAME system.write baseline
+			// (not a system.read/system.write tier — see the group header comment
+			// above) rather than the human-facing /sod/policies routes' calibration,
 			// since a RemoteStorage credential already needs system.write for the
-			// proxies above — no new privilege class. Read is baseline system.read;
-			// create/delete require system.write, matching every other admin-level
-			// mutation in this group.
+			// proxies above — no new privilege class. Every route here, reads
+			// included, requires system.write; there is no separate system.read
+			// tier in this group.
 			r.Get("/sod-policies/{id}", catalogHandler.GetSoDPolicyProxy)
 			r.Get("/sod-policies", catalogHandler.ListSoDPoliciesProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
@@ -1589,16 +1612,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// storage.Storage (no retention POLICY decision — which window applies, the
 			// legal-hold guard, which rows are "in flight" and excluded — is made here;
 			// that stays entirely in the CALLING server's own internal/core.KeyorixCore,
-			// exactly as it does against a local backend), reusing the SAME
-			// system.read/system.write tier — no new privilege class. See
+			// exactly as it does against a local backend), reusing the group's
+			// existing system.write baseline (not a system.read/system.write tier
+			// — see the group header comment above) — no new privilege class. See
 			// retention_proxy.go's package doc for the atomicity analysis (every method
 			// already resolves in one storage.Storage call server-side, so proxying it
 			// as one HTTP round trip preserves whatever transactional guarantee the local
 			// implementation has) and for why DeleteExpiredRoleGrants/
 			// DeleteExpiredShareRecords return the removed rows rather than a bare count
 			// (their callers write one audit-log entry per removed row). Every route here
-			// is destructive except the one List, gated system.read; every mutating
-			// route requires system.write.
+			// is destructive except the one List, which also requires system.write
+			// (there is no separate system.read tier in this group) — every
+			// mutating route requires it too.
 			r.Get("/retention/users/stale", userHandler.ListUsersInStateBeforeProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/anomaly-alerts/purge", auditHandler.DeleteAnomalyAlertsBeforeProxy)
@@ -1614,9 +1639,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Misc storage-primitive proxies (finding #531 — four independent,
 			// unrelated small gaps grouped by similar low-to-moderate severity;
 			// see server/http/handlers/misc_remote_proxy.go's package doc for the
-			// full per-item detail). Every route here reuses the SAME
-			// system.read/system.write tier every other proxy above already
-			// needs — no new privilege class.
+			// full per-item detail). Every route here reuses the group's existing
+			// system.write baseline (not a system.read/system.write tier — see the
+			// group header comment above) every other proxy above already needs —
+			// no new privilege class.
 			//
 			// Dormant-access activity lookup: lets a downstream Keyorix server
 			// booted with storage.type: remote (ADR-049) proxy
@@ -1628,7 +1654,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// gracefully on a lookup failure, so this was a missing detective
 			// signal rather than an outage — but the dormant-access/dormant-
 			// role-grant signal was never available at all under storage.type:
-			// remote before this fix. Reads only, gated system.read.
+			// remote before this fix. Reads only; system.write like every route
+			// in this group (there is no separate system.read tier here).
 			r.Get("/access-activity/secret", userHandler.LastUserSecretActivityProxy)
 			r.Get("/access-activity/role-management", userHandler.LastUserRoleManagementActivityProxy)
 			r.Get("/access-activity/secret-deletion", userHandler.LastUserSecretDeletionActivityProxy)
@@ -1642,14 +1669,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// server/middleware/auth.go) hard-failed on this stub, so every
 			// restore request 404'd before ever reaching the
 			// already-correctly-proxied RestoreSecret. A read, gated
-			// system.read.
+			// system.write like every other route in this group (there is no
+			// separate system.read tier here).
 			r.Get("/secrets/{id}/including-deleted", secretHandler.GetSecretIncludingDeletedProxy)
 
 			// ListSharesByOwner: lets a downstream server proxy the "shares I
 			// created" query to THIS server's real storage backend. Before this
 			// fix, core.ListSharesByUser (backing the gRPC "list my shares"
 			// call) hard-failed with no fallback, unlike the graceful-degrade
-			// access-activity gaps above. A read, gated system.read.
+			// access-activity gaps above. A read, gated system.write like every
+			// other route in this group (there is no separate system.read tier
+			// here).
 			r.Get("/shares/by-owner/{ownerID}", shareHandler.ListSharesByOwnerProxy)
 
 			// ListSharesByUser: the "shares I received" half of the same
@@ -1659,7 +1689,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// received shares" endpoint (GET /api/v1/shares only resolves the
 			// CALLER's own ID from auth context, not a path parameter) — so
 			// this was a 404, not a stub, and slipped past the completeness
-			// guard for that reason. A read, gated system.read.
+			// guard for that reason. A read, gated system.write like every other
+			// route in this group (there is no separate system.read tier here).
 			r.Get("/shares/by-user/{userID}", shareHandler.ListSharesByUserProxy)
 
 			// CreateUserWithRoleGrants: the ONE atomic primitive in this group —
@@ -1688,8 +1719,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// POLICY decision — the escalation-by-proxy ceiling checks,
 			// separation-of-duties, audit-log writes — is made here; that stays
 			// entirely in the CALLING server's own internal/core.KeyorixCore,
-			// exactly as it does against a local backend), reusing the SAME
-			// system.read/system.write tier — no new privilege class.
+			// exactly as it does against a local backend), reusing the group's
+			// existing system.write baseline (not a system.read/system.write tier
+			// — see the group header comment above) — no new privilege class.
 			//
 			// RemoveGlobalAdminRoleGuardedProxy is the ONE exception: it DOES
 			// evaluate the last-global-admin invariant server-side, because no
@@ -1733,8 +1765,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// storage.Storage (no MFA POLICY decision — the re-auth gate, recovery-code
 			// generation/hashing, post-activation session invalidation — is made here;
 			// that stays entirely in the CALLING server's own internal/core.KeyorixCore,
-			// exactly as it does against a local backend), reusing the SAME
-			// system.read/system.write tier — no new privilege class. See
+			// exactly as it does against a local backend), reusing the group's
+			// existing system.write baseline (not a system.read/system.write tier
+			// — see the group header comment above) — no new privilege class. See
 			// mfa_management_proxy.go's package doc for the atomicity analysis: every
 			// route here resolves in ONE storage.Storage call server-side (including
 			// DeleteMFAForUserProxy, which inherits local_mfa.go's own internal
@@ -1781,10 +1814,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// lease revocation, audit-log events, the requireAuthorityToReinstateProjectRoles
 			// admin-ceiling check on restore — is made here; that stays entirely in the
 			// CALLING server's own internal/core.KeyorixCore, exactly as it does against
-			// a local backend), reusing the SAME system.read/system.write tier rather
-			// than the project-scoped secrets.read/write/roles.assign the human-facing
-			// /projects and /environments routes use — no new privilege class. Read is
-			// baseline system.read; every mutating operation requires system.write.
+			// a local backend), reusing the group's existing system.write baseline
+			// (not a system.read/system.write tier — see the group header comment
+			// above) rather than the project-scoped secrets.read/write/roles.assign
+			// the human-facing
+			// /projects and /environments routes use — no new privilege class. Every
+			// route here, reads included, requires system.write; there is no
+			// separate system.read tier in this group.
 			//
 			// CreateProject/CreateEnvironment remain deliberately unsupported here (no
 			// route registered) — see internal/storage/store/remote_rbac.go's Project/
@@ -1839,8 +1875,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// made here; that stays entirely in the CALLING server's own
 			// RemoteStorage.WithSchedulerLock, exactly as LocalStorage.
 			// WithSchedulerLock decides it against a local backend), reusing the
-			// SAME system.read/system.write tier — no new privilege class. BOTH
-			// routes are mutations (acquiring or releasing a lock changes state)
+			// group's existing system.write baseline (not a system.read/
+			// system.write tier — see the group header comment above) — no new
+			// privilege class. BOTH routes are mutations (acquiring or releasing a
+			// lock changes state)
 			// and require system.write; there is no read-only variant. See
 			// scheduler_lock_proxy.go's package doc for the atomicity analysis:
 			// each route performs its ENTIRE conditional decision inside ONE
