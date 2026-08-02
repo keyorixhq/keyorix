@@ -390,6 +390,26 @@ paths:
       responses:
         '200': {description: 'Runtime, HTTP, database, and secrets metrics'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/system/auth-config:
+    get:
+      tags: [System]
+      summary: Authentication configuration (requires system.read)
+      description: Return session, password policy, login lockout, MFA, WebAuthn, and SSO provider settings (secrets redacted).
+      operationId: getAuthConfig
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'Authentication configuration summary'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/system/encryption-config:
+    get:
+      tags: [System]
+      summary: Encryption configuration (requires system.read)
+      description: Return whether encryption is enabled and the key-provider type (key material locations redacted).
+      operationId: getEncryptionConfig
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'Encryption configuration summary'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/projects:
     get:
       tags: [Projects]
