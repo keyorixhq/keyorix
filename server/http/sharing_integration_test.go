@@ -50,6 +50,7 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 		&models.SecretAccessLog{},
 		&models.SecretMetadataHistory{},
 		&models.ShareRecord{},
+		&models.SecretACL{},
 		&models.Session{},
 		&models.PasswordReset{},
 		&models.Tag{},
@@ -103,6 +104,12 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer", Description: "Reader"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2}).Error)
+	// Also grant it scoped to project 1: ShareSecret rejects a non-group share to a
+	// recipient who isn't a member of the secret's project (sharing.go's
+	// IsProjectMember gate), and IsProjectMember only counts a project-scoped role
+	// grant (UserRole.ProjectID), not the global grant above. Without this, every
+	// "Share Secret" step below fails with "permission denied".
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error)
 
 	// Seed sessions for "valid-token" and "owner-token" (user 1, admin), "recipient-token" (user 2, reader).
 	seedSession(t, db, 1, "valid-token")
@@ -202,7 +209,10 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = resp.Body.Close() }()
 
-			assert.Equal(t, http.StatusCreated, resp.StatusCode)
+			// require, not assert: a wrong status code here means the rest of this
+			// block's unchecked type assertions on the response body would panic
+			// and crash the whole test binary instead of failing this one subtest.
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 			var response map[string]interface{}
 			err = json.NewDecoder(resp.Body).Decode(&response)
@@ -233,7 +243,9 @@ func TestSharingHTTPIntegration(t *testing.T) {
 
 			data := response["data"].(map[string]interface{})
 			shares := data["shares"].([]interface{})
-			assert.Len(t, shares, 1)
+			// require, not assert: shares[0] just below would panic on an empty
+			// slice instead of failing this subtest cleanly.
+			require.Len(t, shares, 1)
 
 			share := shares[0].(map[string]interface{})
 			assert.Equal(t, float64(shareID), share["ID"])
