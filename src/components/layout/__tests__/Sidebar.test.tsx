@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
-import { Sidebar, type SidebarProps } from '../Sidebar';
+import { Sidebar, Leaf, type SidebarProps } from '../Sidebar';
 import { useAuth } from '../../../features/auth';
 
 vi.mock('../../../features/auth', () => ({
@@ -172,11 +172,20 @@ describe('Sidebar', () => {
     });
 
     it('renders a "soon" leaf as a disabled-style link that neither navigates nor closes the sidebar', () => {
-        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
+        // Tested against a synthetic Leaf item rather than a real NAV entry —
+        // every NAV leaf has shipped at this point, and coupling this test to
+        // "whatever happens to still be soon today" broke it twice already as
+        // placeholders were built out.
         const onClose = vi.fn();
-        renderSidebar({ onClose });
+        render(
+            <Leaf
+                item={{ kind: 'leaf', name: 'Test Feature', href: '/test-feature', soon: true }}
+                isActive={() => false}
+                onClose={onClose}
+            />
+        );
 
-        const soonLink = screen.getByRole('link', { name: /Authentication/ });
+        const soonLink = screen.getByRole('link', { name: /Test Feature/ });
         expect(soonLink).toHaveClass('cursor-default');
         expect(within(soonLink).getByText('Soon')).toBeInTheDocument();
 
@@ -207,6 +216,34 @@ describe('Sidebar', () => {
 
         expect(screen.queryByRole('link', { name: 'System Health' })).not.toBeInTheDocument();
         // unaffected sibling leaf in the same, non-admin-gated group
+        expect(screen.getByRole('link', { name: 'Appearance' })).toBeInTheDocument();
+    });
+
+    it('shows Authentication for an admin and hides it for a non-admin', () => {
+        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
+        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
+        const { rerender } = renderSidebar();
+
+        expect(screen.getByRole('link', { name: 'Authentication' })).toHaveAttribute('href', '/settings/auth');
+
+        mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
+        rerender(<Sidebar isOpen={true} onClose={vi.fn()} />);
+
+        expect(screen.queryByRole('link', { name: 'Authentication' })).not.toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Appearance' })).toBeInTheDocument();
+    });
+
+    it('shows Encryption & Keys for an admin and hides it for a non-admin', () => {
+        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
+        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
+        const { rerender } = renderSidebar();
+
+        expect(screen.getByRole('link', { name: 'Encryption & Keys' })).toHaveAttribute('href', '/settings/encryption');
+
+        mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
+        rerender(<Sidebar isOpen={true} onClose={vi.fn()} />);
+
+        expect(screen.queryByRole('link', { name: 'Encryption & Keys' })).not.toBeInTheDocument();
         expect(screen.getByRole('link', { name: 'Appearance' })).toBeInTheDocument();
     });
 

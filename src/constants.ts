@@ -90,6 +90,8 @@ export const ROUTES = {
     COMPLIANCE: '/compliance',
     CONNECT: '/integrations/connect',
     SDKS_CLI: '/integrations/sdks',
+    SETTINGS_AUTH: '/settings/auth',
+    SETTINGS_ENCRYPTION: '/settings/encryption',
     SETTINGS_HEALTH: '/settings/health',
     ROADMAP: '/roadmap',
 } as const;

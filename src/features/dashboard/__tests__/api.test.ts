@@ -4,7 +4,9 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('../../../services/dashboard', () => ({ dashboardApi: { getStats: vi.fn(), getActivity: vi.fn() } }));
-vi.mock('../../../services/system', () => ({ systemApi: { getInfo: vi.fn(), getMetrics: vi.fn() } }));
+vi.mock('../../../services/system', () => ({
+    systemApi: { getInfo: vi.fn(), getMetrics: vi.fn(), getAuthConfig: vi.fn(), getEncryptionConfig: vi.fn() },
+}));
 vi.mock('../../../services/audit', () => ({
     auditApi: { getAnomalyAlerts: vi.fn(), acknowledgeAnomalyAlert: vi.fn() },
 }));
@@ -21,6 +23,8 @@ import {
     useDashboardActivity,
     useSystemInfo,
     useSystemMetrics,
+    useAuthConfig,
+    useEncryptionConfig,
     useAnomalyAlerts,
     useAcknowledgeAnomaly,
     useUsers,
@@ -33,7 +37,12 @@ const mockDashboard = dashboardApi as unknown as {
     getStats: ReturnType<typeof vi.fn>;
     getActivity: ReturnType<typeof vi.fn>;
 };
-const mockSystem = systemApi as unknown as { getInfo: ReturnType<typeof vi.fn>; getMetrics: ReturnType<typeof vi.fn> };
+const mockSystem = systemApi as unknown as {
+    getInfo: ReturnType<typeof vi.fn>;
+    getMetrics: ReturnType<typeof vi.fn>;
+    getAuthConfig: ReturnType<typeof vi.fn>;
+    getEncryptionConfig: ReturnType<typeof vi.fn>;
+};
 const mockAudit = auditApi as unknown as {
     getAnomalyAlerts: ReturnType<typeof vi.fn>;
     acknowledgeAnomalyAlert: ReturnType<typeof vi.fn>;
@@ -83,6 +92,22 @@ describe('useSystemInfo / useSystemMetrics', () => {
         const { result } = renderHook(() => useSystemMetrics(), { wrapper: createWrapper().wrapper });
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
         expect(result.current.data).toEqual({ uptime_seconds: 42 });
+    });
+});
+
+describe('useAuthConfig / useEncryptionConfig', () => {
+    it('fetches auth config', async () => {
+        mockSystem.getAuthConfig.mockResolvedValueOnce({ require_mfa: true });
+        const { result } = renderHook(() => useAuthConfig(), { wrapper: createWrapper().wrapper });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.data).toEqual({ require_mfa: true });
+    });
+
+    it('fetches encryption config', async () => {
+        mockSystem.getEncryptionConfig.mockResolvedValueOnce({ enabled: true });
+        const { result } = renderHook(() => useEncryptionConfig(), { wrapper: createWrapper().wrapper });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(result.current.data).toEqual({ enabled: true });
     });
 });
 

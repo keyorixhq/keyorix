@@ -109,6 +109,77 @@ export interface SystemMetrics {
     timestamp: string;
 }
 
+// Mirrors server/http/handlers/settings.go's AuthConfigResponse and its
+// nested types — a read-only, already-redacted summary (no client secrets,
+// no SAML metadata, no OIDC issuer/client details).
+export interface SessionSummary {
+    access_ttl: string;
+    absolute_ttl: string;
+}
+
+export interface PasswordPolicySummary {
+    min_length: number;
+    require_uppercase: boolean;
+    require_lowercase: boolean;
+    require_digit: boolean;
+    require_special: boolean;
+    reject_personal_info: boolean;
+    reject_common_passwords: boolean;
+    history_count: number;
+    max_age_days: number;
+}
+
+export interface LoginLockoutSummary {
+    enabled: boolean;
+    max_attempts: number;
+    window: string;
+    base_cooldown: string;
+    max_cooldown: string;
+}
+
+export interface WebAuthnSummary {
+    enabled: boolean;
+    rp_id: string;
+    rp_display_name: string;
+    rp_origins: string[];
+}
+
+export interface SSOProviderSummary {
+    name: string;
+    type: string;
+    auto_provision: boolean;
+    group_sync: boolean;
+}
+
+export interface SSOSummary {
+    enabled: boolean;
+    providers: SSOProviderSummary[];
+}
+
+export interface AuthConfigResponse {
+    session: SessionSummary;
+    password_policy: PasswordPolicySummary;
+    login_lockout: LoginLockoutSummary;
+    require_mfa: boolean;
+    webauthn: WebAuthnSummary;
+    sso: SSOSummary;
+}
+
+// Mirrors server/http/handlers/settings.go's EncryptionConfigResponse — the
+// KEK provider's file paths, exec commands, env var names, and KMS key IDs
+// are deliberately never returned by the server, so there's nothing for the
+// frontend to accidentally leak either.
+export interface KeyProviderSummary {
+    type: string;
+    shamir_commitment?: string;
+    fallback_count: number;
+}
+
+export interface EncryptionConfigResponse {
+    enabled: boolean;
+    key_provider: KeyProviderSummary;
+}
+
 export const systemApi = {
     async getInfo(): Promise<SystemInfo> {
         const response = await apiClient.get<ApiResponse<SystemInfo>>('/api/v1/system/info');
@@ -117,6 +188,16 @@ export const systemApi = {
 
     async getMetrics(): Promise<SystemMetrics> {
         const response = await apiClient.get<ApiResponse<SystemMetrics>>('/api/v1/system/metrics');
+        return response.data.data;
+    },
+
+    async getAuthConfig(): Promise<AuthConfigResponse> {
+        const response = await apiClient.get<ApiResponse<AuthConfigResponse>>('/api/v1/system/auth-config');
+        return response.data.data;
+    },
+
+    async getEncryptionConfig(): Promise<EncryptionConfigResponse> {
+        const response = await apiClient.get<ApiResponse<EncryptionConfigResponse>>('/api/v1/system/encryption-config');
         return response.data.data;
     },
 };

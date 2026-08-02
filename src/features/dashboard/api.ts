@@ -47,6 +47,22 @@ export const useSystemMetrics = () => {
     });
 };
 
+export const useAuthConfig = () => {
+    return useQuery({
+        queryKey: ['authConfig'],
+        queryFn: () => systemApi.getAuthConfig(),
+        staleTime: 5 * 60 * 1000,
+    });
+};
+
+export const useEncryptionConfig = () => {
+    return useQuery({
+        queryKey: ['encryptionConfig'],
+        queryFn: () => systemApi.getEncryptionConfig(),
+        staleTime: 5 * 60 * 1000,
+    });
+};
+
 // ── Anomaly alerts ─────────────────────────────────────────────────────────
 
 export const useAnomalyAlerts = (unacknowledgedOnly = true) => {

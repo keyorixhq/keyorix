@@ -82,6 +82,12 @@ const AppearancePage = React.lazy(() =>
 const SystemHealthPage = React.lazy(() =>
     import('./pages/settings/SystemHealthPage').then((m) => ({ default: m.SystemHealthPage }))
 );
+const AuthenticationPage = React.lazy(() =>
+    import('./pages/settings/AuthenticationPage').then((m) => ({ default: m.AuthenticationPage }))
+);
+const EncryptionPage = React.lazy(() =>
+    import('./pages/settings/EncryptionPage').then((m) => ({ default: m.EncryptionPage }))
+);
 const CompliancePage = React.lazy(() =>
     import('./pages/compliance/CompliancePage').then((m) => ({ default: m.CompliancePage }))
 );
@@ -217,6 +223,22 @@ function App() {
                                                     element={
                                                         <AdminRoute>
                                                             <SystemHealthPage />
+                                                        </AdminRoute>
+                                                    }
+                                                />
+                                                <Route
+                                                    path={ROUTES.SETTINGS_AUTH}
+                                                    element={
+                                                        <AdminRoute>
+                                                            <AuthenticationPage />
+                                                        </AdminRoute>
+                                                    }
+                                                />
+                                                <Route
+                                                    path={ROUTES.SETTINGS_ENCRYPTION}
+                                                    element={
+                                                        <AdminRoute>
+                                                            <EncryptionPage />
                                                         </AdminRoute>
                                                     }
                                                 />

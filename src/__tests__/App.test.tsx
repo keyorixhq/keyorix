@@ -44,6 +44,8 @@ vi.mock('../pages/admin/NotificationChannelsPage', () => ({
 }));
 vi.mock('../pages/settings/AppearancePage', () => ({ AppearancePage: () => <div>Appearance</div> }));
 vi.mock('../pages/settings/SystemHealthPage', () => ({ SystemHealthPage: () => <div>System Health</div> }));
+vi.mock('../pages/settings/AuthenticationPage', () => ({ AuthenticationPage: () => <div>Authentication</div> }));
+vi.mock('../pages/settings/EncryptionPage', () => ({ EncryptionPage: () => <div>Encryption & Keys</div> }));
 vi.mock('../pages/compliance/CompliancePage', () => ({ CompliancePage: () => <div>Compliance</div> }));
 vi.mock('../pages/integrations/KeyorixConnectPage', () => ({
     KeyorixConnectPage: () => <div>Keyorix Connect</div>,
@@ -237,6 +239,30 @@ describe('App', () => {
         it('redirects a non-admin to the dashboard from /settings/health', async () => {
             setAuth({ isAuthenticated: true, user: { role: 'user' } });
             renderAt('/settings/health');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
+        });
+
+        it('renders /settings/auth for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/settings/auth');
+            expect(await screen.findByText('Authentication')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /settings/auth', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/settings/auth');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
+        });
+
+        it('renders /settings/encryption for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/settings/encryption');
+            expect(await screen.findByText('Encryption & Keys')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /settings/encryption', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/settings/encryption');
             expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
         });
     });

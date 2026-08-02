@@ -27,7 +27,7 @@ export interface SidebarProps {
     className?: string;
 }
 
-interface NavLeaf {
+export interface NavLeaf {
     kind: 'leaf';
     name: string;
     href: string;
@@ -131,8 +131,8 @@ const NAV: NavItem[] = [
         icon: Cog6ToothIcon,
         children: [
             { kind: 'leaf', name: 'Appearance', href: '/settings/appearance' },
-            { kind: 'leaf', name: 'Authentication', href: '/settings/auth', soon: true },
-            { kind: 'leaf', name: 'Encryption & Keys', href: '/settings/encryption', soon: true },
+            { kind: 'leaf', name: 'Authentication', href: '/settings/auth', adminOnly: true },
+            { kind: 'leaf', name: 'Encryption & Keys', href: '/settings/encryption', adminOnly: true },
             { kind: 'leaf', name: 'System Health', href: '/settings/health', adminOnly: true },
         ],
     },
@@ -146,7 +146,7 @@ interface LeafProps {
     onClose: () => void;
 }
 
-const Leaf: React.FC<LeafProps> = ({ item, indent, isActive, onClose }) => {
+export const Leaf: React.FC<LeafProps> = ({ item, indent, isActive, onClose }) => {
     const active = isActive(item.href);
     const leafColor = item.soon ? 'var(--text-muted)' : 'var(--text-secondary)';
     const color = active ? 'var(--accent-text)' : leafColor;
