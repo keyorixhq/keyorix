@@ -6,12 +6,15 @@ on:
   pull_request:
     branches: [main]
 
-# Workflow-level default: read-only. No job here writes to the repo, comments on
-# PRs, or publishes anything — a compromised dependency/action in any step gets
-# the narrowest possible GITHUB_TOKEN rather than the (potentially read/write)
-# repo default (#115).
-permissions:
-  contents: read
+# Workflow-level default: zero permissions. No job here writes to the repo,
+# comments on PRs, or publishes anything — a compromised dependency/action in
+# any step gets the narrowest possible GITHUB_TOKEN rather than the
+# (potentially read/write) repo default (#115). Each job below grants exactly
+# the permissions it needs (contents: read to check out code, plus whatever
+# extra scope a specific job requires) rather than inheriting a workflow-wide
+# default -- SonarCloud's least-privilege rule for GitHub Actions permissions
+# flags a blanket workflow-level grant even when it's already read-only.
+permissions: {}
 
 env:
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
@@ -34,6 +37,55 @@ env:
   COVERAGE_FLOOR: '80'
 
 jobs:
+  # Detects PR changes that touch nothing but *.md/docs/** (a "docs-only" PR).
+  # Every code-verification job below (preflight, test-suite, static-analysis,
+  # lint, licenses, operator, helm-*, openapi-lint, fuzz-targets, and the
+  # build-and-test aggregator) is gated on `docs_only != 'true'` -- go tests,
+  # go lint, Helm charts, dependency licenses, and the operator module cannot
+  # be affected by a *.md/docs/** change, so there is nothing for them to
+  # verify. A job skipped via a job-level `if:` still reports a check-run
+  # (conclusion "skipped"), and branch protection treats a skipped required
+  # check as satisfying the requirement -- this is different from (and safe,
+  # unlike) gating an entire workflow via top-level `paths-ignore`, which
+  # prevents the check-run from being created at all and leaves a *required*
+  # check stuck pending forever (why codeql.yml's Analyze (server)/(operator)
+  # and this workflow's own trigger are deliberately NOT path-filtered).
+  #
+  # Deliberately scoped to pull_request only (push-to-main only happens once
+  # per merge, so the "waste" of a full run there is not worth the added
+  # complexity of also diffing push events).
+  #
+  # gitleaks is NOT gated by this: a secret pasted into a markdown file is
+  # exactly the class of leak gitleaks exists to catch, so it always runs
+  # regardless of docs_only.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - name: Detect docs-only changes
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
+          echo "Changed files:"
+          echo "$changed"
+          if [ -z "$changed" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          elif echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # Fast compile gate (~30s). Catches redeclarations, type errors, and build
   # failures before the expensive test-suite/static-analysis jobs start -- those
   # declare `needs: [preflight]`. Cheaper jobs (lint, licenses, fuzz-targets,
@@ -42,7 +94,11 @@ jobs:
   # waiting on it -- on a broken build they each fail on their own terms
   # instead of via the shared gate, but nothing waits an extra ~30s to start.
   preflight:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -82,7 +138,12 @@ jobs:
   # aggregates both legs' results and does the coverage-floor check, keeping
   # that exact job name for branch protection's required status check.
   test-suite:
-    needs: [preflight]
+    needs: [preflight, changes]
+    # A custom `if:` replaces the implicit "only run if needs succeeded"
+    # default, so preflight's success must be checked explicitly here too --
+    # otherwise a docs_only-unrelated broken build would no longer be
+    # fast-failed by preflight before this (expensive) job starts.
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -101,6 +162,8 @@ jobs:
             timeout: 1200
             coverage-file: coverage_handlers.out
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -146,8 +209,11 @@ jobs:
   # source, so this runs in parallel with test-suite instead of waiting for it
   # (as it did when both lived inside one sequential build-and-test job).
   static-analysis:
-    needs: [preflight]
+    needs: [preflight, changes]
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -183,8 +249,13 @@ jobs:
   # status-check context by name -- a matrix or renamed job would report as
   # e.g. "build-and-test (root)" and never satisfy it.
   build-and-test:
-    needs: [preflight, test-suite, static-analysis]
-    if: always()
+    needs: [preflight, test-suite, static-analysis, changes]
+    # always() so this still runs (and reports the failure below) even when
+    # test-suite/static-analysis genuinely fail, not just when they're
+    # skipped -- combined with the docs_only check so the whole aggregator
+    # itself is skipped (not run at all) on a docs-only PR, matching
+    # test-suite/static-analysis being skipped too.
+    if: always() && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # download-artifact needs actions: read beyond the workflow-level
     # contents: read default, even for same-run artifacts.
@@ -232,7 +303,11 @@ jobs:
           }'
 
   lint:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -252,7 +327,11 @@ jobs:
   # controller-runtime/client-go dependency tree stays out of the server/CLI build.
   # It is therefore not covered by the root `go ./...` jobs above; gate it here.
   operator:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: operator
@@ -313,7 +392,11 @@ jobs:
   #     entry (e.g. after a rename/removal) that run-rotation.sh would fail
   #     to run every cycle.
   fuzz-targets:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -410,7 +493,11 @@ jobs:
   # program. No GPL/AGPL/LGPL/SSPL/BSL/Commons-Clause/Elastic/Unknown licenses
   # were found in either module's real dependency tree.
   licenses:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -462,6 +549,8 @@ jobs:
 
   gitleaks:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -496,7 +585,11 @@ jobs:
           ./gitleaks detect --source . --verbose --redact --log-opts="HEAD"
 
   helm-chart:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -627,7 +720,11 @@ jobs:
   # This job closes that gap by running checkov's Kubernetes policy checks
   # against the same rendered chart output.
   helm-chart-security:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -697,7 +794,11 @@ jobs:
   # used as-is: it only fails on ERRORs by default, so warnings are surfaced
   # without blocking, and the .spectral.yaml at the repo root controls overrides.
   openapi-lint:
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
