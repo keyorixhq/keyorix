@@ -89,6 +89,8 @@ export const ROUTES = {
     ADMIN_NOTIFICATION_CHANNELS: '/admin/notification-channels',
     COMPLIANCE: '/compliance',
     CONNECT: '/integrations/connect',
+    SDKS_CLI: '/integrations/sdks',
+    SETTINGS_HEALTH: '/settings/health',
     ROADMAP: '/roadmap',
 } as const;
 

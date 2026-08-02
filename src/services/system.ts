@@ -37,6 +37,12 @@ export interface SystemInfo {
 }
 
 // Mirrors server/http/handlers/system.go's SystemMetrics and its nested types.
+// NOTE: as of writing, HTTP/Database/Secrets counters below are NOT
+// instrumented server-side — GetMetrics returns them as zero-valued structs
+// (see the handler's own comment: "not instrumented in the HTTP handler
+// path... left at their zero value here rather than fabricated values").
+// Don't build UI that presents these as live monitored data until that
+// changes on the backend.
 export interface SystemHttpMetrics {
     requests_total: number;
     requests_per_sec: number;
@@ -54,13 +60,51 @@ export interface SystemDatabaseMetrics {
     connections_idle: number;
 }
 
+export interface SystemSecretsMetrics {
+    total_secrets: number;
+    active_secrets: number;
+    expired_secrets: number;
+    secrets_created_24h: number;
+    secrets_accessed_24h: number;
+    encryption_ops_24h: number;
+    decryption_ops_24h: number;
+}
+
+// Mirrors MemoryMetrics — populated from runtime.MemStats, genuinely live.
+export interface SystemMemoryMetrics {
+    alloc: number;
+    total_alloc: number;
+    sys: number;
+    lookups: number;
+    mallocs: number;
+    frees: number;
+    heap_alloc: number;
+    heap_sys: number;
+    heap_idle: number;
+    heap_inuse: number;
+    heap_released: number;
+    heap_objects: number;
+    stack_inuse: number;
+    stack_sys: number;
+}
+
+// Mirrors GCMetrics — genuinely live.
+export interface SystemGCMetrics {
+    num_gc: number;
+    pause_total: number;
+    pause_ns: number[];
+    next_gc: number;
+    last_gc: number;
+    gc_cpu_fraction: number;
+}
+
 export interface SystemMetrics {
-    memory: Record<string, number>;
+    memory: SystemMemoryMetrics;
     goroutines: number;
-    gc: Record<string, unknown>;
+    gc: SystemGCMetrics;
     http: SystemHttpMetrics;
     database: SystemDatabaseMetrics;
-    secrets: Record<string, number>;
+    secrets: SystemSecretsMetrics;
     uptime: string;
     timestamp: string;
 }

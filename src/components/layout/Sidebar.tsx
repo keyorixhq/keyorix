@@ -107,7 +107,7 @@ const NAV: NavItem[] = [
         name: 'Integrations',
         icon: PuzzlePieceIcon,
         children: [
-            { kind: 'leaf', name: 'SDKs & CLI', href: '/integrations/sdks', soon: true },
+            { kind: 'leaf', name: 'SDKs & CLI', href: '/integrations/sdks' },
             { kind: 'leaf', name: 'Keyorix Connect', href: '/integrations/connect' },
             { kind: 'leaf', name: 'Notification Channels', href: '/admin/notification-channels', adminOnly: true },
         ],
@@ -133,7 +133,7 @@ const NAV: NavItem[] = [
             { kind: 'leaf', name: 'Appearance', href: '/settings/appearance' },
             { kind: 'leaf', name: 'Authentication', href: '/settings/auth', soon: true },
             { kind: 'leaf', name: 'Encryption & Keys', href: '/settings/encryption', soon: true },
-            { kind: 'leaf', name: 'System Health', href: '/settings/health', soon: true },
+            { kind: 'leaf', name: 'System Health', href: '/settings/health', adminOnly: true },
         ],
     },
 ];

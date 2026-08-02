@@ -172,11 +172,11 @@ describe('Sidebar', () => {
     });
 
     it('renders a "soon" leaf as a disabled-style link that neither navigates nor closes the sidebar', () => {
-        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, integrations: true };
+        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
         const onClose = vi.fn();
         renderSidebar({ onClose });
 
-        const soonLink = screen.getByRole('link', { name: /SDKs & CLI/ });
+        const soonLink = screen.getByRole('link', { name: /Authentication/ });
         expect(soonLink).toHaveClass('cursor-default');
         expect(within(soonLink).getByText('Soon')).toBeInTheDocument();
 
@@ -184,6 +184,30 @@ describe('Sidebar', () => {
         expect(onClose).not.toHaveBeenCalled();
         // preventDefault on click means no navigation occurs despite the <a> tag.
         expect(window.location.pathname).toBe('/');
+    });
+
+    it('renders SDKs & CLI as a real, clickable link now that it has shipped', () => {
+        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, integrations: true };
+        renderSidebar();
+
+        const link = screen.getByRole('link', { name: 'SDKs & CLI' });
+        expect(link).toHaveAttribute('href', '/integrations/sdks');
+        expect(within(link).queryByText('Soon')).not.toBeInTheDocument();
+    });
+
+    it('shows System Health for an admin and hides it for a non-admin', () => {
+        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
+        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
+        const { rerender } = renderSidebar();
+
+        expect(screen.getByRole('link', { name: 'System Health' })).toHaveAttribute('href', '/settings/health');
+
+        mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
+        rerender(<Sidebar isOpen={true} onClose={vi.fn()} />);
+
+        expect(screen.queryByRole('link', { name: 'System Health' })).not.toBeInTheDocument();
+        // unaffected sibling leaf in the same, non-admin-gated group
+        expect(screen.getByRole('link', { name: 'Appearance' })).toBeInTheDocument();
     });
 
     it('toggles a collapsed group open on click, calling toggleSidebarGroup and revealing its children', () => {

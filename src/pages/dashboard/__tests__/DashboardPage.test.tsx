@@ -20,14 +20,18 @@ const useSystemMetrics = vi.fn();
 const useAnomalyAlerts = vi.fn();
 const acknowledgeMutate = vi.fn();
 
-vi.mock('../../../features/dashboard', () => ({
-    useDashboardStats: (...args: any[]) => useDashboardStats(...args),
-    useDashboardActivity: (...args: any[]) => useDashboardActivity(...args),
-    useSystemInfo: (...args: any[]) => useSystemInfo(...args),
-    useSystemMetrics: (...args: any[]) => useSystemMetrics(...args),
-    useAnomalyAlerts: (...args: any[]) => useAnomalyAlerts(...args),
-    useAcknowledgeAnomaly: () => ({ mutate: acknowledgeMutate }),
-}));
+vi.mock('../../../features/dashboard', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../features/dashboard')>();
+    return {
+        ...actual,
+        useDashboardStats: (...args: any[]) => useDashboardStats(...args),
+        useDashboardActivity: (...args: any[]) => useDashboardActivity(...args),
+        useSystemInfo: (...args: any[]) => useSystemInfo(...args),
+        useSystemMetrics: (...args: any[]) => useSystemMetrics(...args),
+        useAnomalyAlerts: (...args: any[]) => useAnomalyAlerts(...args),
+        useAcknowledgeAnomaly: () => ({ mutate: acknowledgeMutate }),
+    };
+});
 
 const baseStats = {
     totalSecrets: 120,
@@ -198,6 +202,20 @@ describe('DashboardPage — system health', () => {
         useSystemInfo.mockReturnValue({ data: undefined });
         render(<DashboardPage />);
         expect(screen.getByText('Healthy')).toBeInTheDocument();
+    });
+
+    it('shows Unknown instead of a false Healthy when the metrics fetch fails', () => {
+        useSystemMetrics.mockReturnValue({ data: undefined, isError: true });
+        render(<DashboardPage />);
+        expect(screen.getByText('Unknown')).toBeInTheDocument();
+        expect(screen.queryByText('Healthy')).not.toBeInTheDocument();
+    });
+
+    it('shows Unknown instead of a false Healthy when the system info fetch fails', () => {
+        useSystemInfo.mockReturnValue({ data: undefined, isError: true });
+        render(<DashboardPage />);
+        expect(screen.getByText('Unknown')).toBeInTheDocument();
+        expect(screen.queryByText('Healthy')).not.toBeInTheDocument();
     });
 });
 

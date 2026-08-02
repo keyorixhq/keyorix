@@ -79,12 +79,16 @@ const NotificationChannelsPage = React.lazy(() =>
 const AppearancePage = React.lazy(() =>
     import('./pages/settings/AppearancePage').then((m) => ({ default: m.AppearancePage }))
 );
+const SystemHealthPage = React.lazy(() =>
+    import('./pages/settings/SystemHealthPage').then((m) => ({ default: m.SystemHealthPage }))
+);
 const CompliancePage = React.lazy(() =>
     import('./pages/compliance/CompliancePage').then((m) => ({ default: m.CompliancePage }))
 );
 const KeyorixConnectPage = React.lazy(() =>
     import('./pages/integrations/KeyorixConnectPage').then((m) => ({ default: m.KeyorixConnectPage }))
 );
+const SdksPage = React.lazy(() => import('./pages/integrations/SdksPage').then((m) => ({ default: m.SdksPage })));
 const RoadmapPage = React.lazy(() => import('./pages/roadmap/RoadmapPage').then((m) => ({ default: m.RoadmapPage })));
 
 // ── Route fallback ────────────────────────────────────────────────────────────
@@ -208,8 +212,17 @@ function App() {
                                                     }
                                                 />
                                                 <Route path="/settings/appearance" element={<AppearancePage />} />
+                                                <Route
+                                                    path={ROUTES.SETTINGS_HEALTH}
+                                                    element={
+                                                        <AdminRoute>
+                                                            <SystemHealthPage />
+                                                        </AdminRoute>
+                                                    }
+                                                />
                                                 <Route path={ROUTES.COMPLIANCE} element={<CompliancePage />} />
                                                 <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />
+                                                <Route path={ROUTES.SDKS_CLI} element={<SdksPage />} />
                                                 <Route path={ROUTES.ROADMAP} element={<RoadmapPage />} />
                                             </Routes>
                                         </RouteErrorBoundary>

@@ -12,6 +12,9 @@ import {
     useSystemMetrics,
     useAnomalyAlerts,
     useAcknowledgeAnomaly,
+    getSystemHealthSeverity,
+    HEALTH_STATUS_STYLES,
+    parseUptime,
 } from '../../features/dashboard';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -21,19 +24,6 @@ const fmtDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
         new Date(d)
     );
-
-function parseUptime(raw: string): string {
-    if (!raw) return '—';
-    // Go duration format: "2h34m12.456s", "45m3s", "1m3.139s", "30s", or bare integer seconds
-    const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)(?:\.\d+)?s)?$/.exec(raw);
-    const [, h, m, s] = match ?? [];
-    if (h !== undefined) return `${h}h ${m ?? '0'}m`;
-    if (m !== undefined) return `${m}m ${s ?? '0'}s`;
-    if (s !== undefined) return `${s}s`;
-    const num = Number.parseInt(raw, 10);
-    if (!Number.isNaN(num)) return `${num}s`;
-    return raw.split('.')[0] ?? '';
-}
 
 interface SecurityCardData {
     label: string;
@@ -400,17 +390,16 @@ interface SystemHealthPanelProps {
     sysInfo: SysInfo;
     features: Record<string, boolean | undefined>;
     dbMetrics: Record<string, any>;
+    hasError: boolean;
 }
 
-const HEALTH_STATUS_STYLES: Record<SignalSeverity, { dot: string; text: string; label: string }> = {
-    neutral: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Healthy' },
-    warn: { dot: 'bg-amber-500', text: 'text-amber-600', label: 'Degraded' },
-    alert: { dot: 'bg-red-500', text: 'text-red-600', label: 'Unhealthy' },
-};
+// Distinct from HEALTH_STATUS_STYLES' 'neutral' — a fetch failure isn't the
+// same claim as "checked and found healthy", so it gets its own gray state.
+const UNKNOWN_STATUS_STYLE = { dot: 'bg-gray-400', text: 'text-gray-500', label: 'Unknown' };
 
-const SystemHealthPanel: React.FC<SystemHealthPanelProps> = ({ metrics, sysInfo, features, dbMetrics }) => {
+const SystemHealthPanel: React.FC<SystemHealthPanelProps> = ({ metrics, sysInfo, features, dbMetrics, hasError }) => {
     const severity = getSystemHealthSeverity(metrics, sysInfo);
-    const statusStyle = HEALTH_STATUS_STYLES[severity];
+    const statusStyle = hasError ? UNKNOWN_STATUS_STYLE : HEALTH_STATUS_STYLES[severity];
 
     return (
         <div className="bg-surface border border-base rounded-xl shadow-xs">
@@ -594,43 +583,6 @@ function getFailedAuthSeverity(failedAuth: number): SignalSeverity {
     return 'warn';
 }
 
-// Thresholds for the System Health panel's status badge. Tunable — these are
-// deliberately conservative starting points, not values derived from any SLO.
-const HTTP_ERROR_RATE_ALERT = 0.25; // server failing most requests
-const HTTP_ERROR_RATE_WARN = 0.05;
-const DB_AVG_QUERY_TIME_WARN_MS = 500;
-const DB_POOL_SATURATION_ALERT = 0.95; // active/max connections
-const DB_POOL_SATURATION_WARN = 0.8;
-
-function getSystemHealthSeverity(metrics: Metrics, sysInfo: SysInfo): SignalSeverity {
-    // Not loaded yet — don't flash a false alert while data is still in flight.
-    if (!metrics && !sysInfo) return 'neutral';
-
-    const errorRate = metrics?.http?.error_rate ?? 0;
-    const avgQueryTime = metrics?.database?.avg_query_time ?? 0;
-    const slowQueries = metrics?.database?.slow_queries ?? 0;
-    const queriesTotal = metrics?.database?.queries_total ?? 0;
-    const slowQueryFraction = queriesTotal > 0 ? slowQueries / queriesTotal : 0;
-
-    const pool = sysInfo?.database?.pool;
-    const poolSaturation = pool && pool.max_connections > 0 ? pool.active_connections / pool.max_connections : 0;
-
-    const dbConnected = sysInfo?.database?.connected ?? true;
-
-    if (!dbConnected || errorRate > HTTP_ERROR_RATE_ALERT || poolSaturation > DB_POOL_SATURATION_ALERT) {
-        return 'alert';
-    }
-    if (
-        errorRate > HTTP_ERROR_RATE_WARN ||
-        avgQueryTime > DB_AVG_QUERY_TIME_WARN_MS ||
-        slowQueryFraction > 0.05 ||
-        poolSaturation > DB_POOL_SATURATION_WARN
-    ) {
-        return 'warn';
-    }
-    return 'neutral';
-}
-
 type AnomalyData = ReturnType<typeof useAnomalyAlerts>['data'];
 
 interface DashboardViewModel {
@@ -716,8 +668,8 @@ export const DashboardPage: React.FC = () => {
 
     const { data: stats, error: statsError } = useDashboardStats();
     const { data: activityData } = useDashboardActivity({ pageSize: 8 });
-    const { data: metrics } = useSystemMetrics();
-    const { data: sysInfo } = useSystemInfo();
+    const { data: metrics, isError: metricsError } = useSystemMetrics();
+    const { data: sysInfo, isError: sysInfoError } = useSystemInfo();
     const { data: anomalyData } = useAnomalyAlerts(true);
     const acknowledgeAnomaly = useAcknowledgeAnomaly();
 
@@ -782,6 +734,7 @@ export const DashboardPage: React.FC = () => {
                             sysInfo={sysInfo}
                             features={features}
                             dbMetrics={dbMetrics}
+                            hasError={Boolean(metricsError || sysInfoError)}
                         />
 
                         {/* Quick Actions removed — duplicates sidebar navigation */}

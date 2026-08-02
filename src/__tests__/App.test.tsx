@@ -39,11 +39,16 @@ vi.mock('../pages/admin/ServiceAccountsPage', () => ({
     ServiceAccountsPage: () => <div>Service Accounts</div>,
 }));
 vi.mock('../pages/admin/APITokensPage', () => ({ APITokensPage: () => <div>API Tokens</div> }));
+vi.mock('../pages/admin/NotificationChannelsPage', () => ({
+    NotificationChannelsPage: () => <div>Notification Channels</div>,
+}));
 vi.mock('../pages/settings/AppearancePage', () => ({ AppearancePage: () => <div>Appearance</div> }));
+vi.mock('../pages/settings/SystemHealthPage', () => ({ SystemHealthPage: () => <div>System Health</div> }));
 vi.mock('../pages/compliance/CompliancePage', () => ({ CompliancePage: () => <div>Compliance</div> }));
 vi.mock('../pages/integrations/KeyorixConnectPage', () => ({
     KeyorixConnectPage: () => <div>Keyorix Connect</div>,
 }));
+vi.mock('../pages/integrations/SdksPage', () => ({ SdksPage: () => <div>SDKs & CLI</div> }));
 vi.mock('../pages/roadmap/RoadmapPage', () => ({ RoadmapPage: () => <div>Roadmap</div> }));
 
 // ── Layout: real guards + stub Layout ────────────────────────────────────────
@@ -172,6 +177,12 @@ describe('App', () => {
             renderAt('/audit');
             expect(await screen.findByText('Audit Log')).toBeInTheDocument();
         });
+
+        it('renders /integrations/sdks for an authenticated user', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/integrations/sdks');
+            expect(await screen.findByText('SDKs & CLI')).toBeInTheDocument();
+        });
     });
 
     describe('admin routes', () => {
@@ -203,6 +214,30 @@ describe('App', () => {
             setAuth({ isAuthenticated: true, user: { role: 'admin' } });
             renderAt('/admin/roles');
             expect(await screen.findByText('Roles Policies')).toBeInTheDocument();
+        });
+
+        it('renders /admin/notification-channels for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/admin/notification-channels');
+            expect(await screen.findByText('Notification Channels')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /admin/notification-channels', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/admin/notification-channels');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
+        });
+
+        it('renders /settings/health for an admin', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'admin' } });
+            renderAt('/settings/health');
+            expect(await screen.findByText('System Health')).toBeInTheDocument();
+        });
+
+        it('redirects a non-admin to the dashboard from /settings/health', async () => {
+            setAuth({ isAuthenticated: true, user: { role: 'user' } });
+            renderAt('/settings/health');
+            expect(await screen.findByText('Dashboard Page')).toBeInTheDocument();
         });
     });
 
