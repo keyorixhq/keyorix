@@ -29,6 +29,10 @@ import (
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
+
+	// modernc.org/sqlite self-registers a database/sql driver named "sqlite"
+	// (see DriverName below) as a side effect of import; it is never referenced
+	// by name in this file (ADR-048's CGO-free driver swap).
 	_ "modernc.org/sqlite"
 )
 
