@@ -395,6 +395,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// (Per-user dashboard stats scope their own recent-activity in core.)
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/dashboard/activity", dashboardHandler.GetActivity)
 
+		// Read-only, redacted config summaries for an admin UI to display (never edit —
+		// config stays YAML-only to change). Deliberately NOT inside the /system route
+		// group below: that group is the RemoteStorage server-to-server proxy API
+		// (machine credentials only, system.write-gated) — these are human-facing reads,
+		// so they sit here alongside /dashboard/stats at system.read instead.
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system/auth-config", handlers.MakeAuthConfigHandler(cfg))
+		r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/system/encryption-config", handlers.MakeEncryptionConfigHandler(cfg))
+
 		// Catalog endpoints (projects, environments).
 		// List endpoints need global read (browse everything); accessing a
 		// specific project/environment is scoped to that project. Creating a
