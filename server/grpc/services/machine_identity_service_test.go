@@ -30,6 +30,13 @@ func newMachineTestRig(t *testing.T) *MachineIdentityGRPCService {
 	}))
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// modernc.org/sqlite gives each pooled connection to ":memory:" its own
+	// fresh, unmigrated database unless pinned to a single connection --
+	// without this, concurrent queries can intermittently hit a connection
+	// that never saw AutoMigrate ("no such table") (ADR-048).
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.User{}, &models.Role{},
 		&models.Permission{}, &models.RolePermission{}, &models.UserRole{},
