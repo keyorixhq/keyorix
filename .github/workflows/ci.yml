@@ -6,12 +6,15 @@ on:
   pull_request:
     branches: [main]
 
-# Workflow-level default: read-only. No job here writes to the repo, comments on
-# PRs, or publishes anything — a compromised dependency/action in any step gets
-# the narrowest possible GITHUB_TOKEN rather than the (potentially read/write)
-# repo default (#115).
-permissions:
-  contents: read
+# Workflow-level default: zero permissions. No job here writes to the repo,
+# comments on PRs, or publishes anything — a compromised dependency/action in
+# any step gets the narrowest possible GITHUB_TOKEN rather than the
+# (potentially read/write) repo default (#115). Each job below grants exactly
+# the permissions it needs (contents: read to check out code, plus whatever
+# extra scope a specific job requires) rather than inheriting a workflow-wide
+# default -- SonarCloud's least-privilege rule for GitHub Actions permissions
+# flags a blanket workflow-level grant even when it's already read-only.
+permissions: {}
 
 env:
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
@@ -94,6 +97,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -157,6 +162,8 @@ jobs:
             timeout: 1200
             coverage-file: coverage_handlers.out
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -205,6 +212,8 @@ jobs:
     needs: [preflight, changes]
     if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -297,6 +306,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -319,6 +330,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: operator
@@ -382,6 +395,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -481,6 +496,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -532,6 +549,8 @@ jobs:
 
   gitleaks:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -569,6 +588,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -702,6 +723,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -774,6 +797,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
