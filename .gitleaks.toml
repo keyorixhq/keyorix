@@ -32,4 +32,18 @@ paths = [
   '''internal/cli/secret/import_parsers\.go''',
   '''internal/cli/secret/source_vault\.go''',
   '''internal/core/setup_consume\.go''',
+  # web/ (ADR-070) test fixtures and mock values — merged in from web/'s own
+  # (now-superseded) .gitleaks.toml. Path-based, not the SHA-fingerprinted
+  # .gitleaksignore entries web/ also had: this repo's gitleaks job scans
+  # full history via `--log-opts="HEAD"` (see ci.yml's gitleaks job), and the
+  # DCO retrofit (ADR-070 Decision) rewrote every non-bot keyorix-web commit's
+  # SHA, so any commit-SHA-keyed suppression from the standalone repo is
+  # already stale on arrival. Path/regex rules survive that kind of rewrite;
+  # SHA fingerprints don't. See BACKLOG.md if a follow-up scan re-flags a
+  # finding these path rules don't cover.
+  '''web/.*__tests__.*''',
+  '''web/.*\.test\.(ts|tsx)$''',
+  '''web/.*\.spec\.(ts|tsx)$''',
+  '''web/src/test/.*''',
+  '''web/e2e/.*''',
 ]

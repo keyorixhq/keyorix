@@ -33,6 +33,24 @@ section. For architectural rationale see the ADRs (`docs/` and
   I Part II expects an SBOM for the product as placed on the market. Land
   `chore/dev-guidance` or reimplement. Not fixed here.
 
+- **Verify: two gitleaks findings from the `keyorix-web` import may re-flag.**
+  `web/.gitleaksignore` (deleted when `web/.gitleaks.toml` was merged into
+  root's, ADR-070 Phase 5) suppressed two `generic-api-key` findings by
+  commit-SHA fingerprint: `src/services/__tests__/users.test.ts:112` and a
+  historical `keyorix.yaml:48` (file no longer present in `web/`). Root's
+  `gitleaks` CI job scans full history reachable from HEAD
+  (`--log-opts="HEAD"`), and the DCO retrofit (ADR-070 Decision) rewrote
+  every non-bot `keyorix-web` commit's SHA — so both fingerprints are stale
+  on arrival and would not suppress a rescan of the same historical commits.
+  The general test-fixture path patterns added to root's `.gitleaks.toml`
+  (`web/.*__tests__.*`, etc.) likely already cover the first; the second
+  references a file that no longer exists, so its trigger could be
+  anywhere in that file's history. Not verified here — no network access to
+  run gitleaks in this environment. If the `gitleaks` CI check fails on this
+  branch's PR, add a path/regex `.gitleaks.toml` allowlist entry for the
+  specific finding (not a SHA fingerprint — see the comment above the web/
+  patterns in `.gitleaks.toml` for why).
+
 ## Done
 
 - **OpenAPI sync (RBAC scope fields)** — `project_id` / `environment_id` are
