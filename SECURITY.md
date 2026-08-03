@@ -60,6 +60,11 @@ Every release ships with `checksums.txt`:
 sha256sum --check --ignore-missing checksums.txt
 ```
 
+Every release also ships a **CycloneDX SBOM** per binary
+(`keyorix_sbom.cdx.json`, `keyorix-server_sbom.cdx.json`) — a full dependency and
+licence inventory, the component list needed to assess CVE exposure under the EU
+CRA. Both SBOMs are covered by `checksums.txt`.
+
 Release binaries are built with `-trimpath` and `CGO_ENABLED=0` from the tagged
 commit. `checksums.txt` and every container image are keylessly signed with
 [Sigstore/cosign](https://www.sigstore.dev/) via GitHub's OIDC token — no

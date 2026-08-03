@@ -14,7 +14,7 @@ TRUST_LICENSE_KEYS?=
 # deterministic per source revision, so release builds stay reproducible (no build date).
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)"
 
-.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release
+.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -119,9 +119,22 @@ release: populate-webui-dist
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
+	@echo "→ Generating CycloneDX SBOMs (per binary, app mode)"
+	cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_sbom.cdx.json    .
+	cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_sbom.cdx.json .
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
-	@echo "✅ Release binaries in dist/"
+	@echo "✅ Release binaries + SBOMs in dist/"
+
+# CycloneDX SBOM per shipped binary (app mode: exactly the deps linked into that
+# binary + Go stdlib). Feed to govulncheck/grype to answer "are we affected by
+# CVE-X?" — the core CRA Article 14 question. Requires cyclonedx-gomod on PATH
+# (go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0).
+sbom:
+	@mkdir -p dist
+	cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_sbom.cdx.json    .
+	cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_sbom.cdx.json .
+	@echo "✅ SBOMs in dist/"
 
 clean:
 	rm -rf $(BUILD_DIR) dist/
