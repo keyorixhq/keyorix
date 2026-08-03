@@ -28,6 +28,37 @@ jobs:
         run: go test -timeout 600s -coverprofile=coverage.out -covermode=set ./...
         continue-on-error: true
 
+      # web/ (ADR-070) coverage, feeding sonar.javascript.lcov.reportPaths in
+      # sonar-project.properties — folded in here rather than kept as a
+      # separate SonarCloud project/workflow. --ignore-scripts: see the
+      # identical reasoning in web-ci.yml.
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Generate web/ coverage report
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm test:coverage --run
+        continue-on-error: true
+
+      # SonarCloud resolves lcov SF: paths relative to sonar.projectBaseDir
+      # (this workflow's `.`, i.e. the repo root) -- vitest writes them
+      # relative to wherever it ran (web/, via working-directory above), e.g.
+      # `SF:src/App.tsx`. Left as-is, every one of those fails to match the
+      # actual analyzed path (web/src/App.tsx) and JS coverage silently comes
+      # out as zero. Rewrite in place before the scan reads it.
+      - name: Fix web/ coverage report paths for SonarCloud
+        run: sed -i 's|^SF:|SF:web/|' web/coverage/lcov.info
+        if: hashFiles('web/coverage/lcov.info') != ''
+
       - name: Analyze with SonarCloud
         uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8
         env:

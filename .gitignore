@@ -50,6 +50,7 @@ config.yaml
 *.local.yaml
 .env
 .env.local
+.env.*.local
 .env.development
 .env.production
 test-config.yaml
@@ -67,6 +68,7 @@ certs/
 node_modules/
 web/node_modules/
 web/dist/
+web/dist-ssr/
 web/build/
 web/.next/
 web/.nuxt/

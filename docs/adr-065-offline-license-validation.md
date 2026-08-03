@@ -10,7 +10,7 @@ nil-safe fresh-evaluating gate on the core, a startup audit event, `GET
 /api/v1/license/status`); **Phase 2c** (this revision) designates the **first commercial
 feature** — `airgap_updates`, gating `keyorix bundle import`, and adds the opt-in `license_expiry`
 background reminder that notifies install-wide admins ahead of a lapse. Dashboard surfacing
-(keyorix-web) remains.
+(`web/`) remains.
 
 ## Context
 

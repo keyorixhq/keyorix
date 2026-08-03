@@ -68,19 +68,53 @@ jobs:
         with:
           category: '/language:go-${{ matrix.name }}'
 
+  # web/ (ADR-070) is JavaScript/TypeScript, not Go -- a separate job rather
+  # than a third matrix entry above, since the Go entries' init/build/analyze
+  # steps (build-mode: manual, `go build`+`go test -run=^$`) don't apply here
+  # at all: JS/TS uses autobuild (no compile step to run) and its own
+  # queries suite. Unconditional (no path filter), matching the two Go jobs
+  # above -- this is a required-status-check-shaped workflow (see the
+  # `summary` fan-in below); a workflow triggered by an unrelated path never
+  # produces a check-run at all, which would leave that required check stuck
+  # pending forever on a backend-only PR, so exhaustiveness here (always run)
+  # is deliberate, not an oversight.
+  analyze-web:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          languages: javascript-typescript
+          # security-and-quality includes all security queries plus
+          # code-quality checks (dead code, error handling, etc.) -- matches
+          # what web/'s own (now-superseded) codeql.yml used.
+          queries: security-and-quality
+
+      # JS/TS autobuild just discovers source files -- no compile step.
+      - uses: github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+
+      - uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          category: /language:javascript-typescript
+
   # Fan-in job that satisfies the "CodeQL" required status check in branch
   # protection. The matrix jobs above are each required too (Analyze (server)
   # and Analyze (operator)), but branch protection also requires a "CodeQL"
   # context which this single-name job provides.
   summary:
     name: CodeQL
-    needs: [analyze]
+    needs: [analyze, analyze-web]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check analysis results
         run: |
-          if [ "${{ needs.analyze.result }}" != "success" ]; then
+          if [ "${{ needs.analyze.result }}" != "success" ] || [ "${{ needs.analyze-web.result }}" != "success" ]; then
             echo "CodeQL analysis failed or was cancelled"
             exit 1
           fi

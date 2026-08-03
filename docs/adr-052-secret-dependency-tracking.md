@@ -85,7 +85,7 @@ answer the two questions from it.
   of the topological order.
 - Wiring the rotation order into the automated-rotation executor (ADR-046) so a planned
   rotation runs dependency-first automatically.
-- gRPC + CLI surfaces and a keyorix-web graph visualisation (the API is the first
+- gRPC + CLI surfaces and a web/ graph visualisation (the API is the first
   vertical).
 - Cascade behaviour on secret soft-delete/restore (currently an edge to a deleted secret
   simply stops resolving a name; a future pass could prune or flag it).

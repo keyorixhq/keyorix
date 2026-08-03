@@ -245,8 +245,8 @@ itself**, so the whole product is one file plus a database. No web container, no
 nginx.
 
 ```sh
-make build-ui      # builds keyorix-web and embeds it into bin/keyorix-server
-                   # (override the web checkout: make build-ui KEYORIX_WEB_DIR=/path)
+make build-ui      # builds web/ (the dashboard, ADR-070) and embeds it into
+                   # bin/keyorix-server
 KEYORIX_MASTER_PASSWORD=… KEYORIX_DB_PASSWORD=… ./bin/keyorix-server
 ```
 

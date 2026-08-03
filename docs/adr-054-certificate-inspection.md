@@ -66,4 +66,4 @@ The deliberate constraints:
 - Surface certificate `notAfter` in the expiry/rotation posture and dashboards (use the
   real cert expiry, not just the manual field), and flag soon-expiring certs.
 - Full chain inspection (intermediates) and chain-validity, not just the leaf.
-- gRPC surface and a keyorix-web certificate panel on the secret detail page.
+- gRPC surface and a web/ certificate panel on the secret detail page.

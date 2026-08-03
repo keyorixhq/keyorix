@@ -36,3 +36,14 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+  # ADR-070: web/ (the dashboard, ex-keyorix-web) is now a subtree here.
+  # web/.github/dependabot.yml — the pnpm-ecosystem entry that covered it as
+  # a standalone repo — is deleted along with the rest of web/.github/ in the
+  # same commit; without this entry Dependabot would silently stop updating
+  # the frontend's dependency tree entirely.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

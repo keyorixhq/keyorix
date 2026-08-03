@@ -6,6 +6,14 @@ section. For architectural rationale see the ADRs (`docs/` and
 
 ## In progress / next
 
+- **Archive/delete the orphaned `keyorixhq_keyorix-web` SonarCloud project.**
+  ADR-070's Sonar setup was reversed: `web/` is now analyzed as part of the
+  single `keyorixhq_keyorix` project (see ADR-070 Consequences) rather than
+  its own project, because the separate-project setup required an org-admin
+  rebind that never happened and permanently failed SonarCloud on every PR
+  touching `web/**`. `keyorixhq_keyorix-web` now has nothing pointing at it.
+  Org-admin action in the SonarCloud UI, not fixable from this repo.
+
 - **Investigate: `stunit` on-disk SQLite leak + suspected connection-pool
   unbounded growth** — `server/http/handlers/secret_templates_unit_test.go:83`
   constructs `file:stunit<N>?mode=memory&cache=private`, but a run left an
@@ -20,6 +28,36 @@ section. For architectural rationale see the ADRs (`docs/` and
   flakiness, same underlying class of bug, fixed there via `SetMaxOpenConns(1)`
   rather than diagnosed at the SQLite-driver level).
   Not fixed here — investigation only.
+
+- **Stranded: per-binary CycloneDX SBOMs for release binaries.** Commit
+  `9eceffe4` "build(release): attach per-binary CycloneDX SBOMs" (2026-07-03)
+  sits unmerged on branch `chore/dev-guidance`. It touches
+  `.github/workflows/release.yml` and `Makefile` (adds a `make sbom` target,
+  pins `cyclonedx-gomod` v1.10.0). `git log -S cyclonedx origin/main --
+  Makefile` returns nothing, so v0.87.x and v0.88.0 shipped release binaries
+  with no SBOM. Container images are covered by BuildKit attestations
+  (`provenance: mode=max` / `sbom: true` in `docker-publish.yml`); the binary
+  tarballs — the delivery path for air-gapped customers — are not. CRA Annex
+  I Part II expects an SBOM for the product as placed on the market. Land
+  `chore/dev-guidance` or reimplement. Not fixed here.
+
+- **Verify: two gitleaks findings from the `keyorix-web` import may re-flag.**
+  `web/.gitleaksignore` (deleted when `web/.gitleaks.toml` was merged into
+  root's, ADR-070 Phase 5) suppressed two `generic-api-key` findings by
+  commit-SHA fingerprint: `src/services/__tests__/users.test.ts:112` and a
+  historical `keyorix.yaml:48` (file no longer present in `web/`). Root's
+  `gitleaks` CI job scans full history reachable from HEAD
+  (`--log-opts="HEAD"`), and the DCO retrofit (ADR-070 Decision) rewrote
+  every non-bot `keyorix-web` commit's SHA — so both fingerprints are stale
+  on arrival and would not suppress a rescan of the same historical commits.
+  The general test-fixture path patterns added to root's `.gitleaks.toml`
+  (`web/.*__tests__.*`, etc.) likely already cover the first; the second
+  references a file that no longer exists, so its trigger could be
+  anywhere in that file's history. Not verified here — no network access to
+  run gitleaks in this environment. If the `gitleaks` CI check fails on this
+  branch's PR, add a path/regex `.gitleaks.toml` allowlist entry for the
+  specific finding (not a SHA fingerprint — see the comment above the web/
+  patterns in `.gitleaks.toml` for why).
 
 ## Done
 
@@ -94,7 +132,7 @@ section. For architectural rationale see the ADRs (`docs/` and
 ## Backlog
 
 ### Other
-- **ADR-020** — project detail page (frontend, `keyorix-web`), still Proposed.
+- **ADR-020** — project detail page (frontend, `web/`), still Proposed.
 - **Refactor candidates (cyclomatic complexity)** — see
   [`docs/REFACTOR-CANDIDATES.md`](docs/REFACTOR-CANDIDATES.md). 55 functions
   above CCN 15 (`lizard`-generated, 2026-07-30), worst outliers

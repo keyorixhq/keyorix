@@ -14,7 +14,7 @@ TRUST_LICENSE_KEYS?=
 # deterministic per source revision, so release builds stay reproducible (no build date).
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)"
 
-.PHONY: build build-cli build-server build-ui install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release
+.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -42,21 +42,31 @@ build-cli:
 build-server:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server
 
-# Path to the keyorix-web checkout (override: make build-ui KEYORIX_WEB_DIR=/path).
-KEYORIX_WEB_DIR ?= ../keyorix-web
-
-# build-ui: build the web dashboard and embed it into the server binary, so a
-# single keyorix-server serves both API and UI (air-gap "one file" deploy).
-# Requires pnpm + a keyorix-web checkout at KEYORIX_WEB_DIR. The committed
-# placeholder is restored afterward so the working tree stays clean — the binary
-# already has the real UI embedded.
-build-ui:
+# populate-webui-dist: builds the dashboard (web/, now an in-repo subtree —
+# ADR-070) and copies the real output into server/webui/dist/, which is
+# gitignored except the committed placeholder index.html. Does NOT restore
+# that placeholder — shared by build-ui and release below, which each need
+# the real dist/ present for one or more `go build`s (embed.go's
+# `//go:embed all:dist` bakes in whatever is physically on disk at compile
+# time) and each restore the placeholder themselves, exactly once, after
+# their own last build that needs the real thing. Restoring here instead
+# would run in the middle of release's 8 cross-compiles (Make prerequisites
+# complete in full before the depending target's own recipe starts), leaving
+# every one of them with a placeholder index.html paired with the real
+# hashed JS/CSS bundles copied in below -- a broken, inconsistent embed.
+populate-webui-dist:
 	@command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required to build the web UI"; exit 1; }
-	@test -d "$(KEYORIX_WEB_DIR)" || { echo "keyorix-web not found at $(KEYORIX_WEB_DIR); set KEYORIX_WEB_DIR=<path>"; exit 1; }
-	cd "$(KEYORIX_WEB_DIR)" && pnpm install --frozen-lockfile && pnpm build
+	cd web && pnpm install --frozen-lockfile && pnpm build
 	rm -rf server/webui/dist
 	mkdir -p server/webui/dist
-	cp -R "$(KEYORIX_WEB_DIR)"/dist/. server/webui/dist/
+	cp -R web/dist/. server/webui/dist/
+
+# build-ui: build the web dashboard and embed it into a native server binary,
+# so a single keyorix-server serves both API and UI (air-gap "one file"
+# deploy). Requires pnpm. The committed placeholder is restored afterward so
+# the working tree stays clean — the binary already has the real UI embedded
+# regardless of what's on disk after this returns.
+build-ui: populate-webui-dist
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
 	@echo "Built $(BUILD_DIR)/$(BINARY_SERVER) with the web UI embedded."
@@ -87,7 +97,18 @@ dev: install-cli
 # {binary}_{os}_{arch} convention that install.sh downloads and that the GitHub
 # releases already use — keep these three in sync. Consumed by
 # .github/workflows/release.yml on a vX.Y.Z tag.
-release:
+#
+# Depends on populate-webui-dist, not build-ui: build-ui's own recipe ends by
+# restoring server/webui/dist/index.html to the committed placeholder, and
+# Make prerequisites run to completion before this recipe starts — depending
+# on build-ui here would mean every one of the 8 `go build`s below embeds a
+# placeholder index.html alongside the real hashed JS/CSS bundles
+# populate-webui-dist copies in, since nothing would rebuild dist/ in
+# between. The 4 server (not CLI) builds are the ones that actually embed
+# it (server/webui/embed.go), but populating once up front is simplest and
+# harmless for the 4 CLI builds. The placeholder is restored once, at the
+# very end, after every build that needs the real dist/ has already run.
+release: populate-webui-dist
 	@echo "→ Cross-compiling $(VERSION)"
 	@mkdir -p dist
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_amd64    .
@@ -99,6 +120,7 @@ release:
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
+	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
 	@echo "✅ Release binaries in dist/"
 
 clean:

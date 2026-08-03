@@ -143,7 +143,7 @@ machine.
 
 ## Deferred
 
-- **Frontend env dropdown** — the My Account scope picker (keyorix-web) offers the
+- **Frontend env dropdown** — the My Account scope picker (`web/`) offers the
   permission allowlist + project; an environment selector (cascading from the
   chosen project) is the remaining UI surface for `environment_scope`.
 - **Scope presets** (e.g. a "read-only" macro expanding to the read permissions).

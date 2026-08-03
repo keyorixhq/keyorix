@@ -65,7 +65,7 @@ confirmable mapping, consistent with how the other four regimes are treated.
 
 ## Deferred follow-ups
 
-- Surface the ENS column in the keyorix-web compliance UI (separate repo) — the matrix
+- Surface the ENS column in the web/ compliance UI — the matrix
   page renders ISO/SOC2/NIS2/DORA today; ENS is carried in the API already.
 - Optional per-regime filtering of the matrix (show only the ENS view).
 - Map any future controls (e.g. backup/continuity `op.cont`, comms `mp.com`) as those

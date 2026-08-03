@@ -27,6 +27,7 @@ use SaaS and won't maintain Vault.
 | `server/validation/` | Input validators |
 | `migrations/` | SQL migration files |
 | `docs/` | ADRs and reference docs |
+| `web/` | Dashboard frontend (React/TS/Vite, pnpm) — in-repo subtree since ADR-070 |
 
 ---
 
@@ -45,10 +46,10 @@ make build-server
 go test ./...
 go test -race ./...
 
-# Frontend (keyorix-web repo)
-npm run dev         # port 3000
-npx tsc --noEmit
-npx vitest run
+# Frontend (web/, ADR-070)
+pnpm --dir web dev         # port 3000
+pnpm --dir web type-check
+pnpm --dir web test --run
 ```
 
 ---

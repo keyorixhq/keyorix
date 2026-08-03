@@ -32,4 +32,30 @@ paths = [
   '''internal/cli/secret/import_parsers\.go''',
   '''internal/cli/secret/source_vault\.go''',
   '''internal/core/setup_consume\.go''',
+  # web/ (ADR-070) test fixtures and mock values — merged in from web/'s own
+  # (now-superseded) .gitleaks.toml. Path-based, not the SHA-fingerprinted
+  # .gitleaksignore entries web/ also had: this repo's gitleaks job scans
+  # full history via `--log-opts="HEAD"` (see ci.yml's gitleaks job), and the
+  # DCO retrofit (ADR-070 Decision) rewrote every non-bot keyorix-web commit's
+  # SHA, so any commit-SHA-keyed suppression from the standalone repo is
+  # already stale on arrival. Path/regex rules survive that kind of rewrite;
+  # SHA fingerprints don't.
+  #
+  # No `web/` prefix, deliberately: gitleaks reports the file path AS IT
+  # EXISTED AT EACH HISTORICAL COMMIT, and only the single subtree-merge
+  # commit renamed the tree under web/ — every commit before that (nearly
+  # all of the imported history) has these same files at their original,
+  # un-prefixed paths (e.g. src/services/__tests__/users.test.ts, not
+  # web/src/services/__tests__/...). A `web/`-prefixed pattern only matches
+  # post-merge paths and misses the historical ones almost entirely — caught
+  # this the hard way when the first PR off this branch failed gitleaks on
+  # exactly the two findings this allowlist was supposed to cover (mock
+  # one_time_password values in src/services/__tests__/users.test.ts).
+  # Root's own Go backend has no __tests__/.test.ts/.test.tsx/src/test//e2e/
+  # paths at any point in its history, so dropping the prefix is safe.
+  '''(^|/)__tests__/''',
+  '''\.test\.(ts|tsx)$''',
+  '''\.spec\.(ts|tsx)$''',
+  '''(^|/)src/test/''',
+  '''(^|/)e2e/''',
 ]

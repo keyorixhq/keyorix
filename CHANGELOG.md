@@ -5,6 +5,15 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## Unreleased
 
+### Changed
+- **Frontend monorepo consolidation (ADR-070)** — `keyorix-web` (the dashboard)
+  is folded into this repository at `web/`, full commit history preserved via
+  `git subtree`. One `vX.Y.Z` tag now triggers both the server and web image
+  builds in `docker-publish.yml`, closing the version-drift bug where the
+  `docker-compose.yml`/Helm chart image pins assumed the two tracked the same
+  tag when nothing enforced that. See ADR-070 for the full rationale and the
+  CI/CD consolidation decisions (CodeQL, Sonar, SBOM, dependency review).
+
 ### Added
 - **FinOps billing report** — `GET /api/v1/admin/billing/report?from=&to=[&project_id=]`
   and `keyorix billing report --from --to [--project-id] [--format table|json]`.

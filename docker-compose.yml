@@ -53,12 +53,28 @@ services:
       - keyorix_keys:/app/keys
 
   web:
+    # ADR-070: as of this pin, no ghcr.io/keyorixhq/keyorix-web:v0.88.0 image
+    # exists — keyorix-web only ever published v0.2.0 as a standalone repo,
+    # decoupled from this tag. docker-publish.yml now builds both images from
+    # the same v* tag in one workflow run, so this resolves starting with the
+    # next release cut after web/'s subtree import merges; until then, bump
+    # to that release's tag or build locally (see the commented `build:`
+    # block on the backend service above for the equivalent web/ pattern).
     image: ghcr.io/keyorixhq/keyorix-web:v0.88.0 # pin; bump to match release tag on upgrades
     restart: unless-stopped
     ports:
       - "8088:80"
     depends_on:
       - backend
+    # web/Dockerfile already bakes an image-level HEALTHCHECK (wget against
+    # /health — nginx:alpine has no curl), which Compose inherits without this
+    # block; declared explicitly so it shows up the same way postgres' does.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   # Optional HTTPS front-end. Enable with `docker compose --profile tls up -d`.
   # Caddy terminates TLS and proxies to web. Set KEYORIX_DOMAIN to a real domain

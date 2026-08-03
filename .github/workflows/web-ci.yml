@@ -1,0 +1,144 @@
+# Frontend (web/, ADR-070) type-check/lint/build/test/e2e gate. Folded in from
+# web/'s own (now-superseded) ci.yml. Path-filtered to web/** so a backend-only
+# commit never spins up pnpm, and a frontend-only commit never waits on Go
+# jobs -- this is deliberately a plain workflow-level path filter, not the
+# job-level `if:`-plus-detection-job pattern ci.yml's own docs-only skip uses,
+# because neither `gate` nor `e2e` is a branch-protection required status
+# check today (unlike ci.yml's build-and-test/lint/etc.) -- a workflow that
+# never triggers at all produces no check-run, which is only a problem for a
+# check something else is waiting on. If these become required checks later,
+# revisit with the same job-level pattern ci.yml uses.
+#
+# web/'s own gitleaks sub-job is dropped here, not folded: root ci.yml's own
+# gitleaks job already scans the whole repository unconditionally (no path
+# filter, full history via fetch-depth: 0), so it already covers web/ for
+# free once web/ is part of this repo -- a second, web/-scoped gitleaks run
+# would be pure redundant work, not additional coverage.
+name: Web CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**']
+  pull_request:
+    branches: [main]
+    paths: ['web/**']
+
+# Workflow-level default: zero permissions, matching ci.yml's own least-privilege
+# convention (#115). Each job grants exactly what it needs below.
+permissions: {}
+
+# Cancel superseded runs on the same ref (matches web's original ci.yml).
+concurrency:
+  group: web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  gate:
+    name: type-check · lint · build · test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # --ignore-scripts: don't let any dependency's install-time lifecycle
+      # script run with CI's ambient permissions — classic supply-chain
+      # vector (a compromised transitive dependency's postinstall script).
+      # pnpm's own default-deny (pnpm 10+) already blocks unlisted lifecycle
+      # scripts; web/pnpm-workspace.yaml's allowBuilds: esbuild: true still
+      # runs esbuild's allowlisted build step under --ignore-scripts (verified:
+      # build/lint/type-check/test all still pass with this flag).
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Type-check
+        run: pnpm type-check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Build
+        run: pnpm build
+
+      # `test` is bare `vitest` (watch mode); --run forces a single pass.
+      - name: Test
+        run: pnpm test --run
+
+      # Verifies all production dependency licenses are permissive (MIT, Apache-2.0,
+      # BSD variants, ISC). Blocks any accidental GPL/AGPL/LGPL ingestion that
+      # would require open-sourcing Keyorix's product code. Uses pnpm's built-in
+      # `licenses list` command — no external tool needed.
+      - name: Check dependency licenses
+        run: node scripts/license-check.mjs
+
+      # Fails on high/critical known-vulnerable dependencies (govulncheck's
+      # equivalent for the npm ecosystem, mirrored from keyorix's CI). Scoped to
+      # --prod: dev-only tooling (jsdom/vitest's undici chain) never ships and
+      # would make this gate noisy with findings that carry no real exposure.
+      # Pipes through scripts/audit-check.mjs so known non-applicable advisories
+      # (react-router RSC-mode CVE, not reachable in SPA builds) can be suppressed
+      # without silently ignoring all findings.
+      - name: Audit dependencies
+        run: pnpm audit --json --prod | node scripts/audit-check.mjs
+
+  e2e:
+    name: e2e (Playwright)
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # --ignore-scripts: don't let any dependency's install-time lifecycle
+      # script run with CI's ambient permissions — classic supply-chain
+      # vector (a compromised transitive dependency's postinstall script).
+      # pnpm's own default-deny (pnpm 10+) already blocks unlisted lifecycle
+      # scripts; web/pnpm-workspace.yaml's allowBuilds: esbuild: true still
+      # runs esbuild's allowlisted build step under --ignore-scripts (verified:
+      # build/lint/type-check/test all still pass with this flag).
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # Chromium-only (playwright.config.ts) to keep this job fast.
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 7
