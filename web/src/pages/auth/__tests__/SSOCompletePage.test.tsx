@@ -5,8 +5,8 @@ import { SSOCompletePage } from '../SSOCompletePage';
 
 const mockNavigate = vi.fn();
 const navState: { navigate: typeof mockNavigate } = { navigate: mockNavigate };
-vi.mock('react-router-dom', async (orig) => ({
-    ...(await orig<typeof import('react-router-dom')>()),
+vi.mock('react-router', async (orig) => ({
+    ...(await orig<typeof import('react-router')>()),
     useNavigate: () => navState.navigate,
 }));
 

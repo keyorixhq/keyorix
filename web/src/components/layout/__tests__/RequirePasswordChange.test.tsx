@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RequirePasswordChange } from '../RequirePasswordChange';
 import type { User } from '../../../types';

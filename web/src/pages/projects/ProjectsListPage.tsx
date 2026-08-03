@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { PlusIcon, FolderIcon, MagnifyingGlassIcon, TrashIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { useProjects, useCreateProject, useDeleteProject, useRestoreProject } from '../../features/projects/api';
 import { ROUTES } from '../../constants';

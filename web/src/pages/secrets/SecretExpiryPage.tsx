@@ -7,7 +7,7 @@ import {
     ArrowTopRightOnSquareIcon,
     MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { secretsApi } from '../../services/secrets';
 import { Secret } from '../../types';
 import { Loading } from '../../components/ui/Loading';

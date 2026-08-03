@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { copyToClipboard } from '../../utils';
 import { ROUTES } from '../../constants';

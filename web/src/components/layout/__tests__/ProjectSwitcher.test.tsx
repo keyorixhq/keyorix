@@ -9,7 +9,7 @@ const { navigateMock, useProjectsMock } = vi.hoisted(() => ({
     useProjectsMock: vi.fn(),
 }));
 
-vi.mock('react-router-dom', async (importOriginal) => {
+vi.mock('react-router', async (importOriginal) => {
     const actual = (await importOriginal()) as object;
     return { ...actual, useNavigate: () => navigateMock };
 });

@@ -6,8 +6,8 @@ import { ProjectAssignmentsPicker } from '../../../features/admin';
 import { useUIStore } from '../../../store/uiStore';
 
 const navigateMock = vi.fn();
-vi.mock('react-router-dom', async () => {
-    const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+vi.mock('react-router', async () => {
+    const actual = await vi.importActual<typeof import('react-router')>('react-router');
     return { ...actual, useNavigate: () => navigateMock };
 });
 
