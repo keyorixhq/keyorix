@@ -1,0 +1,46 @@
+name: SBOM
+
+# Generates a CycloneDX JSON Software Bill of Materials on every push to main
+# and attaches it to any GitHub Release.  CycloneDX is the format recommended
+# by the European Cybersecurity Organisation (ECSO) for EU Cyber Resilience Act
+# Article 13 compliance.
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to attach to GitHub Releases
+      actions: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # anchore/sbom-action uses syft under the hood to produce a CycloneDX JSON
+      # SBOM from the checked-out source tree.  When triggered by a release event
+      # it automatically attaches the SBOM file to the GitHub Release as well.
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          artifact-name: sbom-cyclonedx
+          upload-artifact-retention: 90

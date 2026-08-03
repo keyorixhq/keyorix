@@ -1,0 +1,261 @@
+// Utility functions for the application
+
+/**
+ * Combines class names conditionally
+ */
+export function cn(...classes: (string | undefined | null | boolean)[]): string {
+    return classes.filter(Boolean).join(' ');
+}
+
+/**
+ * Formats a date string to a human-readable format
+ */
+export function formatDate(dateString: string): string {
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    }).format(date);
+}
+
+/**
+ * Formats a relative time (e.g., "2 hours ago")
+ */
+export function formatRelativeTime(dateString: string): string {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (diffInSeconds < 60) return 'just now';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+    if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+
+    return formatDate(dateString);
+}
+
+/**
+ * Masks sensitive data for display
+ */
+export function maskSensitiveData(value: string, visibleChars = 4): string {
+    if (value.length <= visibleChars) {
+        return '*'.repeat(value.length);
+    }
+    return value.slice(0, visibleChars) + '*'.repeat(value.length - visibleChars);
+}
+
+/**
+ * Copies text to clipboard and clears it after a timeout
+ */
+export async function copyToClipboard(
+    text: string,
+    clearTimeout = getEnvConfig().CLIPBOARD_CLEAR_TIMEOUT
+): Promise<void> {
+    try {
+        await navigator.clipboard.writeText(text);
+
+        // Clear clipboard after timeout
+        setTimeout(async () => {
+            try {
+                await navigator.clipboard.writeText('');
+            } catch (error) {
+                console.warn('Failed to clear clipboard:', error);
+            }
+        }, clearTimeout);
+    } catch (error) {
+        console.error('Failed to copy to clipboard:', error);
+        throw new Error('Failed to copy to clipboard', { cause: error });
+    }
+}
+
+/**
+ * Sanitizes user input to prevent XSS
+ */
+export function sanitizeInput(input: string): string {
+    const div = document.createElement('div');
+    div.textContent = input;
+    return div.innerHTML;
+}
+
+/**
+ * Validates email format
+ */
+export function isValidEmail(email: string): boolean {
+    const emailRegex = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+    return emailRegex.test(email);
+}
+
+/**
+ * Formats a date string as a short date (no time) with a dash fallback for empty/invalid values.
+ */
+export function formatDateShort(iso: string | null | undefined): string {
+    if (!iso) return '—';
+    try {
+        return new Date(iso).toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+        });
+    } catch {
+        return iso;
+    }
+}
+
+/**
+ * Triggers a browser download for a Blob (e.g. a CSV fetched with responseType:'blob').
+ */
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+/**
+ * Generates a cryptographically random 32-character URL-safe string.
+ */
+export function generateSecret(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const arr = new Uint8Array(32);
+    window.crypto.getRandomValues(arr);
+    return Array.from(arr)
+        .map((b) => chars[b % chars.length])
+        .join('');
+}
+
+/**
+ * Generates a random ID
+ */
+export function generateId(): string {
+    return crypto.randomUUID();
+}
+
+/**
+ * Debounces a function call
+ */
+export function debounce<T extends (...args: unknown[]) => unknown>(
+    func: T,
+    wait: number
+): (...args: Parameters<T>) => void {
+    let timeout: ReturnType<typeof setTimeout>;
+    return (...args: Parameters<T>) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func(...args), wait);
+    };
+}
+
+/**
+ * Throttles a function call
+ */
+export function throttle<T extends (...args: unknown[]) => unknown>(
+    func: T,
+    limit: number
+): (...args: Parameters<T>) => void {
+    let inThrottle: boolean;
+    return (...args: Parameters<T>) => {
+        if (!inThrottle) {
+            func(...args);
+            inThrottle = true;
+            setTimeout(() => (inThrottle = false), limit);
+        }
+    };
+}
+
+/**
+ * Gets environment configuration
+ */
+export function getEnvConfig() {
+    return {
+        API_BASE_URL: import.meta.env.VITE_API_BASE_URL || '',
+        API_TIMEOUT: Number.parseInt(import.meta.env.VITE_API_TIMEOUT || '30000'),
+        APP_NAME: import.meta.env.VITE_APP_NAME || 'Keyorix',
+        APP_VERSION: import.meta.env.VITE_APP_VERSION || '1.0.0',
+        APP_DESCRIPTION: import.meta.env.VITE_APP_DESCRIPTION || 'Secure Secret Management System',
+        ENVIRONMENT: import.meta.env.VITE_ENVIRONMENT || 'development',
+        ENABLE_DEBUG: import.meta.env.VITE_ENABLE_DEBUG === 'true',
+        ENABLE_DEVTOOLS: import.meta.env.VITE_ENABLE_DEVTOOLS === 'true',
+        SESSION_TIMEOUT: Number.parseInt(import.meta.env.VITE_SESSION_TIMEOUT || '3600000'),
+        CLIPBOARD_CLEAR_TIMEOUT: Number.parseInt(import.meta.env.VITE_CLIPBOARD_CLEAR_TIMEOUT || '30000'),
+        DEFAULT_LANGUAGE: import.meta.env.VITE_DEFAULT_LANGUAGE || 'en',
+        DEFAULT_THEME: import.meta.env.VITE_DEFAULT_THEME || 'system',
+        ITEMS_PER_PAGE: Number.parseInt(import.meta.env.VITE_ITEMS_PER_PAGE || '20'),
+    };
+}
+
+/**
+ * Storage utilities for localStorage with error handling
+ */
+export const storage = {
+    get: <T>(key: string, defaultValue?: T): T | null => {
+        try {
+            const item = localStorage.getItem(key);
+            return item ? JSON.parse(item) : (defaultValue ?? null);
+        } catch (error) {
+            console.error(`Error reading from localStorage key "${key}":`, error);
+            return defaultValue ?? null;
+        }
+    },
+
+    set: <T>(key: string, value: T): void => {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (error) {
+            console.error(`Error writing to localStorage key "${key}":`, error);
+        }
+    },
+
+    remove: (key: string): void => {
+        try {
+            localStorage.removeItem(key);
+        } catch (error) {
+            console.error(`Error removing localStorage key "${key}":`, error);
+        }
+    },
+
+    clear: (): void => {
+        try {
+            localStorage.clear();
+        } catch (error) {
+            console.error('Error clearing localStorage:', error);
+        }
+    },
+};
+
+/**
+ * URL utilities
+ */
+export const url = {
+    /**
+     * Builds a URL with query parameters
+     */
+    buildUrl: (base: string, params: Record<string, string | number | boolean>): string => {
+        const url = new URL(base, window.location.origin);
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null) {
+                url.searchParams.set(key, String(value));
+            }
+        });
+        return url.toString();
+    },
+
+    /**
+     * Parses query parameters from current URL
+     */
+    getQueryParams: (): Map<string, string> => {
+        // Map has no prototype surface, so user-supplied URL param keys
+        // cannot cause property injection (CodeQL js/remote-property-injection).
+        return new Map(new URLSearchParams(window.location.search));
+    },
+};
+
+// Re-export auth utilities
+export * from './auth';
+// Re-export routing utilities
+export * from './routing';
