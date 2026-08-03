@@ -8,7 +8,7 @@ import { useProjectMruStore } from '../../store';
 
 function useCurrentProjectId(): number | null {
     const { pathname } = useLocation();
-    const match = pathname.match(/^\/projects\/(\d+)/);
+    const match = /^\/projects\/(\d+)/.exec(pathname);
     return match?.[1] ? Number.parseInt(match[1], 10) : null;
 }
 
