@@ -176,9 +176,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - leg: root
+          # root was a single ~1160s leg (measured 2026-08-03) -- slower than
+          # handlers below despite handlers being the one with its own
+          # extended timeout, defeating the point of splitting them apart
+          # (ADR-048). Resharded into 3 pinned "heavy" legs (root-1/2/3,
+          # bin-packed to ~830s each from actual per-package timings) plus
+          # root-4, a catch-all computed by EXCLUDING root-1/2/3's pinned
+          # packages from the same list root ever used -- so a newly added
+          # package always lands somewhere (root-4) rather than silently
+          # never running, and only gets promoted to its own pinned leg once
+          # it's proven slow enough to be worth the split.
+          - leg: root-1
             timeout: 600
-            coverage-file: coverage.out
+            coverage-file: coverage_root1.out
+          - leg: root-2
+            timeout: 600
+            coverage-file: coverage_root2.out
+          - leg: root-3
+            timeout: 600
+            coverage-file: coverage_root3.out
+          - leg: root-4
+            timeout: 600
+            coverage-file: coverage_root4.out
           - leg: handlers
             # server/http/handlers (167 test files, each opening its own
             # SQLite DB) gets its own longer -timeout (ADR-048): under -race,
@@ -202,23 +221,103 @@ jobs:
 
       - name: go test (${{ matrix.leg }})
         run: |
+          # Every root-N leg starts from the same base exclusion root always
+          # used (pre-existing failures requiring a running server / known
+          # mock mismatches -- see `git log -S "internal/cli\$" --
+          # .github/workflows/ci.yml` for why each was excluded; do not
+          # re-include without fixing the underlying test first. handlers is
+          # excluded here because it runs as its own matrix leg below).
+          root_base() {
+            go list ./... | grep -v \
+              -e 'internal/cli$' \
+              -e 'internal/core$' \
+              -e 'internal/storage/remote' \
+              -e 'server/http$' \
+              -e 'server/http/handlers$' \
+              -e 'server/middleware$' \
+              -e 'server/proto/pb$'
+          }
+
+          # root-1/2/3: pinned "heavy" packages (bin-packed by measured
+          # per-package time, ~830s/leg). Keep these three lists AND the
+          # exclusion list in root-4 below in sync -- a package listed here
+          # must be excluded there, and vice versa.
+          root_1_pkgs="github.com/keyorixhq/keyorix/internal/encryption
+          github.com/keyorixhq/keyorix/server/grpc/services
+          github.com/keyorixhq/keyorix/internal/cli/invite
+          github.com/keyorixhq/keyorix/internal/cli/group
+          github.com/keyorixhq/keyorix/internal/cli/run
+          github.com/keyorixhq/keyorix/internal/crypto
+          github.com/keyorixhq/keyorix/server/grpc
+          github.com/keyorixhq/keyorix/internal/testhelper
+          github.com/keyorixhq/keyorix/internal/cli/accessreview
+          github.com/keyorixhq/keyorix/internal/cli/anomalies
+          github.com/keyorixhq/keyorix/internal/cli/auth
+          github.com/keyorixhq/keyorix/internal/bundle
+          github.com/keyorixhq/keyorix/internal/rotation
+          github.com/keyorixhq/keyorix/internal/cli/license
+          github.com/keyorixhq/keyorix/internal/cli/config
+          github.com/keyorixhq/keyorix/cmd/validate-translations
+          github.com/keyorixhq/keyorix/internal/startup
+          github.com/keyorixhq/keyorix/internal/di
+          github.com/keyorixhq/keyorix/server/webui"
+
+          root_2_pkgs="github.com/keyorixhq/keyorix/internal/cli/user
+          github.com/keyorixhq/keyorix/internal/cli/encryption
+          github.com/keyorixhq/keyorix/internal/storage
+          github.com/keyorixhq/keyorix/internal/cli/share
+          github.com/keyorixhq/keyorix/server/grpc/interceptors
+          github.com/keyorixhq/keyorix/internal/cli/common
+          github.com/keyorixhq/keyorix/internal/cli/hygiene
+          github.com/keyorixhq/keyorix/internal/cli/sod
+          github.com/keyorixhq/keyorix/internal/cli/breakglass
+          github.com/keyorixhq/keyorix/internal/cli/audit
+          github.com/keyorixhq/keyorix/internal/saml
+          github.com/keyorixhq/keyorix/internal/i18n
+          github.com/keyorixhq/keyorix/internal/notary
+          github.com/keyorixhq/keyorix/internal/securefiles
+          github.com/keyorixhq/keyorix/internal/trust
+          github.com/keyorixhq/keyorix/internal/license
+          github.com/keyorixhq/keyorix/internal/cli/trust
+          github.com/keyorixhq/keyorix/internal/crypto/awskms
+          github.com/keyorixhq/keyorix/internal/utils/safeconv"
+
+          root_3_pkgs="github.com/keyorixhq/keyorix/server/tools
+          github.com/keyorixhq/keyorix/internal/cli/machine
+          github.com/keyorixhq/keyorix/server
+          github.com/keyorixhq/keyorix/internal/cli/rbac
+          github.com/keyorixhq/keyorix/internal/cli/project
+          github.com/keyorixhq/keyorix/internal/cli/status
+          github.com/keyorixhq/keyorix/internal/notifychan
+          github.com/keyorixhq/keyorix/internal/cli/risk
+          github.com/keyorixhq/keyorix/internal/cli/rotation
+          github.com/keyorixhq/keyorix/internal/cli/dynamic
+          github.com/keyorixhq/keyorix/internal/audit/siem
+          github.com/keyorixhq/keyorix/internal/mcp
+          github.com/keyorixhq/keyorix/internal/cli/bundle
+          github.com/keyorixhq/keyorix/server/validation
+          github.com/keyorixhq/keyorix/internal/connect
+          github.com/keyorixhq/keyorix/internal/config
+          github.com/keyorixhq/keyorix/internal/storage/models
+          github.com/keyorixhq/keyorix/internal/delivery
+          github.com/keyorixhq/keyorix/internal/core/storage"
+
           case "${{ matrix.leg }}" in
-            root)
-              # Excludes packages with documented pre-existing failures that
-              # require a running server or have known mock mismatches (see
-              # `git log -S "internal/cli\$" -- .github/workflows/ci.yml` for
-              # the commits that introduced each exclusion) -- do not
-              # re-include without fixing the underlying test first.
-              # server/http/handlers is excluded here because it runs as its
-              # own matrix leg (below).
-              pkgs=$(go list ./... | grep -v \
-                -e 'internal/cli$' \
-                -e 'internal/core$' \
-                -e 'internal/storage/remote' \
-                -e 'server/http$' \
-                -e 'server/http/handlers$' \
-                -e 'server/middleware$' \
-                -e 'server/proto/pb$')
+            root-1)
+              pkgs="$root_1_pkgs"
+              ;;
+            root-2)
+              pkgs="$root_2_pkgs"
+              ;;
+            root-3)
+              pkgs="$root_3_pkgs"
+              ;;
+            root-4)
+              # Catch-all: every root-eligible package not pinned to root-1/2/3
+              # above, including any package added since this split was last
+              # tuned. comm needs both inputs sorted.
+              pinned=$(printf '%s\n%s\n%s\n' "$root_1_pkgs" "$root_2_pkgs" "$root_3_pkgs" | sort -u)
+              pkgs=$(comm -23 <(root_base | sort -u) <(echo "$pinned"))
               ;;
             handlers)
               pkgs=./server/http/handlers/...
@@ -316,7 +415,7 @@ jobs:
       - name: Merge coverage profiles
         run: |
           echo "mode: atomic" > coverage_merged.out
-          tail -q -n +2 coverage.out coverage_handlers.out >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers.out >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
