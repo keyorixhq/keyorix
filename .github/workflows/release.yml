@@ -33,13 +33,19 @@ jobs:
         with:
           go-version: '1.26.5'
 
+      # Pinned: supply-chain tooling is itself an attack surface. The Makefile
+      # `release` target shells out to cyclonedx-gomod to emit a per-binary
+      # CycloneDX SBOM (covered by checksums.txt, uploaded with dist/*).
+      - name: Install SBOM generator
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0
+
       # VERSION is passed via env, not interpolated into the `run:` string (#115):
       # a tag name can contain shell metacharacters ($, `, ;, |, &, ( ) are all
       # valid in a git ref) that git's own naming rules don't reject, so a
       # template-expression interpolation directly into a shell command line is a
       # script-injection vector. GITHUB_REF_NAME is a runner-provided env var —
       # substituted by the shell, never re-parsed as YAML/template syntax.
-      - name: Cross-compile release binaries
+      - name: Cross-compile release binaries + SBOMs
         run: make release VERSION="$GITHUB_REF_NAME"
 
       # cosign-release pinned: latest (v3.1.1) defaults sign-blob to its new
