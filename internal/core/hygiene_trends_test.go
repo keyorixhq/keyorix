@@ -71,7 +71,7 @@ func TestGetHygieneTrends_TodayPointPopulatedFromLiveState(t *testing.T) {
 	ctx := context.Background()
 
 	setupComputeCalls(store, ctx, 5, 3, 2,
-		[]*models.PersonalAccessToken{{}, {}, {}},                                          // 3 PATs
+		[]*models.PersonalAccessToken{{}, {}, {}},                                           // 3 PATs
 		[]*models.MachineIdentity{{State: "active"}, {State: "active"}, {State: "revoked"}}, // 2 active
 	)
 	store.On("ListHygieneTrendSnapshots", ctx, 30).Return([]*models.HygieneTrendSnapshot{}, nil)
@@ -132,7 +132,7 @@ func TestGetHygieneTrends_TodaySnapshotExcluded(t *testing.T) {
 
 	report, err := c.GetHygieneTrends(ctx, 30)
 	require.NoError(t, err)
-	require.Len(t, report.Points, 2) // today (live) + yesterday only
+	require.Len(t, report.Points, 2)               // today (live) + yesterday only
 	assert.Equal(t, 0, report.Points[0].StalePATs) // live value, not 99
 	assert.Equal(t, 7, report.Points[1].StalePATs)
 }

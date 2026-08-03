@@ -52,7 +52,7 @@ func (h *SecretHandler) SetRetentionOverride(w http.ResponseWriter, r *http.Requ
 	}
 
 	h.sendSuccess(w, map[string]interface{}{
-		"secret_id":             uint(id),
+		"secret_id":               uint(id),
 		"retention_override_days": reqBody.RetentionOverrideDays,
 	}, "Retention override updated")
 }

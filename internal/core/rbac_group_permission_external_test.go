@@ -123,7 +123,7 @@ func TestHasPermissionByEmail_ScopeRestrictedAssignment_DeletedProjectStopsAutho
 	ctx := context.Background()
 
 	h.CreateTestUser(t, "kate", 24)
-	projID := uint(2) // "production" project, seeded by the helper
+	projID := uint(2)                   // "production" project, seeded by the helper
 	h.AssignUserRole(t, 24, 3, &projID) // editor, scoped to project 2 → secrets.write
 
 	ok, err := h.CoreService.HasPermissionByEmail(ctx, "kate@test.com", "secrets", "write")

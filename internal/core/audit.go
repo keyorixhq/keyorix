@@ -12,7 +12,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // RBAC audit event types. Role assignments/removals are written to the shared
 // audit_events table and surfaced together by ListRBACAuditLogs.
 const (

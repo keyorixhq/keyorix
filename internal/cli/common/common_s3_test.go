@@ -408,7 +408,7 @@ func TestPrintOneTimePasswordResult_NonNil(t *testing.T) {
 	os.Stdout = w
 
 	PrintOneTimePasswordResult(&core.OneTimePasswordResult{
-		Email:           "user@example.com",
+		Email:    "user@example.com",
 		OTPValue: "Sup3rS3cr3t!",
 	})
 

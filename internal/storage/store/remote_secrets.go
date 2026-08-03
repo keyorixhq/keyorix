@@ -20,7 +20,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // --- Wire DTOs (#496) ---
 //
 // models.SecretNode carries no json tags at all, so marshaling it directly (as
@@ -616,4 +615,3 @@ func (rs *RemoteStorage) TryIncrementSecretReadCount(_ context.Context, _ uint, 
 func (rs *RemoteStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
 	return false, fmt.Errorf("remote storage: max-reads enforcement is server-side only")
 }
-

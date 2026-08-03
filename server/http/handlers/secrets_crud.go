@@ -21,7 +21,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // CreateSecret handles POST /api/v1/secrets
 func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx, ok := mustGetUser(w, r)

@@ -98,7 +98,7 @@ func TestCollectGCP_S27_PrefixFiltersOutAll(t *testing.T) {
 // ── source_azure.go: additional branch ───────────────────────────────────────
 
 // fakeAzureNilValue implements azureSecretsAPI but returns ("", nil) from getValue,
-// exercising the "val == ''" skip branch in collectAzure.
+// exercising the "val == ”" skip branch in collectAzure.
 type fakeAzureNilValue struct {
 	names []string
 }
@@ -835,4 +835,3 @@ func TestInteractiveUpdate_S27_ClearExpiration(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, req.ClearExpiration)
 }
-

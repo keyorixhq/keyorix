@@ -79,9 +79,9 @@ func TestVerifyCmd_Success_MultipleComponents(t *testing.T) {
 
 	const keyID = "test-key-s25-multi"
 	bundlePath, pub, _ := buildSignedBundle(t, map[string]string{
-		"bin/keyorix":       "binary-bytes",
+		"bin/keyorix":      "binary-bytes",
 		"charts/chart.tgz": "fake-chart-data",
-		"images/app.tar":    "fake-image-data",
+		"images/app.tar":   "fake-image-data",
 	}, "v0.99.0", keyID)
 
 	reg := trust.NewRegistry()

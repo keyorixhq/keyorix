@@ -14,7 +14,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 // --- Machine-token credentials ---
 
 func (ls *LocalStorage) CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {

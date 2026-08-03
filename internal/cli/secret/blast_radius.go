@@ -32,8 +32,8 @@ type blastRadiusReportView struct {
 }
 
 var blastRadiusCmd = &cobra.Command{
-	Use:          "blast-radius <secret-id>",
-	Short:        "Show the enriched blast radius of rotating or deleting a secret",
+	Use:   "blast-radius <secret-id>",
+	Short: "Show the enriched blast radius of rotating or deleting a secret",
 	Long: `Show all downstream dependents of a secret (recursive), each annotated with
 owner, project, hop depth, and risk level (critical/high/medium/low). Useful
 for triage before a rotation or deletion event.`,

@@ -45,7 +45,7 @@ func GRPCRateLimitInterceptor(cfg config.RateLimitConfig) grpc.UnaryServerInterc
 }
 
 const (
-	grpcPrincipalLimiterIdleTTL   = 10 * time.Minute
+	grpcPrincipalLimiterIdleTTL    = 10 * time.Minute
 	grpcPrincipalLimiterSweepEvery = 1000
 )
 

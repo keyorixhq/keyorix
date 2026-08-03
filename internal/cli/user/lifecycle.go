@@ -19,7 +19,7 @@ import (
 
 const (
 	descActingAdminEmail = "Acting admin email (required, for audit)"
-	descTargetUserID = "Target user ID (required)"
+	descTargetUserID     = "Target user ID (required)"
 )
 
 var (

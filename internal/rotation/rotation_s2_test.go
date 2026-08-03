@@ -105,7 +105,9 @@ func TestAzureGraphClient_Do_WithOutput(t *testing.T) {
 	defer srv.Close()
 
 	c := newGraphClient(srv, "tok")
-	var out struct{ Name string `json:"name"` }
+	var out struct {
+		Name string `json:"name"`
+	}
 	err := c.do(context.Background(), http.MethodGet, srv.URL+"/app", nil, &out)
 	require.NoError(t, err)
 	assert.Equal(t, "myapp", out.Name)
@@ -135,7 +137,7 @@ func TestAzureGraphClient_ListPasswordKeyIDs_Success(t *testing.T) {
 		"passwordCredentials": []map[string]any{
 			{"keyId": "kid1"},
 			{"keyId": "kid2"},
-			{"keyId": ""},   // empty keyId must be filtered out
+			{"keyId": ""}, // empty keyId must be filtered out
 		},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

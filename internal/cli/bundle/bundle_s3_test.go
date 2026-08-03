@@ -101,10 +101,10 @@ func makeLicenseToken(t *testing.T) (tokenPath string, licPub ed25519.PublicKey)
 	require.NoError(t, err)
 	tok, err := ilicense.Issue(ilicense.License{
 		Licensee: "ACME", Plan: "enterprise-airgap",
-		Features:  []string{ilicense.FeatureAirgapUpdates},
-		IssuedAt:  time.Now().Add(-time.Hour),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
-		KeyID:     "license-s3-2026",
+		Features: []string{ilicense.FeatureAirgapUpdates},
+		IssuedAt: time.Now().Add(-time.Hour),
+		NotAfter: time.Now().Add(365 * 24 * time.Hour),
+		KeyID:    "license-s3-2026",
 	}, licPriv)
 	require.NoError(t, err)
 
@@ -279,8 +279,8 @@ func TestVerifyCmd_Success(t *testing.T) {
 
 	const keyID = "test-key-s3-2026"
 	bundlePath, pub, _ := buildSignedBundle(t, map[string]string{
-		"bin/keyorix":          "binary-bytes",
-		"charts/chart.tgz":    "fake-chart",
+		"bin/keyorix":      "binary-bytes",
+		"charts/chart.tgz": "fake-chart",
 	}, "v0.99.0", keyID)
 
 	reg := trust.NewRegistry()

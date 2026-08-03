@@ -302,11 +302,11 @@ type GRPCKeepaliveConfig struct {
 // defaultGRPCKeepaliveTime/Timeout/MinTime are the server-side keepalive defaults
 // applied when the operator hasn't configured server.grpc.keepalive.* (#222/#435).
 const (
-	defaultGRPCKeepaliveTime           = 5 * time.Minute
-	defaultGRPCKeepaliveTimeout        = 20 * time.Second
-	defaultGRPCKeepaliveMinTime        = 5 * time.Minute
-	defaultGRPCMaxConnectionAge        = 1 * time.Hour
-	defaultGRPCMaxConnectionAgeGrace   = 30 * time.Second
+	defaultGRPCKeepaliveTime         = 5 * time.Minute
+	defaultGRPCKeepaliveTimeout      = 20 * time.Second
+	defaultGRPCKeepaliveMinTime      = 5 * time.Minute
+	defaultGRPCMaxConnectionAge      = 1 * time.Hour
+	defaultGRPCMaxConnectionAgeGrace = 30 * time.Second
 )
 
 // GetTime returns the idle-before-ping interval (default 5m).
@@ -355,9 +355,9 @@ type TLSConfig struct {
 	// between restarts. Defaults to "certs" (relative to the working directory).
 	// Use an absolute path in production to avoid ambiguity. The directory is
 	// created with mode 0700 (owner-only) on startup if it does not exist.
-	CertCacheDir string   `yaml:"cert_cache_dir,omitempty"`
-	CertFile string   `yaml:"cert_file"`
-	KeyFile  string   `yaml:"key_file"`
+	CertCacheDir string `yaml:"cert_cache_dir,omitempty"`
+	CertFile     string `yaml:"cert_file"`
+	KeyFile      string `yaml:"key_file"`
 	// AllowedCiphers optionally restricts the TLS 1.2 cipher suites offered to
 	// SecureCipherSuiteNames' names (e.g. "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384").
 	// Left empty/unset, the caller's own hardcoded secure AEAD-only default applies

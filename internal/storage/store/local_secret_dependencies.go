@@ -15,7 +15,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-
 func (ls *LocalStorage) CreateSecretDependency(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
 	if err := ls.db.WithContext(ctx).Create(d).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

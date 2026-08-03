@@ -24,7 +24,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // Invitation states.
 const (
 	InvitationPending  = "pending"

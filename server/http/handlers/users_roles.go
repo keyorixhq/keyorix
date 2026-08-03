@@ -12,7 +12,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
-
 type updateUserRolesRequest struct {
 	RoleIDs []uint `json:"role_ids" validate:"omitempty"`
 	// ProjectID/EnvironmentID scope the replacement (0 = global). Only the

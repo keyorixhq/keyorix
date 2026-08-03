@@ -298,4 +298,3 @@ func TestValidateTemplateClassification(t *testing.T) {
 	}
 	assert.Error(t, validateTemplateClassification("topsecret"))
 }
-

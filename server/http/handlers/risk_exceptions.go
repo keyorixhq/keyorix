@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // ListRiskExceptions handles GET /api/v1/risk-exceptions — the register. ?all=true
 // includes expired exceptions (history); default is active only.
 func (h *DashboardHandler) ListRiskExceptions(w http.ResponseWriter, r *http.Request) {

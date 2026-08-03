@@ -370,7 +370,7 @@ var logsCmd = &cobra.Command{
 compliance spot-checks (e.g. who deleted secrets last week). For bulk/machine
 consumption use 'keyorix audit export' (NDJSON) instead. Requires audit.read.`,
 	SilenceUsage: true,
-	RunE: func(_ *cobra.Command, _ []string) error { return runLogsQuery() },
+	RunE:         func(_ *cobra.Command, _ []string) error { return runLogsQuery() },
 }
 
 func runLogsQuery() error {
@@ -487,7 +487,7 @@ var searchCmd = &cobra.Command{
 outcome (success/failure), and time range. Returns a table of matching events.
 For bulk consumption use 'keyorix audit export' instead.`,
 	SilenceUsage: true,
-	RunE: func(_ *cobra.Command, _ []string) error { return runAuditSearch() },
+	RunE:         func(_ *cobra.Command, _ []string) error { return runAuditSearch() },
 }
 
 func runAuditSearch() error {

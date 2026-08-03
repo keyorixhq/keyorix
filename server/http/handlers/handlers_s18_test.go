@@ -169,15 +169,15 @@ func TestNewGroupProxyWire_SoftDeletedGroup_S18(t *testing.T) {
 func TestNewUserRetentionProxyWire_SoftDeletedUser_S18(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	u := &models.User{
-		ID:          42,
-		Username:    "deleted-user-s18",
-		Email:       "deleted-user-s18@x.com",
-		DisplayName: "Deleted User S18",
-		IsActive:    false,
+		ID:           42,
+		Username:     "deleted-user-s18",
+		Email:        "deleted-user-s18@x.com",
+		DisplayName:  "Deleted User S18",
+		IsActive:     false,
 		AccountState: core.AccountActive,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		DeletedAt:   gorm.DeletedAt{Time: now, Valid: true},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		DeletedAt:    gorm.DeletedAt{Time: now, Valid: true},
 	}
 	w := newUserRetentionProxyWire(u)
 	assert.Equal(t, "deleted-user-s18", w.Username)
@@ -252,7 +252,7 @@ func newBrokenWriter() *brokenWriter {
 	return &brokenWriter{header: make(http.Header)}
 }
 
-func (b *brokenWriter) Header() http.Header        { return b.header }
+func (b *brokenWriter) Header() http.Header         { return b.header }
 func (b *brokenWriter) WriteHeader(code int)        { b.code = code }
 func (b *brokenWriter) Write(_ []byte) (int, error) { return 0, &fakeWriteError{} }
 
@@ -352,4 +352,3 @@ func TestCreateUserWithOTP_FieldValidated_S18(t *testing.T) {
 	// 201 on first creation: success path confirmed.
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
-

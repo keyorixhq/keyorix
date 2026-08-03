@@ -1,7 +1,9 @@
 // core_s26_test.go — sprint-26 coverage blitz:
 // users.go (UpdateUser branches, RestoreUser, validateCreateUserRequest, CreateUser),
 // versions.go (GetSecretVersionsWithPermissionCheck success, GetSecretVersionWithPermissionCheck success,
-//   GetLatestSecretVersionWithPermissionCheck success),
+//
+//	GetLatestSecretVersionWithPermissionCheck success),
+//
 // setup_consume.go (expireInvitationIfOverdue, localPart, displayNameFromEmail),
 // sharing_validation.go (validateUpdateShareRequest branches),
 // audit_checkpoint.go (SeedAuditWatermark no-key, advanceAuditHighWater),

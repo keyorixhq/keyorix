@@ -1,6 +1,7 @@
 // pat_expiry_route_test.go — integration tests for:
-//   GET    /api/v1/auth/tokens/expired
-//   DELETE /api/v1/auth/tokens/expired
+//
+//	GET    /api/v1/auth/tokens/expired
+//	DELETE /api/v1/auth/tokens/expired
 //
 // These drive the full router (newTestCore + NewRouter) so every middleware
 // layer (auth, rate-limit, userctx injection) is exercised.

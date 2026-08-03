@@ -289,11 +289,11 @@ func TestAzure_S22_GenerateUpstream_PartialDeletion(t *testing.T) {
 // fakeGCPMixedDelete is a fake gcpKeyAPI that fails DeleteKey only for
 // specific key names, allowing partial-deletion scenarios.
 type fakeGCPMixedDelete struct {
-	existing  []string
-	newName   string
-	newJSON   string
-	failKeys  map[string]bool
-	deleted   []string
+	existing []string
+	newName  string
+	newJSON  string
+	failKeys map[string]bool
+	deleted  []string
 }
 
 func (f *fakeGCPMixedDelete) ListKeyNames(_ context.Context, _ string) ([]string, error) {
@@ -315,10 +315,10 @@ func (f *fakeGCPMixedDelete) DeleteKey(_ context.Context, keyName string) error 
 // the new key JSON preserved.
 func TestGCP_S22_GenerateUpstream_PartialDeletion(t *testing.T) {
 	fake := &fakeGCPMixedDelete{
-		existing:  []string{"k/OLD-OK", "k/OLD-FAIL"},
-		newName:   "k/NEW",
-		newJSON:   `{"type":"service_account","key":"new"}`,
-		failKeys:  map[string]bool{"k/OLD-FAIL": true},
+		existing: []string{"k/OLD-OK", "k/OLD-FAIL"},
+		newName:  "k/NEW",
+		newJSON:  `{"type":"service_account","key":"new"}`,
+		failKeys: map[string]bool{"k/OLD-FAIL": true},
 	}
 	e := NewGCPServiceAccountKeyExecutor("gcp-s22-partial", []string{"svc-"})
 	e.newClient = func(context.Context) (gcpKeyAPI, error) { return fake, nil }
@@ -484,7 +484,7 @@ func TestRedactSQLError_S22_AdjacentLiterals(t *testing.T) {
 }
 
 // TestRedactSQLError_S22_EmptyLiteral verifies that an empty SQL literal
-// ('') is also redacted.
+// (”) is also redacted.
 func TestRedactSQLError_S22_EmptyLiteral(t *testing.T) {
 	raw := errors.New("near '' in statement")
 	wrapped := redactSQLError("postgresql", "role", raw)

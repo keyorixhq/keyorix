@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	errTmplNotConnected  = "not connected to a server — run: keyorix connect <server>"
-	apiSecretTemplates = "/api/v1/secret-templates" // #nosec G101 -- URL path, not a credential
+	errTmplNotConnected = "not connected to a server — run: keyorix connect <server>"
+	apiSecretTemplates  = "/api/v1/secret-templates" // #nosec G101 -- URL path, not a credential
 )
 
 var (

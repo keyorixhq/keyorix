@@ -105,7 +105,7 @@ func TestSpool_AddWithMaxBytesZeroSkipsCap(t *testing.T) {
 	d := &fakeDelivery{failing: true}
 	s, err := newSpool(dir, time.Hour, d.deliver)
 	require.NoError(t, err)
-	s.close() // stop background loop; we drive add() directly
+	s.close()      // stop background loop; we drive add() directly
 	s.maxBytes = 0 // disable cap
 
 	tr := true

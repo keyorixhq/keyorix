@@ -40,8 +40,8 @@ func seedSecretForOwnershipTest(t *testing.T, client *http.Client, baseURL, toke
 // ownershipHistoryResponse is the decoded response shape for the
 // GET /api/v1/secrets/{id}/ownership-history endpoint.
 type ownershipHistoryResponse struct {
-	Success          bool `json:"success"`
-	Data             struct {
+	Success bool `json:"success"`
+	Data    struct {
 		OwnershipHistory []map[string]interface{} `json:"ownership_history"`
 		Total            float64                  `json:"total"`
 	} `json:"data"`

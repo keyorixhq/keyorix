@@ -15,7 +15,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-
 // SecretGRPCService implements pb.SecretServiceServer, backing each RPC with the
 // shared core service. Authentication/identity is established by the auth
 // interceptor (see interceptors.AuthInterceptor) and read from the context.

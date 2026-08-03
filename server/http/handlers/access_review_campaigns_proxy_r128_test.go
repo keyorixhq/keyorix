@@ -1,13 +1,13 @@
 // access_review_campaigns_proxy_r128_test.go — regression tests for the r128
 // security fixes in access_review_campaigns_proxy.go:
 //
-//   ARC-003: CreateAccessReviewCampaignProxy must ignore caller-supplied lifecycle
-//            state and always create an open campaign.
-//   ARC-004: CreateAccessReviewItemsProxy must strip decision fields from each
-//            incoming item, forcing every new item to "pending".
-//   ARC-005: UpdateAccessReviewItemProxy must reject self-certification
-//            (decided_by == principal_id for user-type items) and must reject a
-//            zero decided_by.
+//	ARC-003: CreateAccessReviewCampaignProxy must ignore caller-supplied lifecycle
+//	         state and always create an open campaign.
+//	ARC-004: CreateAccessReviewItemsProxy must strip decision fields from each
+//	         incoming item, forcing every new item to "pending".
+//	ARC-005: UpdateAccessReviewItemProxy must reject self-certification
+//	         (decided_by == principal_id for user-type items) and must reject a
+//	         zero decided_by.
 package handlers
 
 import (

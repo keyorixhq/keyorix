@@ -1355,7 +1355,6 @@ func TestAutoRotateCmd_NotConnected(t *testing.T) {
 	assert.Contains(t, err.Error(), "not connected")
 }
 
-
 // ──────────────────────────── suspendCmd / resumeCmd RunE ────────────────────
 
 func TestSuspendCmd_NotConnected(t *testing.T) {

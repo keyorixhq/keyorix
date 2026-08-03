@@ -227,9 +227,9 @@ func TestRotateKEKPassphrase_AuditCheckpointKeyChanges(t *testing.T) {
 // rotation must still decrypt successfully after it.
 func TestRotateKEKPassphrase_DEKValueUnchanged(t *testing.T) {
 	const (
-		oldPass  = "old-dek-unchanged-pass"
-		newPass  = "new-dek-unchanged-pass"
-		secret   = "plaintext-that-must-survive-kek-rotation"
+		oldPass = "old-dek-unchanged-pass"
+		newPass = "new-dek-unchanged-pass"
+		secret  = "plaintext-that-must-survive-kek-rotation"
 	)
 
 	dir := t.TempDir()

@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // ListMachineIdentities handles GET /api/v1/projects/{id}/machine-identities.
 func (h *CatalogHandler) ListMachineIdentities(w http.ResponseWriter, r *http.Request) {
 	id, ok := mustParseProjectID(w, r)

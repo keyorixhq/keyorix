@@ -11,9 +11,9 @@ import (
 
 // bulkRotateResultDTO mirrors the core.BulkRotateResult JSON shape the API returns.
 type bulkRotateResultDTO struct {
-	Triggered []uint              `json:"triggered"`
-	Failed    []bulkRotateErrDTO  `json:"failed"`
-	Total     int                 `json:"total"`
+	Triggered []uint             `json:"triggered"`
+	Failed    []bulkRotateErrDTO `json:"failed"`
+	Total     int                `json:"total"`
 }
 
 // bulkRotateErrDTO mirrors core.BulkRotateError.
@@ -145,9 +145,9 @@ func resolveSecretNamesToIDs(ctx context.Context, c *common.RemoteClient, projec
 func postBulkRotate(ctx context.Context, c *common.RemoteClient, projectID uint, secretIDs []uint, envID uint, classification string) (bulkRotateResultDTO, error) {
 	path := fmt.Sprintf("/api/v1/projects/%d/secrets/bulk-rotate", projectID)
 	body := map[string]interface{}{
-		"secret_ids":      secretIDs,
-		"environment_id":  envID,
-		"classification":  classification,
+		"secret_ids":     secretIDs,
+		"environment_id": envID,
+		"classification": classification,
 	}
 	var result bulkRotateResultDTO
 	if err := c.Post(ctx, path, body, &result); err != nil {

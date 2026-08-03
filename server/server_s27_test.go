@@ -175,7 +175,7 @@ func TestStartHTTPServer_S27_AnomalyOffHoursNumeric(t *testing.T) {
 		},
 		AnomalyAlerts: config.AnomalyAlertsConfig{
 			BusinessHours: config.AnomalyBusinessHoursConfig{
-				Timezone:      "",  // empty → tzLabel = "UTC"
+				Timezone:      "", // empty → tzLabel = "UTC"
 				OffHoursStart: 22, // non-zero → triggers the if-block
 				OffHoursEnd:   6,
 			},
@@ -1273,7 +1273,7 @@ func TestStartHTTPServer_S27_JITExpiredGrantSwept(t *testing.T) {
 	}
 	if err := store.AssignRoleWithExpiry(
 		ctx1, user.ID, role.ID,
-		corestorage.Scope{}, // global scope
+		corestorage.Scope{},        // global scope
 		time.Now().Add(-time.Hour), // already expired
 	); err != nil {
 		t.Fatalf("AssignRoleWithExpiry: %v", err)

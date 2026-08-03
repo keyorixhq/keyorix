@@ -83,7 +83,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // isAlreadyAssignedErr reports whether err is local_machine_credentials.go's
 // AssignMachineRole "already assigned" client error — a conflict, not a storage
 // failure. Classifying it as 409 (rather than a generic 500) matters beyond

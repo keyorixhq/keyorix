@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-
 // ControlStatus is a control's evaluated state.
 type ControlStatus string
 

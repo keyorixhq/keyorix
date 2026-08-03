@@ -17,8 +17,8 @@ import (
 
 const (
 	descProjectRequired = "Project (required)"
-	flagCampaignID = "campaign-id"
-	flagProjectID = "project-id"
+	flagCampaignID      = "campaign-id"
+	flagProjectID       = "project-id"
 )
 
 type campaignView struct {

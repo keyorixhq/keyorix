@@ -102,7 +102,7 @@ type fakeScanErrConn struct{}
 func (c *fakeScanErrConn) Prepare(_ string) (driver.Stmt, error) {
 	return &fakeScanErrStmt{}, nil
 }
-func (c *fakeScanErrConn) Close() error               { return nil }
+func (c *fakeScanErrConn) Close() error              { return nil }
 func (c *fakeScanErrConn) Begin() (driver.Tx, error) { return nil, fmt.Errorf("not supported") }
 
 type fakeScanErrStmt struct{}

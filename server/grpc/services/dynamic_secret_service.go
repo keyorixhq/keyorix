@@ -15,7 +15,6 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
-
 // DynamicSecretGRPCService implements pb.DynamicSecretServiceServer (ADR-035).
 // Authz mirrors the HTTP handlers: reads use secrets.read, mutations secrets.write,
 // each scoped to the owning config's (or lease's) project/environment. The admin

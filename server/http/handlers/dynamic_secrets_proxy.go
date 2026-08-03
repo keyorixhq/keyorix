@@ -68,7 +68,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // dynamicSecretConfigProxyWire mirrors models.DynamicSecretConfig's fields
 // exactly (snake_case), INCLUDING the encrypted admin-DSN ciphertext + metadata —
 // see the package doc for why sending that ciphertext (never plaintext) across

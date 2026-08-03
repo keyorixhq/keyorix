@@ -1148,4 +1148,3 @@ func TestExtractBearerToken_Empty_S6(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	assert.Equal(t, "", extractBearerToken(req))
 }
-

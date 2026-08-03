@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // isSafeConnectError reports whether msg is one of the small set of
 // deliberately-crafted, safe messages core.ReadFederatedSecret /
 // CreateConnectRefGrant / DeleteConnectRefGrant themselves produce (an

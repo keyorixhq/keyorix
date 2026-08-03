@@ -42,14 +42,14 @@ func init() {
 			"round 119 audit: sole caller is VerifyMFACredentials, same bypassed-branch reasoning as MarkTOTPStepUsed — recovery codes are only ever consumed at login, never during enrollment/management"},
 
 		// Secret ACL (RBAC Phase 3)
-		"ListAllUserRoleGrants": {statusIntentional, "permission matrix is server-aggregated via GET /api/v1/rbac/permission-matrix; direct grant enumeration runs server-side"},
-		"CreateOrUpdateSecretACL":  {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-		"ListSecretACLs":           {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-		"ListSecretACLsByUser":     {statusIntentional, "RBAC Phase 3 — listing ACL-granted secrets for a user runs server-side in ListSecretsWithSharingInfo; the core function calls LocalStorage on the server, not RemoteStorage"},
-		"GetSecretACL":             {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-		"DeleteSecretACL":                      {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
-		"DeleteSecretACLsByUserAndProject":     {statusIntentional, "RBAC Phase 3 — project member removal runs server-side; RemoveProjectMember is never called from a remote-storage CLI context"},
-		"GetSecretAncestors":                   {statusIntentional, "RBAC Phase 3 — folder-ACL inheritance walk runs server-side; HasSecretACL uses ErrUnsupportedByBackend to skip the ancestor walk on remote callers"},
+		"ListAllUserRoleGrants":            {statusIntentional, "permission matrix is server-aggregated via GET /api/v1/rbac/permission-matrix; direct grant enumeration runs server-side"},
+		"CreateOrUpdateSecretACL":          {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+		"ListSecretACLs":                   {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+		"ListSecretACLsByUser":             {statusIntentional, "RBAC Phase 3 — listing ACL-granted secrets for a user runs server-side in ListSecretsWithSharingInfo; the core function calls LocalStorage on the server, not RemoteStorage"},
+		"GetSecretACL":                     {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+		"DeleteSecretACL":                  {statusIntentional, "RBAC Phase 3 — no proxy route yet; ACL management is always server-side"},
+		"DeleteSecretACLsByUserAndProject": {statusIntentional, "RBAC Phase 3 — project member removal runs server-side; RemoveProjectMember is never called from a remote-storage CLI context"},
+		"GetSecretAncestors":               {statusIntentional, "RBAC Phase 3 — folder-ACL inheritance walk runs server-side; HasSecretACL uses ErrUnsupportedByBackend to skip the ancestor walk on remote callers"},
 
 		"GetProjectUsageStats": {statusIntentional, "usage report queries run server-side; a future PR may add a /api/v1/system/usage proxy route"},
 

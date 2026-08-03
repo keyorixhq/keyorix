@@ -177,21 +177,21 @@ func TestGroupByTarget_S22_InvalidMappingExcluded(t *testing.T) {
 // TestIsDNS1123Label_S22_EdgeCases verifies label acceptance/rejection for
 // boundary-adjacent inputs.
 func TestIsDNS1123Label_S22_EdgeCases(t *testing.T) {
-	assert.True(t, isDNS1123Label("a"))            // single lowercase letter
-	assert.True(t, isDNS1123Label("0"))            // single digit
-	assert.False(t, isDNS1123Label(""))            // empty
-	assert.False(t, isDNS1123Label("-leading"))    // leading hyphen
-	assert.False(t, isDNS1123Label("trailing-"))   // trailing hyphen
-	assert.False(t, isDNS1123Label("A"))           // uppercase
-	assert.True(t, isDNS1123Label("a-b-0"))        // valid with hyphens and digits
+	assert.True(t, isDNS1123Label("a"))          // single lowercase letter
+	assert.True(t, isDNS1123Label("0"))          // single digit
+	assert.False(t, isDNS1123Label(""))          // empty
+	assert.False(t, isDNS1123Label("-leading"))  // leading hyphen
+	assert.False(t, isDNS1123Label("trailing-")) // trailing hyphen
+	assert.False(t, isDNS1123Label("A"))         // uppercase
+	assert.True(t, isDNS1123Label("a-b-0"))      // valid with hyphens and digits
 }
 
 // TestIsDNS1123Subdomain_S22_EdgeCases verifies subdomain acceptance/rejection for
 // boundary-adjacent inputs.
 func TestIsDNS1123Subdomain_S22_EdgeCases(t *testing.T) {
-	assert.True(t, isDNS1123Subdomain("a.b.c"))   // valid multi-label
-	assert.False(t, isDNS1123Subdomain("a..b"))   // empty label between dots
-	assert.False(t, isDNS1123Subdomain(""))        // empty
+	assert.True(t, isDNS1123Subdomain("a.b.c")) // valid multi-label
+	assert.False(t, isDNS1123Subdomain("a..b")) // empty label between dots
+	assert.False(t, isDNS1123Subdomain(""))     // empty
 	assert.True(t, isDNS1123Subdomain("my-secret-0.namespace"))
 }
 

@@ -22,7 +22,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // CreateUser handles POST /api/v1/users
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	userCtx, ok := mustGetUser(w, r)
@@ -50,7 +49,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		// Atomic provisioning (ADR-028): an optional system role override and a set
 		// of project-scoped role assignments, applied with the create in one
 		// transaction. Supported on the admin-set-password path only.
-		Role               string                 `json:"role,omitempty"`
+		Role               string                  `json:"role,omitempty"`
 		ProjectAssignments []projectAssignmentBody `json:"project_assignments,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

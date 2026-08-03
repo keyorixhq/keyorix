@@ -17,9 +17,9 @@ type BackendRotationStat struct {
 	// or "" (empty string) for secrets whose rotation is regenerated in Keyorix only.
 	Backend      string `json:"backend"`
 	Total        int    `json:"total"`         // total secrets with a rotation policy on this backend
-	Overdue      int    `json:"overdue"`        // past their scheduled rotation date
-	UpToDate     int    `json:"up_to_date"`     // rotated within their schedule (ok + due_soon)
-	NeverRotated int    `json:"never_rotated"`  // policy set but LastRotatedAt is nil
+	Overdue      int    `json:"overdue"`       // past their scheduled rotation date
+	UpToDate     int    `json:"up_to_date"`    // rotated within their schedule (ok + due_soon)
+	NeverRotated int    `json:"never_rotated"` // policy set but LastRotatedAt is nil
 }
 
 // RotationBackendReport is the response body for GET /api/v1/compliance/rotation-by-backend.

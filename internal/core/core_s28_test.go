@@ -28,9 +28,9 @@ import (
 func newTestWebAuthnRP(t *testing.T) *gowebauthn.WebAuthn {
 	t.Helper()
 	rp, err := gowebauthn.New(&gowebauthn.Config{
-		RPID:           "localhost",
-		RPDisplayName:  "Test",
-		RPOrigins:      []string{"https://localhost"},
+		RPID:          "localhost",
+		RPDisplayName: "Test",
+		RPOrigins:     []string{"https://localhost"},
 	})
 	require.NoError(t, err)
 	return rp

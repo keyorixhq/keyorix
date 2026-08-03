@@ -34,10 +34,10 @@ type DeploymentSecretNameViolation struct {
 // policy is global, so PolicyEnabled/Pattern/MaxLength describe the single install-wide
 // policy; PolicyEnabled=false means none is configured and the scan is skipped.
 type DeploymentSecretNameConformanceReport struct {
-	PolicyEnabled bool                            `json:"policy_enabled"`
-	Pattern       string                          `json:"pattern,omitempty"`
-	MaxLength     int                             `json:"max_length,omitempty"`
-	TotalSecrets  int                             `json:"total_secrets"`
+	PolicyEnabled bool   `json:"policy_enabled"`
+	Pattern       string `json:"pattern,omitempty"`
+	MaxLength     int    `json:"max_length,omitempty"`
+	TotalSecrets  int    `json:"total_secrets"`
 	// Truncated reports whether deploymentSecretNameConformanceMaxRows was hit, i.e.
 	// the deployment has more live secrets than this scan pulled in a single query —
 	// the result above is then a (possibly incomplete) sample, not the full set.

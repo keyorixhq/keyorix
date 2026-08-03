@@ -596,8 +596,8 @@ func TestDynProxy_CreateConfig_MissingFields_S13(t *testing.T) {
 func TestDynProxy_CreateConfig_Happy_S13(t *testing.T) {
 	h := newDynamicSecretHandlerProxyS13(t)
 	body, _ := json.Marshal(map[string]interface{}{
-		"name":       "proxy-cfg-s13",
-		"project_id": 1,
+		"name":         "proxy-cfg-s13",
+		"project_id":   1,
 		"backend_type": "postgres",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/dynamic-secrets/configs", bytes.NewReader(body))

@@ -12,7 +12,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-
 // UpsertMFASecret creates or replaces the user's TOTP secret row (one per user).
 func (ls *LocalStorage) UpsertMFASecret(ctx context.Context, s *models.MFASecret) error {
 	return ls.db.WithContext(ctx).Clauses(clause.OnConflict{

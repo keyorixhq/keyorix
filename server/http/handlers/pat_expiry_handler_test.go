@@ -167,10 +167,10 @@ func TestPATExpiry_BulkRevokeExpiredPATs_StorageError_Returns500(t *testing.T) {
 func TestToPATResponse_ExpiredPAT_PopulatesExpiresAt(t *testing.T) {
 	past := time.Now().Add(-time.Hour).UTC()
 	pat := &models.PersonalAccessToken{
-		ID:        1,
-		Name:      "old",
+		ID:          1,
+		Name:        "old",
 		TokenPrefix: "kx_pat_ab",
-		ExpiresAt: &past,
+		ExpiresAt:   &past,
 	}
 	resp := toPATResponse(pat)
 	require.NotNil(t, resp.ExpiresAt)

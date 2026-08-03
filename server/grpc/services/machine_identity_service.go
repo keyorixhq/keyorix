@@ -13,7 +13,6 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
-
 // MachineIdentityGRPCService implements pb.MachineIdentityServiceServer (ADR-023/030).
 // Authz mirrors the HTTP routes: list → users.read, every mutation → roles.assign,
 // scoped to the target project.

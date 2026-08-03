@@ -19,7 +19,7 @@ type MachineAuditRow struct {
 	Description     string     `json:"description,omitempty"`
 	CredentialCount int        `json:"credential_count"`
 	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
-	IsStale         bool       `json:"is_stale"`   // no activity > 30 days
+	IsStale         bool       `json:"is_stale"` // no activity > 30 days
 	IsRevoked       bool       `json:"is_revoked"`
 	CreatedAt       time.Time  `json:"created_at"`
 }

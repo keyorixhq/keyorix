@@ -58,7 +58,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // accessRequestProxyWire mirrors models.AccessRequest's PERSISTED fields
 // exactly (snake_case) — the wire shape
 // internal/storage/store/remote_invitations.go's accessRequestWire

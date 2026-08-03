@@ -18,9 +18,9 @@ import (
 
 // SoD audit event types.
 const (
-	EventSoDPolicyCreated            = "sod.policy_created"             // #nosec G101 -- audit event type, not a credential
-	EventSoDPolicyDeleted            = "sod.policy_deleted"             // #nosec G101 -- audit event type, not a credential
-	EventSoDPreExistingViolations    = "sod.pre_existing_violations"    // #nosec G101 -- audit event type, not a credential
+	EventSoDPolicyCreated         = "sod.policy_created"          // #nosec G101 -- audit event type, not a credential
+	EventSoDPolicyDeleted         = "sod.policy_deleted"          // #nosec G101 -- audit event type, not a credential
+	EventSoDPreExistingViolations = "sod.pre_existing_violations" // #nosec G101 -- audit event type, not a credential
 )
 
 // SoDViolation is one principal (human user or machine identity) that effectively
@@ -243,7 +243,7 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 				PolicyID: pol.ID, PolicyName: pol.Name,
 				PrincipalType: "user", UserID: u.ID, Username: u.Username, Email: u.Email,
 				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
-				Reference:   sodViolationReference(pol.ID, "user", u.ID),
+				Reference: sodViolationReference(pol.ID, "user", u.ID),
 			})
 		}
 	}
@@ -332,7 +332,7 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViola
 				PolicyID: pol.ID, PolicyName: pol.Name,
 				PrincipalType: "machine", UserID: m.ID, Username: m.Name,
 				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
-				Reference:   sodViolationReference(pol.ID, "machine", m.ID),
+				Reference: sodViolationReference(pol.ID, "machine", m.ID),
 			})
 		}
 	}

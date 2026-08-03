@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 // --- Campaigns ---
 
 func (ls *LocalStorage) CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error) {

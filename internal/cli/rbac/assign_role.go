@@ -30,9 +30,9 @@ Time-bound grants require a server connection (run 'keyorix connect <server>').`
 }
 
 var (
-	userEmail        string
-	roleName         string
-	roleTTL          time.Duration
+	userEmail         string
+	roleName          string
+	roleTTL           time.Duration
 	assignProjectFlag string
 	assignEnvFlag     string
 )

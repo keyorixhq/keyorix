@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // AuditHandler handles audit log HTTP requests.
 type AuditHandler struct {
 	coreService *core.KeyorixCore

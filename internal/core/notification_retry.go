@@ -13,7 +13,7 @@ const (
 	// the retry policy of a notification channel is changed.
 	EventNotificationRetryPolicyUpdated = "notification_channel.retry_policy_updated"
 
-	maxRetriesMax    = 10
+	maxRetriesMax     = 10
 	retryBackoffMsMin = 100
 	retryBackoffMsMax = 60000
 )

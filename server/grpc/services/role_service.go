@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-
 // Role Name/Description length bounds. gRPC has no shared internal/core
 // validation layer to inherit these from (unlike other resources), so they
 // are mirrored here exactly from the HTTP-side struct tags in

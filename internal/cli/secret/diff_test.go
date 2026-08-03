@@ -127,8 +127,8 @@ func diffEndpointPath(id uint, from, to int) string {
 	return "/api/v1/secrets/" + jsonUint(id) + "/versions/" + jsonInt(from) + "/diff/" + jsonInt(to)
 }
 
-func jsonUint(v uint) string  { b, _ := json.Marshal(v); return string(b) }
-func jsonInt(v int) string    { b, _ := json.Marshal(v); return string(b) }
+func jsonUint(v uint) string { b, _ := json.Marshal(v); return string(b) }
+func jsonInt(v int) string   { b, _ := json.Marshal(v); return string(b) }
 
 // ── TestSecretDiff_Remote_Changes ─────────────────────────────────────────────
 

@@ -38,33 +38,33 @@ type StatTrend struct {
 // snapshot detectable instead of indistinguishable from a fully-clean one,
 // mirroring the CompliancePosture.Degraded convention (compliance_posture.go).
 type DashboardStats struct {
-	TotalSecrets          int64            `json:"totalSecrets"`
-	SharedSecrets         int              `json:"sharedSecrets"`
-	SecretsSharedWithMe   int              `json:"secretsSharedWithMe"`
-	ActiveUsers           int64            `json:"activeUsers"`
-	AuditEvents30d        int64            `json:"auditEvents30d"`
-	AuditLogins30d        int64            `json:"auditLogins30d"`
-	AuditSecretReads30d   int64            `json:"auditSecretReads30d"`
-	FailedAuthAttempts24h int64            `json:"failedAuthAttempts24h"`
-	InactiveUsers         int64            `json:"inactiveUsers"`
-	PrevTotalSecrets       *int64     `json:"prevTotalSecrets,omitempty"`
-	TotalSecretsTrend      *StatTrend `json:"totalSecretsTrend,omitempty"`
-	SharedSecretsTrend     *StatTrend `json:"sharedSecretsTrend,omitempty"`
-	SharedWithMeTrend      *StatTrend `json:"sharedWithMeTrend,omitempty"`
-	PrevActiveUsers              *int64     `json:"prevActiveUsers,omitempty"`
-	ActiveUsersTrend             *StatTrend `json:"activeUsersTrend,omitempty"`
-	PrevAuditEvents30d           *int64     `json:"prevAuditEvents30d,omitempty"`
-	AuditEvents30dTrend          *StatTrend `json:"auditEvents30dTrend,omitempty"`
-	PrevAuditLogins30d           *int64     `json:"prevAuditLogins30d,omitempty"`
-	AuditLogins30dTrend          *StatTrend `json:"auditLogins30dTrend,omitempty"`
-	PrevAuditSecretReads30d      *int64     `json:"prevAuditSecretReads30d,omitempty"`
-	AuditSecretReads30dTrend     *StatTrend `json:"auditSecretReads30dTrend,omitempty"`
-	PrevFailedAuthAttempts24h    *int64     `json:"prevFailedAuthAttempts24h,omitempty"`
-	FailedAuthAttempts24hTrend   *StatTrend `json:"failedAuthAttempts24hTrend,omitempty"`
-	PrevInactiveUsers            *int64     `json:"prevInactiveUsers,omitempty"`
-	InactiveUsersTrend           *StatTrend `json:"inactiveUsersTrend,omitempty"`
-	ExpiringSecrets       []ExpiringSecret `json:"expiringSecrets,omitempty"`
-	RecentActivity        []ActivityItem   `json:"recentActivity"`
+	TotalSecrets               int64            `json:"totalSecrets"`
+	SharedSecrets              int              `json:"sharedSecrets"`
+	SecretsSharedWithMe        int              `json:"secretsSharedWithMe"`
+	ActiveUsers                int64            `json:"activeUsers"`
+	AuditEvents30d             int64            `json:"auditEvents30d"`
+	AuditLogins30d             int64            `json:"auditLogins30d"`
+	AuditSecretReads30d        int64            `json:"auditSecretReads30d"`
+	FailedAuthAttempts24h      int64            `json:"failedAuthAttempts24h"`
+	InactiveUsers              int64            `json:"inactiveUsers"`
+	PrevTotalSecrets           *int64           `json:"prevTotalSecrets,omitempty"`
+	TotalSecretsTrend          *StatTrend       `json:"totalSecretsTrend,omitempty"`
+	SharedSecretsTrend         *StatTrend       `json:"sharedSecretsTrend,omitempty"`
+	SharedWithMeTrend          *StatTrend       `json:"sharedWithMeTrend,omitempty"`
+	PrevActiveUsers            *int64           `json:"prevActiveUsers,omitempty"`
+	ActiveUsersTrend           *StatTrend       `json:"activeUsersTrend,omitempty"`
+	PrevAuditEvents30d         *int64           `json:"prevAuditEvents30d,omitempty"`
+	AuditEvents30dTrend        *StatTrend       `json:"auditEvents30dTrend,omitempty"`
+	PrevAuditLogins30d         *int64           `json:"prevAuditLogins30d,omitempty"`
+	AuditLogins30dTrend        *StatTrend       `json:"auditLogins30dTrend,omitempty"`
+	PrevAuditSecretReads30d    *int64           `json:"prevAuditSecretReads30d,omitempty"`
+	AuditSecretReads30dTrend   *StatTrend       `json:"auditSecretReads30dTrend,omitempty"`
+	PrevFailedAuthAttempts24h  *int64           `json:"prevFailedAuthAttempts24h,omitempty"`
+	FailedAuthAttempts24hTrend *StatTrend       `json:"failedAuthAttempts24hTrend,omitempty"`
+	PrevInactiveUsers          *int64           `json:"prevInactiveUsers,omitempty"`
+	InactiveUsersTrend         *StatTrend       `json:"inactiveUsersTrend,omitempty"`
+	ExpiringSecrets            []ExpiringSecret `json:"expiringSecrets,omitempty"`
+	RecentActivity             []ActivityItem   `json:"recentActivity"`
 	// Degraded is true when one or more sub-checks above could not be queried —
 	// the zero/empty values they carry are UNKNOWN, not verified-clean. A
 	// consumer must treat a degraded snapshot as incomplete, not as a clean

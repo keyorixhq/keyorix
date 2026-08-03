@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	hdrContentType           = "Content-Type"
-	hdrXContentTypeOptions   = "X-Content-Type-Options"
-	mimeApplicationJSON      = "application/json"
+	hdrContentType         = "Content-Type"
+	hdrXContentTypeOptions = "X-Content-Type-Options"
+	mimeApplicationJSON    = "application/json"
 )
 
 // sendSuccess sends a successful JSON response

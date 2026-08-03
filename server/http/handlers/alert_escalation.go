@@ -18,7 +18,6 @@ const (
 	escalationNotFoundMessage = "Alert escalation policy not found"
 )
 
-
 // AlertEscalationHandler serves the alert escalation policy CRUD endpoints and the
 // run-alert-escalation admin job trigger.
 type AlertEscalationHandler struct {

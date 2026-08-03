@@ -42,7 +42,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // environmentProxyWire mirrors models.Environment's fields exactly (snake_case) —
 // the wire shape RemoteStorage's environment methods
 // (internal/storage/store/remote_rbac.go) expect. See projectProxyWire's comment for

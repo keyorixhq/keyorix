@@ -227,8 +227,12 @@ func TestKMSKeyProvider_S23_DecryptReturnsAllZeroKEK(t *testing.T) {
 // zeroKMS always "decrypts" to a 32-byte all-zero slice.
 type zeroKMS struct{}
 
-func (zeroKMS) Encrypt(_ context.Context, _ []byte) ([]byte, error) { return nil, errors.New("not used") }
-func (zeroKMS) Decrypt(_ context.Context, _ []byte) ([]byte, error) { return make([]byte, KEKSize), nil }
+func (zeroKMS) Encrypt(_ context.Context, _ []byte) ([]byte, error) {
+	return nil, errors.New("not used")
+}
+func (zeroKMS) Decrypt(_ context.Context, _ []byte) ([]byte, error) {
+	return make([]byte, KEKSize), nil
+}
 
 // ---------------------------------------------------------------------------
 // PasswordKeyProvider — empty passphrase error text

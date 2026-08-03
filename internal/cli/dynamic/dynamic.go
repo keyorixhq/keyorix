@@ -131,11 +131,11 @@ type configView struct {
 }
 
 type issuedLease struct {
-	LeaseID   string            `json:"lease_id"`
-	Username  string            `json:"username"`
+	LeaseID     string            `json:"lease_id"`
+	Username    string            `json:"username"`
 	IssuedValue string            `json:"password"`
-	Fields    map[string]string `json:"fields"`
-	ExpiresAt string            `json:"expires_at"`
+	Fields      map[string]string `json:"fields"`
+	ExpiresAt   string            `json:"expires_at"`
 }
 
 type leaseView struct {

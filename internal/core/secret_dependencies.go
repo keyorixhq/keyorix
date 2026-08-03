@@ -22,10 +22,10 @@ import (
 
 // Secret-dependency audit event types.
 const (
-	EventSecretDependencyAdded        = "secret.dependency_added"        // #nosec G101 -- audit event type, not a credential
-	EventSecretDependencyRemoved      = "secret.dependency_removed"      // #nosec G101 -- audit event type, not a credential
-	EventSecretDependencyInvalidated  = "secret.dependency_invalidated"  // #nosec G101 -- emitted when a soft-delete breaks a dependency edge
-	EventSecretDependencyRestored     = "secret.dependency_restored"     // #nosec G101 -- emitted when a restore re-activates a broken dependency edge
+	EventSecretDependencyAdded       = "secret.dependency_added"       // #nosec G101 -- audit event type, not a credential
+	EventSecretDependencyRemoved     = "secret.dependency_removed"     // #nosec G101 -- audit event type, not a credential
+	EventSecretDependencyInvalidated = "secret.dependency_invalidated" // #nosec G101 -- emitted when a soft-delete breaks a dependency edge
+	EventSecretDependencyRestored    = "secret.dependency_restored"    // #nosec G101 -- emitted when a restore re-activates a broken dependency edge
 )
 
 // SecretRef is a secret identified for a dependency view (id + name; never a value).

@@ -32,7 +32,7 @@ const tokenProjectFlagUsage = "Project name (defaults to the active project)" //
 // ── flag variables ────────────────────────────────────────────────────────────
 
 var (
-	tokenProjectName    string
+	tokenProjectName     string
 	tokenIssueName       string
 	tokenIssueExpiryDays int
 	tokenIssueClass      string
@@ -65,9 +65,9 @@ func runTokenIssue(cmd *cobra.Command, args []string) error {
 
 	if rc, ok := common.NewRemoteClient(); ok {
 		body := map[string]interface{}{
-			"name":           tokenIssueName,
+			"name":            tokenIssueName,
 			"expires_in_days": tokenIssueExpiryDays,
-			"classification": tokenIssueClass,
+			"classification":  tokenIssueClass,
 		}
 		var resp struct {
 			Token     string  `json:"token"`

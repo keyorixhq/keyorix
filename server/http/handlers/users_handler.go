@@ -21,7 +21,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
-
 // UserHandler handles user HTTP requests (wired to core when InitCoreHandlers runs).
 type UserHandler struct {
 	coreService *core.KeyorixCore

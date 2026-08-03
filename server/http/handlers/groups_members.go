@@ -16,7 +16,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // GetGroupMembers handles GET /api/v1/groups/{id}/members
 func (h *GroupHandler) GetGroupMembers(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

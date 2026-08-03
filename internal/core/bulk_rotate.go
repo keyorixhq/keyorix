@@ -44,9 +44,9 @@ type BulkRotateRequest struct {
 // which rotation was successfully scheduled; Failed lists the rest with per-entry
 // reasons. Never nil.
 type BulkRotateResult struct {
-	Triggered []uint           `json:"triggered"`
+	Triggered []uint            `json:"triggered"`
 	Failed    []BulkRotateError `json:"failed,omitempty"`
-	Total     int              `json:"total"`
+	Total     int               `json:"total"`
 }
 
 // BulkRotateError is a per-secret failure entry in BulkRotateResult.

@@ -23,7 +23,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 // --- Project / Environment ---
 
 // maxEnvironmentListing caps how many environments a single ListEnvironmentsByProject

@@ -259,8 +259,10 @@ func TestRunCreate_ServiceInitFailure(t *testing.T) {
 
 	origU, origE, origSL, origOTP, origPW := createUsername, createEmail, createSetupLink, createOneTimePassword, createPassword
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
 		createPassword = origPW
 	}()
 	createUsername = "failinit"
@@ -294,9 +296,12 @@ func TestRunCreate_SetupLink_WithBaseURL(t *testing.T) {
 
 	origU, origE, origSL, origOTP, origPW, origBy := createUsername, createEmail, createSetupLink, createOneTimePassword, createPassword, createBy
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
-		createPassword = origPW; createBy = origBy
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
+		createPassword = origPW
+		createBy = origBy
 	}()
 	createUsername = "linkuser2"
 	createEmail = "linkuser2@example.com"
@@ -330,9 +335,12 @@ func TestRunCreate_OTP_DuplicateEmail(t *testing.T) {
 
 	origU, origE, origSL, origOTP, origPW, origBy := createUsername, createEmail, createSetupLink, createOneTimePassword, createPassword, createBy
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
-		createPassword = origPW; createBy = origBy
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
+		createPassword = origPW
+		createBy = origBy
 	}()
 	// Reuse an email that already exists → CreateUser fails inside CreateUserWithOneTimePassword.
 	createUsername = "admin_dup"

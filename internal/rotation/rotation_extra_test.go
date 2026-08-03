@@ -99,7 +99,7 @@ func TestRedactSQLError_NoLiterals(t *testing.T) {
 }
 
 // TestRedactSQLError_EmbeddedDoubleQuoteEscape validates that the SQL
-// ''-doubling escape within a quoted literal is handled correctly.
+// ”-doubling escape within a quoted literal is handled correctly.
 func TestRedactSQLError_EmbeddedDoubleQuoteEscape(t *testing.T) {
 	// 'it''s a secret' is one SQL string literal (contains embedded '')
 	raw := errors.New("ALTER ROLE r WITH PASSWORD 'it''s a secret'")

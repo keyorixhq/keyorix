@@ -18,7 +18,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 )
 
-
 // ── Invitations ────────────────────────────────────────────────────────────
 
 // ListInvitations handles GET /api/v1/projects/{id}/invitations.

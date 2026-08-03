@@ -14,7 +14,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-
 // ShareGRPCService implements pb.ShareServiceServer, backing each RPC with the
 // shared core service. Identity is established by the auth interceptor and read
 // from the context.

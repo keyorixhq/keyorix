@@ -35,7 +35,7 @@ use SaaS and won't maintain Vault.
 
 ```bash
 # Backend server
-KEYORIX_DB_PASSWORD=xxx go run server/main.go
+KEYORIX_DB_PASSWORD=xxx go run ./server
 
 # Build
 make build          # keyorix (CLI) + keyorix-server

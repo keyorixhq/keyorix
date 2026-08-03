@@ -26,7 +26,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
-
 // RBACHandler handles RBAC-related HTTP requests using real storage.
 type RBACHandler struct {
 	coreService *core.KeyorixCore

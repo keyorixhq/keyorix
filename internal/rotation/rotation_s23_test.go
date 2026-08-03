@@ -505,8 +505,8 @@ func TestPartialRotationError_S23_AllBackendMessages(t *testing.T) {
 // Azure client, even if the ref starts with an allowed prefix.
 func TestAzure_S23_GenerateUpstream_MetacharRefs(t *testing.T) {
 	metacharRefs := []struct {
-		ref    string
-		desc   string
+		ref  string
+		desc string
 	}{
 		{"app-guid/extra", "slash"},
 		{"app-guid?q=1", "query"},

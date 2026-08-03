@@ -19,7 +19,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
-
 // GroupHandler handles group HTTP requests.
 type GroupHandler struct {
 	coreService *core.KeyorixCore

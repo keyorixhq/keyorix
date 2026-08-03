@@ -192,7 +192,7 @@ func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUs
 // only the bcrypt hash is persisted, and the account is forced into
 // password_reset_required so the user must replace it on first login.
 type OneTimePasswordResult struct {
-	Email           string `json:"email"`
+	Email    string `json:"email"`
 	OTPValue string `json:"one_time_password"`
 }
 

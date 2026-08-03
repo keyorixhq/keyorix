@@ -290,7 +290,6 @@ func TestEncStatus(t *testing.T) {
 	assert.Equal(t, "disabled", encStatus(false))
 }
 
-
 // TestSecretService_UpdateSecret_NoIDReturnsInvalidArgument verifies that
 // UpdateSecret with id=0 returns InvalidArgument.
 func TestSecretService_UpdateSecret_NoID(t *testing.T) {

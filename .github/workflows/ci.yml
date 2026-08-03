@@ -344,6 +344,20 @@ jobs:
         with:
           go-version: '1.26.5'
 
+      # The operator job below has always had its own gofmt step, scoped to
+      # operator/ — the root module (internal/, server/, cmd/, ...) never
+      # had one at all, so drift there went uncaught: 220 files had quietly
+      # gone out of gofmt-compliance with nothing to catch it. operator/ is
+      # excluded here since its own job already covers it.
+      - name: gofmt
+        run: |
+          bad=$(gofmt -l . | grep -v '^operator/' || true)
+          if [ -n "$bad" ]; then
+            echo "gofmt needed:"
+            echo "$bad"
+            exit 1
+          fi
+
       # Promotes the previously local-only `make lint` to a CI gate:
       # errcheck, staticcheck, unused, goconst, ineffassign (.golangci.yml).
       - name: golangci-lint

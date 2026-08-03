@@ -35,9 +35,9 @@ func TestNewKeyProviderFromConfig_Fallback(t *testing.T) {
 func TestNewKeyProviderFromConfig_NoFallback(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{
-		Enabled:  true,
-		DEKPath:  "dek.key",
-		SaltPath: "salt",
+		Enabled:     true,
+		DEKPath:     "dek.key",
+		SaltPath:    "salt",
 		KeyProvider: config.KeyProviderConfig{Type: "password"},
 	}
 	p, err := encryption.NewKeyProviderFromConfig(cfg, dir, "pass")
@@ -52,7 +52,7 @@ func TestNewKeyProviderFromConfig_BadFallbackType(t *testing.T) {
 		DEKPath:  "dek.key",
 		SaltPath: "salt",
 		KeyProvider: config.KeyProviderConfig{
-			Type: "password",
+			Type:      "password",
 			Fallbacks: []config.KeyProviderConfig{{Type: "invalid-type"}},
 		},
 	}
@@ -66,9 +66,9 @@ func TestNewKeyProviderFromConfig_BadFallbackType(t *testing.T) {
 func TestNewKeyProviderFromConfig_EnvProvider(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{
-		Enabled:  true,
-		DEKPath:  "dek.key",
-		SaltPath: "salt",
+		Enabled:     true,
+		DEKPath:     "dek.key",
+		SaltPath:    "salt",
 		KeyProvider: config.KeyProviderConfig{Type: "env", EnvVar: "_KEYORIX_TEST_KEK_ABSENT"},
 	}
 	p, err := encryption.NewKeyProviderFromConfig(cfg, dir, "")
@@ -81,9 +81,9 @@ func TestNewKeyProviderFromConfig_EnvProvider(t *testing.T) {
 func TestNewKeyProviderFromConfig_ExecProvider(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{
-		Enabled:  true,
-		DEKPath:  "dek.key",
-		SaltPath: "salt",
+		Enabled:     true,
+		DEKPath:     "dek.key",
+		SaltPath:    "salt",
 		KeyProvider: config.KeyProviderConfig{Type: "exec", ExecCommand: []string{"/bin/true"}},
 	}
 	p, err := encryption.NewKeyProviderFromConfig(cfg, dir, "")

@@ -43,8 +43,8 @@ func TestOwnershipHistory_EmptyHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	secret := &models.SecretNode{
-		Name:    "test-secret",
-		OwnerID: 1, // matches withUserCtx's UserID
+		Name:     "test-secret",
+		OwnerID:  1, // matches withUserCtx's UserID
 		IsSecret: true,
 	}
 	require.NoError(t, db.Create(secret).Error)

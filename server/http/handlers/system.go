@@ -226,9 +226,9 @@ func GetMetrics(w http.ResponseWriter, r *http.Request) {
 		// and the gRPC GetMetrics call for domain-level counts. Returning zeros
 		// here rather than fabricated values; previously these were hardcoded
 		// constants that misled capacity-planning and incident-response consumers.
-		HTTP:     HTTPMetrics{},
-		Database: DatabaseMetrics{},
-		Secrets:  SecretsMetrics{},
+		HTTP:      HTTPMetrics{},
+		Database:  DatabaseMetrics{},
+		Secrets:   SecretsMetrics{},
 		Uptime:    time.Since(startTime).String(),
 		Timestamp: time.Now().UTC(),
 	}

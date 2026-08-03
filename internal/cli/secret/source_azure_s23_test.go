@@ -6,7 +6,7 @@
 //   - listNames returning an error → "list azure secrets: ..." wrapping
 //   - getValue returning an error → "read azure secret: ..." wrapping
 //   - fetchFromAzure: non-empty azureVaultURL → SDK credential error (expected;
-//     covers the "azureVaultURL != ''" branch and the credential-creation attempt)
+//     covers the "azureVaultURL != ”" branch and the credential-creation attempt)
 package secret
 
 import (
@@ -61,7 +61,7 @@ func TestCollectAzure_S23_GetValueError(t *testing.T) {
 	assert.Contains(t, err.Error(), "permission denied")
 }
 
-// TestFetchFromAzure_S23_NonEmptyURL exercises the "azureVaultURL != ''"
+// TestFetchFromAzure_S23_NonEmptyURL exercises the "azureVaultURL != ”"
 // branch of fetchFromAzure. With a non-empty (but invalid) URL,
 // azidentity.NewDefaultAzureCredential is called — it succeeds in a test
 // environment (no credential chain entries are required at construction time),

@@ -29,16 +29,16 @@ type RotationDryRunRequest struct {
 type RotationDryRunResult struct {
 	SecretID    uint          `json:"secret_id"`
 	SecretName  string        `json:"secret_name"`
-	Backend     string        `json:"backend"`      // SecretNode.RotationBackend (may be empty)
-	Ref         string        `json:"ref"`          // SecretNode.RotationRef (may be empty)
-	Valid       bool          `json:"valid"`        // true only when all checks passed
+	Backend     string        `json:"backend"` // SecretNode.RotationBackend (may be empty)
+	Ref         string        `json:"ref"`     // SecretNode.RotationRef (may be empty)
+	Valid       bool          `json:"valid"`   // true only when all checks passed
 	Checks      []DryRunCheck `json:"checks"`
 	SimulatedAt time.Time     `json:"simulated_at"`
 }
 
 // DryRunCheck is the result of one named validation step.
 type DryRunCheck struct {
-	Name    string `json:"name"`             // policy_exists | backend_known | ref_non_empty | ref_valid
+	Name    string `json:"name"` // policy_exists | backend_known | ref_non_empty | ref_valid
 	Passed  bool   `json:"passed"`
 	Message string `json:"message,omitempty"` // human-readable detail (always set on failure)
 }

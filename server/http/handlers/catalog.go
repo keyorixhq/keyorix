@@ -15,7 +15,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
-
 // actorID returns the acting user's ID from the request context (0 when absent).
 func actorID(r *http.Request) uint {
 	if u := middleware.GetUserFromContext(r.Context()); u != nil {

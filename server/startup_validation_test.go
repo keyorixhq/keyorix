@@ -28,8 +28,8 @@ func writeStartupTestConfig(t *testing.T, dir string, enableCheck bool, dekMode,
 			t.Fatal(err)
 		}
 	}
-	must(os.WriteFile(dek, make([]byte, 60), dekMode))    // wrapped DEK: 12+32+16 bytes
-	must(os.WriteFile(salt, make([]byte, 32), saltMode))  // KEK salt: 32 bytes
+	must(os.WriteFile(dek, make([]byte, 60), dekMode))   // wrapped DEK: 12+32+16 bytes
+	must(os.WriteFile(salt, make([]byte, 32), saltMode)) // KEK salt: 32 bytes
 	must(os.WriteFile(dbPath, []byte("sqlite"), dbMode))
 
 	configPath := filepath.Join(dir, "keyorix.yaml")

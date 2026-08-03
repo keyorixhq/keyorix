@@ -24,7 +24,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-
 // likeEscaper escapes the LIKE/ILIKE metacharacters so a user-supplied search term is
 // matched literally, not as a wildcard. Paired with an explicit ESCAPE '\' clause.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)

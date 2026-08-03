@@ -110,8 +110,11 @@ func TestRunCreate_BuildRequestError_S7(t *testing.T) {
 	origName, origVal, origFile, origExp, origInter :=
 		createName, createValue, createFromFile, createExpiration, createInteractive
 	t.Cleanup(func() {
-		createName = origName; createValue = origVal; createFromFile = origFile
-		createExpiration = origExp; createInteractive = origInter
+		createName = origName
+		createValue = origVal
+		createFromFile = origFile
+		createExpiration = origExp
+		createInteractive = origInter
 	})
 	createName = ""
 	createValue = ""
@@ -155,8 +158,11 @@ func TestRunDelete_ByName_NotFound_S7(t *testing.T) {
 	newS7EmbeddedDir(t)
 	origID, origName, origNS, origEnv, origForce := deleteID, deleteName, deleteNS, deleteEnv, deleteForce
 	t.Cleanup(func() {
-		deleteID = origID; deleteName = origName; deleteNS = origNS
-		deleteEnv = origEnv; deleteForce = origForce
+		deleteID = origID
+		deleteName = origName
+		deleteNS = origNS
+		deleteEnv = origEnv
+		deleteForce = origForce
 	})
 	deleteID = 0
 	deleteName = "no-such-s7-secret"
@@ -189,8 +195,11 @@ func TestRunDelete_ByID_ForceDeletes_S7(t *testing.T) {
 	origFmt, origLimit, origOffset, origProject, origEnv :=
 		listFormat, listLimit, listOffset, listProjectName, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listLimit = origLimit; listOffset = origOffset
-		listProjectName = origProject; listEnv = origEnv
+		listFormat = origFmt
+		listLimit = origLimit
+		listOffset = origOffset
+		listProjectName = origProject
+		listEnv = origEnv
 	})
 	listFormat = "table"
 	listProjectName = ""
@@ -213,8 +222,11 @@ func TestRunListEmbedded_InvalidFormat_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "xml"
 	listProjectName = ""
@@ -232,8 +244,11 @@ func TestRunListEmbedded_WithEnvFilter_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "table"
 	listProjectName = ""
@@ -249,8 +264,11 @@ func TestRunListEmbedded_ProjectNotFound_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "table"
 	listProjectName = "nonexistent-s7-project"
@@ -280,8 +298,11 @@ func TestRunList_RemoteDispatch_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "table"
 	listProjectName = ""
@@ -303,8 +324,11 @@ func TestRunList_InvalidFormat_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "badformat"
 	listProjectName = ""
@@ -334,8 +358,11 @@ func TestRunListRemote_ProjectNotFound_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "table"
 	listProjectName = "missing-project-s7"
@@ -358,8 +385,11 @@ func TestRunListRemote_WithEnvFilter_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "json"
 	listProjectName = ""
@@ -378,11 +408,11 @@ func TestDisplaySecretsJSON_WithExpiration_S7(t *testing.T) {
 	mr := 5
 	secrets := []*models.SecretNode{
 		{
-			Name:        "s7-json-secret",
-			Type:        "generic",
-			Status:      "active",
-			Expiration:  &exp,
-			MaxReads:    &mr,
+			Name:       "s7-json-secret",
+			Type:       "generic",
+			Status:     "active",
+			Expiration: &exp,
+			MaxReads:   &mr,
 		},
 	}
 	secrets[0].ID = 10
@@ -402,8 +432,12 @@ func TestRunGetEmbedded_ByID_NotFound_S7(t *testing.T) {
 	origID, origName, origRef, origProject, origEnv, origShow :=
 		getID, getName, getRef, getProject, getEnv, getShowValue
 	t.Cleanup(func() {
-		getID = origID; getName = origName; getRef = origRef
-		getProject = origProject; getEnv = origEnv; getShowValue = origShow
+		getID = origID
+		getName = origName
+		getRef = origRef
+		getProject = origProject
+		getEnv = origEnv
+		getShowValue = origShow
 	})
 	getID = 999999
 	getName = ""
@@ -421,8 +455,12 @@ func TestRunGetEmbedded_ByName_NotFound_S7(t *testing.T) {
 	origID, origName, origRef, origProject, origEnv, origShow :=
 		getID, getName, getRef, getProject, getEnv, getShowValue
 	t.Cleanup(func() {
-		getID = origID; getName = origName; getRef = origRef
-		getProject = origProject; getEnv = origEnv; getShowValue = origShow
+		getID = origID
+		getName = origName
+		getRef = origRef
+		getProject = origProject
+		getEnv = origEnv
+		getShowValue = origShow
 	})
 	getID = 0
 	getName = "no-such-s7-secret"
@@ -441,8 +479,12 @@ func TestRunGetEmbedded_ByRef_NotFound_S7(t *testing.T) {
 	origID, origName, origRef, origProject, origEnv, origShow :=
 		getID, getName, getRef, getProject, getEnv, getShowValue
 	t.Cleanup(func() {
-		getID = origID; getName = origName; getRef = origRef
-		getProject = origProject; getEnv = origEnv; getShowValue = origShow
+		getID = origID
+		getName = origName
+		getRef = origRef
+		getProject = origProject
+		getEnv = origEnv
+		getShowValue = origShow
 	})
 	getID = 0
 	getName = ""
@@ -496,8 +538,10 @@ func TestRunFix_Interactive_Yes_S7(t *testing.T) {
 	origPath, origDryRun, origInteractive, origEnvFile :=
 		fixPath, fixDryRun, fixInteractive, fixEnvFile
 	t.Cleanup(func() {
-		fixPath = origPath; fixDryRun = origDryRun
-		fixInteractive = origInteractive; fixEnvFile = origEnvFile
+		fixPath = origPath
+		fixDryRun = origDryRun
+		fixInteractive = origInteractive
+		fixEnvFile = origEnvFile
 	})
 	fixPath = dir
 	fixDryRun = false
@@ -527,8 +571,10 @@ func TestRunFix_Interactive_No_S7(t *testing.T) {
 	origPath, origDryRun, origInteractive, origEnvFile :=
 		fixPath, fixDryRun, fixInteractive, fixEnvFile
 	t.Cleanup(func() {
-		fixPath = origPath; fixDryRun = origDryRun
-		fixInteractive = origInteractive; fixEnvFile = origEnvFile
+		fixPath = origPath
+		fixDryRun = origDryRun
+		fixInteractive = origInteractive
+		fixEnvFile = origEnvFile
 	})
 	fixPath = dir
 	fixDryRun = false
@@ -559,8 +605,10 @@ func TestRunFix_DryRunFalseNoInteractive_S7(t *testing.T) {
 	origPath, origDryRun, origInteractive, origEnvFile :=
 		fixPath, fixDryRun, fixInteractive, fixEnvFile
 	t.Cleanup(func() {
-		fixPath = origPath; fixDryRun = origDryRun
-		fixInteractive = origInteractive; fixEnvFile = origEnvFile
+		fixPath = origPath
+		fixDryRun = origDryRun
+		fixInteractive = origInteractive
+		fixEnvFile = origEnvFile
 	})
 	fixPath = dir
 	fixDryRun = false
@@ -581,8 +629,10 @@ func TestRunFix_NoFindings_S7(t *testing.T) {
 	origPath, origDryRun, origInteractive, origEnvFile :=
 		fixPath, fixDryRun, fixInteractive, fixEnvFile
 	t.Cleanup(func() {
-		fixPath = origPath; fixDryRun = origDryRun
-		fixInteractive = origInteractive; fixEnvFile = origEnvFile
+		fixPath = origPath
+		fixDryRun = origDryRun
+		fixInteractive = origInteractive
+		fixEnvFile = origEnvFile
 	})
 	fixPath = dir
 	fixDryRun = true
@@ -997,8 +1047,11 @@ func TestRunScan_SaveReport_S7(t *testing.T) {
 	origReport, origSev, origCommit, origStaged, origImport :=
 		scanReport, scanSeverity, scanCommit, scanStaged, scanImport
 	t.Cleanup(func() {
-		scanReport = origReport; scanSeverity = origSev; scanCommit = origCommit
-		scanStaged = origStaged; scanImport = origImport
+		scanReport = origReport
+		scanSeverity = origSev
+		scanCommit = origCommit
+		scanStaged = origStaged
+		scanImport = origImport
 	})
 	scanReport = reportFile
 	scanSeverity = ""
@@ -1024,8 +1077,11 @@ func TestRunScan_ScanImportBranch_S7(t *testing.T) {
 	origReport, origSev, origCommit, origStaged, origImport :=
 		scanReport, scanSeverity, scanCommit, scanStaged, scanImport
 	t.Cleanup(func() {
-		scanReport = origReport; scanSeverity = origSev; scanCommit = origCommit
-		scanStaged = origStaged; scanImport = origImport
+		scanReport = origReport
+		scanSeverity = origSev
+		scanCommit = origCommit
+		scanStaged = origStaged
+		scanImport = origImport
 	})
 	scanReport = ""
 	scanSeverity = ""
@@ -1043,8 +1099,11 @@ func TestRunScan_StagedFiles_EmptyOutput_S7(t *testing.T) {
 	origReport, origSev, origCommit, origStaged, origImport :=
 		scanReport, scanSeverity, scanCommit, scanStaged, scanImport
 	t.Cleanup(func() {
-		scanReport = origReport; scanSeverity = origSev; scanCommit = origCommit
-		scanStaged = origStaged; scanImport = origImport
+		scanReport = origReport
+		scanSeverity = origSev
+		scanCommit = origCommit
+		scanStaged = origStaged
+		scanImport = origImport
 	})
 	scanReport = ""
 	scanSeverity = ""
@@ -1099,8 +1158,10 @@ func TestNewVaultClient_InvalidKVVersion_S7(t *testing.T) {
 func TestNewVaultClient_Valid_S7(t *testing.T) {
 	origAddr, origToken, origKV, origMount := vaultAddr, vaultToken, vaultKVVersion, vaultMount
 	t.Cleanup(func() {
-		vaultAddr = origAddr; vaultToken = origToken
-		vaultKVVersion = origKV; vaultMount = origMount
+		vaultAddr = origAddr
+		vaultToken = origToken
+		vaultKVVersion = origKV
+		vaultMount = origMount
 	})
 	vaultAddr = "http://vault:8200"
 	vaultToken = "root"
@@ -1128,8 +1189,11 @@ func TestBuildUpdateRequest_SymlinkRejected_S7(t *testing.T) {
 	origFile, origVal, origExp, origMaxReads, origClear :=
 		updateFromFile, updateValue, updateExpiration, updateMaxReads, updateClearExp
 	t.Cleanup(func() {
-		updateFromFile = origFile; updateValue = origVal; updateExpiration = origExp
-		updateMaxReads = origMaxReads; updateClearExp = origClear
+		updateFromFile = origFile
+		updateValue = origVal
+		updateExpiration = origExp
+		updateMaxReads = origMaxReads
+		updateClearExp = origClear
 	})
 	updateFromFile = "link.txt"
 	updateValue = ""
@@ -1146,8 +1210,12 @@ func TestBuildUpdateRequest_TypeWarning_S7(t *testing.T) {
 	origFile, origVal, origType, origExp, origMaxReads, origClear :=
 		updateFromFile, updateValue, updateType, updateExpiration, updateMaxReads, updateClearExp
 	t.Cleanup(func() {
-		updateFromFile = origFile; updateValue = origVal; updateType = origType
-		updateExpiration = origExp; updateMaxReads = origMaxReads; updateClearExp = origClear
+		updateFromFile = origFile
+		updateValue = origVal
+		updateType = origType
+		updateExpiration = origExp
+		updateMaxReads = origMaxReads
+		updateClearExp = origClear
 	})
 	updateFromFile = ""
 	updateValue = "newval"
@@ -1165,8 +1233,12 @@ func TestBuildUpdateRequest_ClearExpiration_S7(t *testing.T) {
 	origFile, origVal, origType, origExp, origMaxReads, origClear :=
 		updateFromFile, updateValue, updateType, updateExpiration, updateMaxReads, updateClearExp
 	t.Cleanup(func() {
-		updateFromFile = origFile; updateValue = origVal; updateType = origType
-		updateExpiration = origExp; updateMaxReads = origMaxReads; updateClearExp = origClear
+		updateFromFile = origFile
+		updateValue = origVal
+		updateType = origType
+		updateExpiration = origExp
+		updateMaxReads = origMaxReads
+		updateClearExp = origClear
 	})
 	updateFromFile = ""
 	updateValue = ""
@@ -1192,8 +1264,12 @@ func TestBuildUpdateRequest_ValidFile_S7(t *testing.T) {
 	origFile, origVal, origType, origExp, origMaxReads, origClear :=
 		updateFromFile, updateValue, updateType, updateExpiration, updateMaxReads, updateClearExp
 	t.Cleanup(func() {
-		updateFromFile = origFile; updateValue = origVal; updateType = origType
-		updateExpiration = origExp; updateMaxReads = origMaxReads; updateClearExp = origClear
+		updateFromFile = origFile
+		updateValue = origVal
+		updateType = origType
+		updateExpiration = origExp
+		updateMaxReads = origMaxReads
+		updateClearExp = origClear
 	})
 	updateFromFile = "val.txt"
 	updateValue = ""
@@ -1224,9 +1300,14 @@ func TestRunUpdateRemote_WithExpiration_S7(t *testing.T) {
 	origID, origFile, origVal, origType, origExp, origMaxReads, origClear, origInter :=
 		updateID, updateFromFile, updateValue, updateType, updateExpiration, updateMaxReads, updateClearExp, updateInteractive
 	t.Cleanup(func() {
-		updateID = origID; updateFromFile = origFile; updateValue = origVal
-		updateType = origType; updateExpiration = origExp; updateMaxReads = origMaxReads
-		updateClearExp = origClear; updateInteractive = origInter
+		updateID = origID
+		updateFromFile = origFile
+		updateValue = origVal
+		updateType = origType
+		updateExpiration = origExp
+		updateMaxReads = origMaxReads
+		updateClearExp = origClear
+		updateInteractive = origInter
 	})
 	updateID = 1
 	updateFromFile = ""
@@ -1262,9 +1343,14 @@ func TestRunUpdateRemote_ClearExpiration_S7(t *testing.T) {
 	origID, origFile, origVal, origType, origExp, origMaxReads, origClear, origInter :=
 		updateID, updateFromFile, updateValue, updateType, updateExpiration, updateMaxReads, updateClearExp, updateInteractive
 	t.Cleanup(func() {
-		updateID = origID; updateFromFile = origFile; updateValue = origVal
-		updateType = origType; updateExpiration = origExp; updateMaxReads = origMaxReads
-		updateClearExp = origClear; updateInteractive = origInter
+		updateID = origID
+		updateFromFile = origFile
+		updateValue = origVal
+		updateType = origType
+		updateExpiration = origExp
+		updateMaxReads = origMaxReads
+		updateClearExp = origClear
+		updateInteractive = origInter
 	})
 	updateID = 2
 	updateFromFile = ""
@@ -1586,8 +1672,12 @@ func TestRunGetEmbedded_ByName_ShowValue_S7(t *testing.T) {
 	origID, origName, origRef, origProject, origEnv, origShow :=
 		getID, getName, getRef, getProject, getEnv, getShowValue
 	t.Cleanup(func() {
-		getID = origID; getName = origName; getRef = origRef
-		getProject = origProject; getEnv = origEnv; getShowValue = origShow
+		getID = origID
+		getName = origName
+		getRef = origRef
+		getProject = origProject
+		getEnv = origEnv
+		getShowValue = origShow
 	})
 	getID = 0
 	getName = "s7-get-test"
@@ -1608,8 +1698,11 @@ func TestRunList_EmbeddedDispatch_S7(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	t.Cleanup(func() {
-		listFormat = origFmt; listProjectName = origProject; listLimit = origLimit
-		listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	})
 	listFormat = "table"
 	listProjectName = ""
@@ -1684,8 +1777,11 @@ func TestRunScan_ValidCommit_S7(t *testing.T) {
 	origReport, origSev, origCommit, origStaged, origImport :=
 		scanReport, scanSeverity, scanCommit, scanStaged, scanImport
 	t.Cleanup(func() {
-		scanReport = origReport; scanSeverity = origSev; scanCommit = origCommit
-		scanStaged = origStaged; scanImport = origImport
+		scanReport = origReport
+		scanSeverity = origSev
+		scanCommit = origCommit
+		scanStaged = origStaged
+		scanImport = origImport
 	})
 	scanReport = ""
 	scanSeverity = ""

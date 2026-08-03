@@ -57,7 +57,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // webAuthnCredentialProxyWire mirrors models.WebAuthnCredential's fields exactly
 // (snake_case). models.WebAuthnCredential carries no json tags of its own, so
 // every field is named explicitly here rather than relying on encoding/json's

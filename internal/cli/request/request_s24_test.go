@@ -5,9 +5,10 @@
 // state, etc.), plus the runList empty-result branch.
 //
 // All tests follow the same pattern as request_s3_test.go:
-//   t.Chdir(t.TempDir()) + KEYORIX_SERVER="" → InitializeCoreService opens
-//   ./secrets.db; seedRequestDB seeds that same file; the Run function's
-//   own InitializeCoreService opens the same file and sees the seeded rows.
+//
+//	t.Chdir(t.TempDir()) + KEYORIX_SERVER="" → InitializeCoreService opens
+//	./secrets.db; seedRequestDB seeds that same file; the Run function's
+//	own InitializeCoreService opens the same file and sees the seeded rows.
 package request
 
 import (

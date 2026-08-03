@@ -70,15 +70,15 @@ func TestCleanComponentPath(t *testing.T) {
 		input   string
 		wantErr bool
 	}{
-		{"", true},                          // empty
-		{"/absolute", true},                 // absolute path
-		{"../escape", true},                 // escapes via ..
-		{"subdir/../escape", false},         // path.Clean → "escape" (stays inside bundle)
-		{manifestName, true},                // reserved name
-		{sigName, true},                     // reserved name
-		{"valid/path.txt", false},           // ok
-		{"single.txt", false},               // ok
-		{"  spaced.txt  ", false},           // trimmed
+		{"", true},                  // empty
+		{"/absolute", true},         // absolute path
+		{"../escape", true},         // escapes via ..
+		{"subdir/../escape", false}, // path.Clean → "escape" (stays inside bundle)
+		{manifestName, true},        // reserved name
+		{sigName, true},             // reserved name
+		{"valid/path.txt", false},   // ok
+		{"single.txt", false},       // ok
+		{"  spaced.txt  ", false},   // trimmed
 	}
 	for _, c := range cases {
 		got, err := cleanComponentPath(c.input)

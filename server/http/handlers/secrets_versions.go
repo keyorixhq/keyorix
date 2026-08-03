@@ -18,7 +18,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // GetSecretVersions handles GET /api/v1/secrets/{id}/versions
 func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

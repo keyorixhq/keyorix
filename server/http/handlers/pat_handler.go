@@ -22,7 +22,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // PATHandler handles personal-access-token HTTP requests.
 type PATHandler struct {
 	coreService *core.KeyorixCore

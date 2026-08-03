@@ -18,7 +18,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // isSafeDynamicSecretError reports whether msg is one of the small set of
 // deliberately-crafted, safe messages core's dynamic-secret lease functions
 // (IssueLease/RevokeLease/RenewLease/RevokeLeasesForConfig) produce without

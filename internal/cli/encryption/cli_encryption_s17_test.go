@@ -5,11 +5,11 @@
 //   - internal/cli/encryption/migrate_provider.go:217 runMigrateProvider (60%)
 //
 // All four are thin cobra shims. We test:
-//   1. The config-load error path (no keyorix.yaml in cwd → config.Load fails).
-//   2. The success-delegate path by pointing KEYORIX_CONFIG_PATH at a minimal
-//      temp YAML that loads cleanly, then letting the shim reach the testable
-//      core which fires an early-exit guard (encryption disabled, missing
-//      --to-type, or --confirm gate) before any key or DB work.
+//  1. The config-load error path (no keyorix.yaml in cwd → config.Load fails).
+//  2. The success-delegate path by pointing KEYORIX_CONFIG_PATH at a minimal
+//     temp YAML that loads cleanly, then letting the shim reach the testable
+//     core which fires an early-exit guard (encryption disabled, missing
+//     --to-type, or --confirm gate) before any key or DB work.
 package encryption
 
 import (

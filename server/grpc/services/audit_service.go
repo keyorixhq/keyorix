@@ -19,7 +19,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-
 // Audit-stream tail tuning: a SAFETY-NET fallback interval (the common path is the
 // push signal from core.SubscribeAuditStream, not this) and the max events drained per
 // wake. Both vars so tests can shorten them.

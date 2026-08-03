@@ -19,8 +19,8 @@ type encryptedExportEnvelope struct {
 	Format       string `json:"format"`
 	Algorithm    string `json:"algorithm"`
 	EncryptedKey string `json:"encrypted_key"` // base64(RSA-OAEP-SHA256(aesKey))
-	Nonce        string `json:"nonce"`          // base64(12-byte nonce)
-	Ciphertext   string `json:"ciphertext"`     // base64(AES-256-GCM(payload))
+	Nonce        string `json:"nonce"`         // base64(12-byte nonce)
+	Ciphertext   string `json:"ciphertext"`    // base64(AES-256-GCM(payload))
 }
 
 const (

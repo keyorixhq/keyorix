@@ -253,7 +253,7 @@ func TestSafeJoin_Cov_MultiSegmentValidPath(t *testing.T) {
 // WriteBundle's happy path more thoroughly (more components, nested paths).
 func TestWriteBundle_Cov_OutputStructure(t *testing.T) {
 	files := map[string]string{
-		"charts/keyorix-1.0.0.tgz":   "chart-bytes",
+		"charts/keyorix-1.0.0.tgz":     "chart-bytes",
 		"images/server.tar":            "image-bytes",
 		"crds/secrets.keyorix.io.yaml": "crd-bytes",
 		"bin/keyorix":                  "binary-bytes",

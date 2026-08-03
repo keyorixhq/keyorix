@@ -4,7 +4,9 @@
 // only classification, expiry, read count, and the current ACL snapshot.
 //
 // Remote mode:  resolves <name> to its numeric ID via /api/v1/secrets/by-name,
-//               then calls GET /api/v1/secrets/{id}/versions/{from}/diff/{to}.
+//
+//	then calls GET /api/v1/secrets/{id}/versions/{from}/diff/{to}.
+//
 // Embedded mode: requires --id instead of a name.
 package secret
 

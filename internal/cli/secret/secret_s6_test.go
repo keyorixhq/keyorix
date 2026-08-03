@@ -528,9 +528,9 @@ func TestApplyFixS6_SuccessfulApply(t *testing.T) {
 func TestPrintCreatedSecretS6_WithExpiration(t *testing.T) {
 	exp := time.Now().Add(24 * time.Hour)
 	s := &models.SecretNode{
-		Name:        "test",
-		Type:        "generic",
-		Expiration:  &exp,
+		Name:       "test",
+		Type:       "generic",
+		Expiration: &exp,
 	}
 	s.ID = 5
 	s.ProjectID = 1
