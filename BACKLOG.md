@@ -21,6 +21,18 @@ section. For architectural rationale see the ADRs (`docs/` and
   rather than diagnosed at the SQLite-driver level).
   Not fixed here — investigation only.
 
+- **Stranded: per-binary CycloneDX SBOMs for release binaries.** Commit
+  `9eceffe4` "build(release): attach per-binary CycloneDX SBOMs" (2026-07-03)
+  sits unmerged on branch `chore/dev-guidance`. It touches
+  `.github/workflows/release.yml` and `Makefile` (adds a `make sbom` target,
+  pins `cyclonedx-gomod` v1.10.0). `git log -S cyclonedx origin/main --
+  Makefile` returns nothing, so v0.87.x and v0.88.0 shipped release binaries
+  with no SBOM. Container images are covered by BuildKit attestations
+  (`provenance: mode=max` / `sbom: true` in `docker-publish.yml`); the binary
+  tarballs — the delivery path for air-gapped customers — are not. CRA Annex
+  I Part II expects an SBOM for the product as placed on the market. Land
+  `chore/dev-guidance` or reimplement. Not fixed here.
+
 ## Done
 
 - **OpenAPI sync (RBAC scope fields)** — `project_id` / `environment_id` are
