@@ -12,7 +12,51 @@ permissions:
   pull-requests: read
 
 jobs:
+  # Sonar's "New Code Coverage" gate only evaluates lines this PR actually
+  # changed (ADR-070's blended-percentage tradeoff is about the overall
+  # dashboard number, not the gate). So a PR that touches only web/** has
+  # zero new Go lines to score, and vice versa -- generating the other
+  # ecosystem's coverage report is then pure CI time with no effect on the
+  # gate. Mirrors the `changes`/docs_only job in ci.yml (same gh api
+  # approach, no external paths-filter action needed).
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      skip_go: ${{ steps.filter.outputs.skip_go }}
+      skip_web: ${{ steps.filter.outputs.skip_web }}
+    steps:
+      - name: Detect which ecosystem(s) changed
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            # A push to main updates the persistent project baseline, not just
+            # a PR's new-code diff -- always regenerate both reports so the
+            # dashboard's overall (not just new-code) numbers stay accurate.
+            echo "skip_go=false" >> "$GITHUB_OUTPUT"
+            echo "skip_web=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
+          echo "Changed files:"
+          echo "$changed"
+          if [ -z "$changed" ] || echo "$changed" | grep -vE '^web/' > /dev/null; then
+            echo "skip_go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_go=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$changed" ] || echo "$changed" | grep -E '^web/' > /dev/null; then
+            echo "skip_web=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_web=true" >> "$GITHUB_OUTPUT"
+          fi
+
   Analysis:
+    needs: [changes]
     runs-on: ubuntu-latest
     if: github.actor != 'dependabot[bot]'
     steps:
@@ -21,10 +65,12 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.skip_go != 'true'
         with:
           go-version: '1.26.5'
 
       - name: Generate coverage report
+        if: needs.changes.outputs.skip_go != 'true'
         run: go test -timeout 600s -coverprofile=coverage.out -covermode=set ./...
         continue-on-error: true
 
@@ -33,16 +79,19 @@ jobs:
       # separate SonarCloud project/workflow. --ignore-scripts: see the
       # identical reasoning in web-ci.yml.
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        if: needs.changes.outputs.skip_web != 'true'
         with:
           version: 11
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.changes.outputs.skip_web != 'true'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Generate web/ coverage report
+        if: needs.changes.outputs.skip_web != 'true'
         working-directory: web
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
