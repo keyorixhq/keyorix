@@ -83,8 +83,16 @@ func newFailingSTHandler(t *testing.T, flags failingSecretTemplateStore) *Secret
 	dsn := "file:stunit" + string(rune('0'+stUnitCounter)) + "?mode=memory&cache=private"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	// cache=private gives each new physical connection its own empty
+	// in-memory database — without this, a pool-rotated connection opened by
+	// a later handler call in the same test would see neither the migrated
+	// schema nor the seed row below. Matches local_transaction_test.go /
+	// local_usage_test.go's identical fix for the same cache=private pattern.
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretTemplate{}))
-	t.Cleanup(func() { sqlDB, _ := db.DB(); _ = sqlDB.Close() })
+	t.Cleanup(func() { _ = sqlDB.Close() })
 
 	// Seed a template so GET/UPDATE/DELETE have a valid ID to work with before
 	// the injected error fires at the storage layer.

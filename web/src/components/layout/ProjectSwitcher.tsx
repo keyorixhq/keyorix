@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router';
 import { FolderIcon, ChevronUpDownIcon, MagnifyingGlassIcon, PlusIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { useProjects } from '../../features/projects/api';
 import { useProjectMruStore } from '../../store';

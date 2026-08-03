@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } from 'react-router';
 import { ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { useProject } from '../../features/projects/api';
 import { ProjectSecretsTab } from './ProjectSecretsTab';

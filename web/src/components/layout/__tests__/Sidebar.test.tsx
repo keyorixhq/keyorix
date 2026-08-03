@@ -255,46 +255,22 @@ describe('Sidebar', () => {
         expect(within(link).queryByText('Soon')).not.toBeInTheDocument();
     });
 
-    it('shows System Health for an admin and hides it for a non-admin', () => {
+    it.each([
+        ['System Health', '/settings/health'],
+        ['Authentication', '/settings/auth'],
+        ['Encryption & Keys', '/settings/encryption'],
+    ])('shows %s for an admin and hides it for a non-admin', (label, href) => {
         uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
         mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
         const { rerender } = renderSidebar();
 
-        expect(screen.getByRole('link', { name: 'System Health' })).toHaveAttribute('href', '/settings/health');
+        expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
 
         mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
         rerender(<Sidebar isOpen={true} onClose={vi.fn()} />);
 
-        expect(screen.queryByRole('link', { name: 'System Health' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: label })).not.toBeInTheDocument();
         // unaffected sibling leaf in the same, non-admin-gated group
-        expect(screen.getByRole('link', { name: 'Appearance' })).toBeInTheDocument();
-    });
-
-    it('shows Authentication for an admin and hides it for a non-admin', () => {
-        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
-        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
-        const { rerender } = renderSidebar();
-
-        expect(screen.getByRole('link', { name: 'Authentication' })).toHaveAttribute('href', '/settings/auth');
-
-        mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
-        rerender(<Sidebar isOpen={true} onClose={vi.fn()} />);
-
-        expect(screen.queryByRole('link', { name: 'Authentication' })).not.toBeInTheDocument();
-        expect(screen.getByRole('link', { name: 'Appearance' })).toBeInTheDocument();
-    });
-
-    it('shows Encryption & Keys for an admin and hides it for a non-admin', () => {
-        uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
-        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
-        const { rerender } = renderSidebar();
-
-        expect(screen.getByRole('link', { name: 'Encryption & Keys' })).toHaveAttribute('href', '/settings/encryption');
-
-        mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
-        rerender(<Sidebar isOpen={true} onClose={vi.fn()} />);
-
-        expect(screen.queryByRole('link', { name: 'Encryption & Keys' })).not.toBeInTheDocument();
         expect(screen.getByRole('link', { name: 'Appearance' })).toBeInTheDocument();
     });
 

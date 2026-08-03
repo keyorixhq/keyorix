@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router';
 import { Dialog } from 'radix-ui';
 import { cn } from '@/lib/utils';
 import { clsx } from 'clsx';

@@ -189,7 +189,7 @@ describe('AbsoluteSessionExpiryWarning', () => {
         });
 
         // No further polling should happen once unmounted.
-        expect(mockGetTimeUntilAbsoluteExpiry.mock.calls.length).toBe(callsBeforeUnmount);
+        expect(mockGetTimeUntilAbsoluteExpiry.mock.calls).toHaveLength(callsBeforeUnmount);
     });
 
     it('updates and restores the "Sign in again" button background on hover', () => {

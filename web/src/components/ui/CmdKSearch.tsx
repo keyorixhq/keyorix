@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { MagnifyingGlassIcon, FolderIcon, KeyIcon } from '@heroicons/react/24/outline';
 import { useProjects } from '../../features/projects/api';
 import { apiClient } from '../../services/client';

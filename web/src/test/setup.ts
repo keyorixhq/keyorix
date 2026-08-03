@@ -6,9 +6,15 @@ expect.extend(toHaveNoViolations);
 
 // Mock IntersectionObserver as a real class so it is `new`-able (see ResizeObserver below).
 class IntersectionObserverMock {
-    observe(): void {}
-    unobserve(): void {}
-    disconnect(): void {}
+    observe(): void {
+        // jsdom has no real layout engine; nothing to observe.
+    }
+    unobserve(): void {
+        // No-op: no observation is ever actually started.
+    }
+    disconnect(): void {
+        // No-op: no observation is ever actually started.
+    }
     takeRecords(): [] {
         return [];
     }
@@ -19,9 +25,15 @@ global.IntersectionObserver = IntersectionObserverMock as unknown as typeof Inte
 // constructs `new ResizeObserver(...)` via use-on-disappear; an arrow/vi.fn
 // implementation throws "is not a constructor").
 class ResizeObserverMock {
-    observe(): void {}
-    unobserve(): void {}
-    disconnect(): void {}
+    observe(): void {
+        // jsdom has no real layout engine; nothing to observe.
+    }
+    unobserve(): void {
+        // No-op: no observation is ever actually started.
+    }
+    disconnect(): void {
+        // No-op: no observation is ever actually started.
+    }
 }
 global.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
 

@@ -91,7 +91,7 @@ self.addEventListener('fetch', (event) => {
     // Handle different types of requests
     if (url.pathname.startsWith('/api/')) {
         event.respondWith(handleApiRequest(request));
-    } else if (url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2)$/)) {
+    } else if (/\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2)$/.exec(url.pathname)) {
         event.respondWith(handleStaticAsset(request));
     } else {
         event.respondWith(handlePageRequest(request));
@@ -136,7 +136,7 @@ async function handlePageRequest(request) {
 
         return networkResponse;
     } catch (error) {
-        // Network failed, try cache
+        console.log('[SW] Network request failed, falling back to cache:', error);
         const cachedResponse = await caches.match(request);
         if (cachedResponse) {
             return cachedResponse;
@@ -338,7 +338,7 @@ self.addEventListener('notificationclick', (event) => {
             if (existingClient) {
                 // Focus existing window and navigate if needed
                 existingClient.focus();
-                if (data && data.url) {
+                if (data?.url) {
                     existingClient.postMessage({
                         type: 'NAVIGATE',
                         url: data.url,
@@ -346,7 +346,7 @@ self.addEventListener('notificationclick', (event) => {
                 }
             } else {
                 // Open new window
-                const url = data && data.url ? data.url : '/';
+                const url = data?.url || '/';
                 self.clients.openWindow(url);
             }
         })

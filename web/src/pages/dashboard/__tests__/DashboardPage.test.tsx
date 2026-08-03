@@ -5,8 +5,8 @@ import { DashboardPage } from '../DashboardPage';
 import { useUIStore } from '../../../store/uiStore';
 
 const navigateMock = vi.fn();
-vi.mock('react-router-dom', async () => {
-    const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+vi.mock('react-router', async () => {
+    const actual = await vi.importActual<typeof import('react-router')>('react-router');
     return { ...actual, useNavigate: () => navigateMock };
 });
 
@@ -166,34 +166,21 @@ describe('DashboardPage — stat cards', () => {
 });
 
 describe('DashboardPage — operational signals', () => {
-    it('navigates from the failed-auth signal', () => {
+    it.each([
+        ['Failed Auth (24h)', '/audit?tab=audit&filter=failed'],
+        ['Inactive Users', '/admin/users?filter=inactive'],
+        ['Expiring Secrets', '/secrets?sort=expiry_asc&filter=expiring'],
+        ['Secret Reads (30d)', '/audit?tab=audit&filter=reads'],
+    ])('navigates from the "%s" signal', (label, expectedUrl) => {
         render(<DashboardPage />);
-        fireEvent.click(screen.getByText('Failed Auth (24h)').closest('button')!);
-        expect(navigateMock).toHaveBeenCalledWith('/audit?tab=audit&filter=failed');
+        fireEvent.click(screen.getByText(label).closest('button')!);
+        expect(navigateMock).toHaveBeenCalledWith(expectedUrl);
     });
 
     it('shows the inactive-users count', () => {
         render(<DashboardPage />);
         const card = screen.getByText('Inactive Users').closest('button')!;
         expect(within(card).getByText('2')).toBeInTheDocument();
-    });
-
-    it('navigates from the inactive-users signal', () => {
-        render(<DashboardPage />);
-        fireEvent.click(screen.getByText('Inactive Users').closest('button')!);
-        expect(navigateMock).toHaveBeenCalledWith('/admin/users?filter=inactive');
-    });
-
-    it('navigates from the expiring-secrets signal', () => {
-        render(<DashboardPage />);
-        fireEvent.click(screen.getByText('Expiring Secrets').closest('button')!);
-        expect(navigateMock).toHaveBeenCalledWith('/secrets?sort=expiry_asc&filter=expiring');
-    });
-
-    it('navigates from the secret-reads signal', () => {
-        render(<DashboardPage />);
-        fireEvent.click(screen.getByText('Secret Reads (30d)').closest('button')!);
-        expect(navigateMock).toHaveBeenCalledWith('/audit?tab=audit&filter=reads');
     });
 
     it('shows a "warn" severity (not urgent, not expired) when a secret expires beyond 7 days', () => {

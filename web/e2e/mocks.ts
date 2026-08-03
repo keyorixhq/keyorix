@@ -44,7 +44,7 @@ export async function mockAuthenticated(page: Page, overrides: Partial<typeof MO
         // write and JSON.parses on read — a raw unquoted string here fails to
         // parse and is treated as "no expiry", making the request interceptor
         // in services/client.ts force-logout on the very next API call.
-        localStorage.setItem('tokenExpiresAt', JSON.stringify(new Date(Date.now() + 3600_000).toISOString()));
+        localStorage.setItem('tokenExpiresAt', JSON.stringify(new Date(Date.now() + 3_600_000).toISOString()));
     });
     await page.route('**/api/v1/auth/profile', (route) =>
         route.fulfill(json({ data: user, message: '', success: true }))
@@ -63,7 +63,7 @@ export async function mockLoginSuccess(page: Page) {
                     role: MOCK_USER.role,
                     roles: MOCK_USER.roles,
                     permissions: MOCK_USER.permissions,
-                    expires_at: new Date(Date.now() + 3600_000).toISOString(),
+                    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
                 },
                 message: '',
                 success: true,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { ROUTES } from '../../constants';
 import {

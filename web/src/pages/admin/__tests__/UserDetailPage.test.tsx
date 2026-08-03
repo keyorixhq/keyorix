@@ -21,8 +21,8 @@ const revokeSessionsMutate = vi.fn();
 const resendMutate = vi.fn();
 const migrateMutate = vi.fn();
 
-vi.mock('react-router-dom', async (orig) => ({
-    ...(await orig<typeof import('react-router-dom')>()),
+vi.mock('react-router', async (orig) => ({
+    ...(await orig<typeof import('react-router')>()),
     useParams: () => ({ id: routeId }),
     useNavigate: () => mockNavigate,
 }));

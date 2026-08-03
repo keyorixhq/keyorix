@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { SetupForm } from '../../features/auth/SetupForm';
 import { setupService, SetupTokenInfo } from '../../services/setup';
 import { useAuthStore } from '../../store/authStore';

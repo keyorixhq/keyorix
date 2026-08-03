@@ -14,21 +14,6 @@ section. For architectural rationale see the ADRs (`docs/` and
   touching `web/**`. `keyorixhq_keyorix-web` now has nothing pointing at it.
   Org-admin action in the SonarCloud UI, not fixable from this repo.
 
-- **Investigate: `stunit` on-disk SQLite leak + suspected connection-pool
-  unbounded growth** — `server/http/handlers/secret_templates_unit_test.go:83`
-  constructs `file:stunit<N>?mode=memory&cache=private`, but a run left an
-  on-disk SQLite file named `stunit` (no counter suffix) containing table
-  `secret_templates`. Two defects to investigate under ADR-069:
-  (a) the DSN is materializing to disk despite `mode=memory`, and the counter
-  suffix is absent from the produced filename;
-  (b) `cache=private` gives each pooled connection a separate, empty database,
-  so without `SetMaxOpenConns(1)` the pool can grow unbounded — candidate root
-  cause for the `server/http` connection-pool leak seen elsewhere this
-  session (see `server/grpc/services`' `:memory:` connection-pool test
-  flakiness, same underlying class of bug, fixed there via `SetMaxOpenConns(1)`
-  rather than diagnosed at the SQLite-driver level).
-  Not fixed here — investigation only.
-
 ## Done
 
 - **Per-binary CycloneDX SBOMs for release binaries.** Reimplemented commit
@@ -53,6 +38,30 @@ section. For architectural rationale see the ADRs (`docs/` and
   --verbose --redact --log-opts="HEAD"` (CI's exact invocation) against
   current history: "no leaks found". The path-based allowlist patterns added
   to root's `.gitleaks.toml` during the merge cover it.
+
+- **`stunit` connection-pool safety fix (ADR-069 investigation closed).**
+  `server/http/handlers/secret_templates_unit_test.go`'s `newFailingSTHandler`
+  was missing `SetMaxOpenConns(1)` on its `cache=private` in-memory SQLite
+  connection — the same class of gap already fixed in
+  `internal/storage/store/local_transaction_test.go` and
+  `local_usage_test.go` for the identical pattern (`cache=private` gives each
+  new physical connection its own empty database; without pinning to one
+  connection, a pool-rotated connection from a later handler call in the same
+  test could see neither the migrated schema nor the seed row). Fixed to
+  match. The originally-reported symptom — an actual on-disk file named
+  `stunit` (no counter suffix) — could **not** be reproduced despite an
+  extensive attempt: isolated `database/sql` DSN test, isolated
+  GORM+dialector+AutoMigrate test, this file's tests run alone, the full
+  `server/http/handlers` package, all four both with and without `-race`,
+  and on both macOS and Linux (`golang:1.26.5-alpine`, matching the CI
+  runner). No other file in the repo uses this DSN pattern. Most likely a
+  one-off/environmental artifact from whenever it was originally observed,
+  not a live, reproducible bug in the current code — closing the
+  investigation rather than leaving it open indefinitely, but flagging that
+  if a stray `stunit` file is ever seen again, this fix's own reasoning
+  (connection-pool rotation touching a "private" cache) is the first thing
+  to revisit, not the DSN string construction, which was verified correct
+  across every reproduction attempt.
 
 - **OpenAPI sync (RBAC scope fields)** — `project_id` / `environment_id` are
   documented on `POST /user-roles`, `PUT /users/{id}/roles`, and
