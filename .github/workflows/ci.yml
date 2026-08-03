@@ -213,16 +213,31 @@ jobs:
           - leg: root-4
             timeout: 600
             coverage-file: coverage_root4.out
-          - leg: handlers
-            # server/http/handlers (167 test files, each opening its own
-            # SQLite DB) gets its own longer -timeout (ADR-048): under -race,
-            # modernc.org/sqlite is ~3.6x slower here than the mattn/go-sqlite3
-            # CGO driver it replaced (112s -> 406s locally), which crossed the
-            # 600s budget used for the root leg. -race is dev/CI-only
-            # instrumentation; production binaries are unaffected. 1200s
-            # leaves ample margin above the measured runtime.
-            timeout: 1200
-            coverage-file: coverage_handlers.out
+          # handlers (server/http/handlers, one package, 167 test files, 5151
+          # top-level tests, all already t.Parallel()) measured at 911s in CI
+          # -- vs. 15s wall / 37s summed-per-test locally without -race. That
+          # ~60x gap is race-detector contention scaling with the sheer
+          # volume of concurrent goroutines on one runner's limited cores
+          # (ADR-048's ~3.6x modernc.org/sqlite figure explains part of it,
+          # not all of it), not a handful of slow outlier tests the way root
+          # had -- so unlike root-1/2/3's pinned-by-name approach, this
+          # splits evenly by (sorted test name index) mod 4: no per-test
+          # timing data to bin-pack against, and every test costs roughly the
+          # same here. A newly added test always lands in whichever shard its
+          # name happens to hash to -- nothing to keep in sync, unlike
+          # root-1/2/3's pinned lists.
+          - leg: handlers-1
+            timeout: 600
+            coverage-file: coverage_handlers1.out
+          - leg: handlers-2
+            timeout: 600
+            coverage-file: coverage_handlers2.out
+          - leg: handlers-3
+            timeout: 600
+            coverage-file: coverage_handlers3.out
+          - leg: handlers-4
+            timeout: 600
+            coverage-file: coverage_handlers4.out
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -317,7 +332,13 @@ jobs:
           github.com/keyorixhq/keyorix/internal/delivery
           github.com/keyorixhq/keyorix/internal/core/storage"
 
-          case "${{ matrix.leg }}" in
+          leg="${{ matrix.leg }}"
+          # Empty matches everything (verified: `go test -run ""` and no
+          # -run flag at all select the identical test set) -- root-1/2/3/4
+          # leave this empty since they shard by package, not by test name.
+          run_filter=""
+
+          case "$leg" in
             root-1)
               pkgs="$root_1_pkgs"
               ;;
@@ -334,11 +355,23 @@ jobs:
               pinned=$(printf '%s\n%s\n%s\n' "$root_1_pkgs" "$root_2_pkgs" "$root_3_pkgs" | sort -u)
               pkgs=$(comm -23 <(root_base | sort -u) <(echo "$pinned"))
               ;;
-            handlers)
+            handlers-1|handlers-2|handlers-3|handlers-4)
+              # One package (server/http/handlers), 5151 top-level tests, all
+              # already t.Parallel() -- no per-test timing outliers to pin the
+              # way root-1/2/3 do (measured: 60x CI/local gap here is race-
+              # detector contention scaling with total concurrent goroutines
+              # on one runner, not a few slow tests), so split evenly by
+              # (sorted test name index) mod 4 instead. A newly added test
+              # always lands in whichever shard its name happens to hash to --
+              # nothing to keep in sync, unlike root-1/2/3's pinned lists.
               pkgs=./server/http/handlers/...
+              shard=${leg#handlers-}
+              names=$(go test -list '^Test' ./server/http/handlers/... | grep -v '^ok\b' | sort)
+              selected=$(echo "$names" | awk -v n=4 -v s="$shard" 'NR % n == (s - 1)')
+              run_filter="^($(echo "$selected" | paste -sd '|'))\$"
               ;;
           esac
-          go test -race -timeout ${{ matrix.timeout }}s -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -430,7 +463,7 @@ jobs:
       - name: Merge coverage profiles
         run: |
           echo "mode: atomic" > coverage_merged.out
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers.out >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root3.out coverage_root4.out coverage_handlers1.out coverage_handlers2.out coverage_handlers3.out coverage_handlers4.out >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
