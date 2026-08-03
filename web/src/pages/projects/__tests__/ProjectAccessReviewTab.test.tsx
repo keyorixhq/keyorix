@@ -194,7 +194,7 @@ describe('ProjectAccessReviewTab', () => {
         expect(screen.getByText('carol')).toBeInTheDocument();
         // Access level falls back to an em dash when blank, as does the (non-role) source detail
         // since there's no secretName either — both render as "—".
-        expect(screen.getAllByText('—').length).toBe(2);
+        expect(screen.getAllByText('—')).toHaveLength(2);
     });
 
     it('scopes role detail to an environment when one is set, and falls back for a missing principal name', () => {

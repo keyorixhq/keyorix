@@ -47,9 +47,7 @@ describe('ToastComponent', () => {
         render(<ToastComponent id="abc" type="info" title="t" onClose={onClose} />);
         const btn = screen.getByRole('button', { name: /close/i });
 
-        await act(async () => {
-            fireEvent.click(btn);
-        });
+        fireEvent.click(btn);
         expect(onClose).not.toHaveBeenCalled();
 
         await act(async () => {
@@ -161,9 +159,7 @@ describe('ToastContainer', () => {
         const closeButtons = screen.getAllByRole('button', { name: /close/i });
         expect(closeButtons).toHaveLength(2);
 
-        await act(async () => {
-            fireEvent.click(closeButtons[1]);
-        });
+        fireEvent.click(closeButtons[1]);
         await act(async () => {
             await vi.advanceTimersByTimeAsync(200);
         });

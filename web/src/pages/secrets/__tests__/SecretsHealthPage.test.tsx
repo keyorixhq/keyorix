@@ -12,8 +12,8 @@ vi.mock('../../../features/secrets/useSecretsHealth', () => ({
     useSecretsHealth: () => mockUseSecretsHealth(),
 }));
 
-vi.mock('react-router-dom', async () => {
-    const actual = await vi.importActual('react-router-dom');
+vi.mock('react-router', async () => {
+    const actual = await vi.importActual('react-router');
     return { ...actual, useNavigate: () => navigateMock };
 });
 
@@ -162,11 +162,17 @@ describe('SecretsHealthPage', () => {
         expect(screen.getByText(/1 secret has already expired/)).toBeInTheDocument();
     });
 
-    it('links to the expiry drill-down page', () => {
+    // Card drill-down links (expiry/rotation/access) share this exact shape;
+    // parameterized together here rather than duplicated per card section.
+    it.each([
+        ['View all expiring →', '/secrets/expiry'],
+        ['Manage policies →', '/secrets/rotation'],
+        ['View audit log →', '/audit'],
+    ])('links "%s" to %s', (linkText, href) => {
         mockUseSecretsHealth.mockReturnValue(makeHealth());
         render(<SecretsHealthPage />);
-        const link = screen.getByText('View all expiring →');
-        expect(link).toHaveAttribute('href', '/secrets/expiry');
+        const link = screen.getByText(linkText);
+        expect(link).toHaveAttribute('href', href);
     });
 
     // ── rotation card ───────────────────────────────────────────────────────
@@ -277,13 +283,6 @@ describe('SecretsHealthPage', () => {
         expect(screen.getByText('Auto: vault')).toBeInTheDocument();
     });
 
-    it('links to the rotation policy management page', () => {
-        mockUseSecretsHealth.mockReturnValue(makeHealth());
-        render(<SecretsHealthPage />);
-        const link = screen.getByText('Manage policies →');
-        expect(link).toHaveAttribute('href', '/secrets/rotation');
-    });
-
     // ── access card ─────────────────────────────────────────────────────────
 
     it('renders access stats', () => {
@@ -308,13 +307,6 @@ describe('SecretsHealthPage', () => {
         mockUseSecretsHealth.mockReturnValue(makeHealth({ access: { ...baseHealth.access, failedAuth24h: 4 } }));
         render(<SecretsHealthPage />);
         expect(screen.queryByText(/High number of failed auth attempts/)).not.toBeInTheDocument();
-    });
-
-    it('links to the audit log page', () => {
-        mockUseSecretsHealth.mockReturnValue(makeHealth());
-        render(<SecretsHealthPage />);
-        const link = screen.getByText('View audit log →');
-        expect(link).toHaveAttribute('href', '/audit');
     });
 
     // ── anomalies card ──────────────────────────────────────────────────────
