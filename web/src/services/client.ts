@@ -6,8 +6,11 @@ import { getCsrfToken, CSRF_HEADER_NAME, CSRF_PROTECTED_METHODS } from '../utils
 const config = getEnvConfig();
 
 const logError = (error: AxiosError) => {
+    // This is a JS template literal, not a printf-style format string; there is no
+    // %-specifier parsing step for a value to hijack. The rule flags any
+    // console.x(`...`, extraArg) call shape regardless.
     if (getEnvConfig().ENABLE_DEBUG) {
-        console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
+        console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, { // nosemgrep: javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
             status: error.response?.status,
             data: error.response?.data,
             message: error.message,

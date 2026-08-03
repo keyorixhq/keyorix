@@ -385,11 +385,23 @@ self.addEventListener('message', (event) => {
 async function handleCacheInvalidation(payload) {
     try {
         const { pattern, cacheName } = payload;
+        // Defense-in-depth length cap against catastrophic-backtracking ReDoS
+        // patterns (Semgrep detect-non-literal-regexp): `pattern` reaches here
+        // via postMessage from same-origin app code, no current caller sends
+        // CACHE_INVALIDATE today, but the service worker handles caching/fetch
+        // for the whole origin, not just one tab, so a hang here is a much
+        // worse blast radius than a single-page freeze. Cheap and sufficient
+        // given no untrusted-input caller exists.
+        if (typeof pattern !== 'string' || pattern.length > 200) {
+            console.log('[SW] Cache invalidation pattern rejected (missing or too long)');
+            return;
+        }
         const cache = await caches.open(cacheName || DYNAMIC_CACHE_NAME);
         const keys = await cache.keys();
 
+        // Length-capped above; see the comment on that check.
         const keysToDelete = keys.filter(key => {
-            return new RegExp(pattern).test(key.url);
+            return new RegExp(pattern).test(key.url); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
         });
 
         await Promise.all(

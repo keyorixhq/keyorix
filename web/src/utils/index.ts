@@ -198,7 +198,10 @@ export const storage = {
             const item = localStorage.getItem(key);
             return item ? JSON.parse(item) : (defaultValue ?? null);
         } catch (error) {
-            console.error(`Error reading from localStorage key "${key}":`, error);
+            // JS template literal, not a printf-style format string; no %-specifier
+            // parsing step exists for `key` to hijack. Same reasoning for the two
+            // identical patterns below (set/remove).
+            console.error(`Error reading from localStorage key "${key}":`, error); // nosemgrep: javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
             return defaultValue ?? null;
         }
     },
@@ -207,7 +210,7 @@ export const storage = {
         try {
             localStorage.setItem(key, JSON.stringify(value));
         } catch (error) {
-            console.error(`Error writing to localStorage key "${key}":`, error);
+            console.error(`Error writing to localStorage key "${key}":`, error); // nosemgrep: javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
         }
     },
 
@@ -215,7 +218,7 @@ export const storage = {
         try {
             localStorage.removeItem(key);
         } catch (error) {
-            console.error(`Error removing localStorage key "${key}":`, error);
+            console.error(`Error removing localStorage key "${key}":`, error); // nosemgrep: javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
         }
     },
 

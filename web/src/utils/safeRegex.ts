@@ -69,8 +69,12 @@ export function testPatternSafely(pattern: string, value: string): SafeRegexTest
     if (value.length > MAX_REGEX_TEST_INPUT_LENGTH) {
         return { skipped: true };
     }
+    // This is the guarded construction the file's own header comment describes:
+    // isPatternSafe() (catastrophic-backtracking heuristic) and the length cap above
+    // have already run by this point. Semgrep can't see past the two early returns
+    // above to know that.
     try {
-        return { skipped: false, matches: new RegExp(pattern).test(value) };
+        return { skipped: false, matches: new RegExp(pattern).test(value) }; // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     } catch {
         return { skipped: true };
     }

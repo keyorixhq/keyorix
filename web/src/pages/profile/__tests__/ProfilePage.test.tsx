@@ -103,8 +103,10 @@ beforeEach(() => {
     resetMockState();
 });
 
+// Test helper; `name` is always a hardcoded tab label from this file's own
+// test cases below, never external/attacker-controlled input.
 function goToTab(name: string) {
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}$`) }));
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}$`) })); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
 }
 
 // ── Basic Info tab ───────────────────────────────────────────────────────────
