@@ -25,12 +25,10 @@ That's it. Watch the runs under the repo's **Actions** tab.
 | `release.yml` → `build-and-release` | `v*` tag | CLI + server binaries for linux/darwin × amd64/arm64 (`keyorix_<os>_<arch>`, `keyorix-server_<os>_<arch>`) + `checksums.txt`, attached to the GitHub Release. |
 | `release.yml` → `publish-chart` | `v*` tag | Helm chart pushed to `oci://ghcr.io/keyorixhq/charts` (chart + app version = the tag without the `v`). |
 | `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-server` image tagged with the semver version. |
+| `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-web` image tagged with the same semver version — same workflow run, same tag (ADR-070). |
 
 The asset names produced by `make release` are exactly what `install.sh`
 downloads — keep `make release`, `install.sh`, and any image references in sync.
-
-> The **web** image (`ghcr.io/keyorixhq/keyorix-web`) is published from the
-> separate `keyorix-web` repository; tag it there too for a matching version.
 
 ## After the release — verify it's consumable
 

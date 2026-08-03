@@ -2,10 +2,10 @@
 // can serve the UI with no separate web container — the air-gap "one file" deploy.
 //
 // dist/ holds a committed placeholder index.html so the repository always
-// compiles. A release build replaces dist/ with the real keyorix-web output
-// before compiling (see `make build-ui`), embedding the full SPA. Everything
-// under dist/ except the placeholder is gitignored, so build artifacts are never
-// committed.
+// compiles. A release build replaces dist/ with web/'s real build output
+// (ADR-070) before compiling (see `make build-ui`), embedding the full SPA.
+// Everything under dist/ except the placeholder is gitignored, so build
+// artifacts are never committed.
 package webui
 
 import (
