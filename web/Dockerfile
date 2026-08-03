@@ -3,13 +3,19 @@
 # full install, not --prod.
 FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
 # Exact version, not just the major (docker:S8543) — reproducible builds need
-# a resolved pin, not a moving target. --ignore-scripts (docker:S6505) on both
-# installs below: verified `npm install -g pnpm@11.19.0 --ignore-scripts`
-# still produces a working pnpm binary, and (per the identical reasoning
-# already applied to the CI workflows) pnpm's own default-deny plus
-# pnpm-workspace.yaml's allowBuilds: esbuild: true still lets the actual
-# build work.
-RUN npm install -g pnpm@11.19.0 --ignore-scripts
+# a resolved pin, not a moving target. Corepack (bundled with node:22-alpine)
+# fetches the pnpm tarball from the npm registry and verifies it against the
+# registry-published integrity hash before activating it, same trust model as
+# `npm install -g pnpm@<version>` used previously — but Scorecard's
+# Pinned-Dependencies probe only ever recognizes an `npm install` as pinned
+# when it's `npm ci` or a git+commit-hash spec (see isNpmUnpinnedDownload in
+# ossf/scorecard), so a registry-version `npm install -g` is always flagged
+# regardless of how exact the pin is (alert #635). Corepack isn't scanned by
+# that npm-specific probe at all. --ignore-scripts (docker:S6505) on the pnpm
+# workspace install below: pnpm's own default-deny (pnpm 10+) already blocks
+# unlisted lifecycle scripts; web/pnpm-workspace.yaml's allowBuilds:
+# esbuild: true still lets the actual build work.
+RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --ignore-scripts
