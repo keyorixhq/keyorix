@@ -1,0 +1,80 @@
+# Frontend (web/, ADR-070) SonarCloud scan, folded in from web/'s own
+# (now-superseded) sonarcloud.yml. Kept as its own SonarCloud project
+# (keyorixhq_keyorix-web) rather than merged into root's keyorixhq_keyorix
+# project — see ADR-070 Consequences: root's sonar-project.properties carries
+# 31 hand-reasoned Go-specific issue suppressions and a Go-specific coverage-
+# exclusion list; merging would mean auditing all of them against a
+# TypeScript tree and would blend one coverage figure across two toolchains,
+# which ADR-069's risk-based-coverage-as-two-numbers policy treats as a
+# regression, not a simplification.
+#
+# Path-filtered to web/**, matching web-ci.yml and web-dependency-review.yml.
+#
+# This workflow uses SonarSource/sonarqube-scan-action (the same action
+# web/'s own file used), not root sonarcloud.yml's older
+# SonarSource/sonarcloud-github-action -- the two are different, actively
+# maintained actions; switching root's to match here would be an unrelated
+# substitution outside this change's scope. Both are SHA-pinned with a
+# trailing version comment, matching root's pinning convention either way.
+name: Web SonarCloud
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**']
+  pull_request:
+    paths: ['web/**']
+
+# Cancel superseded runs on the same ref (matches web's original sonarcloud.yml).
+concurrency:
+  group: web-sonarcloud-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sonar:
+    name: SonarCloud scan
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history is required for blame and accurate new-code detection.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      # vitest.config.ts's reportsDirectory: './coverage' is relative to cwd,
+      # so this produces web/coverage/lcov.info -- which, combined with
+      # projectBaseDir: web below, is exactly what web/sonar-project.properties'
+      # unmodified sonar.javascript.lcov.reportPaths=coverage/lcov.info expects.
+      - name: Test with coverage
+        working-directory: web
+        run: pnpm test:coverage --run
+
+      # projectBaseDir: web makes the scanner read web/sonar-project.properties
+      # directly -- its sonar.sources=src and sonar.javascript.lcov.reportPaths
+      # both resolve relative to that base dir, so they need no edits.
+      - name: SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          projectBaseDir: web
