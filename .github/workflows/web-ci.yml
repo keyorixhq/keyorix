@@ -24,6 +24,10 @@ on:
     branches: [main]
     paths: ['web/**']
 
+# Workflow-level default: zero permissions, matching ci.yml's own least-privilege
+# convention (#115). Each job grants exactly what it needs below.
+permissions: {}
+
 # Cancel superseded runs on the same ref (matches web's original ci.yml).
 concurrency:
   group: web-ci-${{ github.ref }}
@@ -37,6 +41,8 @@ jobs:
   gate:
     name: type-check · lint · build · test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -50,8 +56,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
+      # --ignore-scripts: don't let any dependency's install-time lifecycle
+      # script run with CI's ambient permissions — classic supply-chain
+      # vector (a compromised transitive dependency's postinstall script).
+      # pnpm's own default-deny (pnpm 10+) already blocks unlisted lifecycle
+      # scripts; web/pnpm-workspace.yaml's allowBuilds: esbuild: true still
+      # runs esbuild's allowlisted build step under --ignore-scripts (verified:
+      # build/lint/type-check/test all still pass with this flag).
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Type-check
         run: pnpm type-check
@@ -90,6 +103,8 @@ jobs:
     name: e2e (Playwright)
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -103,8 +118,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
+      # --ignore-scripts: don't let any dependency's install-time lifecycle
+      # script run with CI's ambient permissions — classic supply-chain
+      # vector (a compromised transitive dependency's postinstall script).
+      # pnpm's own default-deny (pnpm 10+) already blocks unlisted lifecycle
+      # scripts; web/pnpm-workspace.yaml's allowBuilds: esbuild: true still
+      # runs esbuild's allowlisted build step under --ignore-scripts (verified:
+      # build/lint/type-check/test all still pass with this flag).
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Chromium-only (playwright.config.ts) to keep this job fast.
       - name: Install Playwright browser
