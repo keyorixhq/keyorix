@@ -2,10 +2,17 @@
 # All dependencies are needed (Vite et al. are devDependencies), so this is a
 # full install, not --prod.
 FROM node:22-alpine AS builder
-RUN npm install -g pnpm@11
+# Exact version, not just the major (docker:S8543) — reproducible builds need
+# a resolved pin, not a moving target. --ignore-scripts (docker:S6505) on both
+# installs below: verified `npm install -g pnpm@11.19.0 --ignore-scripts`
+# still produces a working pnpm binary, and (per the identical reasoning
+# already applied to the CI workflows) pnpm's own default-deny plus
+# pnpm-workspace.yaml's allowBuilds: esbuild: true still lets the actual
+# build work.
+RUN npm install -g pnpm@11.19.0 --ignore-scripts
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY . .
 RUN pnpm build
 
