@@ -29,37 +29,30 @@ section. For architectural rationale see the ADRs (`docs/` and
   rather than diagnosed at the SQLite-driver level).
   Not fixed here — investigation only.
 
-- **Stranded: per-binary CycloneDX SBOMs for release binaries.** Commit
-  `9eceffe4` "build(release): attach per-binary CycloneDX SBOMs" (2026-07-03)
-  sits unmerged on branch `chore/dev-guidance`. It touches
-  `.github/workflows/release.yml` and `Makefile` (adds a `make sbom` target,
-  pins `cyclonedx-gomod` v1.10.0). `git log -S cyclonedx origin/main --
-  Makefile` returns nothing, so v0.87.x and v0.88.0 shipped release binaries
-  with no SBOM. Container images are covered by BuildKit attestations
-  (`provenance: mode=max` / `sbom: true` in `docker-publish.yml`); the binary
-  tarballs — the delivery path for air-gapped customers — are not. CRA Annex
-  I Part II expects an SBOM for the product as placed on the market. Land
-  `chore/dev-guidance` or reimplement. Not fixed here.
-
-- **Verify: two gitleaks findings from the `keyorix-web` import may re-flag.**
-  `web/.gitleaksignore` (deleted when `web/.gitleaks.toml` was merged into
-  root's, ADR-070 Phase 5) suppressed two `generic-api-key` findings by
-  commit-SHA fingerprint: `src/services/__tests__/users.test.ts:112` and a
-  historical `keyorix.yaml:48` (file no longer present in `web/`). Root's
-  `gitleaks` CI job scans full history reachable from HEAD
-  (`--log-opts="HEAD"`), and the DCO retrofit (ADR-070 Decision) rewrote
-  every non-bot `keyorix-web` commit's SHA — so both fingerprints are stale
-  on arrival and would not suppress a rescan of the same historical commits.
-  The general test-fixture path patterns added to root's `.gitleaks.toml`
-  (`web/.*__tests__.*`, etc.) likely already cover the first; the second
-  references a file that no longer exists, so its trigger could be
-  anywhere in that file's history. Not verified here — no network access to
-  run gitleaks in this environment. If the `gitleaks` CI check fails on this
-  branch's PR, add a path/regex `.gitleaks.toml` allowlist entry for the
-  specific finding (not a SHA fingerprint — see the comment above the web/
-  patterns in `.gitleaks.toml` for why).
-
 ## Done
+
+- **Per-binary CycloneDX SBOMs for release binaries.** Reimplemented commit
+  `9eceffe4`'s intent (it had drifted too far from current `Makefile`/
+  `release.yml` — 14 commits touched those files since it forked — to
+  cherry-pick cleanly): `make release` now generates a CycloneDX 1.6 SBOM per
+  binary (`keyorix_sbom.cdx.json`, `keyorix-server_sbom.cdx.json`, via
+  `cyclonedx-gomod app` in app mode) before the checksums step, so both are
+  covered by `checksums.txt` and uploaded with the existing `dist/*` glob. A
+  standalone `make sbom` target does the same outside a full release.
+  `release.yml` installs `cyclonedx-gomod@v1.10.0` (confirmed still the
+  latest available version) on PATH first. SECURITY.md documents this.
+  Verified: ran the actual tool locally, not just the Makefile syntax — both
+  SBOMs are valid CycloneDX 1.6 with real dependency graphs (112/125
+  components for CLI/server) and full license evidence (112/112 and
+  125/125 components carry `evidence.licenses`), and a full `make release`
+  run confirms both SBOM files land in `checksums.txt` and the web-UI
+  placeholder restore still leaves a clean working tree.
+
+- **Verified: the two gitleaks findings flagged as possibly re-flagging from
+  the `keyorix-web` import (ADR-070) do not.** Ran `gitleaks detect --source .
+  --verbose --redact --log-opts="HEAD"` (CI's exact invocation) against
+  current history: "no leaks found". The path-based allowlist patterns added
+  to root's `.gitleaks.toml` during the merge cover it.
 
 - **OpenAPI sync (RBAC scope fields)** — `project_id` / `environment_id` are
   documented on `POST /user-roles`, `PUT /users/{id}/roles`, and
