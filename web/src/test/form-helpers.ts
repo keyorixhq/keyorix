@@ -151,7 +151,7 @@ export const asyncFormHelpers = {
     /**
      * Submit form and wait for error message
      */
-    async submitAndWaitForError(buttonText = 'Submit', errorText: string) {
+    async submitAndWaitForError(errorText: string, buttonText = 'Submit') {
         await formHelpers.submitForm(buttonText);
         return await waitFor(() => screen.getByText(errorText));
     },
