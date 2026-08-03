@@ -37,13 +37,17 @@ env:
   COVERAGE_FLOOR: '80'
 
 jobs:
-  # Detects PR changes that touch nothing but *.md/docs/** (a "docs-only" PR).
+  # Detects PR changes that touch nothing but *.md/docs/** (a "docs-only" PR),
+  # and separately whether a PR touches nothing but web/** ("web-only").
   # Every code-verification job below (preflight, test-suite, static-analysis,
   # lint, licenses, operator, helm-*, openapi-lint, fuzz-targets, and the
   # build-and-test aggregator) is gated on `docs_only != 'true'` -- go tests,
   # go lint, Helm charts, dependency licenses, and the operator module cannot
   # be affected by a *.md/docs/** change, so there is nothing for them to
-  # verify. A job skipped via a job-level `if:` still reports a check-run
+  # verify. fuzz-targets additionally gates on `web_only != 'true'` (see its
+  # own comment below) -- it's the one job among these whose Go-only output
+  # also can't change from a web/-only diff, post-ADR-070. A job skipped via
+  # a job-level `if:` still reports a check-run
   # (conclusion "skipped"), and branch protection treats a skipped required
   # check as satisfying the requirement -- this is different from (and safe,
   # unlike) gating an entire workflow via top-level `paths-ignore`, which
@@ -65,25 +69,36 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
+      # web/ (ADR-070) lives in this repo now, so a frontend-only PR is no
+      # longer isolated in its own repo+CI -- it flows through this same
+      # workflow. Used to skip jobs that are backend-only busywork on a diff
+      # that can't possibly change their outcome (e.g. fuzz-targets below);
+      # NOT wired into docs_only itself, since jobs like build/test/lint stay
+      # gated on docs_only alone and should keep running on web/-only PRs.
+      web_only: ${{ steps.filter.outputs.web_only }}
     steps:
-      - name: Detect docs-only changes
+      - name: Detect docs-only / web-only changes
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "web_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           echo "Changed files:"
           echo "$changed"
-          if [ -z "$changed" ]; then
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
-          elif echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
+          if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           else
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$changed" ] || echo "$changed" | grep -vE '^web/' > /dev/null; then
+            echo "web_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "web_only=true" >> "$GITHUB_OUTPUT"
           fi
 
   # web/ (ADR-070) has its own pnpm-workspace.yaml. pnpm resolves its
@@ -433,9 +448,15 @@ jobs:
   #   - targets.conf declares a FuzzXxx that no longer exists -- a stale
   #     entry (e.g. after a rename/removal) that run-rotation.sh would fail
   #     to run every cycle.
+  # Also skipped on web_only PRs: every target here is a Go `func FuzzXxx` in
+  # internal/** (or operator/**), and `go test -list` output for those
+  # packages cannot change from a diff that only touches web/ -- ADR-070
+  # merged the frontend into this repo, but the fuzz targets themselves stay
+  # Go-only (there's no JS/TS equivalent to Go's native fuzzing engine), so a
+  # web/-only PR is guaranteed to produce the exact same true-targets.txt.
   fuzz-targets:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
