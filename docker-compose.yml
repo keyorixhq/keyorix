@@ -66,6 +66,15 @@ services:
       - "8088:80"
     depends_on:
       - backend
+    # web/Dockerfile already bakes an image-level HEALTHCHECK (wget against
+    # /health — nginx:alpine has no curl), which Compose inherits without this
+    # block; declared explicitly so it shows up the same way postgres' does.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   # Optional HTTPS front-end. Enable with `docker compose --profile tls up -d`.
   # Caddy terminates TLS and proxies to web. Set KEYORIX_DOMAIN to a real domain
