@@ -142,3 +142,23 @@ these in as an afterthought.
   standalone `keyorix-web` repository. This is expected, not data loss;
   anyone cross-referencing the two needs to match by commit subject/date/tree
   content, not by SHA.
+- **Root's Sonar exclusion of `web/**` is load-bearing, not cosmetic.** Root
+  `sonar-project.properties` has no `sonar.sources` line, so it defaults to
+  the repository base directory. If the `web/**` entry in `sonar.exclusions`
+  is ever removed, the root `keyorixhq_keyorix` project silently begins
+  analyzing every TypeScript file in `web/` too, double-counting findings
+  already covered by `keyorixhq_keyorix-web` and blending one coverage figure
+  across two toolchains.
+- **Two SonarCloud projects now bind to one GitHub repository.** This
+  requires monorepo support to be enabled at the `keyorixhq` SonarCloud
+  organization level and `keyorixhq_keyorix-web` to be rebound to the
+  `keyorix` repo — an org-level action outside this ADR's implementation,
+  tracked as a handoff item.
+- **Frontend SBOM coverage comes from the `keyorix-web` container image's
+  BuildKit attestation** (`provenance: mode=max` / `sbom: true` on the new
+  `build-and-push-web` job in `docker-publish.yml`), not from a source-tree
+  scan. `anchore-syft.yml`'s repo-wide `path: .` scan also reaches `web/`,
+  but that is a vulnerability-triage input over every devDependency in the
+  tree (eslint, playwright, vite — none of which ship in the built image),
+  not a product SBOM; the two serve different purposes and neither
+  substitutes for the other.
