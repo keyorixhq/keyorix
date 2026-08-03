@@ -1,3 +1,0 @@
-# False positives — test fixtures and example configs, not real secrets.
-2a2eded95d61c2d5b67a401371fea2b3697168d4:src/services/__tests__/users.test.ts:generic-api-key:112
-409594d5887bfd77abf949a7a029bcb5f42e3826:keyorix.yaml:generic-api-key:48

@@ -86,6 +86,34 @@ jobs:
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # web/ (ADR-070) has its own pnpm-workspace.yaml. pnpm resolves its
+  # workspace root by walking UP from the invoked directory until it finds a
+  # pnpm-workspace.yaml (or a lockfile) -- a stray pnpm-workspace.yaml or
+  # pnpm-lock.yaml at the repository root would shadow web/'s own and
+  # silently change the frontend's dependency resolution. Not gated by
+  # docs_only (like gitleaks below): a root-level pnpm file could land in a
+  # change docs_only wouldn't classify as code, and this check is a single
+  # `ls`, cheap enough to always run regardless.
+  pnpm-workspace-root-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert no root-level pnpm workspace files
+        run: |
+          if [ -e pnpm-workspace.yaml ] || [ -e pnpm-lock.yaml ]; then
+            echo "::error::pnpm-workspace.yaml or pnpm-lock.yaml found at the repository root."
+            echo "pnpm resolves its workspace root by walking up from the invoked"
+            echo "directory -- a root-level file here would shadow web/pnpm-workspace.yaml"
+            echo "and silently change the frontend's dependency resolution. Remove it,"
+            echo "or if a root-level pnpm workspace is genuinely intended, this guard"
+            echo "and ADR-070 both need to be revisited."
+            exit 1
+          fi
+          echo "OK: no root-level pnpm workspace files."
+
   # Fast compile gate (~30s). Catches redeclarations, type errors, and build
   # failures before the expensive test-suite/static-analysis jobs start -- those
   # declare `needs: [preflight]`. Cheaper jobs (lint, licenses, fuzz-targets,
