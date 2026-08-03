@@ -71,15 +71,32 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # GitHub Actions cache backend, scoped per image so the 5 images in
+          # this workflow don't evict each other's layers under a shared
+          # default scope.
+          cache-from: type=gha,scope=keyorix-server
+          cache-to: type=gha,mode=max,scope=keyorix-server
 
-      # Scans the pushed image DIGEST before it's signed, so a signature only
-      # ever attests to an image that's already cleared this gate.
-      - name: Scan image for vulnerabilities (trivy)
+      # Cached across runs by TRIVY_VERSION — a version bump naturally busts
+      # the cache and re-downloads+re-verifies the checksum.
+      - name: Cache Trivy binary
+        id: trivy-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: trivy
+          key: trivy-${{ env.TRIVY_VERSION }}-${{ runner.os }}
+
+      - name: Download Trivy
+        if: steps.trivy-cache.outputs.cache-hit != 'true'
         run: |
           curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
-          ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-server@${{ steps.build.outputs.digest }}"
+
+      # Scans the pushed image DIGEST before it's signed, so a signature only
+      # ever attests to an image that's already cleared this gate.
+      - name: Scan image for vulnerabilities (trivy)
+        run: ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-server@${{ steps.build.outputs.digest }}"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.0
@@ -139,13 +156,25 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=keyorix-k8s-sync
+          cache-to: type=gha,mode=max,scope=keyorix-k8s-sync
 
-      - name: Scan image for vulnerabilities (trivy)
+      - name: Cache Trivy binary
+        id: trivy-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: trivy
+          key: trivy-${{ env.TRIVY_VERSION }}-${{ runner.os }}
+
+      - name: Download Trivy
+        if: steps.trivy-cache.outputs.cache-hit != 'true'
         run: |
           curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
-          ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-k8s-sync@${{ steps.build.outputs.digest }}"
+
+      - name: Scan image for vulnerabilities (trivy)
+        run: ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-k8s-sync@${{ steps.build.outputs.digest }}"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.0
@@ -199,13 +228,25 @@ jobs:
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=keyorix-operator
+          cache-to: type=gha,mode=max,scope=keyorix-operator
 
-      - name: Scan image for vulnerabilities (trivy)
+      - name: Cache Trivy binary
+        id: trivy-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: trivy
+          key: trivy-${{ env.TRIVY_VERSION }}-${{ runner.os }}
+
+      - name: Download Trivy
+        if: steps.trivy-cache.outputs.cache-hit != 'true'
         run: |
           curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
-          ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-operator@${{ steps.build.outputs.digest }}"
+
+      - name: Scan image for vulnerabilities (trivy)
+        run: ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-operator@${{ steps.build.outputs.digest }}"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.0
@@ -261,13 +302,25 @@ jobs:
             VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=keyorix-mcp
+          cache-to: type=gha,mode=max,scope=keyorix-mcp
 
-      - name: Scan image for vulnerabilities (trivy)
+      - name: Cache Trivy binary
+        id: trivy-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: trivy
+          key: trivy-${{ env.TRIVY_VERSION }}-${{ runner.os }}
+
+      - name: Download Trivy
+        if: steps.trivy-cache.outputs.cache-hit != 'true'
         run: |
           curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
-          ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-mcp@${{ steps.build.outputs.digest }}"
+
+      - name: Scan image for vulnerabilities (trivy)
+        run: ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-mcp@${{ steps.build.outputs.digest }}"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.0
@@ -327,13 +380,25 @@ jobs:
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=keyorix-web
+          cache-to: type=gha,mode=max,scope=keyorix-web
 
-      - name: Scan image for vulnerabilities (trivy)
+      - name: Cache Trivy binary
+        id: trivy-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: trivy
+          key: trivy-${{ env.TRIVY_VERSION }}-${{ runner.os }}
+
+      - name: Download Trivy
+        if: steps.trivy-cache.outputs.cache-hit != 'true'
         run: |
           curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_LINUX_64BIT_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c -
           tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
-          ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-web@${{ steps.build.outputs.digest }}"
+
+      - name: Scan image for vulnerabilities (trivy)
+        run: ./trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "ghcr.io/keyorixhq/keyorix-web@${{ steps.build.outputs.digest }}"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3.10.0
