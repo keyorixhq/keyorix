@@ -26,7 +26,7 @@ type BlastRadiusNode struct {
 	SecretName string `json:"secret_name"`
 	ProjectID  uint   `json:"project_id"`
 	OwnerID    uint   `json:"owner_id"`
-	Depth      int    `json:"depth"` // 1 = direct, 2 = transitive, etc.
+	Depth      int    `json:"depth"`      // 1 = direct, 2 = transitive, etc.
 	RiskLevel  string `json:"risk_level"` // "critical" | "high" | "medium" | "low"
 }
 

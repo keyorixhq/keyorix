@@ -56,7 +56,9 @@ func (ls *LocalStorage) WithAuditCheckpointLock(ctx context.Context, fn func() e
 		return fmt.Errorf("failed to acquire audit-checkpoint advisory lock: %w", err)
 	}
 	// Release before the deferred Close so the pooled connection carries no lock.
-	defer func() { _, _ = conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", int64(auditCheckpointAdvisoryLockKey)) }()
+	defer func() {
+		_, _ = conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", int64(auditCheckpointAdvisoryLockKey))
+	}()
 
 	return fn()
 }

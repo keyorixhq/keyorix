@@ -18,21 +18,21 @@ import (
 // minimalUserWire returns a JSON-compatible map matching userWireResponse fields.
 func minimalUserWire(id int, username, email string) map[string]interface{} {
 	return map[string]interface{}{
-		"id":                   float64(id),
-		"username":             username,
-		"email":                email,
-		"display_name":         "Test User",
-		"active":               true,
-		"account_state":        "active",
-		"external_id":          "",
-		"mfa_enabled":          false,
-		"created_at":           time.Now().UTC().Format(time.RFC3339Nano),
-		"updated_at":           time.Now().UTC().Format(time.RFC3339Nano),
-		"last_login_at":        nil,
-		"deleted_at":           nil,
+		"id":                    float64(id),
+		"username":              username,
+		"email":                 email,
+		"display_name":          "Test User",
+		"active":                true,
+		"account_state":         "active",
+		"external_id":           "",
+		"mfa_enabled":           false,
+		"created_at":            time.Now().UTC().Format(time.RFC3339Nano),
+		"updated_at":            time.Now().UTC().Format(time.RFC3339Nano),
+		"last_login_at":         nil,
+		"deleted_at":            nil,
 		"failed_login_attempts": 0,
-		"login_lockout_count":  0,
-		"last_failed_login_at": nil,
+		"login_lockout_count":   0,
+		"last_failed_login_at":  nil,
 	}
 }
 
@@ -552,10 +552,10 @@ func TestRemoteStorage_CreateUserWithRoleGrants(t *testing.T) {
 		{RoleID: 1, Scope: corestorage.Scope{ProjectID: 0, EnvironmentID: 0}},
 	}
 	user, err := rs.CreateUserWithRoleGrants(context.Background(), &models.User{
-		Username:    "newuser",
-		Email:       "new@example.com",
-		DisplayName: "New User",
-		IsActive:    true,
+		Username:     "newuser",
+		Email:        "new@example.com",
+		DisplayName:  "New User",
+		IsActive:     true,
 		AccountState: "active",
 	}, grants)
 	require.NoError(t, err)

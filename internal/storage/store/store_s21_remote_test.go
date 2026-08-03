@@ -2,7 +2,7 @@
 //
 // Targets (remote_users.go — CreateUserWithRoleGrants branches):
 //   - line 658: errors.As(err, &httpErr) && httpErr.ErrorType == duplicateEmailProxyCode
-//             -> storage.ErrDuplicateEmail sentinel (DUPLICATE_EMAIL wire code)
+//     -> storage.ErrDuplicateEmail sentinel (DUPLICATE_EMAIL wire code)
 //   - line 661: generic HTTP error fallthrough (non-DUPLICATE_EMAIL code)
 //   - line 663: !resp.Success branch (2xx with success:false)
 package store_test

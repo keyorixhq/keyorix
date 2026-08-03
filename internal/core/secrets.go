@@ -45,8 +45,8 @@ type CreateSecretRequest struct {
 
 // UpdateSecretRequest represents a request to update an existing secret.
 type UpdateSecretRequest struct {
-	ID         uint       `json:"id" validate:"required"`
-	Value      []byte     `json:"value,omitempty"`
+	ID    uint   `json:"id" validate:"required"`
+	Value []byte `json:"value,omitempty"`
 	// Type, when non-empty, replaces the secret's type (e.g. "password", "api_key",
 	// "certificate", "generic"). An empty string means "leave unchanged".
 	Type       string     `json:"type,omitempty"`

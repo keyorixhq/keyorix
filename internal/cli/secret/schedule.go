@@ -60,8 +60,8 @@ var (
 )
 
 var setScheduleCmd = &cobra.Command{
-	Use:          "set-schedule <secret-name>",
-	Short:        "Set a temporal access schedule for a secret",
+	Use:   "set-schedule <secret-name>",
+	Short: "Set a temporal access schedule for a secret",
 	Long: `Restrict read access to a secret to a specific day-of-week + hour window.
 
 The schedule applies to all permission-checked reads (human users); admin/machine

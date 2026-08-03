@@ -58,8 +58,8 @@ func seedSecretForRequest(t *testing.T, svc *core.KeyorixCore, ownerID, projectI
 	require.NotEmpty(t, envs)
 
 	secret, err := svc.CreateSecret(ctx, &core.CreateSecretRequest{
-		Name:    "mysecret", Value: []byte("val"),
-		Type:    "password",
+		Name: "mysecret", Value: []byte("val"),
+		Type:      "password",
 		ProjectID: projectID, EnvironmentID: envs[0].ID,
 		CreatedBy: "admin", OwnerID: ownerID,
 	})

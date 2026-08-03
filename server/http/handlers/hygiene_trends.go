@@ -1,12 +1,14 @@
 // hygiene_trends.go — HTTP handlers for credential-hygiene trend data.
 //
 // GET  /api/v1/compliance/credential-trends?days=30|60|90
-//   Returns a HygieneTrendsReport (per-day stale/expired PAT + stale machine counts).
-//   Gated on audit.read in the router.
+//
+//	Returns a HygieneTrendsReport (per-day stale/expired PAT + stale machine counts).
+//	Gated on audit.read in the router.
 //
 // POST /api/v1/system/admin/jobs/record-hygiene-snapshot
-//   Triggers RecordHygieneTrendPoint: computes today's counts and persists a
-//   HygieneTrendSnapshot row. Gated on system.write in the router.
+//
+//	Triggers RecordHygieneTrendPoint: computes today's counts and persists a
+//	HygieneTrendSnapshot row. Gated on system.write in the router.
 package handlers
 
 import (

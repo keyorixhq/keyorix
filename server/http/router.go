@@ -22,44 +22,44 @@ import (
 )
 
 const (
-	cacheNoCache = "no-cache" // NOSONAR -- cognitive complexity 20, suppress go:S3776
-	hdrCacheControl = "Cache-Control"
-	hdrContentType = "Content-Type"
-	contentTypeHTML = "text/html"
-	pathEnvironmentsID = "/environments/{id}"
-	pathGroups = "/groups"
-	pathGroupsID = "/groups/{id}"
-	pathIDPermissions = "/{id}/permissions"
-	pathIDRestore = "/{id}/restore"
-	pathIDRoles = "/{id}/roles"
-	pathIDSchedule = "/{id}/schedule"
-	pathInvitations              = "/invitations"
+	cacheNoCache                  = "no-cache" // NOSONAR -- cognitive complexity 20, suppress go:S3776
+	hdrCacheControl               = "Cache-Control"
+	hdrContentType                = "Content-Type"
+	contentTypeHTML               = "text/html"
+	pathEnvironmentsID            = "/environments/{id}"
+	pathGroups                    = "/groups"
+	pathGroupsID                  = "/groups/{id}"
+	pathIDPermissions             = "/{id}/permissions"
+	pathIDRestore                 = "/{id}/restore"
+	pathIDRoles                   = "/{id}/roles"
+	pathIDSchedule                = "/{id}/schedule"
+	pathInvitations               = "/invitations"
 	pathNotificationChannelsID    = "/notification-channels/{id}"
 	pathAlertEscalationPolicies   = "/alert-escalation-policies"
 	pathAlertEscalationPoliciesID = "/alert-escalation-policies/{id}"
-	pathLegalHold = "/legal-hold"
-	pathMetrics = "/metrics"
-	pathProjectEnvs = "/projects/{id}/environments"
-	pathProjectMembers = "/projects/{id}/members"
-	pathProjects = "/projects"
-	pathProjectsID = "/projects/{id}"
-	pathRiskExceptions = "/risk-exceptions"
-	pathRiskExceptionsID = "/risk-exceptions/{id}"
-	pathSCIMGroupsID = "/Groups/{id}"
-	pathSCIMUsersID = "/Users/{id}"
-	pathStatus = "/status"
-	permAuditRead = "audit.read"
-	permRolesAssign = "roles.assign"
-	permRolesRead = "roles.read"
-	permRolesWrite = "roles.write"
-	permSecretsDelete = "secrets.delete"
-	permSecretsManage = "secrets.manage"
-	permSecretsRead = "secrets.read"
-	permSecretsWrite = "secrets.write"
-	permSystemRead = "system.read"
-	permSystemWrite = "system.write"
-	permUsersRead = "users.read"
-	permUsersWrite = "users.write"
+	pathLegalHold                 = "/legal-hold"
+	pathMetrics                   = "/metrics"
+	pathProjectEnvs               = "/projects/{id}/environments"
+	pathProjectMembers            = "/projects/{id}/members"
+	pathProjects                  = "/projects"
+	pathProjectsID                = "/projects/{id}"
+	pathRiskExceptions            = "/risk-exceptions"
+	pathRiskExceptionsID          = "/risk-exceptions/{id}"
+	pathSCIMGroupsID              = "/Groups/{id}"
+	pathSCIMUsersID               = "/Users/{id}"
+	pathStatus                    = "/status"
+	permAuditRead                 = "audit.read"
+	permRolesAssign               = "roles.assign"
+	permRolesRead                 = "roles.read"
+	permRolesWrite                = "roles.write"
+	permSecretsDelete             = "secrets.delete"
+	permSecretsManage             = "secrets.manage"
+	permSecretsRead               = "secrets.read"
+	permSecretsWrite              = "secrets.write"
+	permSystemRead                = "system.read"
+	permSystemWrite               = "system.write"
+	permUsersRead                 = "users.read"
+	permUsersWrite                = "users.write"
 )
 
 // NewRouter creates and configures the HTTP router
@@ -489,15 +489,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/projects/{id}/access-requests", catalogHandler.CreateAccessRequest)
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Put("/projects/{id}/access-requests/{requestId}", catalogHandler.ResolveAccessRequest)
 		r.Post("/projects/{id}/access-requests/{requestId}/withdraw", catalogHandler.WithdrawAccessRequest)
-			// Bulk approve/reject: process multiple pending access requests in one call.
-			// Require roles.assign (same gate as the per-request ResolveAccessRequest).
-			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-approve", catalogHandler.BulkApproveAccessRequests)
-			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-reject", catalogHandler.BulkRejectAccessRequests)
-			// Rejection reason templates: pre-defined reasons for rejecting access requests.
-			// Creating/deleting requires roles.assign; listing is accessible to all admins.
-			r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/rejection-reason-templates", catalogHandler.CreateRejectionReasonTemplate)
-			r.With(customMiddleware.RequirePermission(permRolesAssign)).Get("/rejection-reason-templates", catalogHandler.ListRejectionReasonTemplates)
-			r.With(customMiddleware.RequirePermission(permRolesAssign)).Delete("/rejection-reason-templates/{id}", catalogHandler.DeleteRejectionReasonTemplate)
+		// Bulk approve/reject: process multiple pending access requests in one call.
+		// Require roles.assign (same gate as the per-request ResolveAccessRequest).
+		r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-approve", catalogHandler.BulkApproveAccessRequests)
+		r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/access-requests/bulk-reject", catalogHandler.BulkRejectAccessRequests)
+		// Rejection reason templates: pre-defined reasons for rejecting access requests.
+		// Creating/deleting requires roles.assign; listing is accessible to all admins.
+		r.With(customMiddleware.RequirePermission(permRolesAssign)).Post("/rejection-reason-templates", catalogHandler.CreateRejectionReasonTemplate)
+		r.With(customMiddleware.RequirePermission(permRolesAssign)).Get("/rejection-reason-templates", catalogHandler.ListRejectionReasonTemplates)
+		r.With(customMiddleware.RequirePermission(permRolesAssign)).Delete("/rejection-reason-templates/{id}", catalogHandler.DeleteRejectionReasonTemplate)
 		// Break-glass emergency access: activation is self-service (un-gated — the
 		// point is access the caller lacks; controlled by config + justification +
 		// audit + auto-expiry). Listing/revoking are review actions (roles.read/assign).

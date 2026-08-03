@@ -163,4 +163,3 @@ func (k *KeyorixCore) GetPermissionChangeAudit(ctx context.Context, since, until
 		Total:   len(changes),
 	}, nil
 }
-

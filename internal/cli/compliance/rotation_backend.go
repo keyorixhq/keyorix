@@ -6,8 +6,8 @@ package compliance
 import (
 	"context"
 	"fmt"
-	"text/tabwriter"
 	"os"
+	"text/tabwriter"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -16,9 +16,9 @@ import (
 
 // backendReport mirrors core.RotationBackendReport for JSON decoding in the CLI.
 type backendReport struct {
-	GeneratedAt  time.Time           `json:"generated_at"`
-	Backends     []backendStat       `json:"backends"`
-	TotalOverdue int                 `json:"total_overdue"`
+	GeneratedAt  time.Time     `json:"generated_at"`
+	Backends     []backendStat `json:"backends"`
+	TotalOverdue int           `json:"total_overdue"`
 }
 
 type backendStat struct {
@@ -30,8 +30,8 @@ type backendStat struct {
 }
 
 var rotationByBackendCmd = &cobra.Command{
-	Use:          "rotation-by-backend",
-	Short:        "Rotation-overdue secrets grouped by backend",
+	Use:   "rotation-by-backend",
+	Short: "Rotation-overdue secrets grouped by backend",
 	Long: `Print a table of rotation-overdue secrets grouped by RotationBackend across
 the whole deployment. Requires audit.read permission.`,
 	SilenceUsage: true,

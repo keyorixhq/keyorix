@@ -22,7 +22,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-
 // --- Permissions ---
 
 func (ls *LocalStorage) CreatePermission(ctx context.Context, permission *models.Permission) (*models.Permission, error) {

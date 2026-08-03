@@ -15,7 +15,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // BootstrapRequest holds credentials and display name for the initial bootstrap.
 // Token is the caller-supplied bootstrap token, matched against the server's
 // configured token (see KeyorixCore.SetBootstrapToken) to authorize the first-admin
@@ -197,7 +196,6 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 	} else if found {
 		return c.currentBootstrapState(ctx)
 	}
-
 
 	_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
 	if err != nil {

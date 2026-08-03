@@ -237,15 +237,23 @@ func TestShareAudit_StampsImpersonationContext(t *testing.T) {
 	ctx := WithImpersonation(context.Background(), 99) // admin 99 impersonating target 2
 
 	writers := map[string]func(){
-		string(ShareAuditEventCreated):      func() { core.LogShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "read"}) },
-		string(ShareAuditEventUpdated):      func() { core.LogShareUpdated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "write", OldPermission: "read"}) },
-		string(ShareAuditEventRevoked):      func() { core.LogShareRevoked(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3}) },
-		string(ShareAuditEventGroupCreated): func() { core.LogGroupShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true, Permission: "read"}) },
+		string(ShareAuditEventCreated): func() {
+			core.LogShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "read"})
+		},
+		string(ShareAuditEventUpdated): func() {
+			core.LogShareUpdated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "write", OldPermission: "read"})
+		},
+		string(ShareAuditEventRevoked): func() { core.LogShareRevoked(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3}) },
+		string(ShareAuditEventGroupCreated): func() {
+			core.LogGroupShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true, Permission: "read"})
+		},
 		string(ShareAuditEventGroupUpdated): func() {
 			core.LogGroupShareUpdated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true, Permission: "write", OldPermission: "read"})
 		},
-		string(ShareAuditEventGroupRevoked): func() { core.LogGroupShareRevoked(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true}) },
-		string(ShareAuditEventSelfRemoved):  func() { core.LogSelfRemovalFromShare(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 2}) },
+		string(ShareAuditEventGroupRevoked): func() {
+			core.LogGroupShareRevoked(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true})
+		},
+		string(ShareAuditEventSelfRemoved): func() { core.LogSelfRemovalFromShare(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 2}) },
 	}
 
 	for eventType, write := range writers {

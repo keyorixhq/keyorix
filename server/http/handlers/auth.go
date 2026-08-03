@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // checkLoginRateLimit returns true if the IP has exceeded the login-attempt budget
 // within the window. Backed by the DB so the limit holds across HA replicas
 // (ADR-040). Fails open on a storage error — it's a backstop on top of the real

@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-
 // ExportAccessLog handles GET /api/v1/secrets/{id}/access-log/export
 func (h *SecretHandler) ExportAccessLog(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")

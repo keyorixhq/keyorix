@@ -24,9 +24,9 @@ var (
 
 // bulkDeleteResult mirrors the BulkDeleteResult from core / the HTTP response envelope.
 type bulkDeleteResult struct {
-	Deleted []uint             `json:"deleted"`
-	Failed  []bulkDeleteError  `json:"failed"`
-	Total   int                `json:"total"`
+	Deleted []uint            `json:"deleted"`
+	Failed  []bulkDeleteError `json:"failed"`
+	Total   int               `json:"total"`
 }
 
 type bulkDeleteError struct {

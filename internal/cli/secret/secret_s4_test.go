@@ -60,8 +60,11 @@ func TestBuildCreateRequest_FromFileHappyS4(t *testing.T) {
 
 	origName, origVal, origFile, origExp, origMax := createName, createValue, createFromFile, createExpiration, createMaxReads
 	defer func() {
-		createName = origName; createValue = origVal; createFromFile = origFile
-		createExpiration = origExp; createMaxReads = origMax
+		createName = origName
+		createValue = origVal
+		createFromFile = origFile
+		createExpiration = origExp
+		createMaxReads = origMax
 	}()
 	createName = "s4-from-file"
 	createValue = ""
@@ -77,7 +80,10 @@ func TestBuildCreateRequest_FromFileHappyS4(t *testing.T) {
 func TestBuildCreateRequest_ValidExpirationS4(t *testing.T) {
 	origName, origVal, origFile, origExp := createName, createValue, createFromFile, createExpiration
 	defer func() {
-		createName = origName; createValue = origVal; createFromFile = origFile; createExpiration = origExp
+		createName = origName
+		createValue = origVal
+		createFromFile = origFile
+		createExpiration = origExp
 	}()
 	createName = "s4-secret"
 	createValue = "v"
@@ -92,7 +98,10 @@ func TestBuildCreateRequest_ValidExpirationS4(t *testing.T) {
 func TestBuildCreateRequest_MaxReadsSetS4(t *testing.T) {
 	origName, origVal, origFile, origMax := createName, createValue, createFromFile, createMaxReads
 	defer func() {
-		createName = origName; createValue = origVal; createFromFile = origFile; createMaxReads = origMax
+		createName = origName
+		createValue = origVal
+		createFromFile = origFile
+		createMaxReads = origMax
 	}()
 	createName = "s4-secret"
 	createValue = "secret-s4"
@@ -191,8 +200,11 @@ func TestRunListEmbeddedS4_TableFormat(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	defer func() {
-		listFormat = origFmt; listProjectName = origProject
-		listLimit = origLimit; listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	}()
 	listFormat = "table"
 	listProjectName = ""
@@ -212,8 +224,11 @@ func TestRunListEmbeddedS4_JSONFormat(t *testing.T) {
 	origFmt, origProject, origLimit, origOffset, origEnv :=
 		listFormat, listProjectName, listLimit, listOffset, listEnv
 	defer func() {
-		listFormat = origFmt; listProjectName = origProject
-		listLimit = origLimit; listOffset = origOffset; listEnv = origEnv
+		listFormat = origFmt
+		listProjectName = origProject
+		listLimit = origLimit
+		listOffset = origOffset
+		listEnv = origEnv
 	}()
 	listFormat = "json"
 	listProjectName = ""
@@ -242,7 +257,12 @@ func TestRunScanS4_InvalidCommitLeadingDash(t *testing.T) {
 
 func TestRunScanS4_LowSeverityFilter(t *testing.T) {
 	origSev, origCommit, origStaged, origReport := scanSeverity, scanCommit, scanStaged, scanReport
-	defer func() { scanSeverity = origSev; scanCommit = origCommit; scanStaged = origStaged; scanReport = origReport }()
+	defer func() {
+		scanSeverity = origSev
+		scanCommit = origCommit
+		scanStaged = origStaged
+		scanReport = origReport
+	}()
 	scanSeverity = "low"
 	scanCommit = ""
 	scanStaged = false
@@ -260,7 +280,12 @@ func TestRunScanS4_LowSeverityFilter(t *testing.T) {
 
 func TestRunScanS4_MediumSeverityFilter(t *testing.T) {
 	origSev, origCommit, origStaged, origReport := scanSeverity, scanCommit, scanStaged, scanReport
-	defer func() { scanSeverity = origSev; scanCommit = origCommit; scanStaged = origStaged; scanReport = origReport }()
+	defer func() {
+		scanSeverity = origSev
+		scanCommit = origCommit
+		scanStaged = origStaged
+		scanReport = origReport
+	}()
 	scanSeverity = "medium"
 	scanCommit = ""
 	scanStaged = false
@@ -277,7 +302,12 @@ func TestRunScanS4_MediumSeverityFilter(t *testing.T) {
 
 func TestRunScanS4_HighSeverityFilter(t *testing.T) {
 	origSev, origCommit, origStaged, origReport := scanSeverity, scanCommit, scanStaged, scanReport
-	defer func() { scanSeverity = origSev; scanCommit = origCommit; scanStaged = origStaged; scanReport = origReport }()
+	defer func() {
+		scanSeverity = origSev
+		scanCommit = origCommit
+		scanStaged = origStaged
+		scanReport = origReport
+	}()
 	scanSeverity = "high"
 	scanCommit = ""
 	scanStaged = false

@@ -2,11 +2,11 @@
 //
 // Targets branches in:
 //   - migrate_provider.go: printMigrateSummary all provider-type branches,
-//                          providerLabel non-empty type,
-//                          findMigrateBackups non-existent DEK directory,
-//                          migrateProviderCleanupWithConfig zero-matches path
+//     providerLabel non-empty type,
+//     findMigrateBackups non-existent DEK directory,
+//     migrateProviderCleanupWithConfig zero-matches path
 //   - auth_encryption_validate.go: runValidateAuthEncryption
-//                          API-client/session/API-token/reset-token error wrapping
+//     API-client/session/API-token/reset-token error wrapping
 //   - auth_encryption.go: runAuthEncryptionStatus stats-error warning print path
 package encryption
 
@@ -96,7 +96,7 @@ func TestPrintMigrateSummary_S23_ShamirWithCommitment(t *testing.T) {
 func TestPrintMigrateSummary_S23_ShamirNoCommitment(t *testing.T) {
 	tgt := config.EncryptionConfig{
 		KeyProvider: config.KeyProviderConfig{
-			Type:          "shamir",
+			Type:           "shamir",
 			ShamirShareEnv: []string{"SHARE_A", "SHARE_B"},
 			// ShamirCommitment intentionally omitted
 		},

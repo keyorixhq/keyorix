@@ -78,13 +78,13 @@ type AccessRequest struct {
 	// secret" rather than a project/role grant (see RequestSecretAccess /
 	// ApproveSecretAccessRequest). nil = the original project/role request this
 	// model was designed for (ADR-024).
-	SecretID      *uint `gorm:"index"`
-	State         string // pending | approved | rejected | withdrawn | expired
-	Reason        string // requester's note, or the rejecter's reason
-	ResolvedBy    uint
-	ExpiresAt     *time.Time
-	CreatedAt     time.Time
-	ResolvedAt    *time.Time
+	SecretID   *uint  `gorm:"index"`
+	State      string // pending | approved | rejected | withdrawn | expired
+	Reason     string // requester's note, or the rejecter's reason
+	ResolvedBy uint
+	ExpiresAt  *time.Time
+	CreatedAt  time.Time
+	ResolvedAt *time.Time
 	// ApprovalsReceived / RequiredApprovals are transient (not persisted): the
 	// dual-control progress (M of K) the API surfaces for a pending request.
 	ApprovalsReceived int `gorm:"-"`
@@ -111,8 +111,8 @@ type AccessRequestApproval struct {
 // selected from a list rather than typed each time.
 type RejectionReasonTemplate struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	Name      string    `gorm:"not null;uniqueIndex" json:"name"`    // short label
-	Reason    string    `gorm:"not null" json:"reason"`              // full text
+	Name      string    `gorm:"not null;uniqueIndex" json:"name"` // short label
+	Reason    string    `gorm:"not null" json:"reason"`           // full text
 	CreatedBy uint      `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -586,7 +586,7 @@ type Group struct {
 }
 
 type UserGroup struct {
-	UserID uint `gorm:"primaryKey"`
+	UserID  uint `gorm:"primaryKey"`
 	GroupID uint `gorm:"primaryKey"`
 	// ProjectID scopes this membership to a specific project. 0 = global (member
 	// in every project), non-zero = member only within that project. The
@@ -751,8 +751,8 @@ type SecretACL struct {
 // A secret with a schedule is readable ONLY during the allowed window.
 // Days uses ISO weekday numbers: 1=Mon, 2=Tue, ..., 7=Sun. "*" = all days.
 type SecretAccessSchedule struct {
-	ID           uint      `gorm:"primarykey" json:"id"`
-	SecretNodeID uint      `gorm:"uniqueIndex;not null" json:"secret_node_id"`
+	ID           uint `gorm:"primarykey" json:"id"`
+	SecretNodeID uint `gorm:"uniqueIndex;not null" json:"secret_node_id"`
 	// AllowedDays is a comma-separated ISO weekday list, e.g. "1,2,3,4,5" or "*"
 	AllowedDays string    `json:"allowed_days"`
 	StartHour   int       `json:"start_hour"` // 0–23 inclusive
@@ -1036,9 +1036,9 @@ type Notification struct {
 	// Severity records the escalation ranking at which this notification was
 	// last created/updated (#250). Zero (NotificationSeverityNone) for
 	// notification types that don't use escalation-aware dedup.
-	Severity NotificationSeverity `gorm:"default:0"`
-	IsRead   bool                 `gorm:"index"`
-	CreatedAt    time.Time
+	Severity  NotificationSeverity `gorm:"default:0"`
+	IsRead    bool                 `gorm:"index"`
+	CreatedAt time.Time
 }
 
 type AuditEvent struct {
@@ -1169,10 +1169,10 @@ type HygieneTrendSnapshot struct {
 // for week-over-week trend computation.
 type CompliancePostureSnapshot struct {
 	ID               uint      `gorm:"primarykey"`
-	TotalControls    int       `json:"total_controls"`    // total control areas evaluated
-	PassedControls   int       `json:"passed_controls"`   // controls with no gaps
-	FailedControls   int       `json:"failed_controls"`   // controls with gaps/failures
-	DegradedControls int       `json:"degraded_controls"` // controls that couldn't be evaluated
+	TotalControls    int       `json:"total_controls"`                   // total control areas evaluated
+	PassedControls   int       `json:"passed_controls"`                  // controls with no gaps
+	FailedControls   int       `json:"failed_controls"`                  // controls with gaps/failures
+	DegradedControls int       `json:"degraded_controls"`                // controls that couldn't be evaluated
 	SnapshotDate     time.Time `json:"snapshot_date" gorm:"uniqueIndex"` // date only (UTC midnight)
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -1328,7 +1328,7 @@ type AnomalyConfigRecord struct {
 	OffHoursEnd      int    `json:"off_hours_end"`      // 0–23
 	// ML Isolation Forest
 	MLEnabled    bool    `json:"ml_enabled"`
-	MLThreshold  float64 `json:"ml_threshold"`   // 0.5–1.0
+	MLThreshold  float64 `json:"ml_threshold"` // 0.5–1.0
 	MLNumTrees   int     `json:"ml_num_trees"`
 	MLSampleSize int     `json:"ml_sample_size"`
 	// VolumeMinCount overrides the volumeSpikeMinCount absolute floor for the
@@ -1345,7 +1345,7 @@ type AnomalyConfigRecord struct {
 	// before the cumulative_rate rule fires for low-traffic secrets (default: 20
 	// when zero). An attacker reading 9 reads/hour over 3 hours evades the per-hour
 	// spike floor but crosses this cumulative threshold.
-	CumulativeRateMax int `json:"cumulative_rate_max"`
+	CumulativeRateMax int       `json:"cumulative_rate_max"`
 	UpdatedAt         time.Time `json:"updated_at"`
 	UpdatedBy         string    `json:"updated_by"` // username of last editor
 }
@@ -1461,11 +1461,11 @@ type NotificationChannel struct {
 	// e.g. "secret.rotated,anomaly.detected,secret.expiring"
 	Events string `json:"events"`
 	// Retry policy for failed deliveries.
-	MaxRetries     int `gorm:"default:3" json:"max_retries"`      // 0 = no retry, max 10
-	RetryBackoffMs int `gorm:"default:1000" json:"retry_backoff_ms"` // base backoff in ms, min 100, max 60000
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	CreatedBy string    `json:"created_by"`
+	MaxRetries     int       `gorm:"default:3" json:"max_retries"`         // 0 = no retry, max 10
+	RetryBackoffMs int       `gorm:"default:1000" json:"retry_backoff_ms"` // base backoff in ms, min 100, max 60000
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	CreatedBy      string    `json:"created_by"`
 }
 
 // ProjectMembership tracks the onboarding lifecycle of a user into a project

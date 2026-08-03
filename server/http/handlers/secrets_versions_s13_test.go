@@ -241,10 +241,10 @@ func TestRollbackSecret_AlreadyCurrentVersion_S13(t *testing.T) {
 	// Insert a SecretVersion directly so GetSecretVersion finds it and
 	// GetLatestSecretVersion returns it as the current version.
 	ver := &models.SecretVersion{
-		SecretNodeID:  secret.ID,
-		VersionNumber: 1,
+		SecretNodeID:   secret.ID,
+		VersionNumber:  1,
 		EncryptedValue: []byte("placeholder"),
-		CreatedAt:     time.Now(),
+		CreatedAt:      time.Now(),
 	}
 	require.NoError(t, db.Create(ver).Error)
 
@@ -295,4 +295,3 @@ func TestDeletedSecrets_EmptyProject_S13(t *testing.T) {
 	deleted, _ := data["deleted"].([]interface{})
 	assert.Empty(t, deleted)
 }
-

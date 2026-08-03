@@ -52,7 +52,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 // --- Wire DTOs (#496) ---
 //
 // models.User carries no json tags of its own (it is a GORM model, and the local

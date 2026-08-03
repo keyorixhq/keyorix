@@ -980,7 +980,7 @@ type fakeKillConn struct{ closed bool }
 func (c *fakeKillConn) Prepare(query string) (driver.Stmt, error) {
 	return &fakeKillStmt{query: query}, nil
 }
-func (c *fakeKillConn) Close() error  { c.closed = true; return nil }
+func (c *fakeKillConn) Close() error              { c.closed = true; return nil }
 func (c *fakeKillConn) Begin() (driver.Tx, error) { return nil, fmt.Errorf("not supported") }
 
 type fakeKillStmt struct{ query string }

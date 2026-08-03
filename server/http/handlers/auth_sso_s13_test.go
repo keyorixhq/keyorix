@@ -7,7 +7,7 @@
 //     DeleteSessionByID no-user-ctx + bad-ID + not-found,
 //     package-level stubs when defaultUserHandler is nil
 //   - sso.go: BeginSSO unknown-provider, CompleteSSO unknown-provider + IdP-error-param
-//     + missing-code-or-state + core-error; fragment does NOT contain session token
+//   - missing-code-or-state + core-error; fragment does NOT contain session token
 //     (#r125-H3)
 package handlers
 
@@ -394,7 +394,7 @@ func TestBeginSSO_UnknownProvider_S13(t *testing.T) {
 func newSSOProvider(name, completeURL string) *core.SSOProvider {
 	return &core.SSOProvider{
 		Name:        name,
-		Type:        "",    // "" == oidc
+		Type:        "", // "" == oidc
 		CompleteURL: completeURL,
 		OAuth: &oauth2.Config{
 			ClientID:     "test-client-id",

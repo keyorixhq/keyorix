@@ -324,7 +324,7 @@ func TestEnforceKeyFilePermissions_S22_RelativePaths(t *testing.T) {
 		Storage: config.StorageConfig{
 			Encryption: config.EncryptionConfig{
 				Enabled:  true,
-				DEKPath:  dek,  // relative — resolve() will join with "."
+				DEKPath:  dek, // relative — resolve() will join with "."
 				SaltPath: salt,
 			},
 		},
@@ -519,4 +519,3 @@ func contains(s, substr string) bool {
 			return false
 		}())
 }
-

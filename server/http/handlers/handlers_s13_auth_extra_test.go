@@ -216,10 +216,10 @@ func TestUserIdentity_SuccessPath_S13(t *testing.T) {
 // branch of userProfileMap, which replaces nil with []string{}.
 func TestUserProfileMap_NilRoles_S13(t *testing.T) {
 	user := &models.User{
-		Username:     "nilroles_s13",
-		Email:        "nilroles_s13@example.com",
-		DisplayName:  "Nil Roles",
-		IsActive:     true,
+		Username:    "nilroles_s13",
+		Email:       "nilroles_s13@example.com",
+		DisplayName: "Nil Roles",
+		IsActive:    true,
 	}
 	// core.UserIdentity with nil Roles and Permissions triggers the nil-guard.
 	id := core.UserIdentity{Role: "viewer", Roles: nil, Permissions: nil}

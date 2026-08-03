@@ -185,7 +185,6 @@ func TestPrincipalHasScopedPermission_StorageError(t *testing.T) {
 	require.Error(t, err)
 }
 
-
 // ── catalog.go — validateEnvironmentName ─────────────────────────────────
 
 func TestValidateEnvironmentName_Empty(t *testing.T) {

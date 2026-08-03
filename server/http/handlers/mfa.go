@@ -11,7 +11,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // EnrollMFA begins TOTP enrolment for the authenticated caller and returns the
 // otpauth:// provisioning URI (for a QR code) plus the base32 secret.
 func (h *AuthHandler) EnrollMFA(w http.ResponseWriter, r *http.Request) {

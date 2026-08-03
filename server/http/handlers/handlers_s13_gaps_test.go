@@ -177,7 +177,6 @@ func TestCreateProject_ValidationError_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-
 // TestUpdateProject_BadParam_S13 — non-numeric id → 400.
 func TestUpdateProject_BadParam_S13(t *testing.T) {
 	t.Parallel()

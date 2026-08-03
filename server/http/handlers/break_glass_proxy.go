@@ -65,7 +65,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // breakGlassActivationProxyWire mirrors models.BreakGlassActivation's fields
 // exactly (snake_case) — a GORM model with no json tags of its own beyond the
 // struct-literal defaults, so — matching membershipProxyWire's/

@@ -23,7 +23,7 @@ import (
 
 const (
 	hdrContentType = "Content-Type"
-	mimeJSON = "application/json"
+	mimeJSON       = "application/json"
 )
 
 // sessionValidator is the subset of *core.KeyorixCore that the auth middleware

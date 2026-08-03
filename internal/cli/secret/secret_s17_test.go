@@ -54,7 +54,7 @@ func saveCreateFlags(t *testing.T) {
 
 // ─────────────────────── interactiveCreate ───────────────────────────────────
 
-// TestInteractiveCreate_EmptyNameReturnsError covers the "name == ''" early
+// TestInteractiveCreate_EmptyNameReturnsError covers the "name == ”" early
 // exit in interactiveCreate (lines 219-221 of create.go). We redirect os.Stdin
 // to a pipe that immediately delivers a bare newline, so ask("Secret name", "")
 // returns "" and the function returns an error without ever reaching

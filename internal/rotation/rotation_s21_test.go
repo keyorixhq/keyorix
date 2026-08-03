@@ -186,7 +186,7 @@ func TestAzureGraphClient_S21_ListPasswordKeyIDs_SuccessPath(t *testing.T) {
 		"passwordCredentials": []map[string]any{
 			{"keyId": "key-aaa"},
 			{"keyId": "key-bbb"},
-			{"keyId": ""},    // empty keyId must be filtered
+			{"keyId": ""}, // empty keyId must be filtered
 			{"keyId": "key-ccc"},
 		},
 	}

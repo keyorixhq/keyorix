@@ -205,7 +205,7 @@ func TestValidateFilePermissions_HTTPTLSKeyTraversal(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Server.HTTP.TLS.Enabled = true
 	cfg.Server.HTTP.TLS.CertFile = filepath.Join(dir, "server.crt") // safe cert path
-	cfg.Server.HTTP.TLS.KeyFile = traversal                          // unsafe key path
+	cfg.Server.HTTP.TLS.KeyFile = traversal                         // unsafe key path
 
 	err := validateFilePermissions(cfg, "", false, &ValidationResult{})
 	require.Error(t, err, "HTTP TLS key path with '..' must be rejected")
@@ -219,7 +219,7 @@ func TestValidateFilePermissions_GRPCTLSCertTraversal(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Server.GRPC.TLS.Enabled = true
-	cfg.Server.GRPC.TLS.CertFile = traversal     // unsafe cert path
+	cfg.Server.GRPC.TLS.CertFile = traversal       // unsafe cert path
 	cfg.Server.GRPC.TLS.KeyFile = "/safe/key/path" // safe key path (won't be reached)
 
 	err := validateFilePermissions(cfg, "", false, &ValidationResult{})

@@ -183,8 +183,10 @@ func TestRunCreate_OTP_RemoteReachesServer(t *testing.T) {
 
 	origU, origE, origSL, origOTP := createUsername, createEmail, createSetupLink, createOneTimePassword
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
 	}()
 	createUsername = "carol"
 	createEmail = "carol@example.com"
@@ -209,8 +211,10 @@ func TestRunCreate_PasswordMode_EmbeddedMode(t *testing.T) {
 
 	origU, origE, origSL, origOTP, origPW := createUsername, createEmail, createSetupLink, createOneTimePassword, createPassword
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
 		createPassword = origPW
 	}()
 	createUsername = "pwduser"
@@ -591,9 +595,12 @@ func TestRunCreate_SetupLink_SeededDB(t *testing.T) {
 
 	origU, origE, origSL, origOTP, origPW, origBy := createUsername, createEmail, createSetupLink, createOneTimePassword, createPassword, createBy
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
-		createPassword = origPW; createBy = origBy
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
+		createPassword = origPW
+		createBy = origBy
 	}()
 	createUsername = "linkuser"
 	createEmail = "linkuser@example.com"
@@ -622,9 +629,12 @@ func TestRunCreate_OTP_SeededDB(t *testing.T) {
 
 	origU, origE, origSL, origOTP, origPW, origBy := createUsername, createEmail, createSetupLink, createOneTimePassword, createPassword, createBy
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
-		createPassword = origPW; createBy = origBy
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
+		createPassword = origPW
+		createBy = origBy
 	}()
 	createUsername = "otpuser2"
 	createEmail = "otpuser2@example.com"
@@ -649,8 +659,10 @@ func TestRunCreate_Password_SeededDB(t *testing.T) {
 
 	origU, origE, origSL, origOTP, origPW := createUsername, createEmail, createSetupLink, createOneTimePassword, createPassword
 	defer func() {
-		createUsername = origU; createEmail = origE
-		createSetupLink = origSL; createOneTimePassword = origOTP
+		createUsername = origU
+		createEmail = origE
+		createSetupLink = origSL
+		createOneTimePassword = origOTP
 		createPassword = origPW
 	}()
 	createUsername = "pwduser2"
@@ -698,8 +710,11 @@ func TestRunUpdate_SeededDB_ActiveTrue(t *testing.T) {
 
 	origID, origActive, origU, origE, origD := updateUserID, updateActiveStr, updateUsername, updateEmail, updateDisplayName
 	defer func() {
-		updateUserID = origID; updateActiveStr = origActive
-		updateUsername = origU; updateEmail = origE; updateDisplayName = origD
+		updateUserID = origID
+		updateActiveStr = origActive
+		updateUsername = origU
+		updateEmail = origE
+		updateDisplayName = origD
 	}()
 	updateUserID = targetID
 	updateActiveStr = "true"

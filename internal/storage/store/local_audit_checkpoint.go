@@ -16,7 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 // CreateAuditCheckpoint appends a signed checkpoint row (append-only).
 func (ls *LocalStorage) CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error {
 	return ls.db.WithContext(ctx).Create(cp).Error

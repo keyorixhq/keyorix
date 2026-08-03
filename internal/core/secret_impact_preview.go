@@ -11,10 +11,10 @@ import "context"
 // GET /api/v1/secrets/{id}/impact-preview.
 type ImpactPreviewResult struct {
 	SecretID             uint   `json:"secret_id"`
-	DirectDependents     int    `json:"direct_dependents"`   // secrets that directly depend on this one (depth=1)
+	DirectDependents     int    `json:"direct_dependents"`     // secrets that directly depend on this one (depth=1)
 	TransitiveDependents int    `json:"transitive_dependents"` // full transitive-closure count (excludes root)
-	AffectedSecretIDs    []uint `json:"affected_secret_ids"` // IDs of all transitively affected secrets
-	MaxDepth             int    `json:"max_depth"`           // deepest dependency chain length found
+	AffectedSecretIDs    []uint `json:"affected_secret_ids"`   // IDs of all transitively affected secrets
+	MaxDepth             int    `json:"max_depth"`             // deepest dependency chain length found
 }
 
 // GetSecretImpactPreview computes the cascade-delete impact of removing secretID.

@@ -61,7 +61,7 @@ import (
 
 const (
 	bearerPrefix = "Bearer "
-	mimeJSON = "application/json"
+	mimeJSON     = "application/json"
 )
 
 // k8sMinExpirationSeconds is the Kubernetes TokenRequest minimum (10 minutes); the

@@ -811,7 +811,7 @@ func TestTouchMachineIdentityCredentialProxy_BadBody_S21(t *testing.T) {
 func TestTouchMachineIdentityCredentialProxy_HappyPath_S21(t *testing.T) {
 	h := freshCatalogHandlerS21(t)
 	body := proxyBodyS21(map[string]interface{}{
-		"used_at":          time.Now(),
+		"used_at":           time.Now(),
 		"staleness_seconds": 30,
 	})
 	req := withChiParam(

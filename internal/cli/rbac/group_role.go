@@ -22,17 +22,17 @@ const groupFlagUsage = "Group name or numeric ID (required)"
 // ── flag variables (prefixed to avoid collision with user-role flags) ──────────
 
 var (
-	groupRoleGroupFlag string
-	groupRoleName      string
+	groupRoleGroupFlag   string
+	groupRoleName        string
 	groupRoleProjectFlag string
-	groupRoleEnvFlag   string
-	groupRoleTTL       time.Duration
+	groupRoleEnvFlag     string
+	groupRoleTTL         time.Duration
 
-	listGroupRoleGroupFlag string
-	removeGroupRoleGroupFlag string
-	removeGroupRoleName    string
+	listGroupRoleGroupFlag     string
+	removeGroupRoleGroupFlag   string
+	removeGroupRoleName        string
 	removeGroupRoleProjectFlag string
-	removeGroupRoleEnvFlag string
+	removeGroupRoleEnvFlag     string
 )
 
 // ── assign-role-to-group ──────────────────────────────────────────────────────

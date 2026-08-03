@@ -48,7 +48,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // projectProxyWire mirrors models.Project's fields exactly (snake_case) — the wire
 // shape RemoteStorage's project methods (internal/storage/store/remote_rbac.go)
 // send/expect. See groupProxyWire's comment for why every field is named explicitly

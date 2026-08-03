@@ -240,7 +240,7 @@ func TestIsPlaceholder_S28_RealValue(t *testing.T) {
 	// These must NOT be flagged as placeholders — real-looking secret values.
 	assert.False(t, isPlaceholder("AKIAIOSFODNN7GHIJ")) // 18 chars, no placeholder keyword
 	assert.False(t, isPlaceholder("longpassword1234"))  // 16 chars, no placeholder keyword
-	assert.False(t, isPlaceholder("s3cr3t-token-val")) // 16 chars
+	assert.False(t, isPlaceholder("s3cr3t-token-val"))  // 16 chars
 }
 
 // ── sanitizeName ─────────────────────────────────────────────────────────────

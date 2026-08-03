@@ -118,8 +118,8 @@ func TestDayNameConversion(t *testing.T) {
 		{"*", "*", false},
 		{"sun", "7", false},
 		{"sat,sun", "6,7", false},
-		{"0", "", true},  // 0 is not a valid ISO weekday
-		{"8", "", true},  // 8 is out of range
+		{"0", "", true},   // 0 is not a valid ISO weekday
+		{"8", "", true},   // 8 is out of range
 		{"abc", "", true}, // unrecognised name
 	}
 	for _, tc := range tests {

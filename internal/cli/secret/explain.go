@@ -9,7 +9,7 @@ import (
 
 const (
 	helpInjectAtRuntime = "Inject at runtime: keyorix run --env production -- your-app"
-	helpStoreAndInject = "Store in Keyorix and inject at runtime"
+	helpStoreAndInject  = "Store in Keyorix and inject at runtime"
 )
 
 var explainCmd = &cobra.Command{

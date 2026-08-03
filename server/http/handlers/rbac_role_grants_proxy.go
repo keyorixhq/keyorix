@@ -61,7 +61,6 @@ import (
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
-
 // roleWithExpiryProxyWire mirrors internal/storage/store/remote_rbac.go's
 // roleWithExpiryWire exactly — the shared wire body for
 // AssignRoleWithExpiryProxy (UserID set, GroupID zero) and

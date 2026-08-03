@@ -23,7 +23,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
-
 // RotationPolicyHandler handles rotation policy HTTP requests.
 type RotationPolicyHandler struct {
 	coreService *core.KeyorixCore

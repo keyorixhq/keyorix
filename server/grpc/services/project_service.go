@@ -12,7 +12,6 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
-
 // ProjectGRPCService implements pb.ProjectServiceServer, backing each RPC with the
 // shared core service. It enforces the SAME permissions as the HTTP routes:
 // list/get → secrets.read, create/update → secrets.write, delete → secrets.delete,

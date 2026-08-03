@@ -39,7 +39,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // setupTokenProxyWire mirrors models.SetupToken's fields exactly (snake_case) — the
 // wire shape internal/storage/store/remote_auth.go's setupTokenWire sends/expects.
 // See that type's comment for why every field is named explicitly rather than

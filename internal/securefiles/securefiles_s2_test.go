@@ -299,4 +299,3 @@ func TestSafeReadFile_SymlinkLoopBase(t *testing.T) {
 	_, err := SafeReadFile(loop, "key.file")
 	require.Error(t, err)
 }
-

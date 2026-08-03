@@ -30,7 +30,7 @@ type SweepResult struct {
 	SessionsSwept             int
 	APITokensSwept            int
 	APIClientsSwept           int
-	AccountResetsSwept       int
+	AccountResetsSwept        int
 	MFASecretsSwept           int
 	DynamicSecretConfigsSwept int
 	DynamicSecretLeasesSwept  int

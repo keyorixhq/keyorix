@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	bearerPrefix = "Bearer "
+	bearerPrefix   = "Bearer "
 	hdrContentType = "Content-Type"
-	mimeJSON = "application/json"
+	mimeJSON       = "application/json"
 )
 
 // ResolveRemote returns the server endpoint and Bearer token from all config sources.

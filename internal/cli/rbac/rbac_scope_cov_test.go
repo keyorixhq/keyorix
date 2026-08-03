@@ -184,8 +184,10 @@ func TestRunRemoveRole_Embedded_GlobalScope(t *testing.T) {
 
 	origU, origR, origP, origE := removeUserEmail, removeRoleName, removeProjectFlag, removeEnvFlag
 	defer func() {
-		removeUserEmail = origU; removeRoleName = origR
-		removeProjectFlag = origP; removeEnvFlag = origE
+		removeUserEmail = origU
+		removeRoleName = origR
+		removeProjectFlag = origP
+		removeEnvFlag = origE
 	}()
 	removeUserEmail = "remove-global@example.com"
 	removeRoleName = "remove-global-role"
@@ -215,8 +217,10 @@ func TestRunRemoveRole_Embedded_WithProjectAndEnv(t *testing.T) {
 
 	origU, origR, origP, origE := removeUserEmail, removeRoleName, removeProjectFlag, removeEnvFlag
 	defer func() {
-		removeUserEmail = origU; removeRoleName = origR
-		removeProjectFlag = origP; removeEnvFlag = origE
+		removeUserEmail = origU
+		removeRoleName = origR
+		removeProjectFlag = origP
+		removeEnvFlag = origE
 	}()
 	removeUserEmail = "remove-scoped@example.com"
 	removeRoleName = "remove-scoped-role"
@@ -234,8 +238,10 @@ func TestRunRemoveRole_Embedded_ScopeError(t *testing.T) {
 
 	origU, origR, origP, origE := removeUserEmail, removeRoleName, removeProjectFlag, removeEnvFlag
 	defer func() {
-		removeUserEmail = origU; removeRoleName = origR
-		removeProjectFlag = origP; removeEnvFlag = origE
+		removeUserEmail = origU
+		removeRoleName = origR
+		removeProjectFlag = origP
+		removeEnvFlag = origE
 	}()
 	removeUserEmail = "nobody@example.com"
 	removeRoleName = "anyrole"
@@ -263,8 +269,11 @@ func TestRunAssignRoleToGroup_Embedded_GlobalScope(t *testing.T) {
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
 	defer func() {
-		groupRoleGroupFlag = origG; groupRoleName = origR
-		groupRoleProjectFlag = origP; groupRoleEnvFlag = origE; groupRoleTTL = origT
+		groupRoleGroupFlag = origG
+		groupRoleName = origR
+		groupRoleProjectFlag = origP
+		groupRoleEnvFlag = origE
+		groupRoleTTL = origT
 	}()
 	groupRoleGroupFlag = "embed-group-assign"
 	groupRoleName = "embed-group-role-assign"
@@ -291,8 +300,11 @@ func TestRunAssignRoleToGroup_Embedded_WithProject(t *testing.T) {
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
 	defer func() {
-		groupRoleGroupFlag = origG; groupRoleName = origR
-		groupRoleProjectFlag = origP; groupRoleEnvFlag = origE; groupRoleTTL = origT
+		groupRoleGroupFlag = origG
+		groupRoleName = origR
+		groupRoleProjectFlag = origP
+		groupRoleEnvFlag = origE
+		groupRoleTTL = origT
 	}()
 	groupRoleGroupFlag = "embed-group-proj"
 	groupRoleName = "embed-group-role-proj"
@@ -315,8 +327,11 @@ func TestRunAssignRoleToGroup_Embedded_RoleNotFound(t *testing.T) {
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
 	defer func() {
-		groupRoleGroupFlag = origG; groupRoleName = origR
-		groupRoleProjectFlag = origP; groupRoleEnvFlag = origE; groupRoleTTL = origT
+		groupRoleGroupFlag = origG
+		groupRoleName = origR
+		groupRoleProjectFlag = origP
+		groupRoleEnvFlag = origE
+		groupRoleTTL = origT
 	}()
 	groupRoleGroupFlag = "embed-group-noRole"
 	groupRoleName = "nonexistent-role"
@@ -346,8 +361,10 @@ func TestRunRemoveRoleFromGroup_Embedded_Success(t *testing.T) {
 
 	origG, origR, origP, origE := removeGroupRoleGroupFlag, removeGroupRoleName, removeGroupRoleProjectFlag, removeGroupRoleEnvFlag
 	defer func() {
-		removeGroupRoleGroupFlag = origG; removeGroupRoleName = origR
-		removeGroupRoleProjectFlag = origP; removeGroupRoleEnvFlag = origE
+		removeGroupRoleGroupFlag = origG
+		removeGroupRoleName = origR
+		removeGroupRoleProjectFlag = origP
+		removeGroupRoleEnvFlag = origE
 	}()
 	removeGroupRoleGroupFlag = "embed-grp-remove"
 	removeGroupRoleName = "embed-grp-role-remove"
@@ -674,8 +691,11 @@ func TestRunAssignRoleToGroup_GroupNotFound(t *testing.T) {
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
 	defer func() {
-		groupRoleGroupFlag = origG; groupRoleName = origR
-		groupRoleProjectFlag = origP; groupRoleEnvFlag = origE; groupRoleTTL = origT
+		groupRoleGroupFlag = origG
+		groupRoleName = origR
+		groupRoleProjectFlag = origP
+		groupRoleEnvFlag = origE
+		groupRoleTTL = origT
 	}()
 	groupRoleGroupFlag = "no-such-group-xyz"
 	groupRoleName = "g-grp-nf-role"
@@ -703,8 +723,11 @@ func TestRunAssignRoleToGroup_ScopeError(t *testing.T) {
 
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
 	defer func() {
-		groupRoleGroupFlag = origG; groupRoleName = origR
-		groupRoleProjectFlag = origP; groupRoleEnvFlag = origE; groupRoleTTL = origT
+		groupRoleGroupFlag = origG
+		groupRoleName = origR
+		groupRoleProjectFlag = origP
+		groupRoleEnvFlag = origE
+		groupRoleTTL = origT
 	}()
 	groupRoleGroupFlag = "grp-scope-err"
 	groupRoleName = "grp-scope-err-role"
@@ -740,8 +763,10 @@ func TestRunRemoveRoleFromGroup_GroupNotFound(t *testing.T) {
 
 	origG, origR, origP, origE := removeGroupRoleGroupFlag, removeGroupRoleName, removeGroupRoleProjectFlag, removeGroupRoleEnvFlag
 	defer func() {
-		removeGroupRoleGroupFlag = origG; removeGroupRoleName = origR
-		removeGroupRoleProjectFlag = origP; removeGroupRoleEnvFlag = origE
+		removeGroupRoleGroupFlag = origG
+		removeGroupRoleName = origR
+		removeGroupRoleProjectFlag = origP
+		removeGroupRoleEnvFlag = origE
 	}()
 	removeGroupRoleGroupFlag = "no-such-group-abc"
 	removeGroupRoleName = "any-role"
@@ -765,8 +790,10 @@ func TestRunRemoveRoleFromGroup_RoleNotFound(t *testing.T) {
 
 	origG, origR, origP, origE := removeGroupRoleGroupFlag, removeGroupRoleName, removeGroupRoleProjectFlag, removeGroupRoleEnvFlag
 	defer func() {
-		removeGroupRoleGroupFlag = origG; removeGroupRoleName = origR
-		removeGroupRoleProjectFlag = origP; removeGroupRoleEnvFlag = origE
+		removeGroupRoleGroupFlag = origG
+		removeGroupRoleName = origR
+		removeGroupRoleProjectFlag = origP
+		removeGroupRoleEnvFlag = origE
 	}()
 	removeGroupRoleGroupFlag = "rrfg-role-nf"
 	removeGroupRoleName = "nonexistent-role-xyz"
@@ -792,8 +819,10 @@ func TestRunRemoveRoleFromGroup_ScopeError(t *testing.T) {
 
 	origG, origR, origP, origE := removeGroupRoleGroupFlag, removeGroupRoleName, removeGroupRoleProjectFlag, removeGroupRoleEnvFlag
 	defer func() {
-		removeGroupRoleGroupFlag = origG; removeGroupRoleName = origR
-		removeGroupRoleProjectFlag = origP; removeGroupRoleEnvFlag = origE
+		removeGroupRoleGroupFlag = origG
+		removeGroupRoleName = origR
+		removeGroupRoleProjectFlag = origP
+		removeGroupRoleEnvFlag = origE
 	}()
 	removeGroupRoleGroupFlag = "rrfg-scope-err"
 	removeGroupRoleName = "rrfg-scope-role"
@@ -862,8 +891,10 @@ func TestRunRemoveRole_RemoveError(t *testing.T) {
 	// No role assignment exists — RemoveUserRoleScoped will fail.
 	origU, origR, origP, origE := removeUserEmail, removeRoleName, removeProjectFlag, removeEnvFlag
 	defer func() {
-		removeUserEmail = origU; removeRoleName = origR
-		removeProjectFlag = origP; removeEnvFlag = origE
+		removeUserEmail = origU
+		removeRoleName = origR
+		removeProjectFlag = origP
+		removeEnvFlag = origE
 	}()
 	removeUserEmail = "nobody-remove@example.com"
 	removeRoleName = "nonexistent-remove-role"
@@ -1156,8 +1187,11 @@ func TestRunAssignRoleToGroup_RemoteDispatch(t *testing.T) {
 		`{"data":{"group_id":7,"role_id":2}}`)
 	origG, origR, origP, origE, origT := groupRoleGroupFlag, groupRoleName, groupRoleProjectFlag, groupRoleEnvFlag, groupRoleTTL
 	defer func() {
-		groupRoleGroupFlag = origG; groupRoleName = origR
-		groupRoleProjectFlag = origP; groupRoleEnvFlag = origE; groupRoleTTL = origT
+		groupRoleGroupFlag = origG
+		groupRoleName = origR
+		groupRoleProjectFlag = origP
+		groupRoleEnvFlag = origE
+		groupRoleTTL = origT
 	}()
 	groupRoleGroupFlag = "ops-team"
 	groupRoleName = "member"
@@ -1177,8 +1211,10 @@ func TestRunRemoveRoleFromGroup_RemoteDispatch(t *testing.T) {
 	srv := groupRemoteServer(t, "/api/v1/groups/7/roles/2", "")
 	origG, origR, origP, origE := removeGroupRoleGroupFlag, removeGroupRoleName, removeGroupRoleProjectFlag, removeGroupRoleEnvFlag
 	defer func() {
-		removeGroupRoleGroupFlag = origG; removeGroupRoleName = origR
-		removeGroupRoleProjectFlag = origP; removeGroupRoleEnvFlag = origE
+		removeGroupRoleGroupFlag = origG
+		removeGroupRoleName = origR
+		removeGroupRoleProjectFlag = origP
+		removeGroupRoleEnvFlag = origE
 	}()
 	removeGroupRoleGroupFlag = "ops-team"
 	removeGroupRoleName = "member"
@@ -1236,8 +1272,11 @@ func TestRunAssignRole_InitStorageError(t *testing.T) {
 	noConfigDir(t)
 	orig, origR, origP, origE, origT := userEmail, roleName, assignProjectFlag, assignEnvFlag, roleTTL
 	defer func() {
-		userEmail = orig; roleName = origR; assignProjectFlag = origP
-		assignEnvFlag = origE; roleTTL = origT
+		userEmail = orig
+		roleName = origR
+		assignProjectFlag = origP
+		assignEnvFlag = origE
+		roleTTL = origT
 	}()
 	userEmail = "any@example.com"
 	roleName = "any"
@@ -1270,8 +1309,10 @@ func TestRunRemoveRole_InitStorageError(t *testing.T) {
 	noConfigDir(t)
 	origU, origR, origP, origE := removeUserEmail, removeRoleName, removeProjectFlag, removeEnvFlag
 	defer func() {
-		removeUserEmail = origU; removeRoleName = origR
-		removeProjectFlag = origP; removeEnvFlag = origE
+		removeUserEmail = origU
+		removeRoleName = origR
+		removeProjectFlag = origP
+		removeEnvFlag = origE
 	}()
 	removeUserEmail = "any@example.com"
 	removeRoleName = "any"
@@ -1637,4 +1678,3 @@ func TestRunListPermissions_InitStorageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load config")
 }
-

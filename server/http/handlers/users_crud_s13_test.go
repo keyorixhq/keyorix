@@ -120,9 +120,9 @@ func TestCreateUser_ValidationError_S13(t *testing.T) {
 func TestCreateUserWithOTP_Success_S13(t *testing.T) {
 	uh, _, _ := freshUserHandlerS12(t)
 	body, _ := json.Marshal(map[string]interface{}{
-		"username":                  "otp-success-s13",
-		"email":                     "otp-success-s13@x.com",
-		"display_name":              "OTP Success S13",
+		"username":                   "otp-success-s13",
+		"email":                      "otp-success-s13@x.com",
+		"display_name":               "OTP Success S13",
 		"generate_one_time_password": true,
 	})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(body)))

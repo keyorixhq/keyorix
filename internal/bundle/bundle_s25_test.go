@@ -3,10 +3,10 @@
 //
 // Gaps targeted:
 //   - WriteBundle:         tw.WriteHeader error (204), io.Copy error (208), f.Close error (212),
-//                          tw.Close error (216), gz.Close error (219)
+//     tw.Close error (216), gz.Close error (219)
 //   - streamBundleComponents: non-regular tar entry (TypeDir skipped), tr.Next error
 //   - streamComponent:    mkdirAllNoSymlink error, CreateTemp error,
-//                         size-mismatch error branch (n != comp.Size)
+//     size-mismatch error branch (n != comp.Size)
 //   - mkdirAllNoSymlink:  non-dir existing path, stat-error default branch
 //   - safeJoin:           cleanComponentPath error path
 //   - CheckUpgrade:       compareVersions error in MinUpgradeFrom check
@@ -445,4 +445,3 @@ func TestExtract_S25_ReadOnlyDestMarkerError(t *testing.T) {
 	// We expect an error somewhere in the pipeline (mkdir, staging, or marker write).
 	assert.Error(t, err)
 }
-

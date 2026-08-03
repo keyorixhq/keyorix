@@ -401,7 +401,7 @@ func TestPrintValidationSummary_S23_StatsCoverage(t *testing.T) {
 		printValidationSummary(summary)
 	})
 
-	assert.Contains(t, out, "75.0%")  // 3/4 languages valid
+	assert.Contains(t, out, "75.0%") // 3/4 languages valid
 	assert.Contains(t, out, "3/4 languages valid")
 }
 

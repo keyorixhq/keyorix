@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // ListSecretShares handles GET /api/v1/secrets/{id}/shares
 func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

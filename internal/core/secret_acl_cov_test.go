@@ -69,8 +69,8 @@ func (s *deleteACLErrStorage) DeleteSecretACL(ctx context.Context, id uint) erro
 // for any ancestorID, triggering the loop-error path (line 180–182).
 type ancestorLoopErrStorage struct {
 	corestorage.Storage
-	directID  uint
-	loopErr   error
+	directID uint
+	loopErr  error
 }
 
 func (s *ancestorLoopErrStorage) GetSecretAncestors(_ context.Context, _ uint) ([]uint, error) {

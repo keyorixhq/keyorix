@@ -2,7 +2,6 @@ package middleware
 
 import "net/http"
 
-
 // contentSecurityPolicy mirrors the policy the Helm chart's nginx frontend already sends
 // (deploy/helm/keyorix/templates/web-config.yaml) — the two serving modes (embedded
 // single-binary SPA vs. the separate nginx+API-proxy deployment) should present the same

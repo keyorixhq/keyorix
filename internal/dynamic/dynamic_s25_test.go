@@ -87,7 +87,7 @@ func mysqlErrPkt(seq uint8) []byte {
 	pkt := make([]byte, 0, 10+len(msg))
 	pkt = append(pkt, 0xFF)               // ERR header
 	pkt = append(pkt, 0x01, 0x04)         // error code 1025 (LE)
-	pkt = append(pkt, '#')                 // SQL state marker
+	pkt = append(pkt, '#')                // SQL state marker
 	pkt = append(pkt, []byte("HY000")...) // generic SQL state
 	pkt = append(pkt, msg...)
 	return pkt
@@ -111,19 +111,19 @@ func sendMySQLHandshake(conn net.Conn) bool {
 	capsHi := uint16(0x0008) // CLIENT_PLUGIN_AUTH
 
 	hs := make([]byte, 0, 128)
-	hs = append(hs, 0x0a)                          // protocol version 10
-	hs = append(hs, []byte(serverVersion)...)       // null-terminated server version
-	hs = append(hs, 0x01, 0x00, 0x00, 0x00)         // connection id = 1
-	hs = append(hs, []byte(authData)...)            // auth-plugin-data part 1 (8 bytes)
-	hs = append(hs, 0x00)                           // filler
-	hs = append(hs, byte(capsLo), byte(capsLo>>8))  // capability flags lo
-	hs = append(hs, 0x21)                           // character set utf8mb4
-	hs = append(hs, 0x02, 0x00)                     // status flags
-	hs = append(hs, byte(capsHi), byte(capsHi>>8))  // capability flags hi
+	hs = append(hs, 0x0a)                               // protocol version 10
+	hs = append(hs, []byte(serverVersion)...)           // null-terminated server version
+	hs = append(hs, 0x01, 0x00, 0x00, 0x00)             // connection id = 1
+	hs = append(hs, []byte(authData)...)                // auth-plugin-data part 1 (8 bytes)
+	hs = append(hs, 0x00)                               // filler
+	hs = append(hs, byte(capsLo), byte(capsLo>>8))      // capability flags lo
+	hs = append(hs, 0x21)                               // character set utf8mb4
+	hs = append(hs, 0x02, 0x00)                         // status flags
+	hs = append(hs, byte(capsHi), byte(capsHi>>8))      // capability flags hi
 	hs = append(hs, byte(len(authData)+len(authData2))) // auth-plugin-data-len (20 bytes, padded to 13)
-	hs = append(hs, make([]byte, 10)...)            // reserved (10 zeros)
-	hs = append(hs, []byte(authData2)...)           // auth-plugin-data part 2
-	hs = append(hs, []byte(pluginName)...)           // plugin name
+	hs = append(hs, make([]byte, 10)...)                // reserved (10 zeros)
+	hs = append(hs, []byte(authData2)...)               // auth-plugin-data part 2
+	hs = append(hs, []byte(pluginName)...)              // plugin name
 
 	if err := writeMySQLPkt(conn, 0, hs); err != nil {
 		return false
@@ -143,7 +143,7 @@ func sendMySQLHandshake(conn net.Conn) bool {
 // If numColumns > 0, we send numColumns column-definition packets + EOF.
 func mysqlStmtPrepareOKPkt(stmtID uint32, numParams, numColumns uint16) []byte {
 	pkt := make([]byte, 12)
-	pkt[0] = 0x00              // OK header
+	pkt[0] = 0x00 // OK header
 	pkt[1] = byte(stmtID)
 	pkt[2] = byte(stmtID >> 8)
 	pkt[3] = byte(stmtID >> 16)
@@ -152,7 +152,7 @@ func mysqlStmtPrepareOKPkt(stmtID uint32, numParams, numColumns uint16) []byte {
 	pkt[6] = byte(numColumns >> 8)
 	pkt[7] = byte(numParams)
 	pkt[8] = byte(numParams >> 8)
-	pkt[9] = 0x00 // reserved
+	pkt[9] = 0x00  // reserved
 	pkt[10] = 0x00 // warning_count lo
 	pkt[11] = 0x00 // warning_count hi
 	return pkt
@@ -166,20 +166,20 @@ func mysqlColumnDefPkt(name string) []byte {
 	// 0x0c(length of fixed fields)+charset(2)+column_len(4)+type(1)+flags(2)+decimals(1)+filler(2)
 	nameBytes := []byte(name)
 	pkt := make([]byte, 0, 50)
-	pkt = append(pkt, 0x03, 'd', 'e', 'f') // catalog = "def"
-	pkt = append(pkt, 0x00)                 // schema (empty lenenc string)
-	pkt = append(pkt, 0x00)                 // table (empty lenenc string)
-	pkt = append(pkt, 0x00)                 // org_table (empty lenenc string)
-	pkt = append(pkt, byte(len(nameBytes))) // name length
-	pkt = append(pkt, nameBytes...)         // name
-	pkt = append(pkt, 0x00)                 // org_name (empty)
-	pkt = append(pkt, 0x0c)                 // length of fixed-length fields
-	pkt = append(pkt, 0x3f, 0x00)           // charset (utf8)
+	pkt = append(pkt, 0x03, 'd', 'e', 'f')    // catalog = "def"
+	pkt = append(pkt, 0x00)                   // schema (empty lenenc string)
+	pkt = append(pkt, 0x00)                   // table (empty lenenc string)
+	pkt = append(pkt, 0x00)                   // org_table (empty lenenc string)
+	pkt = append(pkt, byte(len(nameBytes)))   // name length
+	pkt = append(pkt, nameBytes...)           // name
+	pkt = append(pkt, 0x00)                   // org_name (empty)
+	pkt = append(pkt, 0x0c)                   // length of fixed-length fields
+	pkt = append(pkt, 0x3f, 0x00)             // charset (utf8)
 	pkt = append(pkt, 0x00, 0x00, 0x00, 0x00) // column length
-	pkt = append(pkt, 0x08)                 // type: LONGLONG (8 = int64)
-	pkt = append(pkt, 0x00, 0x00)           // flags
-	pkt = append(pkt, 0x00)                 // decimals
-	pkt = append(pkt, 0x00, 0x00)           // filler
+	pkt = append(pkt, 0x08)                   // type: LONGLONG (8 = int64)
+	pkt = append(pkt, 0x00, 0x00)             // flags
+	pkt = append(pkt, 0x00)                   // decimals
+	pkt = append(pkt, 0x00, 0x00)             // filler
 	return pkt
 }
 

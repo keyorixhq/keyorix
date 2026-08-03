@@ -257,8 +257,8 @@ func TestDeliver_RetriesAbandonedOnShutdown(t *testing.T) {
 	d := newDeliverer("test-abandon", 4, 1*time.Second, send)
 	d.enqueue(core.NotificationEvent{UserID: 42})
 
-	<-inFlight  // wait for first attempt (which fails and starts the 1s backoff)
-	d.close()   // interrupt the in-flight backoff
+	<-inFlight // wait for first attempt (which fails and starts the 1s backoff)
+	d.close()  // interrupt the in-flight backoff
 
 	failed := testutil.ToFloat64(notifyDeliveries.WithLabelValues("test-abandon", outcomeFailed)) - failedBefore
 	assert.Equal(t, 1.0, failed, "abandoned delivery must be counted as failed")

@@ -3,7 +3,9 @@
 // local_audit_checkpoint_lock.go (WithAuditCheckpointLock SQLite path),
 // local_secrets.go (DeleteProjectIfEmpty, ListEnvironments, deleteProjectCascade not-found),
 // local_users.go (isDuplicateEmailViolation, CreateUser error, UpdateUser error,
-//   RestoreUser not-found, ListUsers filters, groups CRUD, sessions empty/edge),
+//
+//	RestoreUser not-found, ListUsers filters, groups CRUD, sessions empty/edge),
+//
 // local_memberships.go (CreateProjectMembership duplicate),
 // local_notifications.go (CreateNotification),
 // local_sod.go (CreateSoDPolicy, DeleteSoDPolicy not-found),

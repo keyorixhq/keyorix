@@ -26,7 +26,7 @@ type PartialRotationError struct {
 }
 
 func (e *PartialRotationError) Error() string { return e.Err.Error() }
-func (e *PartialRotationError) Unwrap() error  { return e.Err }
+func (e *PartialRotationError) Unwrap() error { return e.Err }
 
 // Executor applies a new credential to an upstream system during rotation. Rotate sets
 // the credential identified by ref (e.g. a database role name) to newValue. It must
@@ -100,7 +100,7 @@ func prefixAllowed(allowed []string, ref string) bool {
 }
 
 // sqlStringLiteral matches a single-quoted SQL string literal, including the
-// standard ''-doubling escape for an embedded quote (used by both PostgreSQL
+// standard ”-doubling escape for an embedded quote (used by both PostgreSQL
 // and MySQL's default ANSI_QUOTES-off mode).
 var sqlStringLiteral = regexp.MustCompile(`'(?:[^']|'')*'`)
 

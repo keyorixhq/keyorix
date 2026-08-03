@@ -14,7 +14,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // AdminJobsHandler exposes the scheduled jobs as manual triggers.
 type AdminJobsHandler struct {
 	coreService *core.KeyorixCore
@@ -136,7 +135,6 @@ func (h *AdminJobsHandler) RunReadQuotaCheck(w http.ResponseWriter, r *http.Requ
 		"checked":   result.Checked,
 	}, "")
 }
-
 
 // RunTokenExpiryCheck handles POST /api/v1/system/admin/jobs/token-expiry-check —
 // scans all PersonalAccessTokens and MachineIdentityCredentials and emits in-app

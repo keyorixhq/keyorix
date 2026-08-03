@@ -147,11 +147,11 @@ func TestGetRotationBackendReport_MultipleBackends(t *testing.T) {
 	policy := policyForBackend(1, 30)
 
 	secrets := []*models.SecretNode{
-		{ID: 1, RotationBackend: "aws_sm", LastRotatedAt: rbDaysAgo(100)},  // overdue
-		{ID: 2, RotationBackend: "aws_sm", LastRotatedAt: rbDaysAgo(5)},    // up-to-date
-		{ID: 3, RotationBackend: "vault", LastRotatedAt: rbDaysAgo(200)},   // overdue
-		{ID: 4, RotationBackend: "vault", LastRotatedAt: rbDaysAgo(200)},   // overdue
-		{ID: 5, RotationBackend: "", LastRotatedAt: rbDaysAgo(10)},         // up-to-date, no backend
+		{ID: 1, RotationBackend: "aws_sm", LastRotatedAt: rbDaysAgo(100)}, // overdue
+		{ID: 2, RotationBackend: "aws_sm", LastRotatedAt: rbDaysAgo(5)},   // up-to-date
+		{ID: 3, RotationBackend: "vault", LastRotatedAt: rbDaysAgo(200)},  // overdue
+		{ID: 4, RotationBackend: "vault", LastRotatedAt: rbDaysAgo(200)},  // overdue
+		{ID: 5, RotationBackend: "", LastRotatedAt: rbDaysAgo(10)},        // up-to-date, no backend
 	}
 	store.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return([]*models.RotationPolicy{policy}, nil)

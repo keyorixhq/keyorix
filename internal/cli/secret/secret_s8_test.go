@@ -138,11 +138,11 @@ func TestFetchFromAzure_MissingURL_S8(t *testing.T) {
 
 // errGCPS8 is a fake gcpSecretsAPI that can return errors or values.
 type errGCPS8 struct {
-	listErr    error
-	accessErr  error
-	names      []string
-	values     map[string]string
-	noVersion  map[string]bool
+	listErr   error
+	accessErr error
+	names     []string
+	values    map[string]string
+	noVersion map[string]bool
 }
 
 func (e *errGCPS8) listSecrets(_ context.Context, _ string) ([]string, error) {
@@ -235,8 +235,8 @@ func TestFetchFromGCP_EmptyProject_S8(t *testing.T) {
 
 // fakeAWSS8 implements awsSecretsAPI for test scenarios.
 type fakeAWSS8 struct {
-	list   *secretsmanager.ListSecretsOutput
-	values map[string]string // SecretId → SecretString (nil pointer = binary)
+	list    *secretsmanager.ListSecretsOutput
+	values  map[string]string // SecretId → SecretString (nil pointer = binary)
 	listErr error
 	getErr  error
 }

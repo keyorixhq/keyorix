@@ -2210,7 +2210,7 @@ func TestInitializeCoreService_OIDCVerifier_EmptyAudiences(t *testing.T) {
 				Name:      "no-aud",
 				Issuer:    "https://oidc.example.com",
 				JWKSURI:   "http://127.0.0.1:65433/.well-known/jwks.json", // valid loopback URI
-				Audiences: nil, // empty — NewOIDCVerifier returns error
+				Audiences: nil,                                            // empty — NewOIDCVerifier returns error
 			},
 		},
 	}

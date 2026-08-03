@@ -428,11 +428,11 @@ func TestAdvanceWebAuthnCredentialCounterProxy_NotFound_S13B(t *testing.T) {
 	cs := freshCoreS12(t)
 	h := NewAuthHandler(cs, false)
 	body, _ := json.Marshal(map[string]interface{}{
-		"credential_id":   []byte("nosuchcred"),
-		"user_id":         1,
-		"new_blob":        []byte("blob"),
-		"new_sign_count":  uint32(5),
-		"last_used_at":    time.Now().UTC(),
+		"credential_id":  []byte("nosuchcred"),
+		"user_id":        1,
+		"new_blob":       []byte("blob"),
+		"new_sign_count": uint32(5),
+		"last_used_at":   time.Now().UTC(),
 	})
 	r := httptest.NewRequest(http.MethodPatch,
 		"/api/v1/system/webauthn/credentials/advance-counter",

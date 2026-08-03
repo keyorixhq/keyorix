@@ -19,7 +19,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // maxWebAuthnBody caps the ceremony request body (attestation/assertion blobs are
 // small; this bounds parsing of untrusted input).
 const maxWebAuthnBody = 64 * 1024

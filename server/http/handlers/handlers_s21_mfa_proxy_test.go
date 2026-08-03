@@ -364,4 +364,3 @@ func TestCreateMFARecoveryCodesProxy_HappyPath_S21(t *testing.T) {
 	h.CreateMFARecoveryCodesProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
-

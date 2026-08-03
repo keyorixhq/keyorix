@@ -22,16 +22,16 @@ func TestRemoteStorage_CreateProjectInvitation(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/api/v1/system/invitations", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id":                       1,
-			"project_id":               10,
-			"email":                    "alice@example.com",
-			"role":                     "viewer",
-			"state":                    "pending",
-			"invited_by":               5,
+			"id":                        1,
+			"project_id":                10,
+			"email":                     "alice@example.com",
+			"role":                      "viewer",
+			"state":                     "pending",
+			"invited_by":                5,
 			"validation_mode_at_invite": "email",
-			"system_role":              "",
-			"assignments_json":         "{}",
-			"created_at":               now,
+			"system_role":               "",
+			"assignments_json":          "{}",
+			"created_at":                now,
 		}))
 	}))
 	defer srv.Close()
@@ -57,16 +57,16 @@ func TestRemoteStorage_GetProjectInvitation(t *testing.T) {
 		assert.Equal(t, "GET", r.Method)
 		assert.Equal(t, "/api/v1/system/invitations/1", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id":                       1,
-			"project_id":               10,
-			"email":                    "alice@example.com",
-			"role":                     "viewer",
-			"state":                    "pending",
-			"invited_by":               5,
+			"id":                        1,
+			"project_id":                10,
+			"email":                     "alice@example.com",
+			"role":                      "viewer",
+			"state":                     "pending",
+			"invited_by":                5,
 			"validation_mode_at_invite": "email",
-			"system_role":              "",
-			"assignments_json":         "{}",
-			"created_at":               now,
+			"system_role":               "",
+			"assignments_json":          "{}",
+			"created_at":                now,
 		}))
 	}))
 	defer srv.Close()
@@ -130,16 +130,16 @@ func TestRemoteStorage_ListProjectInvitations(t *testing.T) {
 		_, _ = w.Write(apiOK(map[string]interface{}{
 			"invitations": []map[string]interface{}{
 				{
-					"id":                       1,
-					"project_id":               10,
-					"email":                    "alice@example.com",
-					"role":                     "viewer",
-					"state":                    "pending",
-					"invited_by":               5,
+					"id":                        1,
+					"project_id":                10,
+					"email":                     "alice@example.com",
+					"role":                      "viewer",
+					"state":                     "pending",
+					"invited_by":                5,
 					"validation_mode_at_invite": "email",
-					"system_role":              "",
-					"assignments_json":         "{}",
-					"created_at":               now,
+					"system_role":               "",
+					"assignments_json":          "{}",
+					"created_at":                now,
 				},
 			},
 		}))

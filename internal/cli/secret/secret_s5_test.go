@@ -354,7 +354,9 @@ func TestRunExportS5_NoSecrets(t *testing.T) {
 	defer srv.Close()
 
 	origFmt, origOutput, origEnv, origProject := exportFormat, exportOutput, exportEnv, exportProject
-	defer func() { exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject }()
+	defer func() {
+		exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject
+	}()
 	exportFormat = "dotenv"
 	exportOutput = ""
 	exportEnv = "dev"
@@ -386,7 +388,9 @@ func TestRunExportS5_JSONFormat(t *testing.T) {
 	defer srv.Close()
 
 	origFmt, origOutput, origEnv, origProject := exportFormat, exportOutput, exportEnv, exportProject
-	defer func() { exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject }()
+	defer func() {
+		exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject
+	}()
 	exportFormat = "json"
 	exportOutput = ""
 	exportEnv = "staging"
@@ -418,7 +422,9 @@ func TestRunExportS5_VaultFormat(t *testing.T) {
 	defer srv.Close()
 
 	origFmt, origOutput, origEnv, origProject := exportFormat, exportOutput, exportEnv, exportProject
-	defer func() { exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject }()
+	defer func() {
+		exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject
+	}()
 	exportFormat = "vault"
 	exportOutput = ""
 	exportEnv = "prod"
@@ -450,7 +456,9 @@ func TestRunExportS5_UnknownFormat(t *testing.T) {
 	defer srv.Close()
 
 	origFmt, origOutput, origEnv, origProject := exportFormat, exportOutput, exportEnv, exportProject
-	defer func() { exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject }()
+	defer func() {
+		exportFormat, exportOutput, exportEnv, exportProject = origFmt, origOutput, origEnv, origProject
+	}()
 	exportFormat = "xml"
 	exportOutput = ""
 	exportEnv = "e"

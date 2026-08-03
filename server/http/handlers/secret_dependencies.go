@@ -23,7 +23,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // dependencyErrorStatus maps a core dependency error to an HTTP status by its message,
 // matching the convention used across the secret handlers.
 func dependencyErrorStatus(msg string) int {

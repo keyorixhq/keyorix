@@ -20,7 +20,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // LogAuditEvent proxies to POST /api/v1/system/audit/event, persisting the
 // event in the upstream server's own storage backend. This is the only write
 // path for a remote-storage follower's emitAudit calls; the hub's /audit/logs

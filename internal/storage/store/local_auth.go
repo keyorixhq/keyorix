@@ -20,7 +20,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 // --- Sessions ---
 
 // hashSessionToken is the at-rest representation of a session token. Sessions, like
@@ -322,7 +321,6 @@ func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, u
 }
 
 const sqlWhereExpiredPAT = "user_id = ? AND revoked = ? AND expires_at IS NOT NULL AND expires_at < ?"
-
 
 // ListExpiredPATsByUser returns all non-revoked PATs for userID whose ExpiresAt is in
 // the past (expired but never explicitly revoked). Ordered newest-created first.

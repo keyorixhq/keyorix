@@ -48,7 +48,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // groupProxyWire mirrors models.Group's fields exactly (snake_case) — the wire
 // shape internal/storage/store/remote_users.go's groupWire sends/expects. See
 // that type's comment for why every field is named explicitly rather than

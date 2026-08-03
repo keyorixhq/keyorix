@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // inactiveUserWindow defines how long without a login marks a user "inactive".
 // Matches the dashboard's 30-day inactive-users signal.
 const inactiveUserWindow = 30 * 24 * time.Hour

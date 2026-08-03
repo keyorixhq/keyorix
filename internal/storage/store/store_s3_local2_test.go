@@ -837,4 +837,3 @@ func TestSecretDependencies_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, list3, 1) // dep2 remains
 }
-

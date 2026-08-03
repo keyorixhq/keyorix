@@ -16,7 +16,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 const scimGroupSchema = "urn:ietf:params:scim:schemas:core:2.0:Group"
 
 // SCIM group-mutation bounds: a single request may not carry more than these many

@@ -18,7 +18,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model interface{}, before time.Time) (int64, error) {
 	result := ls.db.WithContext(ctx).Unscoped().
 		Where(sqlWhereDeletedBefore, before).

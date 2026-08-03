@@ -60,7 +60,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // mfaSecretProxyWire mirrors models.MFASecret's fields exactly (snake_case)
 // and mfaSecretWire in internal/storage/store/remote_mfa.go. SecretEnc/
 // SecretMeta/LastUsedStep are tagged json:"-" on the model (to keep them out

@@ -16,7 +16,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // ActivateBreakGlass handles POST /api/v1/projects/{id}/break-glass (self-service).
 func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

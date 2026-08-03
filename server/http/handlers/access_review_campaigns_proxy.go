@@ -68,7 +68,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-
 // accessReviewCampaignProxyWire mirrors models.AccessReviewCampaign's fields
 // exactly (snake_case). Unlike dynamicSecretConfigProxyWire/groupProxyWire,
 // models.AccessReviewCampaign already carries a complete, correct set of json

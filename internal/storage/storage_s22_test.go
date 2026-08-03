@@ -166,8 +166,8 @@ func TestEnsureProjectNameIndex_S22_DeletedRowNotCounted(t *testing.T) {
 	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "proj-idx-softdel.db"))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO projects VALUES (1, 'myproject', '2024-01-01')`).Error)  // soft-deleted
-	require.NoError(t, db.Exec(`INSERT INTO projects VALUES (2, 'myproject', NULL)`).Error)           // live
+	require.NoError(t, db.Exec(`INSERT INTO projects VALUES (1, 'myproject', '2024-01-01')`).Error) // soft-deleted
+	require.NoError(t, db.Exec(`INSERT INTO projects VALUES (2, 'myproject', NULL)`).Error)         // live
 	require.NoError(t, ensureProjectNameIndex(db), "a soft-deleted project must not block re-creation of the same name")
 }
 

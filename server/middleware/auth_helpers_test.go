@@ -136,4 +136,3 @@ func TestDerefUint(t *testing.T) {
 	v := uint(42)
 	assert.Equal(t, uint(42), derefUint(&v))
 }
-

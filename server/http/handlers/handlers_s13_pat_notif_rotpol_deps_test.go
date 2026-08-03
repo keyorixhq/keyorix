@@ -546,8 +546,8 @@ func TestCreateSecretDependencyProxy_HappyPath_S13(t *testing.T) {
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(map[string]any{
-		"project_id":          1,
-		"dependent_secret_id": 1,
+		"project_id":           1,
+		"dependent_secret_id":  1,
 		"depends_on_secret_id": 2,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))

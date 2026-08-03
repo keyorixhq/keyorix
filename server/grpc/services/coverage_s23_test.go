@@ -348,10 +348,10 @@ func TestCreateUser_RoleAndSetupLinkConflict_S23(t *testing.T) {
 	// role + deliver_setup_link is explicitly rejected.
 	svc := newUserService(t)
 	_, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
-		Username:        "conflict2",
-		Email:           "conflict2@example.com",
+		Username:         "conflict2",
+		Email:            "conflict2@example.com",
 		DeliverSetupLink: true,
-		Role:            strPtr("viewer"),
+		Role:             strPtr("viewer"),
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))

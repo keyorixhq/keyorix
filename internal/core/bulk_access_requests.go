@@ -14,13 +14,13 @@ import (
 
 // BulkApproveResult is the outcome of a bulk-approve call.
 type BulkApproveResult struct {
-	Approved []uint           `json:"approved"`         // request IDs successfully approved
+	Approved []uint            `json:"approved"`         // request IDs successfully approved
 	Failed   []BulkAccessError `json:"failed,omitempty"` // per-item errors
 }
 
 // BulkRejectResult is the outcome of a bulk-reject call.
 type BulkRejectResult struct {
-	Rejected []uint           `json:"rejected"`         // request IDs successfully rejected
+	Rejected []uint            `json:"rejected"`         // request IDs successfully rejected
 	Failed   []BulkAccessError `json:"failed,omitempty"` // per-item errors
 }
 
@@ -183,4 +183,3 @@ func (k *KeyorixCore) ListRejectionReasonTemplates(ctx context.Context) ([]model
 func (k *KeyorixCore) DeleteRejectionReasonTemplate(ctx context.Context, id uint) error {
 	return k.storage.DeleteRejectionReasonTemplate(ctx, id)
 }
-

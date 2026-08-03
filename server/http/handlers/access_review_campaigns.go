@@ -15,7 +15,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // campaignStatusForError maps a core error to an HTTP status (shared shape).
 func campaignStatusForError(msg string) int {
 	switch {

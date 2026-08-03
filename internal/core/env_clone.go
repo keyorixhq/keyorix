@@ -20,7 +20,7 @@ type EnvCloneResult struct {
 	SourceEnv      string
 	DestEnv        string
 	SecretsCloned  int
-	SecretsSkipped int   // secrets that already exist in dest (skipped, not overwritten)
+	SecretsSkipped int // secrets that already exist in dest (skipped, not overwritten)
 	Errors         []string
 }
 

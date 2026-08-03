@@ -480,8 +480,8 @@ func TestRemoteStorage_CreateOIDCBinding(t *testing.T) {
 		assert.Equal(t, "/api/v1/system/machine-oidc-bindings", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
 			"id": 1, "machine_identity_id": 5,
-			"issuer": "https://token.actions.githubusercontent.com",
-			"subject": "repo:org/repo:ref:refs/heads/main",
+			"issuer":     "https://token.actions.githubusercontent.com",
+			"subject":    "repo:org/repo:ref:refs/heads/main",
 			"created_by": 1, "created_at": time.Now(),
 		}))
 	}))

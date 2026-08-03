@@ -17,7 +17,7 @@ type PermissionMatrixRow struct {
 	PermissionName  string     `json:"permission_name"`
 	Resource        string     `json:"resource"`
 	Action          string     `json:"action"`
-	Scope           string     `json:"scope"`            // "global" | "project" | "environment"
+	Scope           string     `json:"scope"` // "global" | "project" | "environment"
 	ProjectID       uint       `json:"project_id"`
 	ProjectName     string     `json:"project_name"`
 	EnvironmentID   uint       `json:"environment_id"`

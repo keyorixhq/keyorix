@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-
 // GroupGRPCService implements pb.GroupServiceServer over the shared core. It enforces
 // the SAME global permissions as the HTTP routes: reads → users.read, group CRUD →
 // users.write, membership changes → roles.assign (adding a member confers every role

@@ -3,15 +3,15 @@
 // Targets branches NOT exercised by earlier test batches:
 //
 //   - encryption.go:         rotateWithConfig confirm=true path → masterPassphrase fails
-//                            rotateWithConfig confirm=true path → service.Initialize fails
-//                            upgradeAADWithConfig password OK → storage.OpenGormDB fails
-//                            validateWithConfig enabled → ValidateKeyFiles error path
+//     rotateWithConfig confirm=true path → service.Initialize fails
+//     upgradeAADWithConfig password OK → storage.OpenGormDB fails
+//     validateWithConfig enabled → ValidateKeyFiles error path
 //   - shamir_split.go:       ssOutDir != "" → commitment.hex symlink → write error
 //   - auth_encryption_migrate.go: migrateAPIClients encrypt error (broken authEnc)
 //   - auth_encryption_validate.go: verbose=true paths for sessions/tokens/resets
-//                                  with unmigrated rows
+//     with unmigrated rows
 //   - migrate_provider.go:   copyFile src read OK but dst dir fsync fails (non-existent dir)
-//                            migrateProviderWithConfig → oldSvc.Initialize fails
+//     migrateProviderWithConfig → oldSvc.Initialize fails
 package encryption
 
 import (
@@ -189,7 +189,10 @@ func TestShamirSplit_S24_CommitmentSymlinkRejected(t *testing.T) {
 	symlinkPath := filepath.Join(dir, "commitment.hex")
 	require.NoError(t, os.Symlink(outsideTarget, symlinkPath))
 
-	old := struct{ shares, threshold int; outDir string }{ssShares, ssThreshold, ssOutDir}
+	old := struct {
+		shares, threshold int
+		outDir            string
+	}{ssShares, ssThreshold, ssOutDir}
 	t.Cleanup(func() { ssShares = old.shares; ssThreshold = old.threshold; ssOutDir = old.outDir })
 
 	ssShares = 2

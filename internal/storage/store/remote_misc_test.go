@@ -306,8 +306,8 @@ func TestRemoteStorage_CreateLegalHold(t *testing.T) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/system/legal-hold", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
-			"id":       3,
-			"reason":   "litigation hold",
+			"id":        3,
+			"reason":    "litigation hold",
 			"placed_by": 1,
 			"placed_at": now,
 			"released":  false,
@@ -1287,11 +1287,11 @@ func TestRemoteStorage_GetStats(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/stats", r.URL.Path)
 		_, _ = w.Write(apiOK(map[string]interface{}{
-			"total_secrets":    5,
-			"total_users":      3,
-			"total_roles":      2,
-			"total_sessions":   1,
-			"total_audit_logs": 100,
+			"total_secrets":       5,
+			"total_users":         3,
+			"total_roles":         2,
+			"total_sessions":      1,
+			"total_audit_logs":    100,
 			"database_size_bytes": 4096,
 		}))
 	}))

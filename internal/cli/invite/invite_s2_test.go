@@ -242,8 +242,10 @@ func TestRunSend_NoProject(t *testing.T) {
 
 	origEmail, origRole, origBy, origProject := sendEmail, sendRole, sendBy, sendProject
 	defer func() {
-		sendEmail = origEmail; sendRole = origRole
-		sendBy = origBy; sendProject = origProject
+		sendEmail = origEmail
+		sendRole = origRole
+		sendBy = origBy
+		sendProject = origProject
 	}()
 	sendEmail = "user@example.com"
 	sendRole = "viewer"
@@ -268,8 +270,10 @@ func TestRunSend_WithSeededDB(t *testing.T) {
 
 	origEmail, origRole, origBy, origProject := sendEmail, sendRole, sendBy, sendProject
 	defer func() {
-		sendEmail = origEmail; sendRole = origRole
-		sendBy = origBy; sendProject = origProject
+		sendEmail = origEmail
+		sendRole = origRole
+		sendBy = origBy
+		sendProject = origProject
 	}()
 	sendEmail = "newguest@example.com"
 	sendRole = "project_viewer"
@@ -278,4 +282,3 @@ func TestRunSend_WithSeededDB(t *testing.T) {
 
 	_ = runSend(nil, nil)
 }
-

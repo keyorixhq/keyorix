@@ -39,9 +39,9 @@ const EventAutoRotationFailures = "rotation.failures_alerted"
 // secrets that need manual reconciliation (the upstream may have a new credential
 // while Keyorix still holds the old one).
 const (
-	EventSecretRotateFailed          = "secret.rotate_failed"
-	EventSecretRotateIncomplete      = "secret.rotate_incomplete"
-	EventSecretRotateBackendStarted  = "secret.rotate_backend_started"
+	EventSecretRotateFailed         = "secret.rotate_failed"
+	EventSecretRotateIncomplete     = "secret.rotate_incomplete"
+	EventSecretRotateBackendStarted = "secret.rotate_backend_started"
 )
 
 // notifyRotationFailures broadcasts a single summary of ONE project's rotation

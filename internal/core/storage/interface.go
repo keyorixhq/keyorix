@@ -1343,8 +1343,6 @@ type Storage interface {
 	// ListUnacknowledgedAnomalyAlertsBefore returns unacknowledged anomaly alerts
 	// whose created_at (detected_at) is older than the given threshold.
 	ListUnacknowledgedAnomalyAlertsBefore(ctx context.Context, threshold time.Time) ([]models.AnomalyAlert, error)
-
-
 }
 
 // SecretFilter defines filtering options for secret queries
@@ -1542,7 +1540,7 @@ type RBACAuditLog struct {
 type ProjectUsageStat struct {
 	ProjectID     uint   `json:"project_id"`
 	ProjectName   string `json:"project_name"`
-	SecretCount   int64  `json:"secret_count"`   // active leaf secrets (is_secret=true, not deleted)
+	SecretCount   int64  `json:"secret_count"`    // active leaf secrets (is_secret=true, not deleted)
 	ReadsInWindow int64  `json:"reads_in_window"` // audit_events: event_type="secret.read", success=true, in window
 	UniqueReaders int    `json:"unique_readers"`  // distinct user_id values in those audit events
 }
@@ -1695,8 +1693,8 @@ type SecretReadEntry struct {
 	ActorID string `json:"actor_id"`
 	// ActorUsername is the resolved display name for the actor, empty when the
 	// user row is absent (e.g. deleted users or machine identities).
-	ActorUsername string `json:"actor_username,omitempty"`
-	ReadCount     int64  `json:"read_count"`
+	ActorUsername string    `json:"actor_username,omitempty"`
+	ReadCount     int64     `json:"read_count"`
 	LastReadAt    time.Time `json:"last_read_at"`
 }
 

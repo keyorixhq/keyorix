@@ -17,7 +17,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-
 // NotificationHandler serves the authenticated user's notifications.
 type NotificationHandler struct {
 	coreService *core.KeyorixCore

@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 // setupHealthRemote creates a mock HTTP server backed by handler, sets the
 // KEYORIX_* env vars so common.NewRemoteClient returns true, and returns the
 // client plus a cleanup function.
@@ -393,7 +392,6 @@ func TestProjectHealth_Embedded_ServiceInitError(t *testing.T) {
 	err := runHealthEmbedded(context.Background(), "any-project")
 	require.Error(t, err, "expected error when storage cannot be opened")
 }
-
 
 func TestProjectHealth_Embedded_LongSecretName(t *testing.T) {
 	setupHealthEmbedded(t)

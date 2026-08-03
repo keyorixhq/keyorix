@@ -242,7 +242,7 @@ func TestMachineTokenHashes_Success(t *testing.T) {
 	ms := new(MockStorage)
 	creds := []*models.MachineIdentityCredential{
 		{ID: 1, TokenHash: "hash1"},
-		{ID: 2, TokenHash: ""},   // empty hash is skipped
+		{ID: 2, TokenHash: ""}, // empty hash is skipped
 		{ID: 3, TokenHash: "hash3"},
 	}
 	ms.On("ListMachineIdentityCredentials", mock.Anything, uint(5)).Return(creds, nil)

@@ -19,13 +19,13 @@ var rotationSimulateID uint
 
 // rotationDryRunResult mirrors core.RotationDryRunResult.
 type rotationDryRunResult struct {
-	SecretID    uint               `json:"secret_id"`
-	SecretName  string             `json:"secret_name"`
-	Backend     string             `json:"backend"`
-	Ref         string             `json:"ref"`
-	Valid       bool               `json:"valid"`
+	SecretID    uint                  `json:"secret_id"`
+	SecretName  string                `json:"secret_name"`
+	Backend     string                `json:"backend"`
+	Ref         string                `json:"ref"`
+	Valid       bool                  `json:"valid"`
 	Checks      []rotationDryRunCheck `json:"checks"`
-	SimulatedAt string             `json:"simulated_at"`
+	SimulatedAt string                `json:"simulated_at"`
 }
 
 // rotationDryRunCheck mirrors core.DryRunCheck.

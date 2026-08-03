@@ -182,14 +182,14 @@ func TestGCPExecutor_ClientSuccessPath(t *testing.T) {
 	// it is intentionally not a valid RSA key — it is only validated when Token()
 	// is called, not during iam.NewService or credential detection.
 	fake := map[string]string{
-		"type":         "service_account",
-		"project_id":   "test-project",
+		"type":           "service_account",
+		"project_id":     "test-project",
 		"private_key_id": "key-id",
-		"private_key":  "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0Z3VS5JJcds3xHn/ygWep4PAtEsHAA==\n-----END RSA PRIVATE KEY-----\n",
-		"client_email": "fake@test-project.iam.gserviceaccount.com",
-		"client_id":    "123456789",
-		"auth_uri":     "https://accounts.google.com/o/oauth2/auth",
-		"token_uri":    "https://oauth2.googleapis.com/token",
+		"private_key":    "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0Z3VS5JJcds3xHn/ygWep4PAtEsHAA==\n-----END RSA PRIVATE KEY-----\n",
+		"client_email":   "fake@test-project.iam.gserviceaccount.com",
+		"client_id":      "123456789",
+		"auth_uri":       "https://accounts.google.com/o/oauth2/auth",
+		"token_uri":      "https://oauth2.googleapis.com/token",
 	}
 	b, err := json.Marshal(fake)
 	require.NoError(t, err)
