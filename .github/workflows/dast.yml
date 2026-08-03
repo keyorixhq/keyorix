@@ -25,6 +25,32 @@ jobs:
       - name: Build server
         run: go build -o /tmp/keyorix-server ./server
 
+      # Without a built web/dist to point web_assets_path at, the server falls
+      # back to its "Web UI not bundled in this build" placeholder page at /
+      # (see getWebAssetsPath in server/http/router.go) -- Nuclei would only
+      # ever see that placeholder, never the real dashboard. Building it here
+      # and wiring web_assets_path below (single-binary serving mode, same as
+      # an air-gapped production deploy) lets the existing scan below
+      # naturally cover the SPA too: its "exposure"/"misconfig" tags are
+      # generic web-hygiene checks (missing security headers, exposed
+      # .git/.env, etc.), not API-specific, so they now probe real dashboard
+      # content instead of a stub.
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Build web/
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+
       - name: Write DAST config
         # SC-015: encryption is enabled so the DAST server matches production
         # configuration (authenticated + encrypted surface).  The DEK is derived
@@ -32,7 +58,7 @@ jobs:
         # carries 32 hex-encoded random bytes generated once for this DAST job (see
         # the "Generate DAST KEK" step below); it is never committed or reused.
         run: |
-          cat > /tmp/keyorix-dast.yaml << 'EOF'
+          cat > /tmp/keyorix-dast.yaml << EOF
           environment: "development"
           locale:
             language: "en"
@@ -46,6 +72,7 @@ jobs:
                 enabled: false
               ratelimit:
                 enabled: false
+              web_assets_path: "${GITHUB_WORKSPACE}/web/dist"
             grpc:
               enabled: false
           storage:
