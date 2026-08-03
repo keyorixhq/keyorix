@@ -6,15 +6,17 @@ section. For architectural rationale see the ADRs (`docs/` and
 
 ## In progress / next
 
-- **Archive/delete the orphaned `keyorixhq_keyorix-web` SonarCloud project.**
-  ADR-070's Sonar setup was reversed: `web/` is now analyzed as part of the
+## Done
+
+- **Deleted the orphaned `keyorixhq_keyorix-web` SonarCloud project.**
+  ADR-070's Sonar setup was reversed: `web/` is analyzed as part of the
   single `keyorixhq_keyorix` project (see ADR-070 Consequences) rather than
   its own project, because the separate-project setup required an org-admin
   rebind that never happened and permanently failed SonarCloud on every PR
-  touching `web/**`. `keyorixhq_keyorix-web` now has nothing pointing at it.
-  Org-admin action in the SonarCloud UI, not fixable from this repo.
-
-## Done
+  touching `web/**`. `keyorixhq_keyorix-web` had nothing pointing at it;
+  deleted via the SonarCloud UI (org-admin action). Verified via the
+  SonarCloud API: `GET api/components/show?component=keyorixhq_keyorix-web`
+  now returns "Component key 'keyorixhq_keyorix-web' not found".
 
 - **Per-binary CycloneDX SBOMs for release binaries.** Reimplemented commit
   `9eceffe4`'s intent (it had drifted too far from current `Makefile`/
