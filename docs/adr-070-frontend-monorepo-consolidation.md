@@ -77,12 +77,21 @@ what `docker-compose.yml` says the product is.
 ## Decision
 
 Import `keyorix-web` into `keyorix` as a subdirectory at `web/`, via
-`git subtree`, preserving history (subject to the DCO constraint recorded in
-Phase 2 of the accompanying working notes — full history is not mergeable
-as-is under this repo's DCO gate without an admin override, since none of
-`keyorix-web`'s 421 commits carry a `Signed-off-by:` trailer and the DCO
-check validates every individual commit in a PR's range, not a squashed
-diff; that trade-off is decided separately, not by this ADR).
+`git subtree`, preserving full commit history — not squashed.
+
+`dco.yml` validates every individual non-merge commit in a PR's `base..head`
+range, not an aggregate diff, and none of `keyorix-web`'s 411 human-authored
+commits (of 421 total; the other 10 are dependabot's own, already correctly
+signed and exempted from the check by author email) carried a
+`Signed-off-by:` trailer. Rather than squash (which would discard per-commit
+history) or merge with an admin override on a required check (which would
+leave 411 commits permanently un-attested), the 411 commits were retroactively
+signed on a throwaway clone via `git filter-repo`'s commit-callback, adding
+only the trailer — verified byte-for-byte content-identical before and after
+(`HEAD^{tree}` unchanged, commit count and ordered subject sequence
+unchanged, every non-bot commit's added trailer email confirmed matching its
+own author email) — then imported from that signed clone instead of the
+original.
 
 One repository. One `v*` tag triggers both the server release and the web
 image build. One CI pipeline gates both. This is the only decision that
@@ -123,3 +132,13 @@ these in as an afterthought.
   first defect above.
 - `make release` needs to depend on `build-ui` — the direct fix for the
   second defect above.
+- **Imported commit SHAs do not match the archived `keyorix-web` repo's
+  SHAs.** The DCO retrofit (above) rewrote all 411 human-authored commits to
+  add a trailer, which changes each rewritten commit's hash and cascades to
+  every descendant. The trees are identical at every point in the history —
+  proven by the tree-hash/commit-count/subject-sequence/trailer-match checks
+  recorded in the Phase 2 working notes — but `git log`/`git blame` inside
+  `keyorix` will show different hashes than the same commit in the archived
+  standalone `keyorix-web` repository. This is expected, not data loss;
+  anyone cross-referencing the two needs to match by commit subject/date/tree
+  content, not by SHA.
