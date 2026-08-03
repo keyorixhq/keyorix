@@ -71,4 +71,4 @@ deferred follow-up, not part of this ADR.
 - Wiring the plan into the **auto-rotation executor** (ADR-046) so a project rotates
   wave-by-wave, dependency-first, automatically.
 - A deployment-wide plan (all projects) and an environment-scoped variant.
-- gRPC + CLI surfaces and a keyorix-web plan view (API-only first vertical).
+- gRPC + CLI surfaces and a web/ plan view (API-only first vertical).

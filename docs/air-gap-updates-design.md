@@ -218,7 +218,7 @@ behaviour until built.
      schedulers) notifies install-wide admins when the license is within its lead window of
      expiry or has expired — deduped so it doesn't spam — so a silent lapse that disables
      commercial features doesn't go unnoticed.
-   - **2c remaining:** surface license state in the web dashboard (keyorix-web).
+   - **2c remaining:** surface license state in the web dashboard (`web/`).
 4. **Phase 3 — hardening:** HSM-backed signing, key rotation drill, reproducible-bundle
    verification, and a documented operator runbook.
 

@@ -124,7 +124,7 @@ section. For architectural rationale see the ADRs (`docs/` and
 ## Backlog
 
 ### Other
-- **ADR-020** — project detail page (frontend, `keyorix-web`), still Proposed.
+- **ADR-020** — project detail page (frontend, `web/`), still Proposed.
 - **Refactor candidates (cyclomatic complexity)** — see
   [`docs/REFACTOR-CANDIDATES.md`](docs/REFACTOR-CANDIDATES.md). 55 functions
   above CCN 15 (`lizard`-generated, 2026-07-30), worst outliers
