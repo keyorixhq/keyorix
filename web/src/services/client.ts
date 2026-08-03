@@ -8,13 +8,17 @@ const config = getEnvConfig();
 const logError = (error: AxiosError) => {
     // This is a JS template literal, not a printf-style format string; there is no
     // %-specifier parsing step for a value to hijack. The rule flags any
-    // console.x(`...`, extraArg) call shape regardless.
+    // console.x(`...`, extraArg) call shape regardless. message/details extracted,
+    // and the console.error call kept to one line, so Prettier has no multi-line
+    // object literal to reflow the trailing nosemgrep comment out of.
     if (getEnvConfig().ENABLE_DEBUG) {
-        console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, { // nosemgrep: javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
+        const message = `[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`;
+        const details = {
             status: error.response?.status,
             data: error.response?.data,
             message: error.message,
-        });
+        };
+        console.error(message, details); // nosemgrep: javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
     }
 };
 
