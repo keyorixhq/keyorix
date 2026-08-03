@@ -2,10 +2,16 @@ apiVersion: v2
 name: keyorix
 description: Self-hosted Keyorix secrets manager (API server + web UI + PostgreSQL)
 type: application
-# Chart version — bump on chart changes.
-version: 0.85.0
+# Chart version — bump on chart changes. release.yml's publish-chart job
+# overrides both this and appVersion from the git tag at publish time
+# (helm package --version/--app-version), so the actually-published OCI
+# chart is always correct regardless of what's committed here — but this
+# committed value still governs a local `helm install ./deploy/helm/keyorix`
+# without an explicit --set override, and had drifted 3 releases behind
+# (last bumped for v0.85.0; docker-compose.yml already tracks v0.88.0).
+version: 0.88.0
 # The Keyorix app version this chart deploys by default (the image tag).
-appVersion: "0.85.0"
+appVersion: "0.88.0"
 home: https://github.com/keyorixhq/keyorix
 sources:
   - https://github.com/keyorixhq/keyorix
