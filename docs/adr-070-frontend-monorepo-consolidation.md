@@ -142,18 +142,30 @@ these in as an afterthought.
   standalone `keyorix-web` repository. This is expected, not data loss;
   anyone cross-referencing the two needs to match by commit subject/date/tree
   content, not by SHA.
-- **Root's Sonar exclusion of `web/**` is load-bearing, not cosmetic.** Root
-  `sonar-project.properties` has no `sonar.sources` line, so it defaults to
-  the repository base directory. If the `web/**` entry in `sonar.exclusions`
-  is ever removed, the root `keyorixhq_keyorix` project silently begins
-  analyzing every TypeScript file in `web/` too, double-counting findings
-  already covered by `keyorixhq_keyorix-web` and blending one coverage figure
-  across two toolchains.
-- **Two SonarCloud projects now bind to one GitHub repository.** This
-  requires monorepo support to be enabled at the `keyorixhq` SonarCloud
-  organization level and `keyorixhq_keyorix-web` to be rebound to the
-  `keyorix` repo — an org-level action outside this ADR's implementation,
-  tracked as a handoff item.
+- **SonarCloud: one project, not two — reversed from the original Phase 4
+  decision.** `web/` was first kept as its own `keyorixhq_keyorix-web`
+  SonarCloud project (path-scoped `web/**` exclusion in root's
+  `sonar-project.properties`, a separate `web-sonarcloud.yml` workflow),
+  specifically to avoid blending Go and TypeScript into one "Coverage on New
+  Code" percentage — ADR-069's risk-based-coverage-as-two-numbers policy
+  treats that blending as a regression. In practice this required rebinding
+  `keyorixhq_keyorix-web`'s DevOps Platform integration from the archived
+  `keyorix-web` GitHub repo to `keyorix`, an org-admin action in the
+  SonarCloud UI that nobody had done — every PR touching `web/**` failed
+  SonarCloud permanently with "Could not find the pullrequest" until that
+  happened, and it didn't happen. Folded `web/` into the root
+  `keyorixhq_keyorix` project instead (already correctly bound, so the
+  org-admin dependency disappears entirely) and accepted the blended-coverage
+  tradeoff the original decision was written to avoid. `web-sonarcloud.yml`
+  and `web/sonar-project.properties` are deleted; `sonar.javascript.lcov.reportPaths`
+  in root's `sonar-project.properties` now points at `web/coverage/lcov.info`,
+  with a CI step to rewrite that file's `SF:` paths from web-relative to
+  repo-root-relative first — SonarCloud resolves lcov paths relative to
+  `sonar.projectBaseDir` (the repo root here), not wherever the coverage tool
+  actually ran.
+- **`keyorixhq_keyorix-web` is now a fully orphaned SonarCloud project** —
+  nothing analyzes it anymore. Archiving or deleting it is an org-admin
+  action outside this ADR's implementation, tracked as a handoff item.
 - **Frontend SBOM coverage comes from the `keyorix-web` container image's
   BuildKit attestation** (`provenance: mode=max` / `sbom: true` on the new
   `build-and-push-web` job in `docker-publish.yml`), not from a source-tree

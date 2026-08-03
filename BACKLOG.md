@@ -6,6 +6,14 @@ section. For architectural rationale see the ADRs (`docs/` and
 
 ## In progress / next
 
+- **Archive/delete the orphaned `keyorixhq_keyorix-web` SonarCloud project.**
+  ADR-070's Sonar setup was reversed: `web/` is now analyzed as part of the
+  single `keyorixhq_keyorix` project (see ADR-070 Consequences) rather than
+  its own project, because the separate-project setup required an org-admin
+  rebind that never happened and permanently failed SonarCloud on every PR
+  touching `web/**`. `keyorixhq_keyorix-web` now has nothing pointing at it.
+  Org-admin action in the SonarCloud UI, not fixable from this repo.
+
 - **Investigate: `stunit` on-disk SQLite leak + suspected connection-pool
   unbounded growth** — `server/http/handlers/secret_templates_unit_test.go:83`
   constructs `file:stunit<N>?mode=memory&cache=private`, but a run left an
