@@ -1,3 +1,4 @@
+import { defineConfig } from 'eslint/config';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
@@ -5,7 +6,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import noUnsanitized from 'eslint-plugin-no-unsanitized';
 import globals from 'globals';
 
-export default tseslint.config(
+export default defineConfig(
     // Replaces .eslintignore / ignorePatterns. The legacy `eslint . --ext ts,tsx`
     // only linted TS/TSX, so `public/` (e.g. the service worker sw.js) was never
     // linted — keep it that way to avoid spurious no-undef on browser/SW globals.

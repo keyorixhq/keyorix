@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route } from 'react-router';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
 import { ProjectDetailPage } from '../ProjectDetailPage';
 

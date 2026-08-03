@@ -21,8 +21,8 @@ vi.mock('../../../store/authStore', () => ({
 
 let currentToken: string | undefined = 'kx_setup_abc';
 
-vi.mock('react-router-dom', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('react-router-dom')>();
+vi.mock('react-router', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react-router')>();
     return {
         ...actual,
         useParams: () => ({ token: currentToken }),
@@ -120,7 +120,7 @@ describe('SetupPage', () => {
         unmount();
         resolveDescribe({ purpose: 'account_setup', email: 'new@acme.io' });
 
-        await pending;
+        await expect(pending).resolves.toEqual({ purpose: 'account_setup', email: 'new@acme.io' });
     });
 
     it('ignores a late describe rejection after the component unmounts', async () => {
@@ -134,7 +134,7 @@ describe('SetupPage', () => {
         unmount();
         rejectDescribe(new Error('dead link'));
 
-        await pending.catch(() => undefined);
+        await expect(pending).rejects.toThrow('dead link');
     });
 
     // handleSubmit deliberately rethrows after recording the error (so a caller

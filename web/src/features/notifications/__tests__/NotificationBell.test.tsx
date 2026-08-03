@@ -35,7 +35,7 @@ let mockData: { unread_count: number; notifications: typeof baseNotifications } 
     notifications: baseNotifications,
 };
 
-vi.mock('react-router-dom', async (orig) => {
+vi.mock('react-router', async (orig) => {
     const actual = (await orig()) as object;
     return { ...actual, useNavigate: () => navigate };
 });

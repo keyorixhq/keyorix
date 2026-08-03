@@ -1,7 +1,7 @@
 # Build stage — the SPA is built with pnpm (the repo's package manager) on Node 22.
 # All dependencies are needed (Vite et al. are devDependencies), so this is a
 # full install, not --prod.
-FROM node:22-alpine AS builder
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
 # Exact version, not just the major (docker:S8543) — reproducible builds need
 # a resolved pin, not a moving target. --ignore-scripts (docker:S6505) on both
 # installs below: verified `npm install -g pnpm@11.19.0 --ignore-scripts`
@@ -18,7 +18,7 @@ RUN pnpm build
 
 # Production stage — nginx serves the static bundle and reverse-proxies the API
 # (/api/ and /auth/) to the backend service. See nginx.conf.
-FROM nginx:alpine AS production
+FROM nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752 AS production
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 

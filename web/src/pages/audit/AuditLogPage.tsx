@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
 import { Alert } from '../../components/ui/Alert';

@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ProtectedRoute } from '../components/layout/ProtectedRoute';
 import { PublicRoute } from '../components/layout/PublicRoute';

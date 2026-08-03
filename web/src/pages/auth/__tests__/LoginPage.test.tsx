@@ -48,8 +48,8 @@ vi.mock('../../../services/auth', () => ({
 
 const navigateMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-router-dom', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('react-router-dom')>();
+vi.mock('react-router', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react-router')>();
     return {
         ...actual,
         useNavigate: () => navigateMock,
@@ -262,27 +262,11 @@ describe('LoginPage', () => {
 
         // Resolves without updating state on the unmounted component (the effect's
         // cleanup flips `active` to false, so the .then callback is a no-op).
-        await pending;
+        await expect(pending).resolves.toEqual(['google']);
     });
 
     // NOTE: handlePasswordReset (lines 56-67) and the onBack callback passed to
     // PasswordResetForm (lines 146-149) are unreachable for the same reason as the
     // BUG documented above — mode never becomes 'reset', so PasswordResetForm (and
     // its callback props) never mount. Left uncovered deliberately.
-
-    it('ignores a late SSO providers response after the component unmounts', async () => {
-        let resolveProviders: (value: string[]) => void = () => {};
-        const pending = new Promise<string[]>((resolve) => {
-            resolveProviders = resolve;
-        });
-        getSSOProvidersMock.mockReturnValue(pending);
-
-        const { unmount } = render(<LoginPage />);
-        unmount();
-        resolveProviders(['google']);
-
-        // Resolves without updating state on the unmounted component (the effect's
-        // cleanup flips `active` to false, so the .then callback is a no-op).
-        await pending;
-    });
 });
