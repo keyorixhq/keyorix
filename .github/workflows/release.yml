@@ -37,7 +37,7 @@ jobs:
       # `release` target shells out to cyclonedx-gomod to emit a per-binary
       # CycloneDX SBOM (covered by checksums.txt, uploaded with dist/*).
       - name: Install SBOM generator
-        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0 # NOSONAR githubactions:S8545 -- pinned to v1.10.0; go.sum not applicable for a standalone build-time tool outside the module graph (same pattern as dast.yml's nuclei install)
 
       # VERSION is passed via env, not interpolated into the `run:` string (#115):
       # a tag name can contain shell metacharacters ($, `, ;, |, &, ( ) are all
