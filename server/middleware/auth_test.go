@@ -1,15 +1,21 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -503,6 +509,90 @@ func TestValidateToken(t *testing.T) {
 			}
 		})
 	}
+}
+
+// makeTestJWT builds a real, correctly-signed three-segment JWT with the given
+// issuer/kid, for testing oidcDiagnosticFields's unverified best-effort parse.
+// fakeValidator.ValidateOIDCToken never checks the signature (it just string-
+// matches "header.valid.sig"), so any properly-shaped JWT here exercises the
+// failure path.
+func makeTestJWT(t *testing.T, issuer, kid string) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
+		Issuer:  issuer,
+		Subject: "test-subject",
+	})
+	tok.Header["kid"] = kid
+	signed, err := tok.SignedString(key)
+	require.NoError(t, err)
+	return signed
+}
+
+// TestValidateToken_OIDCFailureLogsDiagnostics confirms a failed federated-JWT
+// verification is logged server-side (previously discarded entirely, leaving
+// zero operator signal — see server/middleware/auth.go's oidcDiagnosticFields)
+// with the token's issuer/kid, without changing validateToken's returned error.
+func TestValidateToken_OIDCFailureLogsDiagnostics(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	badToken := makeTestJWT(t, "https://unreachable-issuer.example", "kid-123")
+	userCtx, err := validateToken(context.Background(), fakeValidator{}, badToken)
+
+	require.Error(t, err)
+	assert.Nil(t, userCtx)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "WARNING: OIDC federation verification failed")
+	assert.Contains(t, logged, "https://unreachable-issuer.example")
+	assert.Contains(t, logged, "kid-123")
+}
+
+// TestValidateToken_OIDCFailureLogIsBoundedAndSafe confirms boundedForLog does
+// its job: an attacker-controlled claim (this runs on an UNVERIFIED token)
+// can't forge a fake log field via an embedded quote, and can't bloat the log
+// line via an oversized value.
+func TestValidateToken_OIDCFailureLogIsBoundedAndSafe(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	maliciousIssuer := `evil" forged_field="injected` + strings.Repeat("A", 1000)
+	badToken := makeTestJWT(t, maliciousIssuer, "k1")
+	_, err := validateToken(context.Background(), fakeValidator{}, badToken)
+	require.Error(t, err)
+
+	logged := buf.String()
+	// %q escapes an embedded quote (-> \") rather than letting it close the
+	// field early and forge a fake key=value pair after it.
+	assert.NotContains(t, logged, `forged_field="injected`, "an embedded quote must not forge a fake log field")
+	assert.Less(t, len(logged), 2000, "an oversized claim must not bloat the log line unbounded")
+}
+
+// TestAuthentication_OIDCFailureResponseUnchanged confirms the server-side
+// logging added for OIDC verification failures does not change what an
+// unauthenticated caller sees: still a generic, detail-free 401 — config
+// topology (issuer identity, reachability) must never leak into the response.
+func TestAuthentication_OIDCFailureResponseUnchanged(t *testing.T) {
+	badToken := makeTestJWT(t, "https://some-internal-issuer.example", "k1")
+	mw := newTestAuthMiddleware()
+	handler := mw(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("handler must not be reached on auth failure")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+badToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "Invalid or expired token")
+	assert.NotContains(t, rec.Body.String(), "some-internal-issuer.example", "issuer must never leak into the client-facing response")
 }
 
 // TestValidateToken_PATRestriction asserts the ADR-042 least-privilege wiring:

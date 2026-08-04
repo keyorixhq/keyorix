@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -794,6 +796,43 @@ func looksLikeJWT(token string) bool {
 	return strings.Count(token, ".") == 2
 }
 
+// maxOIDCLogFieldLen bounds an attacker-influenceable value (from an
+// unverified federated JWT) before it is logged, so a crafted oversized claim
+// can't bloat log output.
+const maxOIDCLogFieldLen = 256
+
+// boundedForLog strips control characters (see recovery.go's stripControl,
+// same rationale: log-injection / terminal-control smuggling via
+// attacker-influenceable values) and truncates to maxOIDCLogFieldLen runes,
+// for logging a value that did not come from a trusted source.
+func boundedForLog(s string) string {
+	s = stripControl(s)
+	r := []rune(s)
+	if len(r) <= maxOIDCLogFieldLen {
+		return s
+	}
+	return string(r[:maxOIDCLogFieldLen]) + "…(truncated)"
+}
+
+// oidcDiagnosticFields best-effort extracts the iss/kid header/claims from a
+// JWT for LOGGING ONLY. It does not verify the signature — these values are
+// exactly as trustworthy as any other attacker-supplied input, i.e. not at
+// all — so they must never feed an authorization or trust decision. The real,
+// verified (issuer, subject) pair is what validator.ValidateOIDCToken itself
+// resolves and audits on success; this is purely a diagnostic best-effort
+// read for the failure path. If the token doesn't even parse, both return "".
+func oidcDiagnosticFields(token string) (issuer, kid string) {
+	var claims jwt.RegisteredClaims
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, &claims)
+	if err != nil || parsed == nil {
+		return "", ""
+	}
+	if k, ok := parsed.Header["kid"].(string); ok {
+		kid = k
+	}
+	return claims.Issuer, kid
+}
+
 // validateToken validates a session token via the supplied validator and returns
 // the resolved UserContext. Permissions are no longer precomputed here — they are
 // resolved per request, scoped to the target, by core.Authorize.
@@ -816,6 +855,33 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	if validator.OIDCEnabled() && looksLikeJWT(token) {
 		m, roleNames, err := validator.ValidateOIDCToken(ctx, token)
 		if err != nil {
+			// The detailed reason (untrusted issuer, unreachable JWKS, bad
+			// signature, expired, ...) must never reach the caller — the
+			// client-facing response stays a generic 401 regardless (see the
+			// caller of validateToken) so config topology (which issuers
+			// exist, which are reachable) can't be probed by an
+			// unauthenticated request. But discarding it entirely left an
+			// operator with zero signal to debug federated auth: an
+			// unreachable jwks_uri (e.g. in an air-gapped deployment) looked
+			// identical to a garden-variety expired token. Log it
+			// server-side instead.
+			//
+			// issuer/kid/err are all attacker-influenceable — this runs on
+			// an UNVERIFIED token, pre-authentication — so every one of them
+			// is bounded and control-stripped (boundedForLog) and rendered
+			// with %q so an embedded quote/space can't forge a fake
+			// key=value pair in this log line.
+			//
+			// Not rate-limited or sampled: a flood of IDENTICAL bad tokens
+			// is already deduplicated upstream (the negative token cache —
+			// see cacheSet's invalidTokenTTL in the caller), but a flood of
+			// DISTINCT crafted tokens (different iss/kid per request) is
+			// not, and would produce one WARNING line each. No existing
+			// log-sampling primitive exists in this codebase to reuse for
+			// that case; adding one is out of scope here.
+			issuer, kid := oidcDiagnosticFields(token)
+			log.Printf("WARNING: OIDC federation verification failed: issuer=%q kid=%q err=%q",
+				boundedForLog(issuer), boundedForLog(kid), boundedForLog(err.Error()))
 			return nil, err
 		}
 		return machineUserContext(m, roleNames, nil), nil
