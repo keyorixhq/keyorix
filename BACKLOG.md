@@ -6,7 +6,26 @@ section. For architectural rationale see the ADRs (`docs/` and
 
 ## In progress / next
 
-## Done
+- **`osv-scanner.yml` is configured `fail-on-vuln: false`.** Found while
+  investigating why keyorix-sdks' `SCA scan` (OWASP dependency-check)
+  reported green with `continue-on-error: true` masking a real
+  `NoDataException` — checked keyorix's own `dependency-check`/
+  `osv-scanner`/`trivy` workflows for the same pattern. keyorix has no
+  `dependency-check` workflow (Go repo, uses `cyclonedx-gomod`/
+  `govulncheck` instead). `trivy.yml` is `scanners: misconfig` only, no
+  CVE database dependency, not the same risk shape. But
+  `.github/workflows/osv-scanner.yml`'s `scan` job sets
+  `fail-on-vuln: false` explicitly — the job cannot fail on the exact
+  condition (a real vulnerability finding) it exists to catch, structurally,
+  not as a side effect of a broken data source the way keyorix-sdks' issue
+  was. It is **not** a required status check on `keyorix/main` (confirmed
+  via the branch protection API), so unlike keyorix-sdks it is not
+  currently a false control gating merges — but a scanner configured never
+  to fail is a scanner nobody reads, and every PR gets an unread signal.
+  Decision on what `osv-scanner.yml` should actually do (fail on
+  high/critical, fail only above some threshold, stay advisory-only but say
+  so explicitly in its job name, something else) is left open — not made
+  here, not changed here.
 
 - **Release SBOMs now cover the frontend embedded in the server binaries
   (ADR-073).** The per-binary-family SBOMs from the entry below
