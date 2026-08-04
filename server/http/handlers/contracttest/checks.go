@@ -136,7 +136,19 @@ func enforcedOperationIDs() map[string]bool {
 // eligible but still didn't record an exercise is a real failure.
 //
 // See ADR-074, "Coverage assertion: enforced must mean exercised".
+//
+// Returns nil immediately under `go test -list`: -list mode never actually
+// invokes any Test function (m.Run() just prints matching names and
+// returns), so every operation would trivially show as "never exercised" --
+// not a real failure, just -list doing its job. Without this guard, a
+// TestMain that calls this after m.Run() would make `go test -list` itself
+// fail, which is exactly the command ci.yml runs to compute the handlers-1..4
+// shards in the first place (`go test -list '^Test' ./server/http/handlers/...`).
 func CheckAllEnforcedExercised() error {
+	if testListModeActive() {
+		return nil
+	}
+
 	loadSpec()
 	if specErr != nil {
 		return specErr
@@ -177,6 +189,13 @@ func CheckAllEnforcedExercised() error {
 			"\"exercised\", not just \"listed\": %s",
 		len(missing), strings.Join(missing, "; "),
 	)
+}
+
+// testListModeActive reports whether this process was invoked as
+// `go test -list <pattern>`.
+func testListModeActive() bool {
+	f := flag.Lookup("test.list")
+	return f != nil && f.Value.String() != ""
 }
 
 // currentRunFilter returns the current `go test -run` pattern, or nil if

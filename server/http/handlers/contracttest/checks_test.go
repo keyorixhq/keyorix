@@ -12,6 +12,16 @@ func TestOpenAPIRegistryPartition(t *testing.T) {
 	}
 }
 
+// TestExercisingTestsExist guards registry.go's exercisingTests map, itself
+// a hand-maintained list, against naming a test function that has been
+// renamed or deleted -- see CheckExercisingTestsExist's doc comment for why
+// nothing else in this package would otherwise catch that.
+func TestExercisingTestsExist(t *testing.T) {
+	if err := CheckExercisingTestsExist(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestSpecLoadsAndValidates guards the harness's own precondition: if
 // openapi.yaml stops parsing or fails OpenAPI validation, every test using
 // AssertOpenAPIResponse would fail with the same underlying cause. This
@@ -26,10 +36,12 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 	}
 }
 
-// TestEnforcedSetMatchesADR074 pins the exact enforced set Phase 1 decided
-// on (ADR-074, "The honest enforced baseline is ~7, not 10") so a future
-// change to openapi.yaml's schema coverage is visible here, not just via a
-// silently growing/shrinking set.
+// TestEnforcedSetMatchesADR074 pins the exact 9-operation enforced set
+// (schema'd minus outOfScopeRegistry's prometheusMetrics -- see ADR-074's
+// "honest enforced baseline" section for which of these 9 carry a real
+// structured schema vs. a near-content-free `{type: string, format:
+// binary}` one) so a future change to openapi.yaml's schema coverage is
+// visible here, not just via a silently growing/shrinking set.
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
