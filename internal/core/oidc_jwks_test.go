@@ -181,6 +181,50 @@ func TestHTTPJWKSResolver_StaleRefetchRateLimited(t *testing.T) {
 	assert.Equal(t, 2, hits, "after the rate-limit window elapses, a call may attempt a refetch again")
 }
 
+// The cold-start refetch path — an issuer that has NEVER had a successful
+// fetch, so entry stays nil — is rate-limited the same way the stale-cache
+// path is: at most one refetch ATTEMPT per jwksMinRefetchInterval per issuer.
+// Before the fix this path had no gate at all: it required entry != nil, so
+// an issuer whose JWKS endpoint has been unreachable since boot (e.g. an
+// air-gapped deployment) fired a live outbound fetch and blocked for the full
+// http.Client timeout on EVERY verification attempt, forever — reachable
+// pre-authentication, since keyfunc runs during JWT parse before the token's
+// signature is checked.
+func TestHTTPJWKSResolver_ColdCacheRefetchRateLimited(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusInternalServerError) // always fails: cache is never seeded
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	// First-ever call: no prior attempt recorded, so it still attempts (and fails) a fetch.
+	_, err = r.Key(context.Background(), "https://iss", "k1")
+	require.Error(t, err)
+	require.Equal(t, 1, hits, "first-ever call on a cold cache still attempts a fetch")
+
+	// A flood of further calls immediately after, with no cache entry ever
+	// populated: all within jwksMinRefetchInterval of the first attempt, so none
+	// should reach the server again. This is exactly the bug: entry stays nil
+	// forever here, so the old `entry != nil` gate condition never engaged.
+	for i := 0; i < 20; i++ {
+		_, err := r.Key(context.Background(), "https://iss", "k1")
+		require.Error(t, err, "a rate-limited cold cache must fail closed, never return a bypassed result")
+	}
+	assert.Equal(t, 1, hits, "repeated calls on a still-rate-limited cold cache must not fire a second outbound fetch")
+
+	// Once the last-attempt timestamp is old enough, a call is allowed to attempt a
+	// refetch again.
+	r.mu.Lock()
+	r.lastFetchAttempt["https://iss"] = time.Now().Add(-(jwksMinRefetchInterval + time.Second))
+	r.mu.Unlock()
+	_, err = r.Key(context.Background(), "https://iss", "k1")
+	require.Error(t, err)
+	assert.Equal(t, 2, hits, "after the rate-limit window elapses, a call may attempt a refetch again")
+}
+
 // A JWKS with more keys than maxJWKSKeys is capped so a pathological key set can't
 // bloat the cache.
 func TestHTTPJWKSResolver_CapsKeyCount(t *testing.T) {
