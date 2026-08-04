@@ -1,5 +1,10 @@
 package contracttest
 
+const (
+	reasonSchemaNotYetWritten = "schema not yet written"
+	reason204NoContent        = "204 No Content -- no body to validate"
+)
+
 // pendingRegistry lists every operationId that has no 2xx JSON-Schema-bearing
 // response in openapi.yaml yet. Every entry needs a reason -- this is a
 // record of known gaps, not a dumping ground (ADR-074). Generated from a
@@ -12,151 +17,151 @@ package contracttest
 // schema, which is the signal to delete the entry -- the registry shrinks
 // one operation at a time as ADR-074's Phase 2 handoff batches land.
 var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "Token"/"PAT" (createPAT, issueMachineToken, ...), values are all the literal reason string "schema not yet written"
-	"acknowledgeAnomalyAlert":        "schema not yet written", // post /api/v1/audit/anomalies/{id}/acknowledge
-	"activateBreakGlass":             "schema not yet written", // post /api/v1/projects/{id}/break-glass
-	"addGroupMember":                 "schema not yet written", // post /api/v1/groups/{id}/members
-	"addProjectMember":               "schema not yet written", // post /api/v1/projects/{id}/members
-	"assignPermissionToRole":         "schema not yet written", // post /api/v1/roles/{id}/permissions
-	"assignRoleToGroup":              "schema not yet written", // post /api/v1/groups/{id}/roles
-	"assignUserRole":                 "schema not yet written", // post /api/v1/user-roles
-	"attestProjectAccessReview":      "schema not yet written", // post /api/v1/projects/{id}/access-review/attest
-	"authConsumeSetup":               "schema not yet written", // post /auth/setup/consume
-	"authLogout":                     "schema not yet written", // post /auth/logout
-	"authPasswordReset":              "schema not yet written", // post /auth/password-reset
-	"changePassword":                 "schema not yet written", // post /api/v1/auth/change-password
-	"classifySecret":                 "schema not yet written", // patch /api/v1/secrets/{id}/classification
-	"closeAccessReviewCampaign":      "schema not yet written", // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
-	"createAccessRequest":            "schema not yet written", // post /api/v1/projects/{id}/access-requests
-	"createGlobalInvitation":         "schema not yet written", // post /api/v1/invitations
-	"createGroup":                    "schema not yet written", // post /api/v1/groups
-	"createMachineIdentity":          "schema not yet written", // post /api/v1/projects/{id}/machine-identities
-	"createPAT":                      "schema not yet written", // post /api/v1/auth/tokens
-	"createProject":                  "schema not yet written", // post /api/v1/projects
-	"createProjectEnvironment":       "schema not yet written", // post /api/v1/projects/{id}/environments
-	"createProjectInvitation":        "schema not yet written", // post /api/v1/projects/{id}/invitations
-	"createRiskException":            "schema not yet written", // post /api/v1/risk-exceptions
-	"createRole":                     "schema not yet written", // post /api/v1/roles
-	"createRotationPolicy":           "schema not yet written", // post /api/v1/rotation-policies
-	"createSecret":                   "schema not yet written", // post /api/v1/secrets
-	"createSoDPolicy":                "schema not yet written", // post /api/v1/sod/policies
-	"createUser":                     "schema not yet written", // post /api/v1/users
-	"decideAccessReviewCampaignItem": "schema not yet written", // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide
-	"deleteEnvironment":              "schema not yet written", // delete /api/v1/environments/{id}
-	"deleteProject":                  "schema not yet written", // delete /api/v1/projects/{id}
-	"deleteSoDPolicy":                "schema not yet written", // delete /api/v1/sod/policies/{id}
-	"endImpersonation":               "schema not yet written", // post /api/v1/auth/end-impersonation
-	"evaluateRotationPolicies":       "schema not yet written", // get /api/v1/rotation-policies/evaluate
-	"exportAuditLogs":                "schema not yet written", // get /api/v1/audit/export
-	"getAccessReviewCampaign":        "schema not yet written", // get /api/v1/projects/{id}/access-review/campaigns/{campaignId}
-	"getAuditRetention":              "schema not yet written", // get /api/v1/audit/retention
-	"getAuthConfig":                  "schema not yet written", // get /api/v1/system/auth-config
-	"getAuthProfile":                 "schema not yet written", // get /api/v1/auth/profile
-	"getComplianceControls":          "schema not yet written", // get /api/v1/compliance/controls
-	"getComplianceEvidence":          "schema not yet written", // get /api/v1/compliance/evidence
-	"getCompliancePosture":           "schema not yet written", // get /api/v1/compliance/posture
-	"getDashboardActivity":           "schema not yet written", // get /api/v1/dashboard/activity
-	"getDashboardStats":              "schema not yet written", // get /api/v1/dashboard/stats
-	"getEncryptionConfig":            "schema not yet written", // get /api/v1/system/encryption-config
-	"getGroup":                       "schema not yet written", // get /api/v1/groups/{id}
-	"getGroupMembers":                "schema not yet written", // get /api/v1/groups/{id}/members
-	"getGroupRoles":                  "schema not yet written", // get /api/v1/groups/{id}/roles
-	"getLegalHold":                   "schema not yet written", // get /api/v1/legal-hold
-	"getMostAccessedSecrets":         "schema not yet written", // get /api/v1/secrets/usage/most-accessed
-	"getPermission":                  "schema not yet written", // get /api/v1/permissions/{id}
-	"getProject":                     "schema not yet written", // get /api/v1/projects/{id}
-	"getProjectAccessReview":         "schema not yet written", // get /api/v1/projects/{id}/access-review
-	"getProjectDrift":                "schema not yet written", // get /api/v1/projects/{id}/drift
-	"getRole":                        "schema not yet written", // get /api/v1/roles/{id}
-	"getRolePermissions":             "schema not yet written", // get /api/v1/roles/{id}/permissions
-	"getRotationPolicy":              "schema not yet written", // get /api/v1/rotation-policies/{id}
-	"getRotationStatus":              "schema not yet written", // get /api/v1/rotation-policies/status
-	"getSecret":                      "schema not yet written", // get /api/v1/secrets/{id}
-	"getSecretRisk":                  "schema not yet written", // get /api/v1/secrets/{id}/risk
-	"getSecretVersions":              "schema not yet written", // get /api/v1/secrets/{id}/versions
-	"getSystemInfo":                  "schema not yet written", // get /api/v1/system/info
-	"getSystemMetrics":               "schema not yet written", // get /api/v1/system/metrics
-	"getUnusedSecrets":               "schema not yet written", // get /api/v1/secrets/usage/unused
-	"getUser":                        "schema not yet written", // get /api/v1/users/{id}
-	"getUserMembershipsForUser":      "schema not yet written", // get /api/v1/users/{id}/memberships
-	"getUserRoleAssignment":          "schema not yet written", // get /api/v1/user-roles/user/{userId}
-	"getUserRolesForUser":            "schema not yet written", // get /api/v1/users/{id}/roles
-	"grantMachineRole":               "schema not yet written", // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
-	"grantSecretACL":                 "schema not yet written", // post /api/v1/secrets/{id}/acl
-	"inviteMember":                   "schema not yet written", // post /api/v1/projects/{id}/memberships
-	"issueMachineToken":              "schema not yet written", // post /api/v1/projects/{id}/machine-identities/{machineId}/tokens
-	"liftLegalHold":                  "schema not yet written", // delete /api/v1/legal-hold
-	"listAccessRequests":             "schema not yet written", // get /api/v1/projects/{id}/access-requests
-	"listAccessReviewCampaigns":      "schema not yet written", // get /api/v1/projects/{id}/access-review/campaigns
-	"listAnomalyAlerts":              "schema not yet written", // get /api/v1/audit/anomalies
-	"listAuditLogs":                  "schema not yet written", // get /api/v1/audit/logs
-	"listBreakGlassActivations":      "schema not yet written", // get /api/v1/projects/{id}/break-glass
-	"listEnvironments":               "schema not yet written", // get /api/v1/environments
-	"listGroups":                     "schema not yet written", // get /api/v1/groups
-	"listMachineIdentities":          "schema not yet written", // get /api/v1/projects/{id}/machine-identities
-	"listMachineTokens":              "schema not yet written", // get /api/v1/projects/{id}/machine-identities/{machineId}/tokens
-	"listNotifications":              "schema not yet written", // get /api/v1/notifications
-	"listPATs":                       "schema not yet written", // get /api/v1/auth/tokens
-	"listPermissions":                "schema not yet written", // get /api/v1/permissions
-	"listProjectEnvironments":        "schema not yet written", // get /api/v1/projects/{id}/environments
-	"listProjectInvitations":         "schema not yet written", // get /api/v1/projects/{id}/invitations
-	"listProjectMembers":             "schema not yet written", // get /api/v1/projects/{id}/members
-	"listProjectMemberships":         "schema not yet written", // get /api/v1/projects/{id}/memberships
-	"listProjects":                   "schema not yet written", // get /api/v1/projects
-	"listRBACAuditLogs":              "schema not yet written", // get /api/v1/audit/rbac-logs
-	"listRiskExceptions":             "schema not yet written", // get /api/v1/risk-exceptions
-	"listRoles":                      "schema not yet written", // get /api/v1/roles
-	"listRotationPolicies":           "schema not yet written", // get /api/v1/rotation-policies
-	"listSecretShares":               "schema not yet written", // get /api/v1/secrets/{id}/shares
-	"listSecrets":                    "schema not yet written", // get /api/v1/secrets
-	"listSessions":                   "schema not yet written", // get /api/v1/auth/sessions
-	"listSharedSecrets":              "schema not yet written", // get /api/v1/shared-secrets
-	"listShares":                     "schema not yet written", // get /api/v1/shares
-	"listSoDPolicies":                "schema not yet written", // get /api/v1/sod/policies
-	"listSoDViolations":              "schema not yet written", // get /api/v1/sod/violations
-	"listStaleUsers":                 "schema not yet written", // get /api/v1/users/stale
-	"listUsers":                      "schema not yet written", // get /api/v1/users
-	"markAllNotificationsRead":       "schema not yet written", // post /api/v1/notifications/read-all
-	"markNotificationRead":           "schema not yet written", // post /api/v1/notifications/{id}/read
-	"openAccessReviewCampaign":       "schema not yet written", // post /api/v1/projects/{id}/access-review/campaigns
-	"placeLegalHold":                 "schema not yet written", // post /api/v1/legal-hold
-	"reactivateUser":                 "schema not yet written", // post /api/v1/users/{id}/reactivate
-	"removeMachineRole":              "schema not yet written", // delete /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}
-	"removeProjectMember":            "schema not yet written", // delete /api/v1/projects/{id}/members/{userId}
-	"requirePasswordReset":           "schema not yet written", // post /api/v1/users/{id}/require-password-reset
-	"resendProjectInvitation":        "schema not yet written", // post /api/v1/projects/{id}/invitations/{invitationId}/resend
-	"resendSetupLink":                "schema not yet written", // post /api/v1/users/{id}/resend-setup-link
-	"resolveAccessRequest":           "schema not yet written", // put /api/v1/projects/{id}/access-requests/{requestId}
-	"restoreEnvironment":             "schema not yet written", // post /api/v1/projects/{projectId}/environments/{id}/restore
-	"restoreProject":                 "schema not yet written", // post /api/v1/projects/{id}/restore
-	"restoreUser":                    "schema not yet written", // post /api/v1/users/{id}/restore
-	"revokeBreakGlass":               "schema not yet written", // post /api/v1/projects/{id}/break-glass/{activationId}/revoke
-	"revokeMachineToken":             "schema not yet written", // delete /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}
-	"revokeProjectAccessReview":      "schema not yet written", // post /api/v1/projects/{id}/access-review/revoke
-	"revokeProjectInvitation":        "schema not yet written", // delete /api/v1/projects/{id}/invitations/{invitationId}
-	"revokeRiskException":            "schema not yet written", // delete /api/v1/risk-exceptions/{id}
-	"revokeSecretACL":                "schema not yet written", // delete /api/v1/secrets/{id}/acl/{aclId}
-	"rotateSecret":                   "schema not yet written", // post /api/v1/secrets/{id}/rotate
-	"searchAuditLogs":                "schema not yet written", // get /api/v1/audit/search
-	"searchUsers":                    "schema not yet written", // get /api/v1/users/search
-	"shareSecret":                    "schema not yet written", // post /api/v1/secrets/{id}/share
-	"startImpersonation":             "schema not yet written", // post /api/v1/admin/impersonate
-	"suspendUser":                    "schema not yet written", // post /api/v1/users/{id}/suspend
-	"transitionMachineIdentity":      "schema not yet written", // put /api/v1/projects/{id}/machine-identities/{machineId}
-	"transitionMembership":           "schema not yet written", // put /api/v1/projects/{id}/memberships/{membershipId}
-	"updateAuthProfile":              "schema not yet written", // put /api/v1/auth/profile
-	"updateGroup":                    "schema not yet written", // put /api/v1/groups/{id}
-	"updateProject":                  "schema not yet written", // put /api/v1/projects/{id}
-	"updateProjectMember":            "schema not yet written", // put /api/v1/projects/{id}/members/{userId}
-	"updateRole":                     "schema not yet written", // put /api/v1/roles/{id}
-	"updateRotationPolicy":           "schema not yet written", // put /api/v1/rotation-policies/{id}
-	"updateSecret":                   "schema not yet written", // put /api/v1/secrets/{id}
-	"updateSharePermission":          "schema not yet written", // put /api/v1/shares/{id}
-	"updateUser":                     "schema not yet written", // put /api/v1/users/{id}
-	"updateUserRoles":                "schema not yet written", // put /api/v1/users/{id}/roles
-	"verifyAuditChain":               "schema not yet written", // get /api/v1/audit/verify
-	"verifyComplianceEvidence":       "schema not yet written", // post /api/v1/compliance/evidence/verify
-	"withdrawAccessRequest":          "schema not yet written", // post /api/v1/projects/{id}/access-requests/{requestId}/withdraw
-	"writeAuditCheckpoint":           "schema not yet written", // post /api/v1/audit/checkpoint
+	"acknowledgeAnomalyAlert":        reasonSchemaNotYetWritten, // post /api/v1/audit/anomalies/{id}/acknowledge
+	"activateBreakGlass":             reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass
+	"addGroupMember":                 reasonSchemaNotYetWritten, // post /api/v1/groups/{id}/members
+	"addProjectMember":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/members
+	"assignPermissionToRole":         reasonSchemaNotYetWritten, // post /api/v1/roles/{id}/permissions
+	"assignRoleToGroup":              reasonSchemaNotYetWritten, // post /api/v1/groups/{id}/roles
+	"assignUserRole":                 reasonSchemaNotYetWritten, // post /api/v1/user-roles
+	"attestProjectAccessReview":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/attest
+	"authConsumeSetup":               reasonSchemaNotYetWritten, // post /auth/setup/consume
+	"authLogout":                     reasonSchemaNotYetWritten, // post /auth/logout
+	"authPasswordReset":              reasonSchemaNotYetWritten, // post /auth/password-reset
+	"changePassword":                 reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
+	"classifySecret":                 reasonSchemaNotYetWritten, // patch /api/v1/secrets/{id}/classification
+	"closeAccessReviewCampaign":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
+	"createAccessRequest":            reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
+	"createGlobalInvitation":         reasonSchemaNotYetWritten, // post /api/v1/invitations
+	"createGroup":                    reasonSchemaNotYetWritten, // post /api/v1/groups
+	"createMachineIdentity":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities
+	"createPAT":                      reasonSchemaNotYetWritten, // post /api/v1/auth/tokens
+	"createProject":                  reasonSchemaNotYetWritten, // post /api/v1/projects
+	"createProjectEnvironment":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/environments
+	"createProjectInvitation":        reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/invitations
+	"createRiskException":            reasonSchemaNotYetWritten, // post /api/v1/risk-exceptions
+	"createRole":                     reasonSchemaNotYetWritten, // post /api/v1/roles
+	"createRotationPolicy":           reasonSchemaNotYetWritten, // post /api/v1/rotation-policies
+	"createSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets
+	"createSoDPolicy":                reasonSchemaNotYetWritten, // post /api/v1/sod/policies
+	"createUser":                     reasonSchemaNotYetWritten, // post /api/v1/users
+	"decideAccessReviewCampaignItem": reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide
+	"deleteEnvironment":              reasonSchemaNotYetWritten, // delete /api/v1/environments/{id}
+	"deleteProject":                  reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}
+	"deleteSoDPolicy":                reasonSchemaNotYetWritten, // delete /api/v1/sod/policies/{id}
+	"endImpersonation":               reasonSchemaNotYetWritten, // post /api/v1/auth/end-impersonation
+	"evaluateRotationPolicies":       reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/evaluate
+	"exportAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/export
+	"getAccessReviewCampaign":        reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns/{campaignId}
+	"getAuditRetention":              reasonSchemaNotYetWritten, // get /api/v1/audit/retention
+	"getAuthConfig":                  reasonSchemaNotYetWritten, // get /api/v1/system/auth-config
+	"getAuthProfile":                 reasonSchemaNotYetWritten, // get /api/v1/auth/profile
+	"getComplianceControls":          reasonSchemaNotYetWritten, // get /api/v1/compliance/controls
+	"getComplianceEvidence":          reasonSchemaNotYetWritten, // get /api/v1/compliance/evidence
+	"getCompliancePosture":           reasonSchemaNotYetWritten, // get /api/v1/compliance/posture
+	"getDashboardActivity":           reasonSchemaNotYetWritten, // get /api/v1/dashboard/activity
+	"getDashboardStats":              reasonSchemaNotYetWritten, // get /api/v1/dashboard/stats
+	"getEncryptionConfig":            reasonSchemaNotYetWritten, // get /api/v1/system/encryption-config
+	"getGroup":                       reasonSchemaNotYetWritten, // get /api/v1/groups/{id}
+	"getGroupMembers":                reasonSchemaNotYetWritten, // get /api/v1/groups/{id}/members
+	"getGroupRoles":                  reasonSchemaNotYetWritten, // get /api/v1/groups/{id}/roles
+	"getLegalHold":                   reasonSchemaNotYetWritten, // get /api/v1/legal-hold
+	"getMostAccessedSecrets":         reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/most-accessed
+	"getPermission":                  reasonSchemaNotYetWritten, // get /api/v1/permissions/{id}
+	"getProject":                     reasonSchemaNotYetWritten, // get /api/v1/projects/{id}
+	"getProjectAccessReview":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review
+	"getProjectDrift":                reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/drift
+	"getRole":                        reasonSchemaNotYetWritten, // get /api/v1/roles/{id}
+	"getRolePermissions":             reasonSchemaNotYetWritten, // get /api/v1/roles/{id}/permissions
+	"getRotationPolicy":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/{id}
+	"getRotationStatus":              reasonSchemaNotYetWritten, // get /api/v1/rotation-policies/status
+	"getSecret":                      reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}
+	"getSecretRisk":                  reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/risk
+	"getSecretVersions":              reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/versions
+	"getSystemInfo":                  reasonSchemaNotYetWritten, // get /api/v1/system/info
+	"getSystemMetrics":               reasonSchemaNotYetWritten, // get /api/v1/system/metrics
+	"getUnusedSecrets":               reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/unused
+	"getUser":                        reasonSchemaNotYetWritten, // get /api/v1/users/{id}
+	"getUserMembershipsForUser":      reasonSchemaNotYetWritten, // get /api/v1/users/{id}/memberships
+	"getUserRoleAssignment":          reasonSchemaNotYetWritten, // get /api/v1/user-roles/user/{userId}
+	"getUserRolesForUser":            reasonSchemaNotYetWritten, // get /api/v1/users/{id}/roles
+	"grantMachineRole":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
+	"grantSecretACL":                 reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/acl
+	"inviteMember":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/memberships
+	"issueMachineToken":              reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/tokens
+	"liftLegalHold":                  reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
+	"listAccessRequests":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-requests
+	"listAccessReviewCampaigns":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/access-review/campaigns
+	"listAnomalyAlerts":              reasonSchemaNotYetWritten, // get /api/v1/audit/anomalies
+	"listAuditLogs":                  reasonSchemaNotYetWritten, // get /api/v1/audit/logs
+	"listBreakGlassActivations":      reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/break-glass
+	"listEnvironments":               reasonSchemaNotYetWritten, // get /api/v1/environments
+	"listGroups":                     reasonSchemaNotYetWritten, // get /api/v1/groups
+	"listMachineIdentities":          reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/machine-identities
+	"listMachineTokens":              reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/machine-identities/{machineId}/tokens
+	"listNotifications":              reasonSchemaNotYetWritten, // get /api/v1/notifications
+	"listPATs":                       reasonSchemaNotYetWritten, // get /api/v1/auth/tokens
+	"listPermissions":                reasonSchemaNotYetWritten, // get /api/v1/permissions
+	"listProjectEnvironments":        reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/environments
+	"listProjectInvitations":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/invitations
+	"listProjectMembers":             reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/members
+	"listProjectMemberships":         reasonSchemaNotYetWritten, // get /api/v1/projects/{id}/memberships
+	"listProjects":                   reasonSchemaNotYetWritten, // get /api/v1/projects
+	"listRBACAuditLogs":              reasonSchemaNotYetWritten, // get /api/v1/audit/rbac-logs
+	"listRiskExceptions":             reasonSchemaNotYetWritten, // get /api/v1/risk-exceptions
+	"listRoles":                      reasonSchemaNotYetWritten, // get /api/v1/roles
+	"listRotationPolicies":           reasonSchemaNotYetWritten, // get /api/v1/rotation-policies
+	"listSecretShares":               reasonSchemaNotYetWritten, // get /api/v1/secrets/{id}/shares
+	"listSecrets":                    reasonSchemaNotYetWritten, // get /api/v1/secrets
+	"listSessions":                   reasonSchemaNotYetWritten, // get /api/v1/auth/sessions
+	"listSharedSecrets":              reasonSchemaNotYetWritten, // get /api/v1/shared-secrets
+	"listShares":                     reasonSchemaNotYetWritten, // get /api/v1/shares
+	"listSoDPolicies":                reasonSchemaNotYetWritten, // get /api/v1/sod/policies
+	"listSoDViolations":              reasonSchemaNotYetWritten, // get /api/v1/sod/violations
+	"listStaleUsers":                 reasonSchemaNotYetWritten, // get /api/v1/users/stale
+	"listUsers":                      reasonSchemaNotYetWritten, // get /api/v1/users
+	"markAllNotificationsRead":       reasonSchemaNotYetWritten, // post /api/v1/notifications/read-all
+	"markNotificationRead":           reasonSchemaNotYetWritten, // post /api/v1/notifications/{id}/read
+	"openAccessReviewCampaign":       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns
+	"placeLegalHold":                 reasonSchemaNotYetWritten, // post /api/v1/legal-hold
+	"reactivateUser":                 reasonSchemaNotYetWritten, // post /api/v1/users/{id}/reactivate
+	"removeMachineRole":              reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}
+	"removeProjectMember":            reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/members/{userId}
+	"requirePasswordReset":           reasonSchemaNotYetWritten, // post /api/v1/users/{id}/require-password-reset
+	"resendProjectInvitation":        reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/invitations/{invitationId}/resend
+	"resendSetupLink":                reasonSchemaNotYetWritten, // post /api/v1/users/{id}/resend-setup-link
+	"resolveAccessRequest":           reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/access-requests/{requestId}
+	"restoreEnvironment":             reasonSchemaNotYetWritten, // post /api/v1/projects/{projectId}/environments/{id}/restore
+	"restoreProject":                 reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/restore
+	"restoreUser":                    reasonSchemaNotYetWritten, // post /api/v1/users/{id}/restore
+	"revokeBreakGlass":               reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass/{activationId}/revoke
+	"revokeMachineToken":             reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}
+	"revokeProjectAccessReview":      reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/revoke
+	"revokeProjectInvitation":        reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/invitations/{invitationId}
+	"revokeRiskException":            reasonSchemaNotYetWritten, // delete /api/v1/risk-exceptions/{id}
+	"revokeSecretACL":                reasonSchemaNotYetWritten, // delete /api/v1/secrets/{id}/acl/{aclId}
+	"rotateSecret":                   reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/rotate
+	"searchAuditLogs":                reasonSchemaNotYetWritten, // get /api/v1/audit/search
+	"searchUsers":                    reasonSchemaNotYetWritten, // get /api/v1/users/search
+	"shareSecret":                    reasonSchemaNotYetWritten, // post /api/v1/secrets/{id}/share
+	"startImpersonation":             reasonSchemaNotYetWritten, // post /api/v1/admin/impersonate
+	"suspendUser":                    reasonSchemaNotYetWritten, // post /api/v1/users/{id}/suspend
+	"transitionMachineIdentity":      reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/machine-identities/{machineId}
+	"transitionMembership":           reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/memberships/{membershipId}
+	"updateAuthProfile":              reasonSchemaNotYetWritten, // put /api/v1/auth/profile
+	"updateGroup":                    reasonSchemaNotYetWritten, // put /api/v1/groups/{id}
+	"updateProject":                  reasonSchemaNotYetWritten, // put /api/v1/projects/{id}
+	"updateProjectMember":            reasonSchemaNotYetWritten, // put /api/v1/projects/{id}/members/{userId}
+	"updateRole":                     reasonSchemaNotYetWritten, // put /api/v1/roles/{id}
+	"updateRotationPolicy":           reasonSchemaNotYetWritten, // put /api/v1/rotation-policies/{id}
+	"updateSecret":                   reasonSchemaNotYetWritten, // put /api/v1/secrets/{id}
+	"updateSharePermission":          reasonSchemaNotYetWritten, // put /api/v1/shares/{id}
+	"updateUser":                     reasonSchemaNotYetWritten, // put /api/v1/users/{id}
+	"updateUserRoles":                reasonSchemaNotYetWritten, // put /api/v1/users/{id}/roles
+	"verifyAuditChain":               reasonSchemaNotYetWritten, // get /api/v1/audit/verify
+	"verifyComplianceEvidence":       reasonSchemaNotYetWritten, // post /api/v1/compliance/evidence/verify
+	"withdrawAccessRequest":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests/{requestId}/withdraw
+	"writeAuditCheckpoint":           reasonSchemaNotYetWritten, // post /api/v1/audit/checkpoint
 }
 
 // outOfScopeRegistry lists every operationId that will never be enforced,
@@ -169,18 +174,18 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 //     third-party handler, not code this repo owns, and no client will ever
 //     be generated against Prometheus exposition format.
 var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "PAT"/"Session" (revokePAT, revokeSession, ...), values are all descriptive reason strings
-	"deleteGroup":              "204 No Content -- no body to validate", // delete /api/v1/groups/{id}
-	"deleteRole":               "204 No Content -- no body to validate", // delete /api/v1/roles/{id}
-	"deleteRotationPolicy":     "204 No Content -- no body to validate", // delete /api/v1/rotation-policies/{id}
-	"deleteSecret":             "204 No Content -- no body to validate", // delete /api/v1/secrets/{id}
-	"deleteUser":               "204 No Content -- no body to validate", // delete /api/v1/users/{id}
-	"removeGroupMember":        "204 No Content -- no body to validate", // delete /api/v1/groups/{id}/members/{userId}
-	"removePermissionFromRole": "204 No Content -- no body to validate", // delete /api/v1/roles/{id}/permissions/{permissionId}
-	"removeRoleFromGroup":      "204 No Content -- no body to validate", // delete /api/v1/groups/{id}/roles/{roleId}
-	"removeUserRole":           "204 No Content -- no body to validate", // delete /api/v1/user-roles
-	"revokePAT":                "204 No Content -- no body to validate", // delete /api/v1/auth/tokens/{id}
-	"revokeSession":            "204 No Content -- no body to validate", // delete /api/v1/auth/sessions/{id}
-	"revokeShare":              "204 No Content -- no body to validate", // delete /api/v1/shares/{id}
+	"deleteGroup":              reason204NoContent, // delete /api/v1/groups/{id}
+	"deleteRole":               reason204NoContent, // delete /api/v1/roles/{id}
+	"deleteRotationPolicy":     reason204NoContent, // delete /api/v1/rotation-policies/{id}
+	"deleteSecret":             reason204NoContent, // delete /api/v1/secrets/{id}
+	"deleteUser":               reason204NoContent, // delete /api/v1/users/{id}
+	"removeGroupMember":        reason204NoContent, // delete /api/v1/groups/{id}/members/{userId}
+	"removePermissionFromRole": reason204NoContent, // delete /api/v1/roles/{id}/permissions/{permissionId}
+	"removeRoleFromGroup":      reason204NoContent, // delete /api/v1/groups/{id}/roles/{roleId}
+	"removeUserRole":           reason204NoContent, // delete /api/v1/user-roles
+	"revokePAT":                reason204NoContent, // delete /api/v1/auth/tokens/{id}
+	"revokeSession":            reason204NoContent, // delete /api/v1/auth/sessions/{id}
+	"revokeShare":              reason204NoContent, // delete /api/v1/shares/{id}
 
 	"prometheusMetrics": "promhttp.Handler, third-party code, no generated client will ever read Prometheus exposition format", // get /metrics
 }

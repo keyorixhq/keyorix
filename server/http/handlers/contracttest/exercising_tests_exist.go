@@ -69,7 +69,13 @@ func CheckExercisingTestsExist() error {
 // derived source, so this check verifies against exactly what a real test
 // run would see.
 func realTestNames() (map[string]bool, error) {
-	cmd := exec.Command("go", "test", "-list", "^Test", ".")
+	// "go" resolves via PATH (S4036), but it's the same toolchain binary
+	// already trusted to compile and run this very test process -- if PATH
+	// were compromised enough to shadow it, that trust boundary was already
+	// crossed one level up, by the `go test` invocation that started this
+	// process in the first place. Same treatment as this repo's existing
+	// PATH-resolved `git` calls (internal/cli/secret/scan.go).
+	cmd := exec.Command("go", "test", "-list", "^Test", ".") // #nosec G204 -- NOSONAR go:S4036
 	cmd.Dir = handlersPkgDir
 	var out bytes.Buffer
 	cmd.Stdout = &out

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
 // allOperationIDs returns every operationId declared in the spec.
@@ -33,25 +35,42 @@ func operationsWithSchema() map[string]bool {
 	result := map[string]bool{}
 	for _, pathItem := range spec.Paths.Map() {
 		for _, op := range pathItem.Operations() {
-			if op.OperationID == "" || op.Responses == nil {
-				continue
-			}
-			for status, responseRef := range op.Responses.Map() {
-				if len(status) == 0 || status[0] != '2' || status == "204" {
-					continue
-				}
-				if responseRef.Value == nil {
-					continue
-				}
-				for _, mediaType := range responseRef.Value.Content {
-					if mediaType.Schema != nil {
-						result[op.OperationID] = true
-					}
-				}
+			if op.OperationID != "" && operationHasSchema(op) {
+				result[op.OperationID] = true
 			}
 		}
 	}
 	return result
+}
+
+// operationHasSchema reports whether op declares at least one non-204 2xx
+// response with a JSON-Schema-bearing content block, for any content type.
+func operationHasSchema(op *openapi3.Operation) bool {
+	if op.Responses == nil {
+		return false
+	}
+	for status, responseRef := range op.Responses.Map() {
+		if !is2xxExceptNoContent(status) || responseRef.Value == nil {
+			continue
+		}
+		if responseHasSchema(responseRef.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+func is2xxExceptNoContent(status string) bool {
+	return len(status) > 0 && status[0] == '2' && status != "204"
+}
+
+func responseHasSchema(resp *openapi3.Response) bool {
+	for _, mediaType := range resp.Content {
+		if mediaType.Schema != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckPartition asserts that every operation in the spec lands in exactly
