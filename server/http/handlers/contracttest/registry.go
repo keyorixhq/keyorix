@@ -11,7 +11,7 @@ package contracttest
 // CheckPartition fails the build if a pending entry's operation gains a
 // schema, which is the signal to delete the entry -- the registry shrinks
 // one operation at a time as ADR-074's Phase 2 handoff batches land.
-var pendingRegistry = map[string]string{
+var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "Token"/"PAT" (createPAT, issueMachineToken, ...), values are all the literal reason string "schema not yet written"
 	"acknowledgeAnomalyAlert":        "schema not yet written", // post /api/v1/audit/anomalies/{id}/acknowledge
 	"activateBreakGlass":             "schema not yet written", // post /api/v1/projects/{id}/break-glass
 	"addGroupMember":                 "schema not yet written", // post /api/v1/groups/{id}/members
@@ -168,7 +168,7 @@ var pendingRegistry = map[string]string{
 //   - prometheusMetrics: has a schema (text/plain), but it's promhttp's own
 //     third-party handler, not code this repo owns, and no client will ever
 //     be generated against Prometheus exposition format.
-var outOfScopeRegistry = map[string]string{
+var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "PAT"/"Session" (revokePAT, revokeSession, ...), values are all descriptive reason strings
 	"deleteGroup":              "204 No Content -- no body to validate", // delete /api/v1/groups/{id}
 	"deleteRole":               "204 No Content -- no body to validate", // delete /api/v1/roles/{id}
 	"deleteRotationPolicy":     "204 No Content -- no body to validate", // delete /api/v1/rotation-policies/{id}
