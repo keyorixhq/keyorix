@@ -164,9 +164,7 @@ describe('useSecretReveal', () => {
 
         expect(result.current.copyingSecretId).toBe(11);
 
-        await act(async () => {
-            resolveVersions([{ EncryptedValue: btoa('value'), VersionNumber: 1, CreatedAt: '2026-06-01T00:00:00Z' }]);
-        });
+        resolveVersions([{ EncryptedValue: btoa('value'), VersionNumber: 1, CreatedAt: '2026-06-01T00:00:00Z' }]);
 
         await waitFor(() => expect(result.current.copyingSecretId).toBeNull());
         expect(result.current.copiedSecretId).toBe(11);

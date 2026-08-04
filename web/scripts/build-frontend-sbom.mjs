@@ -21,27 +21,96 @@
  * prunes both.
  */
 
+import {
+    accessSync,
+    constants as fsConstants,
+    existsSync,
+    readFileSync,
+    writeFileSync,
+    unlinkSync,
+} from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-const outputFile = process.argv[2];
-if (!outputFile) {
-    console.error('[frontend-sbom] usage: build-frontend-sbom.mjs <output-file>');
-    process.exit(1);
-}
+import { delimiter, dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function fail(message) {
     console.error(`[frontend-sbom] FAIL: ${message}`);
     process.exit(1);
 }
 
+// Sonar S4036: don't let execFileSync search process.env.PATH blindly for
+// an executable by bare name. Resolve it ourselves instead, for two
+// distinct reasons:
+//   1. Reject relative/implicit PATH entries outright (e.g. a bare "."),
+//      the classic PATH-injection vector: whoever controls the current
+//      working directory controls what runs. Every candidate here must be
+//      an absolute, fixed directory.
+//   2. Among absolute candidates, PREFER one sitting in a directory this
+//      process cannot write to -- if a directory earlier in PATH is
+//      writable by us, an attacker with the same privileges could shadow
+//      "cdxgen"/"pnpm" there.
+//
+// (2) is a preference, not a hard requirement, deliberately: GitHub-hosted
+// runners make /usr/local/bin (where `npm install -g`/corepack-installed
+// pnpm actually land -- verified locally in a standard Node image) legally
+// writable by the `runner` user precisely so setup actions can install
+// there without sudo. A hard "must be unwriteable" requirement would
+// reject that legitimate install and break the script in the exact CI
+// environment it needs to run in. A fixed directory allowlist was also
+// considered and rejected: pnpm/action-setup's actual install location is
+// a versioned runner tool-cache path that isn't reliably predictable.
+function resolveTrusted(cmd) {
+    const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+    let writableMatch;
+    for (const dir of dirs) {
+        if (!dir.startsWith(sep)) continue; // reject relative/implicit entries
+        const candidate = `${dir}${sep}${cmd}`;
+        if (!existsSync(candidate)) continue;
+        try {
+            accessSync(dir, fsConstants.W_OK);
+            // Writable by us -- usable, but not preferred; keep looking for
+            // a better (non-writable-directory) match before falling back.
+            writableMatch ??= candidate;
+        } catch {
+            // Not writable by us -- the preferred, trustworthy case.
+            return candidate;
+        }
+    }
+    if (writableMatch) return writableMatch;
+    fail(`could not find "${cmd}" in any fixed (absolute) PATH directory`);
+    return undefined; // unreachable -- fail() exits the process
+}
+
+// Sonar: validate a user-supplied output path before it ever reaches the
+// file system, rather than trusting argv directly -- a future caller
+// (human or automated) passing an unexpected value (e.g. path traversal
+// like "../../../etc/cron.d/x") should get a clear error here, not a
+// write wherever that path happens to resolve. Scoped to "must resolve
+// somewhere inside the repository root", computed from this script's own
+// location (not process.cwd(), which varies -- the Makefile invokes this
+// from web/) so the check holds regardless of the caller's cwd.
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+function validatedOutputPath(rawArg) {
+    if (!rawArg) {
+        console.error('[frontend-sbom] usage: build-frontend-sbom.mjs <output-file>');
+        process.exit(1);
+    }
+    const resolved = resolve(rawArg);
+    if (resolved !== repoRoot && !resolved.startsWith(repoRoot + sep)) {
+        fail(`output path resolves outside the repository (${repoRoot}): ${resolved}`);
+    }
+    return resolved;
+}
+
+const outputFile = validatedOutputPath(process.argv[2]);
+
 // 1. Full transitive SBOM via cdxgen, autodetected (no --type — see header).
 const rawSbomFile = join(tmpdir(), `cdxgen-raw-${process.pid}.json`);
 try {
     execFileSync(
-        'cdxgen',
+        resolveTrusted('cdxgen'),
         ['--spec-version', '1.6', '--output', rawSbomFile, '.'],
         { stdio: ['ignore', 'ignore', 'inherit'] },
     );
@@ -69,9 +138,11 @@ if (bom.bomFormat !== 'CycloneDX' || bom.specVersion !== '1.6') {
 // 2. Production-only package set, ground truth from pnpm itself.
 let prodTree;
 try {
-    const raw = execFileSync('pnpm', ['list', '--prod', '--depth', 'Infinity', '--json'], {
-        encoding: 'utf8',
-    });
+    const raw = execFileSync(
+        resolveTrusted('pnpm'),
+        ['list', '--prod', '--depth', 'Infinity', '--json'],
+        { encoding: 'utf8' },
+    );
     prodTree = JSON.parse(raw);
 } catch (err) {
     fail(`\`pnpm list --prod --depth Infinity --json\` failed: ${err.message}`);
