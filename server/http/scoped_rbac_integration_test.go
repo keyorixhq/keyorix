@@ -252,7 +252,7 @@ func TestSecretACL_EndToEnd_PerSecretRoutes(t *testing.T) {
 	// Admin grants user 3 secrets.read AND secrets.write on secretWithACL only,
 	// through the real HTTP ACL endpoint (exercising the same grant path an
 	// operator would use).
-	grantBody := fmt.Sprintf(`{"user_id":3,"permissions":["secrets.read","secrets.write"]}`)
+	grantBody := `{"user_id":3,"permissions":["secrets.read","secrets.write"]}`
 	assert.Equal(t, http.StatusOK, do(t, "POST", fmt.Sprintf("/api/v1/secrets/%d/acl", secretWithACL), "admin-tok3", grantBody),
 		"admin grants the ACL")
 
