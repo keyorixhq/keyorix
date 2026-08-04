@@ -311,9 +311,25 @@ squattable name space.
   pre-import paths (`git log --all -- keyorix.go`) or direct SHAs. This
   was accepted rather than corrected: the affected code is 1,344 lines
   across four repos with 5–30 commits each, and it is slated for
-  replacement by generated clients. The four source repositories are
-  **archived rather than deleted** specifically so the browsable
-  per-file history remains available regardless of any of the above.
+  replacement by generated clients.
+
+  **Disposition of the four source repositories, decided separately from
+  the history-traversal concern above (2026-08-04):** `keyorix-node`,
+  `keyorix-python`, and `keyorix-java` are **deleted** — zero forks, zero
+  stars, no inbound links for any of the three — with their full branch
+  and tag history preserved as verified `git bundle --all` archives in
+  `keyorix-private/archive/` (`git bundle verify` passing, every ref
+  cross-checked against `git ls-remote` on the source repo before
+  deletion; restore via `git clone <repo>.bundle <dir>`), rather than
+  relying on GitHub's continued hosting of a repo with no external
+  dependents. `keyorix-go` is **archived, not deleted**: it has one fork
+  (`syntax-syndicate`, recorded 2026-07-24 — see "Prior AGPL grant is
+  irrevocable" above), and deleting a forked repository promotes that
+  fork to root of its own fork network, making an unaffiliated bulk-mirror
+  copy the only public repository left bearing the `keyorix-go` name. This
+  is a namespace-integrity decision, not a history-preservation one —
+  archiving keeps the real repository, not a mirror, as the canonical
+  answer to "what is keyorix-go" for anyone who finds it.
 
   The technique that would have avoided this: `git filter-repo
   --to-subdirectory-filter <lang>` on each throwaway clone, run *before*
