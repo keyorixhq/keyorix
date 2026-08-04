@@ -3,6 +3,7 @@ package contracttest
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -64,18 +65,31 @@ func CheckExercisingTestsExist() error {
 	)
 }
 
+// goBinary locates the "go" binary without searching PATH (Sonar S4036):
+// runtime.GOROOT() is the toolchain root baked into this very binary at
+// build time, not a runtime PATH lookup, so there is no PATH-shadowing
+// surface to resolve against in the first place -- a stronger property
+// than preferring a fixed, unwriteable PATH directory (which is what a
+// PATH search resolves down to anyway).
+func goBinary() (string, error) {
+	candidate := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if _, err := os.Stat(candidate); err != nil {
+		return "", fmt.Errorf("\"go\" not found at %s (from runtime.GOROOT()): %w", candidate, err)
+	}
+	return candidate, nil
+}
+
 // realTestNames shells out to `go test -list`, the ground truth ci.yml
 // itself uses to compute shard membership -- not go/ast or any other
 // derived source, so this check verifies against exactly what a real test
 // run would see.
 func realTestNames() (map[string]bool, error) {
-	// "go" resolves via PATH (S4036), but it's the same toolchain binary
-	// already trusted to compile and run this very test process -- if PATH
-	// were compromised enough to shadow it, that trust boundary was already
-	// crossed one level up, by the `go test` invocation that started this
-	// process in the first place. Same treatment as this repo's existing
-	// PATH-resolved `git` calls (internal/cli/secret/scan.go).
-	cmd := exec.Command("go", "test", "-list", "^Test", ".") // #nosec G204 -- NOSONAR go:S4036
+	goPath, err := goBinary()
+	if err != nil {
+		return nil, fmt.Errorf("contracttest: %w", err)
+	}
+
+	cmd := exec.Command(goPath, "test", "-list", "^Test", ".") // #nosec G204 -- goPath is derived entirely from runtime.GOROOT() (goBinary above), not attacker input
 	cmd.Dir = handlersPkgDir
 	var out bytes.Buffer
 	cmd.Stdout = &out
