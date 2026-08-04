@@ -364,33 +364,101 @@ func RequireScopedPermission(permission string, resolve ScopeResolver) func(http
 }
 
 func handleScopedPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, permission string, resolve ScopeResolver) {
-	userCtx := GetUserFromContext(r.Context())
-	if userCtx == nil {
-		unauthorizedResponse(w, "User context not found")
-		return
-	}
-	cs := GetCoreServiceFromContext(r.Context())
-	if cs == nil {
-		forbiddenResponse(w, "Authorization unavailable")
+	userCtx, cs, ok := requireUserAndCore(w, r)
+	if !ok {
 		return
 	}
 	scope, err := resolve(r, cs)
 	if err != nil {
-		if errors.Is(err, errTargetNotFound) {
-			// Reveal "not found" only to callers who hold the permission
-			// globally; otherwise deny without confirming the resource
-			// exists (avoids existence enumeration by unprivileged users).
-			if ok, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{}); aerr == nil && ok {
-				notFoundResponse(w, "Resource not found")
-			} else {
-				forbiddenResponse(w, "Insufficient permissions")
-			}
-			return
-		}
-		badRequestResponse(w, "Invalid target")
+		handleScopeResolutionError(w, r, cs, userCtx, permission, err)
 		return
 	}
 	allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, scope)
+	finishScopedPermissionRequest(next, w, r, cs, scope, allowed, err)
+}
+
+// RequireScopedSecretPermission is RequireScopedPermission specialized for the
+// per-secret routes (GET/PUT/PATCH/DELETE .../secrets/{id}[/...]): it resolves
+// scope from the secret named by idParam exactly like ScopeFromSecretParam (same
+// 400/404 behavior), but the final authorization check also consults per-secret
+// SecretACL grants (RBAC Phase 3) via core.AuthorizeSecretPrincipal — so a caller
+// who holds NO project-scope role but was explicitly granted the permission on
+// this one secret (or an ancestor folder, via HasSecretACL's inheritance walk) is
+// let through, closing the gap where SecretACL was honored by ListSecrets but
+// dead on arrival for every per-secret GET/write route. ACL grants remain
+// strictly additive: AuthorizeSecretPrincipal still falls back to the existing
+// role-based check, so a caller with neither a role nor a covering grant is
+// denied exactly as before. Machine/OIDC principals are unaffected — SecretACL
+// rows are user-scoped, so AuthorizeSecretPrincipal skips the ACL lookup for them
+// and takes the same role-based path as always.
+func RequireScopedSecretPermission(permission, idParam string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleScopedSecretPermissionRequest(next, w, r, permission, idParam)
+		})
+	}
+}
+
+func handleScopedSecretPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, permission, idParam string) {
+	userCtx, cs, ok := requireUserAndCore(w, r)
+	if !ok {
+		return
+	}
+	secretID, err := scopePathUint(r, idParam)
+	if err != nil {
+		badRequestResponse(w, "Invalid target")
+		return
+	}
+	secret, err := cs.Storage().GetSecret(r.Context(), secretID)
+	if err != nil {
+		handleScopeResolutionError(w, r, cs, userCtx, permission, errTargetNotFound)
+		return
+	}
+	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+	allowed, err := cs.AuthorizeSecretPrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secretID, permission)
+	finishScopedPermissionRequest(next, w, r, cs, scope, allowed, err)
+}
+
+// requireUserAndCore fetches the authenticated user and core service from the
+// request context, writing the appropriate error response and returning
+// ok=false if either is missing. Shared by RequireScopedPermission and
+// RequireScopedSecretPermission.
+func requireUserAndCore(w http.ResponseWriter, r *http.Request) (*UserContext, *core.KeyorixCore, bool) {
+	userCtx := GetUserFromContext(r.Context())
+	if userCtx == nil {
+		unauthorizedResponse(w, "User context not found")
+		return nil, nil, false
+	}
+	cs := GetCoreServiceFromContext(r.Context())
+	if cs == nil {
+		forbiddenResponse(w, "Authorization unavailable")
+		return nil, nil, false
+	}
+	return userCtx, cs, true
+}
+
+// handleScopeResolutionError writes the response for a scope-resolution failure,
+// shared by RequireScopedPermission and RequireScopedSecretPermission. An
+// errTargetNotFound reveals "not found" only to callers who hold the permission
+// globally; otherwise it denies without confirming the resource exists (avoids
+// existence enumeration by unprivileged users). Any other error is treated as an
+// unparseable target (400).
+func handleScopeResolutionError(w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, userCtx *UserContext, permission string, err error) {
+	if errors.Is(err, errTargetNotFound) {
+		if ok, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{}); aerr == nil && ok {
+			notFoundResponse(w, "Resource not found")
+		} else {
+			forbiddenResponse(w, "Insufficient permissions")
+		}
+		return
+	}
+	badRequestResponse(w, "Invalid target")
+}
+
+// finishScopedPermissionRequest applies the authorize result and, on success,
+// the per-project MFA policy (ADR-037), before serving next. Shared by
+// RequireScopedPermission and RequireScopedSecretPermission.
+func finishScopedPermissionRequest(next http.Handler, w http.ResponseWriter, r *http.Request, cs *core.KeyorixCore, scope core.Scope, allowed bool, err error) {
 	if err != nil || !allowed {
 		forbiddenResponse(w, "Insufficient permissions")
 		return

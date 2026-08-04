@@ -1,7 +1,9 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -154,4 +156,119 @@ func TestScopedRBACEnforcement(t *testing.T) {
 	// Write is denied to viewer-A even in project A (delete a secret it can read).
 	assert.Equal(t, http.StatusForbidden, do(t, "DELETE", "/api/v1/secrets/1", "viewerA-tok"),
 		"viewer-A has no delete permission")
+}
+
+// setupACLOnlyRBACCore builds a core with one project/environment and TWO
+// secrets in it, plus an "acl-only" user (ID 3) who holds a project-membership
+// role that grants NO permissions at all (mirroring the membership-only
+// UserRole pattern internal/core/secret_acl_test.go's newACLCore uses to seed a
+// GrantSecretACL target: GrantSecretACL requires the grantee to already be a
+// project member, but that membership role need not itself confer secrets.read/
+// write). User 3's only possible path to secrets.read/write is therefore a
+// SecretACL grant. Sessions: "admin-tok3" -> user 1 (global admin, used to
+// perform the grant through the real HTTP ACL endpoint), "aclonly-tok" -> user 3.
+func setupACLOnlyRBACCore(t *testing.T) (cs *core.KeyorixCore, secretWithACL, secretWithoutACL uint) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Project{}, &models.Environment{}, &models.User{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{},
+		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.SecretNode{}, &models.ShareRecord{}, &models.Session{},
+		&models.SecretACL{}, &models.AuditEvent{},
+		&models.SecretAccessSchedule{}, &models.Tag{}, &models.SecretTag{},
+	))
+
+	now := time.Now()
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "project-acl"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, ProjectID: 1, EnvironmentID: 1, Name: "acl-granted-secret", OwnerID: 1, CreatedBy: "admin", Status: "active", IsSecret: true}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 2, ProjectID: 1, EnvironmentID: 1, Name: "no-acl-secret", OwnerID: 1, CreatedBy: "admin", Status: "active", IsSecret: true}).Error)
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin3@test.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 3, Username: "aclonly", Email: "aclonly@test.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
+
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
+	// member-noperm: gives user 3 project membership (so GrantSecretACL's
+	// IsProjectMember precondition passes) WITHOUT granting any RBAC permission
+	// — no RolePermission row exists for this role. This is what proves the ACL
+	// grant, not a role, is what authorizes user 3 below.
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "member-noperm"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 2, ProjectID: 1}).Error)
+
+	seedSession(t, db, 1, "admin-tok3")
+	seedSession(t, db, 3, "aclonly-tok")
+
+	return core.NewKeyorixCore(store.NewLocalStorage(db)), 1, 2
+}
+
+// TestSecretACL_EndToEnd_PerSecretRoutes is the r140 regression test: it proves
+// that a per-secret SecretACL grant — documented since RBAC Phase 3 as usable
+// "without needing a project role at all" — actually authorizes the per-secret
+// GET/write HTTP routes, not just ListSecrets. Before this fix, AuthorizeSecret
+// (the ACL-aware check) had zero production callers: an ACL-only user was 403'd
+// on every per-secret route despite holding a valid grant.
+func TestSecretACL_EndToEnd_PerSecretRoutes(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cs, secretWithACL, secretWithoutACL := setupACLOnlyRBACCore(t)
+	router, err := NewRouter(&config.Config{}, cs)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	do := func(t *testing.T, method, path, token string, body string) int {
+		t.Helper()
+		var reqBody *bytes.Reader
+		if body != "" {
+			reqBody = bytes.NewReader([]byte(body))
+		} else {
+			reqBody = bytes.NewReader(nil)
+		}
+		req, err := http.NewRequest(method, server.URL+path, reqBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	// Sanity: before any grant, the ACL-only user (project member, zero-permission
+	// role) is denied read on BOTH secrets — proves the negative case (neither a
+	// qualifying role nor an ACL grant) still 403s, i.e. nothing was loosened.
+	assert.Equal(t, http.StatusForbidden, do(t, "GET", fmt.Sprintf("/api/v1/secrets/%d", secretWithACL), "aclonly-tok", ""),
+		"acl-only user must be denied before any grant exists")
+	assert.Equal(t, http.StatusForbidden, do(t, "GET", fmt.Sprintf("/api/v1/secrets/%d", secretWithoutACL), "aclonly-tok", ""),
+		"acl-only user must be denied on a secret it is never granted")
+
+	// Admin grants user 3 secrets.read AND secrets.write on secretWithACL only,
+	// through the real HTTP ACL endpoint (exercising the same grant path an
+	// operator would use).
+	grantBody := fmt.Sprintf(`{"user_id":3,"permissions":["secrets.read","secrets.write"]}`)
+	assert.Equal(t, http.StatusOK, do(t, "POST", fmt.Sprintf("/api/v1/secrets/%d/acl", secretWithACL), "admin-tok3", grantBody),
+		"admin grants the ACL")
+
+	// The ACL-only user can now GET the granted secret (middleware layer +
+	// GetSecretWithPermissionCheck's core.CheckSecretPermission both must honor
+	// the grant) ...
+	assert.Equal(t, http.StatusOK, do(t, "GET", fmt.Sprintf("/api/v1/secrets/%d", secretWithACL), "aclonly-tok", ""),
+		"acl-only user reads the secret it was granted, with no project role")
+	// ... and a write-tier route (tags) also succeeds, proving the grant covers
+	// secrets.write end to end through core.SetSecretTags -> EnforceSecretWritePermission.
+	assert.Equal(t, http.StatusOK, do(t, "PUT", fmt.Sprintf("/api/v1/secrets/%d/tags", secretWithACL), "aclonly-tok", `{"tags":["env:prod"]}`),
+		"acl-only user writes tags on the secret it was granted write on")
+
+	// The grant is scoped to exactly that one secret: the ACL-only user is still
+	// denied on the sibling secret in the SAME project that carries no grant —
+	// proves the fix is additive/per-secret, not an accidental project-wide loosening.
+	assert.Equal(t, http.StatusForbidden, do(t, "GET", fmt.Sprintf("/api/v1/secrets/%d", secretWithoutACL), "aclonly-tok", ""),
+		"acl-only user remains denied on a secret it was never granted")
 }
