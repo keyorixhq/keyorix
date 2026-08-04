@@ -60,10 +60,16 @@ Every release ships with `checksums.txt`:
 sha256sum --check --ignore-missing checksums.txt
 ```
 
-Every release also ships a **CycloneDX SBOM** per binary
-(`keyorix_sbom.cdx.json`, `keyorix-server_sbom.cdx.json`) — a full dependency and
-licence inventory, the component list needed to assess CVE exposure under the EU
-CRA. Both SBOMs are covered by `checksums.txt`.
+Every release also ships one **CycloneDX SBOM per binary** (e.g.
+`keyorix-server_linux_amd64_sbom.cdx.json`, 8 total across the CLI and server
+binaries × linux/darwin × amd64/arm64) — a full dependency and licence
+inventory, the component list needed to assess CVE exposure under the EU CRA.
+The four server binaries embed a built React dashboard (`server/webui`); each
+of their SBOMs links to one shared, production-scope frontend SBOM
+(`keyorix-server_frontend_sbom.cdx.json`) via a hashed CycloneDX
+`externalReferences` entry, so a scanner pointed at a server binary's own SBOM
+can follow the link rather than needing a separate download step (ADR-073).
+All 9 SBOMs are covered by `checksums.txt`.
 
 Release binaries are built with `-trimpath` and `CGO_ENABLED=0` from the tagged
 commit. `checksums.txt` and every container image are keylessly signed with

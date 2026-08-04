@@ -8,6 +8,32 @@ section. For architectural rationale see the ADRs (`docs/` and
 
 ## Done
 
+- **Release SBOMs now cover the frontend embedded in the server binaries
+  (ADR-073).** The per-binary-family SBOMs from the entry below
+  (`keyorix_sbom.cdx.json`, `keyorix-server_sbom.cdx.json`) covered only the
+  Go module graph — accurate until ADR-070 merged the frontend in and
+  `server/webui/embed.go` started baking the built React dashboard into the
+  four server binaries via `go:embed`. `make release`/`make sbom` now
+  generate one Go SBOM per binary (8 total, e.g.
+  `keyorix-server_darwin_arm64_sbom.cdx.json`) plus one shared,
+  production-scope frontend SBOM (`keyorix-server_frontend_sbom.cdx.json`,
+  filtered from cdxgen's full pnpm dependency tree against `pnpm list --prod`,
+  125 of 478 components) linked from all four server SBOMs via a hashed
+  CycloneDX `externalReferences` entry. `release.yml` now also sets up
+  Node/pnpm (a pre-existing gap — `populate-webui-dist` needed it before this
+  change too, undiscovered until wiring in the frontend SBOM step surfaced
+  it) and installs `cdxgen@12.8.2` pinned. SECURITY.md and RELEASING.md
+  updated to describe the actual 9-SBOM artifact set. Verified: a full
+  `make release` run produces all 17 dist/ files (8 binaries + 9 SBOMs),
+  every entry in `checksums.txt` checksum-verifies, all 9 SBOMs validate as
+  CycloneDX 1.6 against the official schema, the frontend SBOM contains real
+  production packages (react, zustand, axios, ...) and excludes dev tooling
+  by name (eslint, vite, playwright, vitest, typescript, prettier all
+  confirmed absent), the CLI SBOMs are unchanged in content (Go-only, no
+  frontend contamination), and the embedded hash in all four server SBOMs'
+  `externalReferences` matches the frontend SBOM's actual SHA-256 exactly
+  (recomputed independently, not just checked for presence).
+
 - **Deleted the orphaned `keyorixhq_keyorix-web` SonarCloud project.**
   ADR-070's Sonar setup was reversed: `web/` is analyzed as part of the
   single `keyorixhq_keyorix` project (see ADR-070 Consequences) rather than

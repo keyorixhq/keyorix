@@ -33,11 +33,35 @@ jobs:
         with:
           go-version: '1.26.5'
 
+      # `make release` has depended on `populate-webui-dist` (pnpm install +
+      # build of web/) since ADR-070 merged the frontend into this repo, but
+      # this workflow never set up Node/pnpm to make that dependency
+      # satisfiable — a pre-existing gap, not introduced by ADR-073, found
+      # while wiring in the frontend SBOM step below (which also needs
+      # pnpm). Same versions/actions as web-ci.yml's own setup, for
+      # consistency.
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
       # Pinned: supply-chain tooling is itself an attack surface. The Makefile
       # `release` target shells out to cyclonedx-gomod to emit a per-binary
       # CycloneDX SBOM (covered by checksums.txt, uploaded with dist/*).
       - name: Install SBOM generator
         run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0 # NOSONAR githubactions:S8545 -- pinned to v1.10.0; go.sum not applicable for a standalone build-time tool outside the module graph (same pattern as dast.yml's nuclei install)
+
+      # Pinned for the same reason as cyclonedx-gomod above (ADR-073: the
+      # frontend SBOM generator). `npm install -g`, not `pnpm add -g` — cdxgen
+      # is a standalone global CLI tool here, not a project dependency
+      # resolved against web/pnpm-lock.yaml.
+      - name: Install frontend SBOM generator
+        run: npm install -g @cyclonedx/cdxgen@12.8.2 # NOSONAR githubactions:S8545 -- pinned to v12.8.2, verified (ADR-073) against this repo's actual pnpm-lock.yaml; not in any lockfile since it's a standalone build-time tool, same pattern as cyclonedx-gomod above
 
       # VERSION is passed via env, not interpolated into the `run:` string (#115):
       # a tag name can contain shell metacharacters ($, `, ;, |, &, ( ) are all
