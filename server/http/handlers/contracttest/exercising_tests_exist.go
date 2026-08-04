@@ -98,7 +98,7 @@ func realTestNames() (map[string]bool, error) {
 		return nil, fmt.Errorf("contracttest: %w", err)
 	}
 
-	cmd := exec.Command(goPath, "test", "-list", "^Test", ".") // #nosec G204 -- goPath is derived entirely from runtime.GOROOT() (goBinary above), not attacker input
+	cmd := exec.Command(goPath, "test", "-list", "^Test", ".") // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command // goPath is derived entirely from runtime.GOROOT() (goBinary above), not attacker input
 	cmd.Dir = handlersPkgDir
 	var out bytes.Buffer
 	cmd.Stdout = &out
