@@ -22,7 +22,7 @@ That's it. Watch the runs under the repo's **Actions** tab.
 
 | Workflow | Trigger | Output |
 |----------|---------|--------|
-| `release.yml` → `build-and-release` | `v*` tag | CLI + server binaries for linux/darwin × amd64/arm64 (`keyorix_<os>_<arch>`, `keyorix-server_<os>_<arch>`) + `checksums.txt`, attached to the GitHub Release. |
+| `release.yml` → `build-and-release` | `v*` tag | CLI + server binaries for linux/darwin × amd64/arm64 (`keyorix_<os>_<arch>`, `keyorix-server_<os>_<arch>`), one CycloneDX SBOM per binary (`<binary_asset_name>_sbom.cdx.json`, 8 total) plus one shared, production-scope frontend SBOM (`keyorix-server_frontend_sbom.cdx.json`, linked from all four server SBOMs — ADR-073), `checksums.txt` covering all 17 files, and `checksums.txt.sig`/`.pem` (cosign keyless signature). All attached to the GitHub Release. |
 | `release.yml` → `publish-chart` | `v*` tag | Helm chart pushed to `oci://ghcr.io/keyorixhq/charts` (chart + app version = the tag without the `v`). |
 | `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-server` image tagged with the semver version. |
 | `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-web` image tagged with the same semver version — same workflow run, same tag (ADR-070). |

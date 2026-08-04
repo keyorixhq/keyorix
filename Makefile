@@ -14,7 +14,7 @@ TRUST_LICENSE_KEYS?=
 # deterministic per source revision, so release builds stay reproducible (no build date).
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)"
 
-.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom
+.PHONY: build build-cli build-server build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -119,22 +119,54 @@ release: populate-webui-dist
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
-	@echo "→ Generating CycloneDX SBOMs (per binary, app mode)"
-	cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_sbom.cdx.json    .
-	cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_sbom.cdx.json .
+	$(MAKE) _sbom-generate
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
 	@echo "✅ Release binaries + SBOMs in dist/"
 
 # CycloneDX SBOM per shipped binary (app mode: exactly the deps linked into that
-# binary + Go stdlib). Feed to govulncheck/grype to answer "are we affected by
-# CVE-X?" — the core CRA Article 14 question. Requires cyclonedx-gomod on PATH
-# (go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0).
+# binary + Go stdlib) plus one production-only frontend SBOM linked from each
+# server binary's SBOM (ADR-073 — before that ADR, this covered the Go module
+# graph only, which stopped being a complete description of keyorix-server the
+# moment server/webui/embed.go started baking the built dashboard in). Feed to
+# govulncheck/grype to answer "are we affected by CVE-X?" — the core CRA
+# Article 14 question. Requires cyclonedx-gomod on PATH
+# (go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0)
+# and cdxgen on PATH (npm install -g @cyclonedx/cdxgen@12.8.2).
 sbom:
 	@mkdir -p dist
-	cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_sbom.cdx.json    .
-	cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_sbom.cdx.json .
+	$(MAKE) _sbom-generate
 	@echo "✅ SBOMs in dist/"
+
+# Shared by release and sbom so the two targets can't silently drift (ADR-073).
+# Order matters and is enforced by this sequencing, not left to convention:
+# the frontend SBOM must exist in its final form, hashed, before any server
+# Go SBOM is generated and linked to it — generating them the other way
+# round would leave a reference that validates cleanly while pointing at a
+# stale or absent hash. See scripts/link-sbom.mjs's own header.
+_sbom-generate:
+	@echo "→ Generating frontend SBOM (ADR-073), production scope only"
+	# cdxgen must run with NO --type flag here. `--type npm` silently drops to
+	# scanning package.json's direct dependencies only (47 components instead
+	# of the real ~478-package pnpm-lock.yaml graph filtered to ~125
+	# production) — no error, just wrong. See
+	# web/scripts/build-frontend-sbom.mjs's own header for the full story
+	# (this exact trap, measured, is why the flag is absent below).
+	cd web && node scripts/build-frontend-sbom.mjs ../dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	@echo "→ Generating per-binary Go CycloneDX SBOMs (one per binary, not per binary family)"
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_linux_amd64_sbom.cdx.json    .
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_linux_arm64_sbom.cdx.json    .
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_darwin_amd64_sbom.cdx.json   .
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main .      -licenses -output dist/$(BINARY_CLI)_darwin_arm64_sbom.cdx.json   .
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json  .
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  .
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json .
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 cyclonedx-gomod app -json -main server -licenses -output dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json .
+	@echo "→ Linking frontend SBOM into the four server Go SBOMs (ADR-073)"
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_linux_amd64_sbom.cdx.json  dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_linux_arm64_sbom.cdx.json  dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_amd64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
+	node scripts/link-sbom.mjs dist/$(BINARY_SERVER)_darwin_arm64_sbom.cdx.json dist/$(BINARY_SERVER)_frontend_sbom.cdx.json
 
 clean:
 	rm -rf $(BUILD_DIR) dist/
