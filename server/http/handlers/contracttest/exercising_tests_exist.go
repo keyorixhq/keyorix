@@ -72,7 +72,16 @@ func CheckExercisingTestsExist() error {
 // than preferring a fixed, unwriteable PATH directory (which is what a
 // PATH search resolves down to anyway).
 func goBinary() (string, error) {
-	candidate := filepath.Join(runtime.GOROOT(), "bin", "go")
+	return goBinaryFrom(runtime.GOROOT())
+}
+
+// goBinaryFrom is goBinary's logic against an arbitrary goroot, kept
+// separate so its error branch is directly testable -- runtime.GOROOT()
+// itself is fixed at build time (Go 1.20+ no longer reads GOROOT from the
+// environment at call time), so there is no way to make goBinary() itself
+// observe a bad root without this split.
+func goBinaryFrom(goroot string) (string, error) {
+	candidate := filepath.Join(goroot, "bin", "go")
 	if _, err := os.Stat(candidate); err != nil {
 		return "", fmt.Errorf("\"go\" not found at %s (from runtime.GOROOT()): %w", candidate, err)
 	}
