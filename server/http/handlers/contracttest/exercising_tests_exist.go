@@ -70,9 +70,12 @@ func CheckExercisingTestsExist() error {
 // build time, not a runtime PATH lookup, so there is no PATH-shadowing
 // surface to resolve against in the first place -- a stronger property
 // than preferring a fixed, unwriteable PATH directory (which is what a
-// PATH search resolves down to anyway).
+// PATH search resolves down to anyway). SA1019: runtime.GOROOT is deprecated
+// because a binary copied to another machine may carry a stale build-time
+// root -- doesn't apply here, this package only ever runs via `go test` in
+// the same CI job that just built it, never a copied/redistributed binary.
 func goBinary() (string, error) {
-	return goBinaryFrom(runtime.GOROOT())
+	return goBinaryFrom(runtime.GOROOT()) //nolint:staticcheck // SA1019: see doc comment above
 }
 
 // goBinaryFrom is goBinary's logic against an arbitrary goroot, kept
