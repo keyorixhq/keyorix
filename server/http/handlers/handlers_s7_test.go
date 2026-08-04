@@ -24,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -927,6 +928,7 @@ func TestRefreshToken_ValidToken_S7(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+session.SessionToken)
 	w := httptest.NewRecorder()
 	h.RefreshToken(w, req)
+	contracttest.AssertOpenAPIResponse(t, req, w)
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))

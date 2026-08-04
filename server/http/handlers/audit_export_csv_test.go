@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 )
 
 func TestExportAuditLogsCSV(t *testing.T) {
@@ -37,6 +38,7 @@ func TestExportAuditLogsCSV(t *testing.T) {
 		req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export.csv", nil))
 		w := httptest.NewRecorder()
 		h.ExportAuditLogsCSV(w, req)
+		contracttest.AssertOpenAPIResponse(t, req, w)
 
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/csv")

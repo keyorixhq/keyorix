@@ -8,12 +8,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 )
 
 func TestHealthCheck(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	HealthCheck(w, req)
+
+	// Before any assertion below consumes w.Body via a Decoder.
+	contracttest.AssertOpenAPIResponse(t, req, w)
 
 	require.Equal(t, http.StatusOK, w.Code)
 

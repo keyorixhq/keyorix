@@ -16,6 +16,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 )
 
 func TestExportAccessReviewCampaignCSV(t *testing.T) {
@@ -50,6 +51,7 @@ func TestExportAccessReviewCampaignCSV(t *testing.T) {
 			map[string]string{"id": "1", "campaignId": "5"})
 		w := httptest.NewRecorder()
 		h.ExportAccessReviewCampaignCSV(w, req)
+		contracttest.AssertOpenAPIResponse(t, req, w)
 
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/csv")

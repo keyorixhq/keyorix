@@ -25,6 +25,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -703,6 +704,7 @@ func TestLogin_HappyPath_S8(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.Login(w, req)
+	contracttest.AssertOpenAPIResponse(t, req, w)
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))

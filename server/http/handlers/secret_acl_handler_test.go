@@ -22,6 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -135,6 +136,7 @@ func TestListSecretACLs_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListSecretACLs(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+	contracttest.AssertOpenAPIResponse(t, req, w)
 	// Response should contain an empty list (null or []).
 	assert.Contains(t, w.Body.String(), "success")
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 )
 
 var exportHandlerCounter atomic.Int64
@@ -43,22 +44,25 @@ func freshExportDB(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
-func doExportGet(t *testing.T, svc *core.KeyorixCore, secretID uint, queryParams string) *httptest.ResponseRecorder {
+func doExportGet(t *testing.T, svc *core.KeyorixCore, secretID uint, queryParams string) (*httptest.ResponseRecorder, *http.Request) {
 	t.Helper()
 	h, err := NewSecretHandler(svc)
 	require.NoError(t, err)
 
+	// Mounted at the real API path (matching router.go), not a shortened
+	// local one -- the OpenAPI contract harness resolves operations by the
+	// request's actual URL path, which must match what the spec declares.
 	r := chi.NewRouter()
-	r.Get("/secrets/{id}/access-log/export", h.ExportAccessLog)
+	r.Get("/api/v1/secrets/{id}/access-log/export", h.ExportAccessLog)
 
-	url := fmt.Sprintf("/secrets/%d/access-log/export", secretID)
+	url := fmt.Sprintf("/api/v1/secrets/%d/access-log/export", secretID)
 	if queryParams != "" {
 		url += "?" + queryParams
 	}
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
-	return rr
+	return rr, req
 }
 
 func seedSecretAndEvents(t *testing.T, db *gorm.DB) uint {
@@ -106,7 +110,7 @@ func TestExportAccessLog_InvalidID(t *testing.T) {
 
 func TestExportAccessLog_SecretNotFound(t *testing.T) {
 	svc, _ := freshExportDB(t)
-	rr := doExportGet(t, svc, 9999, "")
+	rr, _ := doExportGet(t, svc, 9999, "")
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
@@ -114,7 +118,7 @@ func TestExportAccessLog_InvalidFormat(t *testing.T) {
 	svc, db := freshExportDB(t)
 	secretID := seedSecretAndEvents(t, db)
 
-	rr := doExportGet(t, svc, secretID, "format=xlsx")
+	rr, _ := doExportGet(t, svc, secretID, "format=xlsx")
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
@@ -125,7 +129,7 @@ func TestExportAccessLog_StorageError(t *testing.T) {
 	// Drop audit_events to force an error from GetAuditLogs.
 	require.NoError(t, db.Exec("DROP TABLE IF EXISTS audit_events").Error)
 
-	rr := doExportGet(t, svc, secretID, "")
+	rr, _ := doExportGet(t, svc, secretID, "")
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
@@ -134,7 +138,7 @@ func TestExportAccessLog_DefaultFormatJSON(t *testing.T) {
 	secretID := seedSecretAndEvents(t, db)
 
 	// No format param → defaults to json
-	rr := doExportGet(t, svc, secretID, "")
+	rr, _ := doExportGet(t, svc, secretID, "")
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
 	assert.Contains(t, rr.Header().Get("Content-Disposition"), fmt.Sprintf("secret-%d-access-log.json", secretID))
@@ -149,7 +153,8 @@ func TestExportAccessLog_JSONFormat(t *testing.T) {
 	svc, db := freshExportDB(t)
 	secretID := seedSecretAndEvents(t, db)
 
-	rr := doExportGet(t, svc, secretID, "format=json")
+	rr, req := doExportGet(t, svc, secretID, "format=json")
+	contracttest.AssertOpenAPIResponse(t, req, rr)
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "application/json")
 
@@ -163,7 +168,8 @@ func TestExportAccessLog_CSVFormat(t *testing.T) {
 	svc, db := freshExportDB(t)
 	secretID := seedSecretAndEvents(t, db)
 
-	rr := doExportGet(t, svc, secretID, "format=csv")
+	rr, req := doExportGet(t, svc, secretID, "format=csv")
+	contracttest.AssertOpenAPIResponse(t, req, rr)
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "text/csv")
 	assert.Contains(t, rr.Header().Get("Content-Disposition"), fmt.Sprintf("secret-%d-access-log.csv", secretID))

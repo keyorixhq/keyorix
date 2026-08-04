@@ -32,6 +32,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -2673,6 +2674,7 @@ func TestGetSetupToken_HappyPath_S11(t *testing.T) {
 	r = withChiParamS8(r, "token", issued.PlainToken)
 	w := httptest.NewRecorder()
 	h.GetSetupToken(w, r)
+	contracttest.AssertOpenAPIResponse(t, r, w)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
