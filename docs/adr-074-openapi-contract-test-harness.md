@@ -106,15 +106,19 @@ since `kin-openapi` cannot load a 3.1 document at all. `kin-openapi` is the
 defensible choice for the spec as it exists today, not a permanent one
 regardless of spec version.
 
-## The honest enforced baseline is ~7, not 10
+## The honest enforced baseline is ~6, not 10
 
-Three of the ten schema'd operations validate close to nothing:
+Four of the ten schema'd operations validate close to nothing:
 
-- `exportAuditLogsCSV` and `exportAccessReviewCampaignCSV` declare
-  `text/csv` bodies as `{type: string, format: binary}` — a schema
-  satisfied by any non-empty byte stream. Wiring the harness to these two
-  checks "a response body exists with the right content-type," not "the
-  response matches its contract."
+- `exportAuditLogsCSV`, `exportAccessReviewCampaignCSV`, and
+  `exportSecretAccessLog` all declare their bodies as `{type: string,
+  format: binary}` — a schema satisfied by any non-empty byte stream.
+  `exportSecretAccessLog` declares this for **both** of its content types
+  (`application/json` and `text/csv`), not just its CSV side — its JSON
+  response carries exactly the same near-zero signal as the two dedicated
+  CSV endpoints. Wiring the harness to these three checks "a response body
+  exists with the right content-type," not "the response matches its
+  contract."
 - `prometheusMetrics` (`GET /metrics`) is `promhttp.Handler()` — third-party
   code, not a handler this repo owns, and no client is or will be generated
   against Prometheus exposition format. It is **out of scope**, and recorded
@@ -124,14 +128,14 @@ Three of the ten schema'd operations validate close to nothing:
   indistinguishable from one nobody thought about yet, which is the same
   false-control shape this ADR exists to prevent.
 
-That leaves **7 operations with actual JSON-Schema signal enforced on day
+That leaves **6 operations with actual JSON-Schema signal enforced on day
 one**: `authGetSetupToken`, `authLogin`, `authRefresh`, `healthCheck`,
-`listSecretACLs`, `systemInit`, and `exportSecretAccessLog`'s JSON side (see
-below). Phase 2 wires the harness to all 10 schema'd operations — the CSV
-pair still gets real value from content-type and non-empty-body checks, and
-`prometheusMetrics` is explicitly registered out-of-scope rather than
-omitted — but the ADR states the number that reflects actual verification
-strength, not the number that looks best.
+`listSecretACLs`, and `systemInit`. Phase 2 wires the harness to all 10
+schema'd operations — the three near-zero-signal ones still get real value
+from content-type and non-empty-body checks, and `prometheusMetrics` is
+explicitly registered out-of-scope rather than omitted — but the ADR states
+the number that reflects actual verification strength, not the number that
+looks best.
 
 ## `exportSecretAccessLog`'s dual content-type is a deliberate case, not an incidental one
 
