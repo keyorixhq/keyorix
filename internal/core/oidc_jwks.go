@@ -188,21 +188,35 @@ func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interfa
 	}
 	// Past this point a refetch is needed — either because the cache is
 	// stale/missing, or because it's fresh but doesn't have this kid (possible
-	// rotation). BOTH cases are rate-limited the same way: at most one refetch
+	// rotation). ALL of those are rate-limited the same way: at most one refetch
 	// ATTEMPT per jwksMinRefetchInterval per issuer, tracked by lastFetchAttempt
 	// (set on every attempt, success or failure) rather than entry.fetchedAt (set
-	// only on success). Previously only the "fresh cache, unknown kid" case was
-	// gated; the stale-cache path — e.g. during an IdP outage, where every refetch
-	// fails and the cache never becomes fresh again — had NO gate at all, so it
-	// could be hit on every single request to force an unbounded stream of
-	// outbound JWKS fetches: a DoS amplifier against the IdP and against this
-	// server's own outbound budget/latency.
+	// only on success). This also covers the cold-start case — an issuer that has
+	// NEVER had a successful fetch (its JWKS endpoint has been unreachable since
+	// boot, e.g. an air-gapped deployment). That case used to fall through this
+	// gate unconditionally (it required entry != nil), so every verification
+	// attempt fired a live outbound fetch and blocked for the full http.Client
+	// timeout — reachable pre-authentication, since keyfunc runs during JWT parse
+	// BEFORE the signature is verified and only requires the token's iss to name a
+	// configured issuer (a public, guessable value). singleflight already
+	// collapses CONCURRENT callers into one outbound fetch, so this was never an
+	// amplification attack against the IdP; the cost was sequential, on Keyorix
+	// itself — each blocked request held a goroutine and a connection for up to
+	// the timeout, one after another.
+	//
+	// Accepted tradeoff: an issuer whose first-ever fetch fails now fails fast —
+	// rejected immediately, not blocked — for up to jwksMinRefetchInterval before
+	// the next attempt, rather than paying a full blocking fetch on every request
+	// in that window. Intentional: a bounded, fast rejection beats an unbounded
+	// number of full-timeout blocking calls.
 	lastAttempt, attempted := r.lastFetchAttempt[issuer]
-	if entry != nil && attempted && time.Since(lastAttempt) < jwksMinRefetchInterval {
+	if attempted && time.Since(lastAttempt) < jwksMinRefetchInterval {
 		r.mu.Unlock()
 		// Still within the stale-grace window: serve the cached key if we have it
 		// rather than paying for (or waiting on) a refetch we've decided to skip.
-		if time.Since(entry.fetchedAt) < jwksCacheTTL+jwksStaleGrace {
+		// entry is nil on the cold-start path (no fetch has ever succeeded), so
+		// this is skipped there and we fall through to the rate-limited error.
+		if entry != nil && time.Since(entry.fetchedAt) < jwksCacheTTL+jwksStaleGrace {
 			if k, ok := entry.keys[kid]; ok {
 				return k, nil
 			}
