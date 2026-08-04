@@ -11,9 +11,14 @@ configuration and release artifacts.
 | Latest release | ✅ Security fixes |
 | Older releases | ❌ Upgrade to latest |
 
-Keyorix is pre-1.0. A formal backport policy for previous minor versions (relevant
-for air-gapped deployments with slow upgrade cadences) will be published with the
-1.0 release; commercial licence tiers will include extended backport windows.
+Keyorix is pre-1.0 and has **not yet declared a support period** under the EU Cyber
+Resilience Act. Pre-1.0 tags are development releases: they carry no declared support
+period and no Declaration of Conformity.
+
+From v1.0, LTS releases receive **five years of security updates**, delivered to
+air-gapped deployments as signed offline bundles with an SBOM and a VEX document.
+See [SUPPORT.md](SUPPORT.md) for the full policy and
+[ADR-067](docs/adr-067-release-lifecycle-support-policy.md) for the rationale.
 
 ## Reporting a Vulnerability
 
