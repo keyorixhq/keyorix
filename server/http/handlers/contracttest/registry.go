@@ -173,6 +173,14 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 //   - prometheusMetrics: has a schema (text/plain), but it's promhttp's own
 //     third-party handler, not code this repo owns, and no client will ever
 //     be generated against Prometheus exposition format.
+//
+// A reason string here is NOT independently verified against the spec by
+// CheckPartition -- it only checks that the entry doesn't ALSO have a real
+// 2xx JSON schema, unless the operationId is in schemaExemptOperations
+// below. That means the only way to legitimately opt a schema-bearing
+// operation out of enforcement is to add it to schemaExemptOperations with
+// its own justification, not just write a reason string here -- otherwise
+// this map would be a silent, unaudited escape hatch from enforcement.
 var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, not credentials; some contain "PAT"/"Session" (revokePAT, revokeSession, ...), values are all descriptive reason strings
 	"deleteGroup":              reason204NoContent, // delete /api/v1/groups/{id}
 	"deleteRole":               reason204NoContent, // delete /api/v1/roles/{id}
@@ -190,6 +198,17 @@ var outOfScopeRegistry = map[string]string{ // #nosec G101 -- operationId keys, 
 	"prometheusMetrics": "promhttp.Handler, third-party code, no generated client will ever read Prometheus exposition format", // get /metrics
 }
 
+// schemaExemptOperations is the explicit, narrow allowlist of operationIds
+// permitted to be BOTH in outOfScopeRegistry AND have a real 2xx JSON schema
+// in openapi.yaml -- today, only prometheusMetrics (see its comment above).
+// CheckPartition (checks.go) flags any other outOfScopeRegistry entry that
+// also has a schema as a violation: without this allowlist, a reason string
+// alone would let any schema-bearing operation be silently opted out of all
+// contract enforcement while CI stays green.
+var schemaExemptOperations = map[string]bool{
+	"prometheusMetrics": true,
+}
+
 // exercisingTests maps each enforced operationId to the top-level test
 // function name(s) that call AssertOpenAPIResponse for it. This exists
 // only so CheckAllEnforcedExercised can stay correct under CI's test
@@ -205,7 +224,7 @@ var exercisingTests = map[string][]string{
 	"authLogin":                     {"TestLogin_HappyPath_S8"},
 	"authRefresh":                   {"TestRefreshToken_ValidToken_S7"},
 	"healthCheck":                   {"TestHealthCheck"},
-	"listSecretACLs":                {"TestListSecretACLs_Empty"},
+	"listSecretACLs":                {"TestListSecretACLs_Empty", "TestGrantSecretACL_HappyPath"},
 	"systemInit":                    {"TestAuthHandler_InitSystem_Success"},
 	"exportSecretAccessLog":         {"TestExportAccessLog_JSONFormat", "TestExportAccessLog_CSVFormat"},
 	"exportAuditLogsCSV":            {"TestExportAuditLogsCSV"},

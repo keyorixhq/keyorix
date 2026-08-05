@@ -65,28 +65,44 @@ func CheckExercisingTestsExist() error {
 	)
 }
 
-// goBinary locates the "go" binary without searching PATH (Sonar S4036):
-// runtime.GOROOT() is the toolchain root baked into this very binary at
-// build time, not a runtime PATH lookup, so there is no PATH-shadowing
-// surface to resolve against in the first place -- a stronger property
-// than preferring a fixed, unwriteable PATH directory (which is what a
-// PATH search resolves down to anyway). SA1019: runtime.GOROOT is deprecated
-// because a binary copied to another machine may carry a stale build-time
-// root -- doesn't apply here, this package only ever runs via `go test` in
-// the same CI job that just built it, never a copied/redistributed binary.
+// goBinary locates the "go" binary. It prefers runtime.GOROOT() (Sonar
+// S4036 flags a bare PATH search; the GOROOT candidate avoids that in the
+// common case), but that is best-effort, not a hard guarantee: a -trimpath
+// build (this repo's own release builds use it, see Makefile) strips the
+// embedded root entirely, and even a non-trimpath binary's runtime.GOROOT()
+// still honors a GOROOT environment variable override at process start
+// (https://pkg.go.dev/runtime#GOROOT, and empirically verified against this
+// toolchain) -- so it is not immune to environment tampering, just keyed on
+// a different variable than PATH. When the GOROOT candidate doesn't exist,
+// this falls back to a PATH search so the check still works under
+// -trimpath or an unusual GOROOT, matching the behavior this package had
+// before the switch to runtime.GOROOT() (90f24f2c). SA1019: runtime.GOROOT
+// is deprecated for exactly the environment-dependence reason above; used
+// deliberately here as a first-choice fast path, with the PATH fallback
+// covering the case its own deprecation note describes.
 func goBinary() (string, error) {
-	return goBinaryFrom(runtime.GOROOT()) //nolint:staticcheck // SA1019: see doc comment above
+	return resolveGoBinary(runtime.GOROOT()) //nolint:staticcheck // SA1019: see doc comment above
 }
 
-// goBinaryFrom is goBinary's logic against an arbitrary goroot, kept
-// separate so its error branch is directly testable -- runtime.GOROOT()
-// itself is fixed at build time (Go 1.20+ no longer reads GOROOT from the
-// environment at call time), so there is no way to make goBinary() itself
-// observe a bad root without this split.
+// resolveGoBinary is goBinary's logic against an arbitrary goroot, kept
+// separate so both its GOROOT-hit and PATH-fallback branches are directly
+// testable without depending on the real runtime.GOROOT() value.
+func resolveGoBinary(goroot string) (string, error) {
+	if candidate, err := goBinaryFrom(goroot); err == nil {
+		return candidate, nil
+	}
+	path, err := exec.LookPath("go") // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- literal "go", not attacker input; fallback for when GOROOT doesn't yield a usable path
+	if err != nil {
+		return "", fmt.Errorf("\"go\" not found at %s (from runtime.GOROOT()) or on PATH: %w", filepath.Join(goroot, "bin", "go"), err)
+	}
+	return path, nil
+}
+
+// goBinaryFrom reports whether goroot/bin/go exists, without touching PATH.
 func goBinaryFrom(goroot string) (string, error) {
 	candidate := filepath.Join(goroot, "bin", "go")
 	if _, err := os.Stat(candidate); err != nil {
-		return "", fmt.Errorf("\"go\" not found at %s (from runtime.GOROOT()): %w", candidate, err)
+		return "", fmt.Errorf("%q not found: %w", candidate, err)
 	}
 	return candidate, nil
 }
@@ -101,7 +117,7 @@ func realTestNames() (map[string]bool, error) {
 		return nil, fmt.Errorf("contracttest: %w", err)
 	}
 
-	cmd := exec.Command(goPath, "test", "-list", "^Test", ".") // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command // goPath is derived entirely from runtime.GOROOT() (goBinary above), not attacker input
+	cmd := exec.Command(goPath, "test", "-list", "^Test", ".") // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command // goPath comes from goBinary() above (runtime.GOROOT(), or a PATH lookup for the literal string "go" as fallback), never from attacker/network input
 	cmd.Dir = handlersPkgDir
 	var out bytes.Buffer
 	cmd.Stdout = &out

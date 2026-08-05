@@ -23,8 +23,15 @@ func TestMain(m *testing.M) {
 	// ADR-074, "Coverage assertion: enforced must mean exercised", and
 	// CheckAllEnforcedExercised's doc comment for how this stays correct
 	// under CI's handlers-1..4 sharding.
+	//
+	// This can't be a normal *testing.T failure (no t.Fatal): it has to run
+	// after m.Run() to see every test's result, by which point there's no
+	// live *testing.T left to attribute it to. That means it produces no
+	// "--- FAIL: TestXxx" line, so the "FAIL:" prefix here is load-bearing --
+	// without it, a routine `go test -v ... | grep -iE 'fail|error'` triage
+	// would silently drop this line, since neither word otherwise appears in it.
 	if err := contracttest.CheckAllEnforcedExercised(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
 		if code == 0 {
 			code = 1
 		}

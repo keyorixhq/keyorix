@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 )
 
@@ -62,24 +61,19 @@ func TestContentTypeSelection_NotJSONAssumption(t *testing.T) {
 		t.Fatalf("building router: %v", err)
 	}
 
+	// validate reuses AssertOpenAPIResponse's own matching+validation logic
+	// (validateAgainstRouter, harness.go) against this synthetic router,
+	// rather than hand-building a ResponseValidationInput here -- so this
+	// test can never silently drift from what production tests actually run.
 	validate := func(t *testing.T, contentType, body string) error {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/dual", nil)
-		route, pathParams, err := r.FindRoute(req)
-		if err != nil {
-			t.Fatalf("FindRoute: %v", err)
-		}
-		respInput := &openapi3filter.ResponseValidationInput{
-			RequestValidationInput: &openapi3filter.RequestValidationInput{
-				Request:    req,
-				PathParams: pathParams,
-				Route:      route,
-			},
-			Status: http.StatusOK,
-			Header: http.Header{"Content-Type": []string{contentType}},
-		}
-		respInput.SetBodyBytes([]byte(body))
-		return openapi3filter.ValidateResponse(req.Context(), respInput)
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+		_, err := validateAgainstRouter(r, req, w)
+		return err
 	}
 
 	t.Run("csv body validates against the csv (string) schema", func(t *testing.T) {

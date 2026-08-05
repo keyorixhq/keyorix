@@ -24,6 +24,27 @@ func allOperationIDs() []string {
 	return ids
 }
 
+// operationsWithoutID identifies each spec operation that has no
+// operationId, as "METHOD path" since it has nothing else to name it by.
+// Every function above that walks the spec by operationId silently drops
+// these -- they can never be registered in pendingRegistry or
+// outOfScopeRegistry, never enforced, and never flagged by CheckPartition's
+// main loop below, which only ever iterates allOperationIDs(). This exists
+// so that omission fails loudly instead of leaving the operation invisible
+// to the entire harness.
+func operationsWithoutID() []string {
+	var missing []string
+	for path, pathItem := range spec.Paths.Map() {
+		for method, op := range pathItem.Operations() {
+			if op.OperationID == "" {
+				missing = append(missing, fmt.Sprintf("%s %s", method, path))
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
 // operationsWithSchema returns the set of operationIds that declare at least
 // one 2xx response with a JSON-Schema-bearing content block, for any content
 // type. This is deliberately the same "has a schema at all" test used in
@@ -76,17 +97,27 @@ func responseHasSchema(resp *openapi3.Response) bool {
 // CheckPartition asserts that every operation in the spec lands in exactly
 // one of: enforced (has a schema, not registered out-of-scope),
 // pending-with-reason, or out-of-scope-with-reason. Both failure directions
-// are checked -- see ADR-074, "Fail-closed semantics".
+// are checked -- see ADR-074, "Fail-closed semantics" -- and so is the
+// reverse direction: every registry entry (pendingRegistry,
+// outOfScopeRegistry, exercisingTests) must still name a real, current
+// operationId, so a renamed or deleted operation can't leave a stale entry
+// behind forever.
 func CheckPartition() error {
 	loadSpec()
 	if specErr != nil {
 		return specErr
 	}
 
+	ids := allOperationIDs()
+	validIDs := map[string]bool{}
+	for _, opID := range ids {
+		validIDs[opID] = true
+	}
+
 	withSchema := operationsWithSchema()
 	var violations []string
 
-	for _, opID := range allOperationIDs() {
+	for _, opID := range ids {
 		hasSchema := withSchema[opID]
 		pendingReason, isPending := pendingRegistry[opID]
 		outOfScopeReason, isOutOfScope := outOfScopeRegistry[opID]
@@ -103,6 +134,15 @@ func CheckPartition() error {
 					"remove the pending entry, it is now enforced",
 				opID, pendingReason,
 			))
+		case isOutOfScope && hasSchema && !schemaExemptOperations[opID]:
+			violations = append(violations, fmt.Sprintf(
+				"%s: has a 2xx schema in openapi.yaml but is registered in outOfScopeRegistry (%q) "+
+					"without being in schemaExemptOperations (registry.go) -- a schema-bearing "+
+					"operation can't be silently opted out of enforcement this way; either wire it "+
+					"up as enforced, or add it to schemaExemptOperations with justification if it "+
+					"genuinely has no generated-client use case",
+				opID, outOfScopeReason,
+			))
 		case !hasSchema && !isPending && !isOutOfScope:
 			violations = append(violations, fmt.Sprintf(
 				"%s: has no 2xx schema in openapi.yaml and is not registered in pendingRegistry "+
@@ -112,6 +152,19 @@ func CheckPartition() error {
 		}
 	}
 
+	for _, methodAndPath := range operationsWithoutID() {
+		violations = append(violations, fmt.Sprintf(
+			"%s: operation has no operationId -- every operation must declare one so it can be "+
+				"tracked by this harness (pendingRegistry/outOfScopeRegistry/enforced), otherwise "+
+				"it is invisible to every check in this package",
+			methodAndPath,
+		))
+	}
+
+	violations = append(violations, staleRegistryEntries("pendingRegistry", pendingRegistryKeys(), validIDs)...)
+	violations = append(violations, staleRegistryEntries("outOfScopeRegistry", outOfScopeRegistryKeys(), validIDs)...)
+	violations = append(violations, staleRegistryEntries("exercisingTests", exercisingTestsKeys(), validIDs)...)
+
 	if len(violations) == 0 {
 		return nil
 	}
@@ -120,6 +173,49 @@ func CheckPartition() error {
 		"contracttest: openapi.yaml <-> registry partition is inconsistent (%d violation(s)):\n  - %s",
 		len(violations), strings.Join(violations, "\n  - "),
 	)
+}
+
+// staleRegistryEntries flags any key in a registry map that no longer names
+// a real operationId in the spec -- e.g. left behind by a rename or removal
+// that added a fresh entry under the new operationId without cleaning up
+// the old one. registryName is used only to make the violation message
+// point at the right map.
+func staleRegistryEntries(registryName string, keys []string, validIDs map[string]bool) []string {
+	var violations []string
+	for _, opID := range keys {
+		if !validIDs[opID] {
+			violations = append(violations, fmt.Sprintf(
+				"%s: registered in %s but no such operationId exists in openapi.yaml -- "+
+					"stale entry, remove it (renamed or deleted operation?)",
+				opID, registryName,
+			))
+		}
+	}
+	return violations
+}
+
+func pendingRegistryKeys() []string {
+	keys := make([]string, 0, len(pendingRegistry))
+	for opID := range pendingRegistry {
+		keys = append(keys, opID)
+	}
+	return keys
+}
+
+func outOfScopeRegistryKeys() []string {
+	keys := make([]string, 0, len(outOfScopeRegistry))
+	for opID := range outOfScopeRegistry {
+		keys = append(keys, opID)
+	}
+	return keys
+}
+
+func exercisingTestsKeys() []string {
+	keys := make([]string, 0, len(exercisingTests))
+	for opID := range exercisingTests {
+		keys = append(keys, opID)
+	}
+	return keys
 }
 
 // enforcedOperationIDs is the set the coverage assertion checks against:

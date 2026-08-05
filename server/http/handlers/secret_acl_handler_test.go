@@ -241,6 +241,12 @@ func TestGrantSecretACL_HappyPath(t *testing.T) {
 	// The response data should contain the ACL row with user_id 77.
 	body2 := w2.Body.String()
 	assert.Contains(t, body2, "77")
+	// TestListSecretACLs_Empty (this operation's other exercising test) only
+	// ever asserts against an empty array, which JSON Schema validates
+	// vacuously -- this call is what actually exercises the SecretACL item
+	// schema (registry.go's exercisingTests lists this test for
+	// listSecretACLs precisely so a populated response gets checked too).
+	contracttest.AssertOpenAPIResponse(t, req2, w2)
 }
 
 // ── RevokeSecretACL ────────────────────────────────────────────────────────────
