@@ -125,6 +125,34 @@ reachable."** Shape B is built because "completely unavailable" is a worse
 outcome than "available via a more manual path," but it is documented as the
 fallback for the narrower case, not the headline story.
 
+## Terminology: what "air-gapped" means in this ADR, and what it doesn't
+
+`README.md` already makes an unqualified product claim: "Air-gapped ready,"
+"Air-gapped | Yes" (feature comparison table), "Air-gapped deployment: copy
+the binary and run. No internet required." This ADR has to be explicit about
+which of its two shapes that claim is backed by, so customer-facing docs
+don't silently redefine "air-gapped" out from under a buyer's expectation.
+
+**Shape A requires live network reachability to an internal IdP.** It is
+air-gapped in exactly the sense the README already states — "no internet
+required" — but it is NOT air-gapped in the stricter sense some defense and
+critical-infrastructure buyers use the term: total network isolation, no live
+dependency on any external system, internet-facing or not. A buyer who reads
+"air-gapped" as "this process makes zero network calls, ever" would be wrong
+to assume that of Shape A specifically — that property belongs to Shape B's
+static mode alone (Decision 8: zero outbound requests, structurally, not
+merely resilient to their failure).
+
+**Decision: the product claim stays "no internet required," unchanged and
+accurate — this ADR does not redefine it.** But this ADR's own language, and
+any deployment/sales collateral that cites OIDC federation specifically as
+air-gap-compatible, must name which shape it means. A buyer evaluating a
+strict network-isolation requirement needs to be pointed at Shape B (and its
+file-based static configuration), not left to assume Shape A's "reachable
+internal IdP" satisfies a no-network-calls-at-all requirement it structurally
+does not — Shape A still depends on a live TLS connection to something, even
+though that something is never the public internet.
+
 ## Decision 1 (Shape A): per-issuer CA bundle, not a global trust-store change
 
 Add an optional per-issuer CA bundle to both the machine-federation
@@ -195,8 +223,8 @@ Three options, evaluated against operability, not just feasibility:
   own release cadence and the customer's IdP's key-rotation cadence, which
   is driven entirely by the IdP, not by Keyorix. Forcing a full
   release-bundle cycle every time an operator's IdP rotates a signing key
-  would be a severe operability regression — directly the failure mode
-  Decision 5's runbook has to avoid.
+  would be a severe operability regression — directly the failure mode the
+  Key rotation runbook (below) has to avoid.
 
 **Decision: file path is the primary supported mechanism** (`jwks_file` on
 the issuer entry), inline JWK-in-config supported only as a secondary/testing
@@ -206,7 +234,7 @@ convenience, documented as such.
 issuers:
   - name: hardened-cluster
     issuer: https://kubernetes.default.svc
-    jwks_file: /etc/keyorix/oidc-keys/hardened-cluster.jwks.json   # mutually exclusive with jwks_uri — see Decision 6
+    jwks_file: /etc/keyorix/oidc-keys/hardened-cluster.jwks.json   # mutually exclusive with jwks_uri — see Decision 7
     audiences: [keyorix]
 ```
 
@@ -234,7 +262,54 @@ from Decision 3, populated by the **operator at deploy/config time** rather
 than by Keyorix at build time. Same shape, different point in the lifecycle
 where pinning happens, because the two cases pin different parties' keys.
 
-## Decision 5 (Shape B): offline equivalent of `discoverOIDC()`
+## Decision 5 (Shape B): kid-less tokens and single-key static sets
+
+`oidc_jwks.go`'s `fetch()` silently drops any JWK with no `kid`
+(`if k.Kid != "" { out[k.Kid] = key }`), and the verification keyfunc looks up
+by whatever `kid` the TOKEN's header carries (empty string if absent) — so a
+kid-less token already cannot match any key on the live-fetch path today, a
+pre-existing limitation, not one this ADR introduces. Some internal IdPs —
+particularly small, single-key deployments, exactly the profile most likely
+to end up in Shape B — omit `kid` entirely, since there is no ambiguity to
+resolve with only one signing key in circulation.
+
+Static mode has a materially smaller footprint than live-fetch: an operator
+explicitly curates a small, known set of keys (often exactly one, for a
+single-key IdP), rather than trusting whatever a JWKS document happens to
+contain at fetch time. That difference makes a more permissive rule
+defensible here in a way it would not be for live-fetch, where "match any
+kid, including none" against a larger, dynamically-fetched set would blur
+which specific key actually signed a token.
+
+**Decision:**
+
+- **An explicit `kid` in the token is always honoured and must match
+  exactly, regardless of static set size.** A token naming a specific,
+  known key_id is never subject to any fallback — it either matches that
+  exact entry in the static set or verification fails, the same as
+  live-fetch.
+- **The single-key fallback applies ONLY when the token carries no `kid`
+  claim at all.** In that case, and only that case, a static set containing
+  exactly one key matches the token against it. A kid-less token against a
+  static set with more than one key is rejected outright — ambiguous, not
+  guessed at.
+
+The exact-match-when-present rule is load-bearing, not a convenience:
+without it, a token naming a rotated-out key_id could match the sole
+*remaining* key in a single-key set purely because the set happens to have
+one entry after rotation — silently defeating rotation-as-revocation, the
+exact property ADR-031's stale-cache hardening and this ADR's own
+mutual-exclusivity rule (Decision 7) both exist to protect. The fallback
+exists only to cover a token's total absence of a `kid` claim, never to
+paper over a mismatched one.
+
+The per-verification audit event (Decision 10.2) must record which case
+applied — `kid_matched: explicit | single-key-fallback` — so "this token
+verified without presenting a kid, against the deployment's sole configured
+key" stays visible after the fact, not silently indistinguishable from a
+normal exact match.
+
+## Decision 6 (Shape B): offline equivalent of `discoverOIDC()`
 
 `discoverOIDC` (`server/main.go:1710`) fetches
 `/.well-known/openid-configuration` to learn `authorization_endpoint`,
@@ -263,7 +338,7 @@ static" (that would reintroduce exactly the boot-time network dependency
 Shape B exists to remove), but skip discovery outright when static
 configuration is present for that provider.
 
-## Decision 6 (cross-cutting): static and `jwks_uri` are mutually exclusive per issuer, enforced at startup
+## Decision 7 (cross-cutting): static and `jwks_uri` are mutually exclusive per issuer, enforced at startup
 
 `Key(ctx, issuer, kid)` already takes `issuer`, so mixing Shape A and Shape
 B **across different issuers** in one deployment is straightforward and
@@ -288,7 +363,7 @@ both weightier than the convenience of a fallback:
   at boot is the only answer that can't produce a silent "yes" to that
   question.
 
-## Decision 7 (cross-cutting): TTL / stale-grace / fail-closed semantics do not apply to static material
+## Decision 8 (cross-cutting): TTL / stale-grace / fail-closed semantics do not apply to static material
 
 The live resolver's `jwksCacheTTL`, `jwksStaleGrace`, and refetch-on-unknown-kid
 logic exist to bound trust in a *fetched* value that could go stale or be
@@ -296,8 +371,8 @@ served from a compromised/rotated-out source while unreachable. None of that
 reasoning applies to static material: there is nothing to refetch, so a TTL
 on pinned material would only manufacture a scheduled outage with no
 corresponding security benefit — the operator already controls exactly when
-the material changes, via the rotation action in Decision 8, not via a
-timer.
+the material changes, via the rotation action described in the Key rotation
+runbook below, not via a timer.
 
 **Decision: static-mode `Key()` performs zero outbound requests, ever, and
 never expires the loaded material — it is valid until explicitly replaced
@@ -308,24 +383,24 @@ sidesteps the `entry != nil` rate-limit gate bug entirely for static
 issuers, without needing to touch that (separately tracked) bug — a static
 resolver's `Key()` never reaches the fetch path at all.
 
-## Decision 8 (cross-cutting): per-issuer structural property, not a global deployment-mode flag
+## Decision 9 (cross-cutting): per-issuer structural property, not a global deployment-mode flag
 
 **No new "air-gap mode" flag.** Whether an issuer is Shape A or Shape B is
 determined structurally, by which field is populated on that issuer's config
-entry (`jwks_uri` XOR `jwks_file`/static block — see Decision 6), the same
+entry (`jwks_uri` XOR `jwks_file`/static block — see Decision 7), the same
 way `SSOProviderConfig.Type` ("oidc" vs "saml") already selects behavior
 per-entry rather than via a global "all providers are SAML" setting.
 
 Two reasons beyond matching precedent:
 
-- A global flag forecloses the realistic mixed deployment (Decision 6) —
+- A global flag forecloses the realistic mixed deployment (Decision 7) —
   one reachable internal IdP plus one hardened-cluster issuer needing static
   pinning cannot both be expressed if "air-gap mode" is an all-or-nothing
   switch.
 - A separate mode flag creates a second place that can disagree with the
   actual field configuration (flag says air-gapped, an issuer entry still
   has `jwks_uri` populated — which wins?), reintroducing exactly the
-  ambiguity Decision 6 forbids. Making the shape a pure function of which
+  ambiguity Decision 7 forbids. Making the shape a pure function of which
   fields are populated removes that class of contradiction structurally.
 
 **On the standing "no runtime crypto algorithm selection" principle:** this
@@ -339,7 +414,7 @@ verify the identical signature with the identical strength requirements.
 This is a key-*source* decision, not a key-*strength* decision, and the
 principle doesn't constrain it.
 
-## Decision 9 (cross-cutting): audit event design — what makes rotation reconstructable
+## Decision 10 (cross-cutting): audit event design — what makes rotation reconstructable
 
 Today, `Verify()` returns `(issuer, subject, err)` — the `kid` that actually
 verified the token is resolved internally and then discarded, never reaching
@@ -364,16 +439,28 @@ rotation reconstructable after the fact:
    is structurally unavailable to a process that doesn't own the file.
 2. **Per-verification usage** — extend the existing machine-identity
    federation audit event (already fired on successful auth per ADR-030's
-   `actor_type = machine_identity` path) with the `key_id` that verified the
-   token and a `key_source` ∈ `{static, fetched}`. Requires `Verify()` to
-   return `kid` alongside `(issuer, subject)`.
+   `actor_type = machine_identity` path) with three new fields: the `key_id`
+   that verified the token; a closed, three-value `key_source` enum —
+   `static` | `fetched_ca_bundle` | `fetched_default_trust` — rather than a
+   flat `{static, fetched}`, which would collapse Decision 1's CA-bundle case
+   (Shape A) into the same value as an ordinary system-trust-store fetch,
+   losing exactly the distinction Decision 1 exists to make; and, for static
+   issuers, `kid_matched` ∈ `explicit | single-key-fallback` (Decision 5), so
+   a token that verified without presenting a `kid` at all stays visibly
+   distinct from a normal exact match. The boot-time load event above
+   similarly records, per issuer, which trust mode was configured
+   (`ca_bundle_file` set or not) — together, "what was trusted," "which
+   trust path verified this token," and "did it require the single-key
+   fallback" are all answerable after the fact, for every configuration this
+   ADR introduces, not just static-vs-live. Requires `Verify()` to return
+   `kid` alongside `(issuer, subject)`.
 
 Together: (1) says what was trusted and when it was loaded; (2) says which
-of those trusted keys was actually used, and how often, until it stops
-appearing in usage — which is the operational signal that a rotated-out key
-has actually fallen out of use.
+of those trusted keys was actually used, over which trust path, and how
+often, until it stops appearing in usage — which is the operational signal
+that a rotated-out key has actually fallen out of use.
 
-## Decision 10 (human SSO): boot stays resilient, but silent-skip gets a visible signal
+## Decision 11 (human SSO): boot stays resilient, but silent-skip gets a visible signal
 
 Current behavior — a human SSO provider whose discovery fails is skipped
 with a log line, and the server still boots — is **kept for boot
@@ -389,7 +476,7 @@ the latter category.
 does change.** In Shape B, an unreachable discovery endpoint is not
 transient — it will never succeed without a config change, so "warning,
 continuing" framing is actively misleading, and nobody reliably tails
-startup logs. Once Decision 5 ships, a correctly-configured Shape-B provider
+startup logs. Once Decision 6 ships, a correctly-configured Shape-B provider
 uses `static_endpoints` and never attempts discovery at all — so this gap
 only bites (a) a provider that *should* have used static config but wasn't
 set up correctly, or (b) a genuinely transient Shape-A outage. Both deserve
@@ -397,11 +484,38 @@ better visibility than a log line an operator has to know to go looking for
 at the exact moment of a restart.
 
 **Decision: keep the resilient boot behavior, but surface skipped providers
-as a degraded-state signal on an existing admin-facing posture surface**
-(the codebase already has deployment-posture/compliance-snapshot surfaces —
-extend one of those rather than inventing a new health-check mechanism),
-not merely a startup log line. Exact wiring is implementation detail for the
-follow-up PR.
+as a degraded-state signal on `IdentityPosture`
+(`internal/core/compliance_posture.go`)** — the identity/auth-themed slice
+of the existing `CompliancePosture` rollup (currently: active users, 2FA
+adoption) — via a new `DegradedSSOProviders []string` field, rather than
+inventing a new health-check mechanism.
+
+`internal/core/deployment_hygiene.go`'s `DeploymentHygieneSummary` was also
+considered and rejected as the surface: its theme is secret/credential-
+lifecycle debt (orphaned/unused/expiring secrets, stale machine identities,
+rotation-overdue) — a provider disabled at boot is not a hygiene signal
+about existing data, and doesn't fit that rollup's per-project-breakdown
+shape.
+
+`DegradedSSOProviders` is populated from the in-memory result of
+`buildSSOProviders` at startup — `GetCompliancePosture` already reads live
+`KeyorixCore` state elsewhere in `compliance_posture.go`, not exclusively
+DB-backed queries, so this is consistent with the existing pattern, not a
+new category of data source. **Confirmed before committing to this design:**
+`GetCompliancePosture` is RBAC-gated on the `audit.read` permission on both
+its HTTP (`router.go:1940`) and gRPC (`compliance_service.go`) paths — not a
+universal baseline permission — so exposing provider names here carries no
+more exposure than everything else `CompliancePosture` already reports
+behind that same gate.
+
+**This field reflects boot-time state only, and goes stale until the next
+restart** — consistent with the no-hot-reload non-goal, but worth stating
+explicitly rather than leaving it implicit: a provider fixed by a config
+change will not clear from `DegradedSSOProviders` until the server is
+restarted to pick that change up. A reader encountering this field without
+that context would reasonably assume it reflects current, live state, when
+it in fact reflects "as of the last boot." The field's own doc comment must
+say so, not just this ADR.
 
 ## Non-goals
 
@@ -439,8 +553,8 @@ follow-up PR.
    already protects on the live-fetch path).
 4. The operator places the file at the configured path and restarts the
    server (Non-goals: no hot-reload in v1).
-5. The boot-time load event (Decision 9.1) records the new `key_id` set and
-   file hash. Per-verification usage events (Decision 9.2) show the outgoing
+5. The boot-time load event (Decision 10.1) records the new `key_id` set and
+   file hash. Per-verification usage events (Decision 10.2) show the outgoing
    `key_id` disappearing from live usage going forward — the operational
    confirmation that rotation actually took effect.
 
@@ -464,16 +578,18 @@ infrastructure invented for this feature alone.
 - Static-mode issuers gain a strictly stronger air-gap property than
   live-fetch issuers ever can: zero outbound requests, structurally, not
   just "resilient to failure of" outbound requests.
-- The mutual-exclusivity rule (Decision 6) means a misconfigured issuer
+- The mutual-exclusivity rule (Decision 7) means a misconfigured issuer
   fails at startup, loudly, rather than producing an undetected partial
   air-gap violation — consistent with this codebase's existing fail-loud
   posture on structural config errors.
 - `Verify()`'s signature changes (adds `kid` to its return) to support
-  Decision 9 — a small, contained change to an already-narrow, well-tested
+  Decision 10 — a small, contained change to an already-narrow, well-tested
   function, not a redesign.
-- Human SSO's discovery-skip behavior (Decision 10) requires a posture-surface
-  addition; exact surface TBD in implementation, but the decision — resilient
-  boot, visible degraded state, not a log line — is made here.
+- Human SSO's discovery-skip behavior (Decision 11) adds a
+  `DegradedSSOProviders` field to `IdentityPosture` — named here, not left
+  TBD — reflecting boot-time state only until the next restart; the decision
+  itself (resilient boot, visible degraded state, not a log line) is made
+  here.
 - Two known, real bugs (error-swallowing, rate-limit gate) remain unfixed by
   this ADR on purpose, tracked as separate, smaller, independently-shippable
   changes.
