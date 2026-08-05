@@ -44,6 +44,237 @@ rules:
           ...
           $DEC.Decode(...)
 
+  - id: keyorix-json-unmarshal-fail-open
+    languages: [go]
+    severity: WARNING
+    message: >-
+      This function parses a stored JSON column into a security-relevant
+      restriction/scope value and returns nil on a parse error. If nil is
+      interpreted downstream as "no restriction," a corrupted-but-non-empty
+      stored value silently WIDENS access instead of failing closed -- the field
+      was legitimately empty and unrestricted is a different case from the field
+      being non-empty but unreadable. This does NOT apply to a purely additive
+      grant model (e.g. an ACL where nil means "no extra grant, still governed
+      by the base role check") -- only to a model where nil is interpreted as
+      "unrestricted." Return a sentinel value that matches no real
+      permission/CIDR instead of nil (see internal/core/pat.go's
+      patScopeCorrupted or internal/core/machine_token.go's
+      machineTokenCIDRCorrupted for the pattern), or add a `// nosemgrep:
+      keyorix-json-unmarshal-fail-open -- <reason>` comment if this is a
+      confirmed additive-grant model.
+    metadata:
+      category: security
+      references:
+        - internal/core/pat.go DecodePATScopes (fixed, r124-M)
+        - internal/core/machine_token.go machineRestrictionFrom (fixed, r137 PAT-001)
+    paths:
+      exclude:
+        - "**/*_test.go"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              func $FUNC(...) $RET {
+                ...
+                if $ERR := json.Unmarshal(...); $ERR != nil {
+                  return nil
+                }
+                ...
+              }
+          - pattern: |
+              func $FUNC(...) $RET {
+                ...
+                if $ERR := json.Unmarshal(...); $ERR != nil {
+                  return nil, nil
+                }
+                ...
+              }
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: (?i).*(restrict|scope|cidr|permission).*
+
+  - id: keyorix-raw-error-to-client
+    languages: [go]
+    severity: WARNING
+    message: >-
+      A raw error's .Error() text is sent verbatim to the client (CWE-209). On
+      the HTTP side this fires only for a 5xx ("backend/internal fault")
+      status -- a 5xx path's error usually wraps a backend/storage/driver
+      failure and can leak internal details (DSNs, file paths, stack context,
+      driver error text), unlike a 4xx validation error, which is an
+      application-generated, already-safe message describing what the caller
+      did wrong. On the gRPC side (status.Error) this fires regardless of
+      code, since this codebase's convention is to never pass a raw error
+      straight into a gRPC status -- every status.Error call is expected to go
+      through a map*Error-style translator returning a fixed safe string. Log
+      the error server-side and return a fixed safe string instead (see
+      clientSafe() in server/http/handlers, or the mapUserError-style pattern
+      in server/grpc/services). If this specific error is a known, safe
+      sentinel (checked via errors.Is/errors.As) whose .Error() text is
+      already a fixed, non-sensitive string, add a `// nosemgrep:
+      keyorix-raw-error-to-client -- <reason>` comment instead of changing it.
+    metadata:
+      category: security
+      references:
+        - server/http/handlers/secrets_versions.go, users_crud.go, rbac.go, dynamic_secrets.go, pat_handler.go, secret_schedule.go (fixed, CWE-209 sweep)
+        - server/grpc/services/{user_service,machine_identity_service,break_glass_service}.go (fixed, r139 GRPC-003/004/005)
+    paths:
+      exclude:
+        - "**/*_test.go"
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: sendError($W, $CODE, $E.Error(), $STATUS, ...)
+                  - pattern: $H.sendError($W, $CODE, $E.Error(), $STATUS, ...)
+              - metavariable-pattern:
+                  metavariable: $STATUS
+                  patterns:
+                    - pattern-either:
+                        - pattern: http.StatusInternalServerError
+                        - pattern: http.StatusBadGateway
+                        - pattern: http.StatusServiceUnavailable
+                        - pattern: http.StatusGatewayTimeout
+                        - pattern: http.StatusNotImplemented
+          - pattern: status.Error($GCODE, $E.Error())
+
+  - id: keyorix-role-grant-query-missing-expiry-filter
+    languages: [go]
+    severity: WARNING
+    message: >-
+      This function queries the user_roles/group_roles grants table (a
+      models.UserRole/models.GroupRole read) without applying
+      sqlWhereURNotExpired/sqlWhereGRNotExpired anywhere in the same function,
+      unlike every other role-lookup function in this file. An expired JIT/
+      time-boxed grant is then read back as a live, currently-held role --
+      access reviews, role-replacement logic, and reinstatement counts all
+      treat a lapsed grant as still active. Add
+      .Where(sqlWhereURNotExpired, time.Now().UTC()) (or the GR variant for
+      group grants) to the query chain, matching e.g. GetUserRoleIDsAt in this
+      same file. If this function deliberately needs to see expired rows too
+      (e.g. a cleanup/sweep job, or a Delete that intentionally targets both
+      live and expired grants), add a `// nosemgrep:
+      keyorix-role-grant-query-missing-expiry-filter -- <reason>` comment.
+    metadata:
+      category: security
+      references:
+        - internal/storage/store/local_rbac.go ListProjectRoleAssignments (fixed, AUTHZ-002, r137 Sprint 3)
+        - internal/storage/store/local_rbac.go GetUserRoleIDsExact (fixed, AUTHZ-003, r137 Sprint 4)
+    paths:
+      include:
+        - internal/storage/**
+      exclude:
+        - "**/*_test.go"
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: |
+                      func $FN(...) $RET {
+                        ...
+                        var $VAR []models.UserRole
+                        ...
+                        $DB.Find(&$VAR)
+                        ...
+                      }
+                  - pattern: |
+                      func $FN(...) $RET {
+                        ...
+                        $DB.Model(&models.UserRole{})
+                        ...
+                      }
+              - pattern-not: |
+                  func $FN(...) $RET {
+                    ...
+                    $X.Where(sqlWhereURNotExpired, ...)
+                    ...
+                  }
+          - patterns:
+              - pattern-either:
+                  - pattern: |
+                      func $FN(...) $RET {
+                        ...
+                        var $VAR []models.GroupRole
+                        ...
+                        $DB.Find(&$VAR)
+                        ...
+                      }
+                  - pattern: |
+                      func $FN(...) $RET {
+                        ...
+                        $DB.Model(&models.GroupRole{})
+                        ...
+                      }
+              - pattern-not: |
+                  func $FN(...) $RET {
+                    ...
+                    $X.Where(sqlWhereGRNotExpired, ...)
+                    ...
+                  }
+
+  - id: keyorix-unbounded-bulk-slice-param
+    languages: [go]
+    severity: WARNING
+    message: >-
+      This function takes a caller-supplied slice parameter and loops over it
+      doing per-item work (a storage/DB round trip per item) with no upper
+      bound on the slice's length. The global request body-size limit alone
+      still permits a very large array of small values in one request (well
+      over a million integers within 10 MiB), and the per-item loop has no
+      cancellation check, so an oversized batch is a per-request resource-
+      exhaustion vector (CWE-400) -- this also covers the CLI's embedded/local
+      mode, which calls core functions directly, bypassing the HTTP body-size
+      limit entirely. Add a `if len($PARAM) > maxBatchSize { return ...,
+      fmt.Errorf(...) }` guard before the loop (see
+      maxBulkAccessRequestBatchSize in internal/core/bulk_access_requests.go
+      for the pattern). If this function is deliberately unbounded (e.g. an
+      internal/trusted-only caller, or the loop does no per-item I/O), add a
+      `// nosemgrep: keyorix-unbounded-bulk-slice-param -- <reason>` comment.
+    metadata:
+      category: security
+      references:
+        - internal/core/bulk_access_requests.go BulkApproveAccessRequests/BulkRejectAccessRequests (fixed, r141, #1331)
+    paths:
+      include:
+        - internal/core/**
+      exclude:
+        - "**/*_test.go"
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: |
+                  func ($RECV *KeyorixCore) $FN(ctx context.Context, $PARAM []$T, ...) $RET {
+                    ...
+                    for $I, $ITEM := range $PARAM {
+                      ...
+                    }
+                    ...
+                  }
+              - pattern-not: |
+                  func ($RECV *KeyorixCore) $FN(ctx context.Context, $PARAM []$T, ...) $RET {
+                    ...
+                    if len($PARAM) > $MAX {
+                      ...
+                    }
+                    ...
+                  }
+          - patterns:
+              - pattern: |
+                  func ($RECV *KeyorixCore) $FN(ctx context.Context, $PARAM []$T, ...) $RET {
+                    ...
+                    for _, $ITEM := range $PARAM {
+                      ...
+                    }
+                    ...
+                  }
+              - pattern-not: |
+                  func ($RECV *KeyorixCore) $FN(ctx context.Context, $PARAM []$T, ...) $RET {
+                    ...
+                    if len($PARAM) > $MAX {
+                      ...
+                    }
+                    ...
+                  }
+
   - id: keyorix-raw-clipboard-write
     languages: [typescript, javascript]
     severity: WARNING

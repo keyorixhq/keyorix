@@ -80,7 +80,7 @@ func (h *AdminBillingHandler) GetBillingReport(w http.ResponseWriter, r *http.Re
 	report, err := h.coreService.GenerateBillingReport(r.Context(), from, to, projectIDs)
 	if err != nil {
 		log.Printf("GetBillingReport: %v", err)
-		sendError(w, "InternalError", err.Error(), http.StatusInternalServerError, nil)
+		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, report, "")

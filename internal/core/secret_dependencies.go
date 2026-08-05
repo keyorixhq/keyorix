@@ -300,7 +300,7 @@ type secretInfo struct {
 // so the views can show names and filter by real environment without an extra
 // round-trip per row. A secret that no longer resolves is absent from the map (zero
 // value), so it is treated as not in any caller's environment.
-func (c *KeyorixCore) resolveSecretInfo(ctx context.Context, edges []*models.SecretDependency) map[uint]secretInfo {
+func (c *KeyorixCore) resolveSecretInfo(ctx context.Context, edges []*models.SecretDependency) map[uint]secretInfo { // nosemgrep: keyorix-unbounded-bulk-slice-param -- edges is a dependency-graph query result for one project, not a raw client-supplied array in one request
 	ids := make(map[uint]struct{})
 	for _, e := range edges {
 		ids[e.DependentSecretID] = struct{}{}

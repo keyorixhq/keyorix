@@ -607,7 +607,7 @@ func (c *KeyorixCore) requireMachineGrantNoSoDViolation(ctx context.Context, mac
 // permissions against, so every role in the set is evaluated together instead.
 // Any role in the set that is itself admin-bypass exempts the whole set (see
 // package doc above).
-func (c *KeyorixCore) requireGrantSetNoSoDViolation(ctx context.Context, roleIDs []uint) error {
+func (c *KeyorixCore) requireGrantSetNoSoDViolation(ctx context.Context, roleIDs []uint) error { // nosemgrep: keyorix-unbounded-bulk-slice-param -- roleIDs derives from CreateUserWithAssignments's assignments param, which enforces maxUserCreateAssignments before calling this
 	policies, err := c.storage.ListSoDPolicies(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)

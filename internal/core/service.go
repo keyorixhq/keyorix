@@ -692,7 +692,7 @@ func (c *KeyorixCore) HealthCheck(ctx context.Context) error {
 
 // ResolveUsernames maps UserID → username for a slice of audit events.
 // Nil UserIDs (system events) map to key 0 → "system".
-func (c *KeyorixCore) ResolveUsernames(ctx context.Context, events []*models.AuditEvent) map[uint]string {
+func (c *KeyorixCore) ResolveUsernames(ctx context.Context, events []*models.AuditEvent) map[uint]string { // nosemgrep: keyorix-unbounded-bulk-slice-param -- events is an already-paginated audit-log query result, not a raw client-supplied array; the per-item DB round trip below is over the deduped user-id set, not events itself
 	seen := map[uint]bool{}
 	for _, e := range events {
 		if e.UserID != nil {

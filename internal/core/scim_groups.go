@@ -74,10 +74,21 @@ func (c *KeyorixCore) scimManagedMember(ctx context.Context, uid uint) bool {
 	return user.ExternalID != ""
 }
 
+// maxSCIMGroupMembersPerCall bounds how many member ids a single SCIM group
+// provision/replace/patch request may carry. Each id costs one
+// scimManagedMember (GetUser) round trip via filterSCIMManaged below; an IdP
+// integration (or a compromised/misbehaving one) submitting an unbounded
+// member list in one request is a per-request resource-exhaustion vector, the
+// same class of bug as maxBulkAccessRequestBatchSize
+// (internal/core/bulk_access_requests.go). Enforced at each of the three SCIM
+// group entry points (ProvisionSCIMGroup, ReplaceSCIMGroup, PatchSCIMGroup)
+// against their raw incoming id list, before any storage access.
+const maxSCIMGroupMembersPerCall = 500
+
 // filterSCIMManaged splits ids into (allowed, rejected) member ids based on
 // scimManagedMember, so callers can add only the SCIM-managed subset and report the
 // rest as refused rather than silently dropping them.
-func (c *KeyorixCore) filterSCIMManaged(ctx context.Context, ids []uint) (allowed, rejected []uint) {
+func (c *KeyorixCore) filterSCIMManaged(ctx context.Context, ids []uint) (allowed, rejected []uint) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- all three callers (ProvisionSCIMGroup, ReplaceSCIMGroup, PatchSCIMGroup) enforce maxSCIMGroupMembersPerCall on their raw incoming id list before calling this
 	for _, id := range ids {
 		if id == 0 {
 			continue
@@ -97,6 +108,9 @@ func (c *KeyorixCore) filterSCIMManaged(ctx context.Context, ids []uint) (allowe
 func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*models.Group, error) {
 	if displayName == "" {
 		return nil, fmt.Errorf("displayName is required")
+	}
+	if len(memberIDs) > maxSCIMGroupMembersPerCall {
+		return nil, fmt.Errorf("memberIDs exceeds the maximum batch size of %d", maxSCIMGroupMembersPerCall)
 	}
 	allowed, rejected := c.filterSCIMManaged(ctx, memberIDs)
 	if len(rejected) > 0 {
@@ -119,6 +133,9 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 // ReplaceSCIMGroup applies a SCIM Replace (PUT): an optional rename plus the FULL
 // member set (members not in memberIDs are removed; new ones are added).
 func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uint, displayName string, memberIDs []uint) (*models.Group, error) {
+	if len(memberIDs) > maxSCIMGroupMembersPerCall {
+		return nil, fmt.Errorf("memberIDs exceeds the maximum batch size of %d", maxSCIMGroupMembersPerCall)
+	}
 	group, err := c.storage.GetGroup(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
@@ -154,6 +171,9 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 // PatchSCIMGroup applies a SCIM PATCH: an optional rename plus incremental member
 // add/remove. nil newName leaves the name unchanged.
 func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint, newName *string, addIDs, removeIDs []uint) (*models.Group, error) {
+	if len(addIDs) > maxSCIMGroupMembersPerCall || len(removeIDs) > maxSCIMGroupMembersPerCall {
+		return nil, fmt.Errorf("addIDs/removeIDs exceeds the maximum batch size of %d", maxSCIMGroupMembersPerCall)
+	}
 	group, err := c.storage.GetGroup(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
