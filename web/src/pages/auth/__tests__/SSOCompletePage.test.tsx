@@ -39,6 +39,13 @@ describe('SSOCompletePage', () => {
         expect(mockComplete).not.toHaveBeenCalled();
     });
 
+    it('falls back to / for a protocol-relative return_to (open-redirect guard, shared with utils/routing.ts)', async () => {
+        window.location.hash = '#expires_at=2026-12-31T00:00:00Z&return_to=' + encodeURIComponent('//evil.example/x');
+        render(<SSOCompletePage />);
+        await waitFor(() => expect(mockComplete).toHaveBeenCalledWith('2026-12-31T00:00:00Z', undefined));
+        await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true }));
+    });
+
     it('defaults to / when the fragment has no return_to', async () => {
         window.location.hash = '#expires_at=2026-12-31T00:00:00Z';
         render(<SSOCompletePage />);

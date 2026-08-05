@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ClipboardDocumentIcon, CheckIcon, EyeIcon, EyeSlashIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -46,8 +46,26 @@ const FederatedReadPanel: React.FC = () => {
     const [ref, setRef] = useState('');
     const [value, setValue] = useState<string | null>(null);
     const [revealed, setRevealed] = useState(false);
+    // Distinct from `value != null`: tracks whether a value has been fetched
+    // at all (so the value box + Reveal control stay rendered across a
+    // hide-triggered clear), independent of whether the plaintext currently
+    // sits in `value`.
+    const [loaded, setLoaded] = useState(false);
     const [copied, setCopied] = useState(false);
     const [error, setError] = useState('');
+    // The connector/ref of the last successful fetch, kept only to support
+    // re-fetching on re-reveal after `value` has been cleared — never holds
+    // the secret itself.
+    const lastQuery = useRef<{ connector: string; ref: string } | null>(null);
+
+    // The plaintext otherwise lingers in this component's state indefinitely —
+    // visible via React DevTools or a heap snapshot even while the UI renders
+    // only bullets. Clear it (not just the `revealed` flag) whenever the panel
+    // unmounts, mirroring SecretDetailView's eviction of its cached value for
+    // the same reason.
+    useEffect(() => {
+        return () => setValue(null);
+    }, []);
 
     if (isLoading) {
         return (
@@ -75,18 +93,42 @@ const FederatedReadPanel: React.FC = () => {
         setError('');
         setValue(null);
         setRevealed(false);
-        read.mutate(
-            { connector: effectiveConnector, ref: ref.trim() },
-            {
-                onSuccess: (res) => setValue(res.value),
-                onError: (err) =>
-                    setError(
-                        (err as { response?: { data?: { message?: string } } }).response?.data?.message ||
-                            (err as Error).message ||
-                            'Read failed.'
-                    ),
-            }
-        );
+        setLoaded(false);
+        const vars = { connector: effectiveConnector, ref: ref.trim() };
+        read.mutate(vars, {
+            onSuccess: (res) => {
+                lastQuery.current = vars;
+                setValue(res.value);
+                setLoaded(true);
+            },
+            onError: (err) => setError(errMessage(err, 'Read failed.')),
+        });
+    };
+
+    // Reveal/Hide toggle. Hiding clears `value` back to null (not just the
+    // `revealed` flag) so the plaintext doesn't linger in memory while masked.
+    // Re-revealing after a hide has nothing left to show, so it re-fetches
+    // (re-audited, same as the original read) rather than displaying stale or
+    // empty data.
+    const toggleReveal = () => {
+        if (revealed) {
+            setRevealed(false);
+            setValue(null);
+            return;
+        }
+        if (value != null) {
+            setRevealed(true);
+            return;
+        }
+        if (!lastQuery.current) return;
+        setError('');
+        read.mutate(lastQuery.current, {
+            onSuccess: (res) => {
+                setValue(res.value);
+                setRevealed(true);
+            },
+            onError: (err) => setError(errMessage(err, 'Read failed.')),
+        });
     };
 
     const copy = async () => {
@@ -142,7 +184,7 @@ const FederatedReadPanel: React.FC = () => {
                 </Button>
             </div>
 
-            {value != null && (
+            {loaded && (
                 <div
                     className="rounded-lg p-4"
                     style={{ backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
@@ -155,13 +197,21 @@ const FederatedReadPanel: React.FC = () => {
                             <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => setRevealed((r) => !r)}
+                                onClick={toggleReveal}
+                                disabled={read.isPending}
                                 type="button"
                                 aria-label={revealed ? 'Hide value' : 'Reveal value'}
                             >
                                 {revealed ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
                             </Button>
-                            <Button variant="outline" size="sm" onClick={copy} type="button" aria-label="Copy value">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={copy}
+                                type="button"
+                                disabled={value == null}
+                                aria-label="Copy value"
+                            >
                                 {copied ? (
                                     <CheckIcon className="h-4 w-4" />
                                 ) : (
@@ -171,7 +221,9 @@ const FederatedReadPanel: React.FC = () => {
                         </div>
                     </div>
                     <code className="block break-all font-mono text-sm" style={{ color: 'var(--text-primary)' }}>
-                        {revealed ? value : '•'.repeat(Math.min(value.length, 40))}
+                        {revealed && value != null
+                            ? value
+                            : '•'.repeat(value != null ? Math.min(value.length, 40) : 24)}
                     </code>
                 </div>
             )}

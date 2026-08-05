@@ -4,12 +4,29 @@ import { ADMIN_ROLES } from '../features/auth/roles';
 
 const INTENDED_ROUTE_KEY = 'intendedRoute';
 
+// react-router's navigate() can't currently be turned into an open redirect to
+// another origin (browsers reject a cross-origin pushState), but a stored
+// intended-route path still ends up passed straight to <Navigate> after
+// login, so require it to look like an in-app relative path as
+// defense-in-depth: a single leading '/' (not '//' or '/\', both of which
+// some browsers treat as protocol-relative). Shared with the SSO `return_to`
+// flow (see SSOCompletePage.tsx) so both post-login redirect paths apply the
+// same rule instead of maintaining it twice.
+export const isSafeReturnTo = (path: string): boolean => /^\/(?![/\\])/.test(path);
+
 /**
  * Stores the intended route for redirect after authentication
  */
 export const storeIntendedRoute = (path: string): void => {
     // Don't store login or other auth-related routes
     if (path === ROUTES.LOGIN || path.startsWith('/auth')) {
+        return;
+    }
+
+    // Don't store a protocol-relative (or otherwise unsafe) path — see
+    // isSafeReturnTo. Silently drop it rather than store something a later
+    // getPostLoginRedirect() caller could hand to <Navigate>/window.location.
+    if (!isSafeReturnTo(path)) {
         return;
     }
 
@@ -42,7 +59,13 @@ export const clearIntendedRoute = (): void => {
  */
 export const getPostLoginRedirect = (defaultPath: string = ROUTES.DASHBOARD): string => {
     const intendedRoute = getAndClearIntendedRoute();
-    return intendedRoute || defaultPath;
+    // Re-validate defense-in-depth: storeIntendedRoute already rejects an
+    // unsafe path, but this guards any stale/pre-fix value already sitting in
+    // storage, or a future write path that bypasses storeIntendedRoute.
+    if (intendedRoute && isSafeReturnTo(intendedRoute)) {
+        return intendedRoute;
+    }
+    return defaultPath;
 };
 
 /**

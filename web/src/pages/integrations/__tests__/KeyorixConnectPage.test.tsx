@@ -73,6 +73,43 @@ describe('KeyorixConnectPage', () => {
         await waitFor(() => expect(screen.getByText('s3cr3t')).toBeInTheDocument());
     });
 
+    it('clears the fetched value from state on hide, forcing a re-fetch (not a stale display) on re-reveal', async () => {
+        readMutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' })
+        );
+        render(<KeyorixConnectPage />);
+
+        fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+        fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+        expect(readMutate).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
+        await waitFor(() => expect(screen.getByText('s3cr3t')).toBeInTheDocument());
+
+        // Hide: the plaintext must be cleared from React state, not just
+        // masked again — proven below by the fact that revealing a second
+        // time has to re-fetch rather than instantly showing the value.
+        fireEvent.click(screen.getByRole('button', { name: /Hide value/i }));
+        expect(screen.queryByText('s3cr3t')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
+        expect(readMutate).toHaveBeenCalledTimes(2);
+        expect(readMutate).toHaveBeenLastCalledWith({ connector: 'prod-aws', ref: 'prod/db' }, expect.anything());
+        await waitFor(() => expect(screen.getByText('s3cr3t')).toBeInTheDocument());
+    });
+
+    it('clears the fetched value on unmount without throwing', () => {
+        readMutate.mockImplementation((_vars, opts) =>
+            opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 's3cr3t' })
+        );
+        const { unmount } = render(<KeyorixConnectPage />);
+        fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+        fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+        expect(screen.getByRole('button', { name: /Reveal value/i })).toBeInTheDocument();
+
+        expect(() => unmount()).not.toThrow();
+    });
+
     it('surfaces a read error', () => {
         readMutate.mockImplementation((_vars, opts) =>
             opts.onError({ response: { data: { message: 'ref not permitted' } } })

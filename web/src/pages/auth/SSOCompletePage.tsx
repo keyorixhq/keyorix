@@ -1,15 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuthStore } from '../../store/authStore';
-
-// react-router's navigate() can't currently be turned into an open redirect to
-// another origin (browsers reject a cross-origin pushState), but `return_to`
-// still comes from the SSO redirect chain, so require it to look like an
-// in-app relative path as defense-in-depth: a single leading '/' (not '//' or
-// '/\', both of which some browsers treat as protocol-relative).
-function isSafeReturnTo(path: string): boolean {
-    return /^\/(?![/\\])/.test(path);
-}
+// Shared with storeIntendedRoute/getPostLoginRedirect's non-SSO post-login
+// redirect (see utils/routing.ts) so both paths apply the same
+// protocol-relative-path guard instead of maintaining it twice.
+import { isSafeReturnTo } from '../../utils/routing';
 
 // SSOCompletePage is the landing page the OIDC callback redirects the browser to.
 // The backend sets the session cookie directly on its own redirect response (see
