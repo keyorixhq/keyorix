@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,10 +17,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	secretsv1alpha1 "github.com/keyorixhq/keyorix/operator/api/v1alpha1"
 	"github.com/keyorixhq/keyorix/operator/internal/keyorix"
@@ -534,4 +537,40 @@ func TestReconcile_RefusesToAdoptSecretOwnedByAnotherCR(t *testing.T) {
 	assert.NotContains(t, got.Data, "DB_PASSWORD")
 	require.Len(t, got.OwnerReferences, 1)
 	assert.Equal(t, "other-cr", got.OwnerReferences[0].Name, "ownership must not have moved to the new CR")
+}
+
+// SetupWithManager must configure a small, fixed MaxConcurrentReconciles (r143). Without
+// it, controller-runtime's default of exactly 1 means one shared worker services every
+// KeyorixSecret in every namespace cluster-wide — a single slow/malicious CR (large Data
+// array, or an entry pointed at an allow-listed-but-slow server) can stall reconciliation
+// of every other tenant. This builds a real manager/controller (never Start()ed, so no
+// network/API-server access happens) via setupController — the exact function
+// SetupWithManager itself calls — and inspects the constructed controller-runtime
+// controller. Because controller-runtime's own controller.Controller interface exposes no
+// public accessor for MaxConcurrentReconciles (it's a field on an internal-package
+// struct), this reads it via reflection on the concrete value — a legitimate technique
+// here since we only need runtime reflection, not a compile-time import of the internal
+// package.
+func TestSetupController_SetsMaxConcurrentReconciles(t *testing.T) {
+	s := testScheme(t)
+	mgr, err := ctrl.NewManager(&rest.Config{Host: "https://127.0.0.1:1"}, ctrl.Options{
+		Scheme:                 s,
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err, "manager construction must not require a live API server connection")
+
+	r := &KeyorixSecretReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s, hashKey: []byte("test-fixture-hmac-key")}
+	c, err := r.setupController(mgr)
+	require.NoError(t, err)
+
+	v := reflect.ValueOf(c)
+	for v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	field := v.FieldByName("MaxConcurrentReconciles")
+	require.True(t, field.IsValid(), "controller-runtime's controller type must still expose a MaxConcurrentReconciles field (reflection target); if this fails after a controller-runtime upgrade, the field/type may have been renamed")
+	assert.EqualValues(t, maxConcurrentReconciles, field.Int(),
+		"the constructed controller must run with the operator's small, fixed reconcile-concurrency bound, not controller-runtime's default of 1")
+	assert.Equal(t, 5, maxConcurrentReconciles, "documents the chosen bound so a future change to the constant is a deliberate, reviewed diff here too")
 }

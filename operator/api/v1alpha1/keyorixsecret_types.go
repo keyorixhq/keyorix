@@ -22,6 +22,12 @@ type KeyorixSecretData struct {
 	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
 	SecretKey string `json:"secretKey"`
 	// Ref is the Keyorix "project/environment/name" reference to read (ADR-059).
+	// Bounded well above any realistic project/environment/name combination (the main
+	// module caps individual project/environment names at 200 chars each — see
+	// maxProjectNameLen/maxEnvironmentNameLen in internal/core/catalog.go) but far below
+	// unbounded, so a CR author can't inflate a single reconcile's request/response size
+	// with an arbitrarily long string (r143).
+	// +kubebuilder:validation:MaxLength=512
 	Ref string `json:"ref"`
 }
 
@@ -62,7 +68,18 @@ type KeyorixSecretSpec struct {
 	// +optional
 	Target KeyorixSecretTarget `json:"target,omitempty"`
 	// Data lists the Keyorix references to materialise into the target Secret.
+	// MaxItems bounds per-reconcile fan-out (r143): buildDesired fetches every entry
+	// sequentially over HTTP (internal/keyorix.Client, 30s timeout per call) while
+	// SetupWithManager runs reconciles on a small, fixed worker pool shared across every
+	// namespace in the cluster — an unbounded array from any single, least-privileged,
+	// CR-create-capable tenant could otherwise stall a shared worker for an unbounded
+	// time, starving reconciliation of every other tenant's KeyorixSecret. 50 mirrors
+	// this codebase's existing bulk-operation cap (maxEnvNamesPerCreate in
+	// internal/core/catalog.go) — comfortably enough keys for one Kubernetes Secret
+	// (which itself caps out around 1MiB total) while keeping worst-case per-reconcile
+	// fan-out in the tens, not thousands.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=50
 	Data []KeyorixSecretData `json:"data"`
 }
 

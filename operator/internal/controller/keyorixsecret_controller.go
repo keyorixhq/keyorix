@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -40,6 +41,28 @@ const (
 	// cluster.
 	minRefreshInterval = 30 * time.Second
 	conditionReady     = "Ready"
+	// maxConcurrentReconciles bounds how many KeyorixSecret reconciles run in parallel
+	// (r143). ctrl.NewControllerManagedBy defaults to exactly 1 with no override — the
+	// operator is deployed as a single cluster-wide instance (see cmd/main.go), so that
+	// default means ONE shared worker services every KeyorixSecret in every namespace: a
+	// single slow or malicious reconcile (a large Data array, or an entry pointed at an
+	// allow-listed-but-slow server) stalls the sole worker and starves reconciliation of
+	// every other tenant's KeyorixSecret cluster-wide. A small, fixed pool bounds how much
+	// one bad reconcile can crowd out — kept low (rather than "unbounded") because higher
+	// concurrency multiplies simultaneous outbound calls to the (trusted, but still
+	// external) Keyorix server and simultaneous token-Secret reads; nothing else in this
+	// module exposes reconciler tuning via a flag (cf. minRefreshInterval above), so this
+	// follows the same fixed-constant convention rather than adding a new --flag.
+	maxConcurrentReconciles = 5
+	// reconcileTimeout bounds the total wall-clock time a single Reconcile call may run,
+	// as defense in depth alongside KeyorixSecretSpec.Data's MaxItems=50 cap (r143):
+	// buildDesired fetches every Data entry sequentially, each over HTTP with its own 30s
+	// timeout (internal/keyorix.Client), so even a MaxItems-bounded array of entries that
+	// are each slow-but-within-timeout could otherwise occupy a worker for up to
+	// 50*30s=25m. 5 minutes is comfortably above any realistic sync (fetches normally
+	// complete in well under a second each) while capping the worst case to a fraction of
+	// that 25-minute ceiling.
+	reconcileTimeout = 5 * time.Minute
 )
 
 // KeyorixSecretReconciler reconciles KeyorixSecret objects.
@@ -127,6 +150,13 @@ type valueFetcher interface {
 
 // Reconcile reads the referenced Keyorix values and writes them into the target Secret.
 func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	// Bound total reconcile time (r143): defense in depth alongside spec.data's MaxItems
+	// cap, so a pathological case (many entries, each near its individual 30s HTTP
+	// timeout) still can't monopolize this reconciler's limited worker pool
+	// (maxConcurrentReconciles) indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, reconcileTimeout)
+	defer cancel()
+
 	logger := log.FromContext(ctx)
 
 	var ks secretsv1alpha1.KeyorixSecret
@@ -373,10 +403,23 @@ func (r *KeyorixSecretReconciler) setReady(ks *secretsv1alpha1.KeyorixSecret, st
 // on changes to them, while arbitrary other namespace Secrets (including every token
 // Secret CR authors reference) are never pulled into the operator's memory.
 func (r *KeyorixSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	_, err := r.setupController(mgr)
+	return err
+}
+
+// setupController is the guts of SetupWithManager, split out so a test can inspect the
+// built controller.Controller (e.g. its MaxConcurrentReconciles) without needing to
+// duplicate this exact builder chain — SetupWithManager itself just discards the
+// returned controller, matching what builder.Builder.Complete does internally.
+func (r *KeyorixSecretReconciler) setupController(mgr ctrl.Manager) (controller.Controller, error) {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&secretsv1alpha1.KeyorixSecret{}).
 		Owns(&corev1.Secret{}).
-		Complete(r)
+		// See maxConcurrentReconciles (r143): without this, controller-runtime's default
+		// of exactly 1 concurrent reconcile means a single shared worker services every
+		// KeyorixSecret in every namespace cluster-wide.
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
+		Build(r)
 }
 
 // hashData fingerprints the desired data deterministically (sorted keys) so an
