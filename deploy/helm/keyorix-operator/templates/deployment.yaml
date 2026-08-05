@@ -24,6 +24,10 @@ spec:
         {{- include "kxop.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "kxop.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532  # matches the distroless:nonroot image user
