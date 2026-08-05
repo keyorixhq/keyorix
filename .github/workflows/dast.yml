@@ -101,11 +101,11 @@ jobs:
       - name: Start server
         run: |
           KEYORIX_CONFIG_PATH=/tmp/keyorix-dast.yaml /tmp/keyorix-server &
-          echo "SERVER_PID=$!" >> $GITHUB_ENV
+          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
 
       - name: Wait for health
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -sf http://localhost:8080/health && break
             sleep 2
           done
@@ -119,6 +119,10 @@ jobs:
 
       - name: Create empty SARIF fallback
         run: |
+          # Single-quoted deliberately: "$schema" here is a literal JSON field
+          # name, not a shell variable to expand -- double-quoting would try to
+          # substitute a (nonexistent) $schema env var and break the JSON.
+          # shellcheck disable=SC2016
           printf '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nuclei","version":"3.3.9","rules":[]}},"results":[]}]}\n' > /tmp/nuclei-results.sarif
 
 
@@ -139,4 +143,4 @@ jobs:
 
       - name: Stop server
         if: always()
-        run: kill $SERVER_PID || true
+        run: kill "$SERVER_PID" || true
