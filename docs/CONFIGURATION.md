@@ -468,6 +468,20 @@ Machine-identity federation: trust external OIDC issuers (e.g. Kubernetes
 projected service-account tokens) and map verified JWTs to machine identities
 (ADR-031). Disabled = OIDC auth off.
 
+**Network reachability, for air-gapped deployments.** Every configuration
+below verifies tokens by fetching `jwks_uri` live from the issuer — this
+requires an identity provider that's reachable from wherever Keyorix runs,
+even if that reachability stays entirely inside a private network with no
+internet egress ("**Shape A**": an enclave with a reachable internal IdP —
+Keycloak, ADFS, Entra ID on-prem/hybrid, or an in-cluster Kubernetes issuer;
+see ADR-075). This is the deployment this section documents, and it's what
+"air-gapped" means for OIDC federation today. A stricter, genuinely
+disconnected deployment with **no** identity provider reachable at all
+("**Shape B**") — the bar a strict zero-network-calls interpretation of
+air-gapped would require — is not yet supported for OIDC federation; if
+that's your requirement, use ADR-030 opaque machine tokens or ADR-027 PATs
+instead, neither of which calls out to any external service.
+
 ```yaml
 oidc:
   enabled: true
@@ -999,6 +1013,13 @@ and maps the identity to a Keyorix user — by the IdP subject (matched against 
 `externalId`) first, then by email. By default there is **no auto-provisioning**: the
 account must already exist (provision it via SCIM or invite). A suspended user is
 refused.
+
+Same network-reachability caveat as [`oidc`](#oidc) above: SSO login needs live
+discovery + JWKS reachability to the IdP on every login, so it needs a reachable
+identity provider (Shape A) — a fully disconnected deployment with no IdP at all
+(Shape B) isn't supported for SSO login either. A provider whose discovery fails
+doesn't take the whole server down (see below), but login via that provider won't
+work until the IdP is reachable again.
 
 ```yaml
 sso:

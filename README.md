@@ -11,11 +11,17 @@ On-premise. Air-gapped ready. Single binary. No Vault admin required.
 | | Vault | Doppler | Keyorix |
 |---|---|---|---|
 | On-premise | Yes | No | **Yes** |
-| Air-gapped | Yes | No | **Yes** |
+| Air-gapped¹ | Yes | No | **Yes** |
 | Simple ops | No | Yes | **Yes** |
 | EU company | No | No | **Yes** |
 | Open source | BSL | No | **AGPL** |
 | Single binary | Yes | N/A | **Yes** |
+
+¹ The core product needs no internet access. Optional integrations that delegate to
+an external identity provider — OIDC machine-identity federation, SSO login — need
+network reachability to that provider (which can itself live entirely inside a
+private network with no internet egress). See [Configuration](docs/CONFIGURATION.md#oidc)
+for what's required.
 
 Vault is powerful but requires a dedicated admin. Doppler is simple but SaaS-only. Keyorix is both simple and runs entirely in your infrastructure.
 
@@ -160,7 +166,10 @@ Single binary. HTTP REST API on port 8080. Web UI on port 3000.
 
 SQLite for development and small teams. PostgreSQL for production.
 
-Air-gapped deployment: copy the binary and run. No internet required.
+Air-gapped deployment: copy the binary and run. No internet required. (Optional
+features that delegate to an external identity provider — OIDC federation, SSO
+login — need network reachability to that provider; see
+[Configuration](docs/CONFIGURATION.md#oidc).)
 
 ---
 
