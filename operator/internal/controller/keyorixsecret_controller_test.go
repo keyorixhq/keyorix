@@ -317,6 +317,53 @@ func TestReconcile_UpstreamGoneDoesNotDeleteUnmanagedSecret(t *testing.T) {
 	assert.Equal(t, []byte("do-not-touch"), got.Data["OTHER"])
 }
 
+// TestReconcile_UpstreamGoneDoesNotDeleteSecretOwnedByAnotherCR pins the cross-tenant
+// delete confused-deputy fixed alongside #428's wipe feature: ks.Spec.Target.Name is
+// taken directly from the reconciling CR's OWN spec, fully attacker-controlled. Before
+// this fix, wipeTargetSecret only checked the SHARED ManagedByLabel before deleting —
+// which every Secret this operator manages carries, regardless of which CR owns it. An
+// attacker with only ordinary namespaced KeyorixSecret-create RBAC could set their own
+// CR's spec.target.name to the name of a Secret already owned by a DIFFERENT, victim
+// CR, and point spec.data[0].ref at any nonexistent Keyorix ref: their reconcile would
+// hit ErrSecretGone and delete the victim's Secret — despite never owning it — on every
+// requeue, a sustained cross-tenant availability attack. This mirrors
+// TestReconcile_RefusesToAdoptSecretOwnedByAnotherCR (the write-side sibling) but for
+// the delete path: the fix adds metav1.IsControlledBy(&secret, ks) alongside the
+// existing label check.
+func TestReconcile_UpstreamGoneDoesNotDeleteSecretOwnedByAnotherCR(t *testing.T) {
+	victim := &secretsv1alpha1.KeyorixSecret{
+		ObjectMeta: metav1.ObjectMeta{Name: "victim-cr", Namespace: "app", UID: "victim-uid"},
+	}
+	owned := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-creds",
+			Namespace: "app",
+			Labels:    map[string]string{ManagedByLabel: ManagedByValue},
+		},
+		Data: map[string][]byte{"OTHER": []byte("owned-by-victim-cr")},
+	}
+	// Give `owned` a real controller owner reference to `victim`, mirroring what a prior
+	// reconcile of the victim CR would have set via applySecret.
+	s := testScheme(t)
+	require.NoError(t, controllerutil.SetControllerReference(victim, owned, s))
+
+	// The attacker's own CR ("db", from ksFixture) targets the SAME Secret name, and its
+	// own upstream ref is confirmed gone — driving Reconcile into the wipe path.
+	fetcher := &fakeFetcher{goneRefs: map[string]bool{"app/production/db-password": true}}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret(), owned)
+
+	_, err := reconcile(t, r)
+	require.Error(t, err, "a confirmed-gone upstream ref still requeues with error for backoff")
+	assert.True(t, errors.Is(err, keyorix.ErrSecretGone))
+
+	var got corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got),
+		"a Secret controlled by a DIFFERENT CR must not be deleted just because the shared managed-by label matches")
+	assert.Equal(t, []byte("owned-by-victim-cr"), got.Data["OTHER"], "the victim CR's Secret data must be untouched")
+	require.Len(t, got.OwnerReferences, 1)
+	assert.Equal(t, "victim-cr", got.OwnerReferences[0].Name, "ownership must not have moved or been disturbed")
+}
+
 // TestReconcile_TokenSecretReadUsesAPIReader pins #124: the token Secret lookup
 // must go through the uncached APIReader (when set), not the shared/cached
 // Client — the shared cache is scoped to only Secrets this operator manages, so

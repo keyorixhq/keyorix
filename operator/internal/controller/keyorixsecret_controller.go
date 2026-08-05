@@ -145,7 +145,6 @@ type valueFetcher interface {
 
 // +kubebuilder:rbac:groups=secrets.keyorix.io,resources=keyorixsecrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=secrets.keyorix.io,resources=keyorixsecrets/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=secrets.keyorix.io,resources=keyorixsecrets/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile reads the referenced Keyorix values and writes them into the target Secret.
@@ -358,10 +357,20 @@ func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alp
 
 // wipeTargetSecret deletes the target Secret when the upstream Keyorix reference has
 // been confirmed gone (404/403 — see the ErrSecretGone handling in Reconcile). Only a
-// Secret this operator actually manages (carries ManagedByLabel) is ever touched:
-// applySecret already refuses to adopt a pre-existing unmanaged Secret sharing the
-// target name, so wiping it here too would risk deleting an unrelated workload's own
-// Secret that merely happens to collide on name. A missing target Secret is a no-op.
+// Secret this operator actually manages AND that THIS CR controls is ever touched. Two
+// checks, mirroring applySecret's write-side rigor:
+//   - ManagedByLabel: applySecret already refuses to adopt a pre-existing unmanaged
+//     Secret sharing the target name, so wiping an unlabeled Secret here too would risk
+//     deleting an unrelated workload's own Secret that merely happens to collide on name.
+//   - metav1.IsControlledBy(&secret, ks): ks.Spec.Target.Name is attacker-controlled —
+//     it comes straight from the caller's OWN CR spec. Without this check, an attacker
+//     with only ordinary namespaced KeyorixSecret-create RBAC could set spec.target.name
+//     to the name of a Secret already owned by a DIFFERENT, victim CR and spec.data[0].ref
+//     to any nonexistent Keyorix ref: their reconcile would hit ErrSecretGone and delete
+//     the victim's Secret on every reconcile, despite never owning it — a sustained,
+//     cross-tenant availability attack. Checking ownership, not just the shared label,
+//     closes it: only the CR that actually owns the Secret (via SetControllerReference in
+//     applySecret) may wipe it. A missing target Secret is a no-op.
 func (r *KeyorixSecretReconciler) wipeTargetSecret(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, name string) error {
 	var secret corev1.Secret
 	key := types.NamespacedName{Namespace: ks.Namespace, Name: name}
@@ -369,6 +378,9 @@ func (r *KeyorixSecretReconciler) wipeTargetSecret(ctx context.Context, ks *secr
 		return client.IgnoreNotFound(err)
 	}
 	if secret.Labels[ManagedByLabel] != ManagedByValue {
+		return nil
+	}
+	if !metav1.IsControlledBy(&secret, ks) {
 		return nil
 	}
 	return client.IgnoreNotFound(r.Delete(ctx, &secret))
