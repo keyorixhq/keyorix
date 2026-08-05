@@ -34,6 +34,12 @@ env:
   # asset and pinned here, matching the gitleaks/kubeconform convention above.
   CHECKOV_VERSION: 3.3.6
   CHECKOV_LINUX_X64_SHA256: 0b4f043603225acc55812d896233c98fdfe13e8de31dbbcb18edc669812fb667
+  # actionlint publishes an official checksums.txt; verified it against a
+  # locally-recomputed sha256 of the same asset before pinning here, matching
+  # the gitleaks/kubeconform convention above rather than trusting either
+  # source alone.
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_LINUX_AMD64_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
   COVERAGE_FLOOR: '80'
 
 jobs:
@@ -128,6 +134,34 @@ jobs:
             exit 1
           fi
           echo "OK: no root-level pnpm workspace files."
+
+  # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
+  # not a replacement for it. That hook is the PRIMARY guard: it runs on the
+  # contributor's own machine before a broken workflow file is ever pushed,
+  # which matters specifically because a job defined INSIDE ci.yml cannot run
+  # to catch ci.yml's own syntax error breaking its own parse -- if this file
+  # itself is what's unparseable, no job in it starts, this one included. This
+  # job exists for what pre-commit can't cover: a bypassed hook (--no-verify),
+  # a contributor without it installed, or a GitHub web-UI edit -- and it
+  # protects every OTHER workflow file unconditionally, which stays possible
+  # even when ci.yml itself is the one that's broken elsewhere in history.
+  # Not gated by docs_only, matching pnpm-workspace-root-guard's reasoning: a
+  # workflow file is never classified as docs (doesn't match \.md$ or
+  # ^docs/), and this is a single static-analysis pass, cheap enough to
+  # always run regardless of what this specific PR touches.
+  workflow-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: actionlint
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_LINUX_AMD64_SHA256}  actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | sha256sum -c -
+          tar -xz -f "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" actionlint
+          ./actionlint
 
   # Fast compile gate (~30s). Catches redeclarations, type errors, and build
   # failures before the expensive test-suite/static-analysis jobs start -- those
