@@ -240,6 +240,20 @@ func TestAuthorizeSecretPrincipal_MachineSkipsACL(t *testing.T) {
 	assert.False(t, ok, "a machine identity must never be authorized via a user-scoped SecretACL grant")
 }
 
+// TestAuthorizeSecretPrincipal_MachineGetSecretError covers
+// AuthorizeSecretPrincipal's machine-actor error branch: when the secret
+// itself can't be resolved (e.g. it doesn't exist), the function must
+// propagate the storage error rather than falling through to
+// AuthorizePrincipal with a zero-value scope.
+func TestAuthorizeSecretPrincipal_MachineGetSecretError(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newACLCore(t)
+
+	ok, err := c.AuthorizeSecretPrincipal(ctx, ActorTypeMachine, 1, 999999, "secrets.read")
+	require.Error(t, err)
+	assert.False(t, ok, "an unresolvable secret must never authorize a machine principal")
+}
+
 // TestGrantSecretACL_Upsert verifies that a second grant on the same (secret, user)
 // updates rather than inserting a duplicate.
 func TestGrantSecretACL_Upsert(t *testing.T) {
