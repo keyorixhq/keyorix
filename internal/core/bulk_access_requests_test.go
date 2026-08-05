@@ -98,6 +98,52 @@ func TestBulkApproveAccessRequests_ApproveError(t *testing.T) {
 	assert.Equal(t, uint(5), result.Failed[0].RequestID)
 }
 
+func TestBulkApproveAccessRequests_TooManyIDs(t *testing.T) {
+	k := newBulkTestCore(t)
+	m := k.storage.(*MockStorage)
+
+	ids := make([]uint, maxBulkAccessRequestBatchSize+1)
+	for i := range ids {
+		ids[i] = uint(i + 1)
+	}
+
+	result, err := k.BulkApproveAccessRequests(context.Background(), ids, 2)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "exceeds the maximum batch size")
+	// The cap is checked before any storage access — no partial processing.
+	m.AssertNotCalled(t, "ListAccessRequestsByIDs", mock.Anything, mock.Anything)
+}
+
+func TestBulkApproveAccessRequests_AtBatchLimit(t *testing.T) {
+	// A batch exactly AT the cap must not be rejected by the size check, and every
+	// item must still reach the per-item processing loop as before (no regression
+	// on legitimate use). Permission is denied for all items (as in
+	// TestBulkApproveAccessRequests_MixedResults) purely to keep the mock setup
+	// simple; what this test verifies is that the cap itself does not trip and
+	// that all items are attempted, not that approval succeeds.
+	k := newBulkTestCore(t)
+	m := k.storage.(*MockStorage)
+
+	ids := make([]uint, maxBulkAccessRequestBatchSize)
+	reqs := make([]*models.AccessRequest, maxBulkAccessRequestBatchSize)
+	for i := range ids {
+		ids[i] = uint(i + 1)
+		reqs[i] = pendingReq(uint(i + 1))
+	}
+	m.On("ListAccessRequestsByIDs", mock.Anything, ids).Return(reqs, nil)
+	// Empty roles → Authorize denies every item → each lands in Failed, but the
+	// loop still runs to completion for the full batch.
+	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+
+	result, err := k.BulkApproveAccessRequests(context.Background(), ids, 2)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Approved)
+	assert.Len(t, result.Failed, maxBulkAccessRequestBatchSize)
+}
+
 func TestBulkApproveAccessRequests_MixedResults(t *testing.T) {
 	// ID 1 will succeed (found), ID 99 will fail (not found in pre-fetch).
 	k := newBulkTestCore(t)
@@ -209,6 +255,48 @@ func TestBulkRejectAccessRequests_RejectNonPending(t *testing.T) {
 	require.Len(t, result.Failed, 1)
 	assert.Equal(t, uint(8), result.Failed[0].RequestID)
 	assert.Contains(t, result.Failed[0].Error, "pending")
+}
+
+func TestBulkRejectAccessRequests_TooManyIDs(t *testing.T) {
+	k := newBulkTestCore(t)
+	m := k.storage.(*MockStorage)
+
+	ids := make([]uint, maxBulkAccessRequestBatchSize+1)
+	for i := range ids {
+		ids[i] = uint(i + 1)
+	}
+
+	result, err := k.BulkRejectAccessRequests(context.Background(), ids, 2, "denied")
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "exceeds the maximum batch size")
+	// The cap is checked before any storage access — no partial processing.
+	m.AssertNotCalled(t, "ListAccessRequestsByIDs", mock.Anything, mock.Anything)
+}
+
+func TestBulkRejectAccessRequests_AtBatchLimit(t *testing.T) {
+	// A batch exactly AT the cap must not be rejected by the size check, and every
+	// item must still reach the per-item processing loop as before (no regression
+	// on legitimate use). See TestBulkApproveAccessRequests_AtBatchLimit for why
+	// permission-denied is used to keep the mock setup simple.
+	k := newBulkTestCore(t)
+	m := k.storage.(*MockStorage)
+
+	ids := make([]uint, maxBulkAccessRequestBatchSize)
+	reqs := make([]*models.AccessRequest, maxBulkAccessRequestBatchSize)
+	for i := range ids {
+		ids[i] = uint(i + 1)
+		reqs[i] = pendingReq(uint(i + 1))
+	}
+	m.On("ListAccessRequestsByIDs", mock.Anything, ids).Return(reqs, nil)
+	m.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+	m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
+
+	result, err := k.BulkRejectAccessRequests(context.Background(), ids, 2, "denied")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Rejected)
+	assert.Len(t, result.Failed, maxBulkAccessRequestBatchSize)
 }
 
 func TestBulkRejectAccessRequests_MixedResults(t *testing.T) {

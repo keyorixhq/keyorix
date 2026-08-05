@@ -31,7 +31,7 @@ func (h *CatalogHandler) BulkApproveAccessRequests(w http.ResponseWriter, r *htt
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest
-		if !strings.Contains(msg, "required") {
+		if !strings.Contains(msg, "required") && !strings.Contains(msg, "exceeds the maximum batch size") {
 			log.Printf("Error bulk-approving access requests: %v", err)
 			msg = clientSafe(err)
 			status = http.StatusInternalServerError
@@ -61,7 +61,7 @@ func (h *CatalogHandler) BulkRejectAccessRequests(w http.ResponseWriter, r *http
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest
-		if !strings.Contains(msg, "required") {
+		if !strings.Contains(msg, "required") && !strings.Contains(msg, "exceeds the maximum batch size") {
 			log.Printf("Error bulk-rejecting access requests: %v", err)
 			msg = clientSafe(err)
 			status = http.StatusInternalServerError
