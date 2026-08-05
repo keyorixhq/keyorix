@@ -28,6 +28,15 @@ const (
 	azureHTTPTimeout = 30 * time.Second
 )
 
+// maxGraphResponseBytes caps how much of a Microsoft Graph API response body
+// this client will read into memory before decoding. azureGraphClient.do is a
+// shared helper for every Graph call this executor makes (list password key
+// IDs, add/remove a password credential) — all normally small objects/lists —
+// but the cap is kept generous rather than tuned per call site, bounding a
+// misbehaving or compromised Graph response from exhausting client memory via
+// an unbounded json.Decode of resp.Body.
+const maxGraphResponseBytes = 5 << 20 // 5MB
+
 // azureGraphAPI is the high-level slice of Microsoft Graph the executor uses — an
 // interface seam so the HTTP/SDK details stay contained and tests inject a fake. appID
 // is the application's object id.
@@ -181,7 +190,7 @@ func (c *azureGraphClient) do(ctx context.Context, method, url string, body, out
 		return fmt.Errorf("graph %s returned %d: %s", method, resp.StatusCode, bytes.TrimSpace(msg))
 	}
 	if out != nil {
-		return json.NewDecoder(resp.Body).Decode(out)
+		return json.NewDecoder(io.LimitReader(resp.Body, maxGraphResponseBytes)).Decode(out)
 	}
 	return nil
 }

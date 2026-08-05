@@ -264,21 +264,6 @@ func TestRunValidateAuthEncryption_S23_APIClientValidationError(t *testing.T) {
 		"error should reference the client or decryption failure: %v", err)
 }
 
-// TestRunValidateAuthEncryption_S23_SessionValidationError drives the
-// "session validation failed" error-wrapping branch.
-func TestRunValidateAuthEncryption_S23_SessionValidationError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	require.NoError(t, db.Create(&models.Session{
-		UserID:                88,
-		EncryptedSessionToken: []byte("garbage-ciphertext-s23"),
-	}).Error)
-
-	_, err := validateSessions(db, ae, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "session")
-}
-
 // TestRunValidateAuthEncryption_S23_APITokenValidationError drives the
 // "API token validation failed" error-wrapping branch.
 func TestRunValidateAuthEncryption_S23_APITokenValidationError(t *testing.T) {

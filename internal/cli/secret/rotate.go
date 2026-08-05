@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"syscall"
 
@@ -12,6 +13,14 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
+
+// maxSecretListResponseBytes caps how much of the Keyorix server's secrets-list
+// response this command will read into memory before decoding — the response
+// can list every secret in an environment, so a generous cap is used (matching
+// the same 10MB idiom used elsewhere for Keyorix server response decodes).
+// This bounds a malicious or misbehaving server response from exhausting
+// client memory via an unbounded json.Decode of resp.Body.
+const maxSecretListResponseBytes = 10 << 20 // 10MB
 
 var rotateCmd = &cobra.Command{
 	Use:   "rotate <name>",
@@ -80,7 +89,7 @@ func runRotate(cmd *cobra.Command, args []string) error {
 			} `json:"secrets"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&listResult); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSecretListResponseBytes)).Decode(&listResult); err != nil {
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
 

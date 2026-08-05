@@ -189,14 +189,15 @@ locale:
 func TestRunMigrateAuthData_S22_DryRunWithRows(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	// Insert rows for all four tables so the "Found N … to migrate" lines fire.
+	// Insert rows for the three migrated tables so the "Found N … to migrate"
+	// lines fire. Sessions are intentionally excluded — session_token is a
+	// hash, never plaintext, so migrateSessions was removed (see
+	// auth_encryption_migrate.go).
 	require.NoError(t, db.Create(&models.APIClient{Name: "x", ClientID: "c1", ClientSecret: "plain", IsActive: true}).Error)
-	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "tok"}).Error)
 	require.NoError(t, db.Create(&models.APIToken{ClientID: 1, Token: "api"}).Error)
 	require.NoError(t, db.Create(&models.PasswordReset{UserID: 1, Token: "rst"}).Error)
 
 	require.NoError(t, migrateAPIClients(db, ae, true))
-	require.NoError(t, migrateSessions(db, ae, true))
 	require.NoError(t, migrateAPITokens(db, ae, true))
 	require.NoError(t, migratePasswordResetTokens(db, ae, true))
 
@@ -216,12 +217,10 @@ func TestRunMigrateAuthData_S22_NonDryRunWithAllTables(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
 	require.NoError(t, db.Create(&models.APIClient{Name: "a", ClientID: "cli-s22", ClientSecret: "secret-s22", IsActive: true}).Error)
-	require.NoError(t, db.Create(&models.Session{UserID: 10, SessionToken: "sess-s22"}).Error)
 	require.NoError(t, db.Create(&models.APIToken{ClientID: 1, Token: "tok-s22"}).Error)
 	require.NoError(t, db.Create(&models.PasswordReset{UserID: 10, Token: "reset-s22"}).Error)
 
 	require.NoError(t, migrateAPIClients(db, ae, false))
-	require.NoError(t, migrateSessions(db, ae, false))
 	require.NoError(t, migrateAPITokens(db, ae, false))
 	require.NoError(t, migratePasswordResetTokens(db, ae, false))
 
@@ -240,17 +239,14 @@ func TestRunMigrateAuthData_S22_NonDryRunWithAllTables(t *testing.T) {
 func TestRunValidateAuthEncryption_S22_UnmigratedReturnsError(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
 
-	// Insert one unmigrated row in each of the four tables.
+	// Insert one unmigrated row in each of the three validated tables. Sessions
+	// are intentionally excluded — validateSessions was removed since
+	// session_token is a hash, never plaintext (see auth_encryption_validate.go).
 	require.NoError(t, db.Create(&models.APIClient{Name: "u1", ClientID: "um1", ClientSecret: "pt1", IsActive: true}).Error)
-	require.NoError(t, db.Create(&models.Session{UserID: 99, SessionToken: "ptsess"}).Error)
 	require.NoError(t, db.Create(&models.APIToken{ClientID: 2, Token: "ptapi"}).Error)
 	require.NoError(t, db.Create(&models.PasswordReset{UserID: 99, Token: "ptreset"}).Error)
 
 	n, err := validateAPIClients(db, ae, false)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-
-	n, err = validateSessions(db, ae, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 
@@ -307,13 +303,6 @@ func tamperAPIClientRow(t *testing.T, db *gorm.DB) models.APIClient {
 	return c
 }
 
-func tamperSessionRow(t *testing.T, db *gorm.DB) models.Session {
-	t.Helper()
-	s := models.Session{UserID: 77, EncryptedSessionToken: []byte("not-valid-ciphertext")}
-	require.NoError(t, db.Create(&s).Error)
-	return s
-}
-
 func tamperAPITokenRow(t *testing.T, db *gorm.DB) models.APIToken {
 	t.Helper()
 	tok := models.APIToken{ClientID: 7, EncryptedToken: []byte("not-valid-ciphertext")}
@@ -338,16 +327,6 @@ func TestValidateAPIClients_S22_DecryptError(t *testing.T) {
 	_, err := validateAPIClients(db, ae, false)
 	require.Error(t, err, "decrypt error must propagate")
 	assert.Contains(t, err.Error(), "tamper-client")
-}
-
-// TestValidateSessions_S22_DecryptError drives the DecryptSessionToken error
-// branch in validateSessions.
-func TestValidateSessions_S22_DecryptError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	tamperSessionRow(t, db)
-
-	_, err := validateSessions(db, ae, false)
-	require.Error(t, err, "decrypt error must propagate")
 }
 
 // TestValidateAPITokens_S22_DecryptError drives the DecryptAPIToken error

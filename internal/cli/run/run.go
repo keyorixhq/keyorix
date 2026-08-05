@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,6 +16,15 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
+
+// maxAPIResponseBytes caps how much of a Keyorix server response body this
+// client will read into memory before decoding — the response here is a
+// project's secrets envelope, potentially a large list, so a generous cap is
+// used (matching the same 10MB idiom used elsewhere for Keyorix server
+// response decodes, e.g. internal/cli/common/remote_client.go). This bounds a
+// malicious or misbehaving server response from exhausting client memory via
+// an unbounded json.Decode of resp.Body.
+const maxAPIResponseBytes = 10 << 20 // 10MB
 
 var (
 	runEnv      string
@@ -206,7 +216,7 @@ func (c *apiClient) get(ctx context.Context, path string, out interface{}) error
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAPIResponseBytes)).Decode(&envelope); err != nil {
 		return fmt.Errorf("decode envelope: %w", err)
 	}
 	if envelope.Data == nil {

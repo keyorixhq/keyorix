@@ -7,6 +7,7 @@ package encryption
 //     printing an all-clear.
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 // TestAuthEncryptionCmd_WiredIntoCommandTree is the regression test for the
@@ -93,8 +95,10 @@ func TestMigrateAuthData_ClearsPlaintextColumns(t *testing.T) {
 	client := &models.APIClient{Name: "c", ClientID: "client-1", ClientSecret: "plain-client-secret", IsActive: true}
 	require.NoError(t, db.Create(client).Error)
 
-	session := &models.Session{UserID: 1, SessionToken: "plain-session-token"}
-	require.NoError(t, db.Create(session).Error)
+	// Sessions are intentionally NOT part of this migration/table set — see
+	// runMigrateAuthData's comment in auth_encryption_migrate.go: session_token
+	// stores a SHA-256 hash, never plaintext, so there is nothing for
+	// migrateSessions (removed) to have migrated in the first place.
 
 	token := &models.APIToken{ClientID: 1, Token: "plain-api-token"}
 	require.NoError(t, db.Create(token).Error)
@@ -103,7 +107,6 @@ func TestMigrateAuthData_ClearsPlaintextColumns(t *testing.T) {
 	require.NoError(t, db.Create(reset).Error)
 
 	require.NoError(t, migrateAPIClients(db, authEnc, false))
-	require.NoError(t, migrateSessions(db, authEnc, false))
 	require.NoError(t, migrateAPITokens(db, authEnc, false))
 	require.NoError(t, migratePasswordResetTokens(db, authEnc, false))
 
@@ -114,11 +117,6 @@ func TestMigrateAuthData_ClearsPlaintextColumns(t *testing.T) {
 	plain, err := authEnc.DecryptClientSecret(gotClient.EncryptedClientSecret, []byte(gotClient.ClientSecretMetadata))
 	require.NoError(t, err)
 	require.Equal(t, "plain-client-secret", plain)
-
-	var gotSession models.Session
-	require.NoError(t, db.First(&gotSession, session.ID).Error)
-	require.Empty(t, gotSession.SessionToken, "plaintext session_token must be cleared after migration")
-	require.NotEmpty(t, gotSession.EncryptedSessionToken)
 
 	var gotToken models.APIToken
 	require.NoError(t, db.First(&gotToken, token.ID).Error)
@@ -135,31 +133,33 @@ func TestMigrateAuthData_ClearsPlaintextColumns(t *testing.T) {
 	// fail on a unique-constraint collision now that multiple rows share a
 	// cleared (NULL) plaintext column.
 	require.NoError(t, migrateAPIClients(db, authEnc, false))
-	require.NoError(t, migrateSessions(db, authEnc, false))
 	require.NoError(t, migrateAPITokens(db, authEnc, false))
 	require.NoError(t, migratePasswordResetTokens(db, authEnc, false))
 }
 
 // TestMigrateAuthData_ClearsPlaintext_MultipleRowsNoUniqueCollision guards the
-// NULL-not-empty-string choice: session_token/token columns carry a unique
-// index, so clearing two rows to "" would collide on the second UPDATE.
+// NULL-not-empty-string choice: token columns carry a unique index, so
+// clearing two rows to "" would collide on the second UPDATE. (Originally
+// written against sessions; sessions were removed from this migration path
+// since session_token is a hash, never plaintext — api_tokens exercises the
+// identical unique-index-collision hazard.)
 func TestMigrateAuthData_ClearsPlaintext_MultipleRowsNoUniqueCollision(t *testing.T) {
 	authEnc, db := setupMigrateValidateTest(t)
 
-	s1 := &models.Session{UserID: 1, SessionToken: "session-token-one"}
-	s2 := &models.Session{UserID: 2, SessionToken: "session-token-two"}
-	require.NoError(t, db.Create(s1).Error)
-	require.NoError(t, db.Create(s2).Error)
+	t1 := &models.APIToken{ClientID: 1, Token: "api-token-one"}
+	t2 := &models.APIToken{ClientID: 2, Token: "api-token-two"}
+	require.NoError(t, db.Create(t1).Error)
+	require.NoError(t, db.Create(t2).Error)
 
-	require.NoError(t, migrateSessions(db, authEnc, false))
+	require.NoError(t, migrateAPITokens(db, authEnc, false))
 
-	var got1, got2 models.Session
-	require.NoError(t, db.First(&got1, s1.ID).Error)
-	require.NoError(t, db.First(&got2, s2.ID).Error)
-	require.Empty(t, got1.SessionToken)
-	require.Empty(t, got2.SessionToken)
-	require.NotEmpty(t, got1.EncryptedSessionToken)
-	require.NotEmpty(t, got2.EncryptedSessionToken)
+	var got1, got2 models.APIToken
+	require.NoError(t, db.First(&got1, t1.ID).Error)
+	require.NoError(t, db.First(&got2, t2.ID).Error)
+	require.Empty(t, got1.Token)
+	require.Empty(t, got2.Token)
+	require.NotEmpty(t, got1.EncryptedToken)
+	require.NotEmpty(t, got2.EncryptedToken)
 }
 
 // TestValidateAuthEncryption_FlagsUnmigratedRows is the regression test for
@@ -196,4 +196,67 @@ func TestValidateAuthEncryption_CleanWhenFullyMigrated(t *testing.T) {
 	n, err := validateAPIClients(db, authEnc, false)
 	require.NoError(t, err)
 	require.Zero(t, n)
+}
+
+// TestMigrateAuthData_DoesNotCorruptLiveSessionLookup is the regression test
+// for the HIGH-severity migrateSessions defect: sessions.session_token has
+// NEVER stored a plaintext token. store.CreateSession (see
+// internal/storage/store/local_auth.go's hashSessionToken) always writes the
+// SHA-256 hash of the token, and store.GetSession looks a session up by
+// recomputing that same hash and matching it against this column.
+//
+// A previous version of runMigrateAuthData ran every session through a
+// migrateSessions helper that matched on "session_token != ''" — true for
+// every live session, since the column always holds a hash — "encrypted" the
+// hash value as if it were a real secret, and then set session_token to NULL
+// in the same UPDATE. NULL landed on the exact column GetSession keys its
+// WHERE clause on, so every live session silently and permanently became
+// unfindable while the CLI reported success.
+//
+// This test creates a session through the real store.CreateSession path (so
+// the row looks exactly like production data — a hash, not plaintext), runs
+// the auth-encryption migration end to end, and asserts the session can still
+// be looked up by its original plaintext token afterward.
+func TestMigrateAuthData_DoesNotCorruptLiveSessionLookup(t *testing.T) {
+	authEnc, db := setupMigrateValidateTest(t)
+	ls := store.NewLocalStorage(db)
+	ctx := context.Background()
+
+	const plaintextToken = "a-real-session-token-issued-at-login" //nolint:gosec // test fixture, not a credential
+	created, err := ls.CreateSession(ctx, &models.Session{
+		UserID:       7,
+		SessionToken: plaintextToken,
+	})
+	require.NoError(t, err)
+	require.NotZero(t, created.ID)
+
+	// Sanity check on the premise the original bug got wrong: the stored row
+	// must hold a hash, not the plaintext token.
+	var stored models.Session
+	require.NoError(t, db.First(&stored, created.ID).Error)
+	require.NotEqual(t, plaintextToken, stored.SessionToken, "session_token must be a hash, not the plaintext token")
+	require.NotEmpty(t, stored.SessionToken)
+
+	// Seed one row in each table that the migration DOES act on, so this test
+	// exercises a full, non-trivial migration pass rather than a no-op.
+	require.NoError(t, db.Create(&models.APIClient{Name: "c", ClientID: "regress-client", ClientSecret: "plain-secret", IsActive: true}).Error)
+	require.NoError(t, db.Create(&models.APIToken{ClientID: 1, Token: "plain-api-token-regress"}).Error)
+	require.NoError(t, db.Create(&models.PasswordReset{UserID: 7, Token: "plain-reset-regress"}).Error)
+
+	require.NoError(t, migrateAPIClients(db, authEnc, false))
+	require.NoError(t, migrateAPITokens(db, authEnc, false))
+	require.NoError(t, migratePasswordResetTokens(db, authEnc, false))
+
+	// The regression check: the session must still be findable by its original
+	// plaintext token after a full migration pass — proving migrate no longer
+	// touches session_token.
+	got, err := ls.GetSession(ctx, plaintextToken)
+	require.NoError(t, err, "session must still be findable by its token after migration — session_token must not have been nulled")
+	require.Equal(t, created.ID, got.ID)
+
+	// And validate must not flag the (correctly untouched, hash-only) session
+	// as needing migration either.
+	unmigratedAPIClients, err := validateAPIClients(db, authEnc, false)
+	require.NoError(t, err)
+	require.Zero(t, unmigratedAPIClients, "the migrated client should no longer be flagged")
 }
