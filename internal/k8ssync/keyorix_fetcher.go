@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -29,6 +30,11 @@ var ErrUpstreamGone = errors.New("k8ssync: secret not found or access revoked up
 // downgraded — so resolveID must both cap at this value AND paginate rather than
 // assume one page holds every secret (#Bug2).
 const maxServerPageSize = 100
+
+// maxResponseBodyBytes caps how much of a Keyorix server response this fetcher will
+// buffer during json.Decode, so a compromised/misbehaving server (or a DNS-rebound
+// response) can't exhaust process memory with an oversized reply.
+const maxResponseBodyBytes = 10 << 20 // 10MiB
 
 // KeyorixFetcher reads secret values from a Keyorix server over HTTP, resolving a
 // reference of the form "<environment>/<name>" (e.g. "production/db-password") to the
@@ -220,7 +226,7 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface
 	var env struct {
 		Data json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&env); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	if env.Data == nil {

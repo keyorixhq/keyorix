@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,6 +34,9 @@ const (
 	saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101 -- well-known k8s path, not a credential
 	saCAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
+
+// maxResponseBodyBytes (keyorix_fetcher.go) caps how much of a single Kubernetes
+// API response this sink will buffer during json.Decode.
 
 // NewInClusterSink builds a RESTSink from the standard in-cluster environment: the
 // API host/port from KUBERNETES_SERVICE_HOST/PORT and the projected service-account
@@ -92,7 +96,7 @@ func (s *RESTSink) Get(ctx context.Context, namespace, name string) (map[string]
 	var body struct {
 		Data map[string]string `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&body); err != nil {
 		return nil, fmt.Errorf("decode secret %s/%s: %w", namespace, name, err)
 	}
 	out := make(map[string][]byte, len(body.Data))
@@ -264,7 +268,7 @@ func (s *RESTSink) List(ctx context.Context, namespace string) ([]string, error)
 			} `json:"metadata"`
 		} `json:"items"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&body); err != nil {
 		return nil, fmt.Errorf("decode secret list for %s: %w", namespace, err)
 	}
 	names := make([]string, 0, len(body.Items))
@@ -344,7 +348,7 @@ func (s *RESTSink) getOwnedMeta(ctx context.Context, namespace, name string) (ui
 			Labels          map[string]string `json:"labels"`
 		} `json:"metadata"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&body); err != nil {
 		return "", "", false, false, fmt.Errorf("decode secret %s/%s: %w", namespace, name, err)
 	}
 	owned = body.Metadata.Labels[managedByLabel] == managedByValue
