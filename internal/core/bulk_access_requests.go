@@ -10,6 +10,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// maxBulkAccessRequestBatchSize bounds how many request IDs a single bulk
+// approve/reject call may process. Enforced here in core (not just at the
+// HTTP layer) so the CLI's embedded/local mode, which calls these functions
+// directly, is covered too. The global request body-size limit alone still
+// permits well over a million small integers in one JSON array, and the
+// per-item loop below does one DB round trip per ID with no cancellation
+// check — an unbounded batch is a per-request resource-exhaustion vector.
+// 500 comfortably covers any legitimate UI-driven bulk action while bounding
+// worst-case handler runtime and DB load.
+const maxBulkAccessRequestBatchSize = 500
+
 // ── Result types ─────────────────────────────────────────────────────────────
 
 // BulkApproveResult is the outcome of a bulk-approve call.
@@ -42,6 +53,9 @@ type BulkAccessError struct {
 func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs []uint, approverID uint) (*BulkApproveResult, error) {
 	if len(requestIDs) == 0 {
 		return nil, errors.New("request_ids is required")
+	}
+	if len(requestIDs) > maxBulkAccessRequestBatchSize {
+		return nil, fmt.Errorf("request_ids exceeds the maximum batch size of %d", maxBulkAccessRequestBatchSize)
 	}
 
 	// Pre-fetch all requests in one query so we can resolve projectID per item
@@ -105,6 +119,9 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs []uint, approverID uint, reason string) (*BulkRejectResult, error) {
 	if len(requestIDs) == 0 {
 		return nil, errors.New("request_ids is required")
+	}
+	if len(requestIDs) > maxBulkAccessRequestBatchSize {
+		return nil, fmt.Errorf("request_ids exceeds the maximum batch size of %d", maxBulkAccessRequestBatchSize)
 	}
 	if reason == "" {
 		return nil, errors.New("reason is required")

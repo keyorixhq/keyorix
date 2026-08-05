@@ -147,3 +147,33 @@ func TestBulkRejectAccessRequests_SuccessPath(t *testing.T) {
 	require.Contains(t, result.Rejected, reqID, "request must be in the rejected list")
 	require.Empty(t, result.Failed, "no failures expected")
 }
+
+// TestBulkApproveAccessRequests_AtBatchLimit_RealApprovals proves the new
+// maxBulkAccessRequestBatchSize cap is a pure size gate, not a regression on
+// legitimate use: a batch of exactly the cap size goes through the FULL real
+// approval chain (role lookup, role grant, audit) against a real SQLite-backed
+// core and every single request succeeds, exactly as it did before the cap
+// was added.
+func TestBulkApproveAccessRequests_AtBatchLimit_RealApprovals(t *testing.T) {
+	k, db, approverID, _, projectID := setupBulkAccessDB(t)
+	ctx := context.Background()
+
+	// Each request needs a DISTINCT requester: granting the same role to the
+	// same user twice fails with "Role already assigned" (correct, unrelated
+	// pre-existing behavior), which would make every request after the first
+	// fail here for a reason that has nothing to do with the batch-size cap.
+	ids := make([]uint, maxBulkAccessRequestBatchSize)
+	for i := range ids {
+		userID := uint(1000 + i)
+		require.NoError(t, db.Exec(
+			"INSERT INTO users (id,username,email) VALUES (?,?,?)",
+			userID, fmt.Sprintf("requester%d", i), fmt.Sprintf("requester%d@example.com", i),
+		).Error)
+		ids[i] = seedPendingRequest(t, k, projectID, userID, "editor")
+	}
+
+	result, err := k.BulkApproveAccessRequests(ctx, ids, approverID)
+	require.NoError(t, err)
+	require.Empty(t, result.Failed, "no failures expected at exactly the cap")
+	require.Len(t, result.Approved, maxBulkAccessRequestBatchSize)
+}

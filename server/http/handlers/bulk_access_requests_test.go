@@ -84,6 +84,22 @@ func TestBulkApprove_EmptyIDs(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestBulkApprove_TooManyIDs(t *testing.T) {
+	h := newBulkAccessTestHandler(t)
+	// One over core.maxBulkAccessRequestBatchSize (500) — the cap is unexported,
+	// so this mirrors that value rather than importing it.
+	ids := make([]string, 501)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%d", i+1)
+	}
+	body := fmt.Sprintf(`{"request_ids":[%s]}`, strings.Join(ids, ","))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body)))
+	w := httptest.NewRecorder()
+	h.BulkApproveAccessRequests(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "maximum batch size")
+}
+
 func TestBulkApprove_NotFound_ReturnsSuccess(t *testing.T) {
 	h := newBulkAccessTestHandler(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"request_ids":[9999]}`)))
@@ -117,6 +133,22 @@ func TestBulkReject_EmptyIDs(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.BulkRejectAccessRequests(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestBulkReject_TooManyIDs(t *testing.T) {
+	h := newBulkAccessTestHandler(t)
+	// One over core.maxBulkAccessRequestBatchSize (500) — the cap is unexported,
+	// so this mirrors that value rather than importing it.
+	ids := make([]string, 501)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%d", i+1)
+	}
+	body := fmt.Sprintf(`{"request_ids":[%s],"reason":"too risky"}`, strings.Join(ids, ","))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body)))
+	w := httptest.NewRecorder()
+	h.BulkRejectAccessRequests(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "maximum batch size")
 }
 
 func TestBulkReject_NotFound_ReturnsSuccess(t *testing.T) {

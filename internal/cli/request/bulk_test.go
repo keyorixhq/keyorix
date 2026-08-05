@@ -6,6 +6,8 @@ package request
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -334,6 +336,43 @@ func TestRunBulkApprove_BulkApproveError(t *testing.T) {
 	err := runBulkApprove(nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bulk approve failed")
+}
+
+func TestRunBulkApprove_TooManyIDs(t *testing.T) {
+	// The per-request batch-size cap is enforced in core, so it applies to the
+	// CLI's embedded/local path too, not just HTTP callers. A batch over the
+	// cap must be rejected before any storage access is attempted — the
+	// partial service (users table only) would otherwise fail with a generic
+	// "no such table" error on the access_requests lookup, so seeing the
+	// specific cap message here proves the cap check runs first.
+	origIDs, origBy := bulkApproveIDs, bulkApproveBy
+	defer func() { bulkApproveIDs = origIDs; bulkApproveBy = origBy }()
+	ids := make([]string, 501)
+	for i := range ids {
+		ids[i] = strconv.Itoa(i + 1)
+	}
+	bulkApproveIDs = strings.Join(ids, ",")
+	bulkApproveBy = "partial@example.com"
+	withUserSeededPartialService(t, "partial@example.com")
+	err := runBulkApprove(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maximum batch size")
+}
+
+func TestRunBulkReject_TooManyIDs(t *testing.T) {
+	origIDs, origBy, origReason := bulkRejectIDs, bulkRejectBy, bulkRejectReason
+	defer func() { bulkRejectIDs = origIDs; bulkRejectBy = origBy; bulkRejectReason = origReason }()
+	ids := make([]string, 501)
+	for i := range ids {
+		ids[i] = strconv.Itoa(i + 1)
+	}
+	bulkRejectIDs = strings.Join(ids, ",")
+	bulkRejectBy = "partial@example.com"
+	bulkRejectReason = "too many"
+	withUserSeededPartialService(t, "partial@example.com")
+	err := runBulkReject(nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maximum batch size")
 }
 
 func TestRunBulkReject_BulkRejectError(t *testing.T) {
