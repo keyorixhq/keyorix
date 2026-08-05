@@ -1,0 +1,32 @@
+# Trivy misconfig ignores -- read each check's purpose before adding an entry here,
+# not blind suppression (matches this repo's checkov.io/skip convention in
+# deploy/helm/keyorix/templates/*.yaml: every suppression is justified, narrow, and
+# revisited if the underlying design changes).
+
+# KSV-0041 ("ClusterRole shouldn't have access to manage resource 'secrets'") fires on
+# deploy/helm/keyorix-operator/templates/rbac.yaml's ClusterRole object regardless of how
+# it's bound. That's a false positive for this chart's specific design (ADR-076): a single
+# ClusterRole is always defined for manifest reusability, but it is bound via a
+# NAMESPACE-scoped RoleBinding by default (rbac.clusterScoped: false) -- only
+# rbac.clusterScoped=true binds it cluster-wide via a ClusterRoleBinding. KSV-0041 checks
+# the Role's rules in isolation and has no way to know the binding type is what actually
+# determines the effective scope. The real regression guard for "is this cluster-wide by
+# default" already exists and is precise about binding type: the helm-chart job's "ADR-076:
+# all 4 scope paths" step (.github/workflows/ci.yml) asserts no ClusterRoleBinding renders
+# under default values.
+KSV-0041 exp:2027-01-01
+
+# Same false positive, same root cause, on the OTHER copy of this ClusterRole's rules:
+# operator/config/rbac/role.yaml is controller-gen's generated reference manifest (`make
+# manifests` / operator/Makefile's `rbac:roleName=...` target), used only to keep the
+# Helm chart's hand-written RBAC in sync with what the controller's +kubebuilder:rbac
+# markers actually declare -- see deploy/helm/keyorix-operator/templates/rbac.yaml's own
+# comment. It has no RoleBinding/ClusterRoleBinding/ServiceAccount/kustomization.yaml
+# anywhere in operator/config/, so it is never deployed or bound on its own.
+KSV-0041 exp:2027-01-01
+
+# KSV-0125 ("image from an untrusted registry") flags ghcr.io/keyorixhq/keyorix-operator --
+# this project's own published image, from its own GitHub Container Registry namespace.
+# Trivy's built-in trusted-registry policy only recognizes a small default allowlist of
+# well-known public registries and has no way to know this one belongs to this project.
+KSV-0125 exp:2027-01-01

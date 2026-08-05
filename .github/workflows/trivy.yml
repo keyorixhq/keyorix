@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - name: Run Trivy (Dockerfile / Helm / k8s misconfigs)
+      - name: Run Trivy (Dockerfile / Helm / k8s misconfigs) -- SARIF, always uploaded
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
@@ -29,9 +29,25 @@ jobs:
           scanners: misconfig
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL,HIGH
+          severity: CRITICAL,HIGH,MEDIUM
+        if: always()
 
       - name: Upload results
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: trivy-results.sarif
+        if: always()
+
+      # The step above uploads to the Security tab but, with no exit-code set, NEVER
+      # fails this job regardless of what it finds -- CRITICAL misconfigs have been
+      # silently non-blocking. This second run makes MEDIUM+ misconfigs an actual gate,
+      # respecting .trivyignore for the handful of documented false positives (see that
+      # file's comments) rather than raising the bar and leaving them unaddressed.
+      - name: Run Trivy (Dockerfile / Helm / k8s misconfigs) -- blocking
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: '1'

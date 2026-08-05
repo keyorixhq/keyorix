@@ -1,0 +1,68 @@
+# Custom Semgrep rules for patterns specific to this repo -- run alongside
+# --config=auto (community rules) in .github/workflows/semgrep.yml. Each rule here
+# closes a gap semgrep's generic ruleset can't see: a repo-specific convention
+# (the one sanctioned helper for a security-sensitive operation) that the same
+# mistake bypassed more than once across the codebase.
+
+rules:
+  - id: keyorix-unbounded-json-decoder
+    languages: [go]
+    severity: WARNING
+    message: >-
+      json.NewDecoder is reading from a source with no size limit. A large
+      payload is fully buffered into memory before any of the decoded struct's
+      own validation ever runs, which is a self-inflicted memory-exhaustion DoS
+      when the source is a remote HTTP response or another process's stdin.
+      Wrap it in io.LimitReader(...) or http.MaxBytesReader(...) first (see
+      internal/mcp/keyorix.go's getJSON for the pattern). This rule excludes
+      server/http/handlers/**, which server/middleware's MaxBodyBytes
+      middleware already caps globally before any handler runs.
+    metadata:
+      category: security
+      references:
+        - internal/mcp/server.go (stdin JSON-RPC decode had no cap)
+        - operator/internal/keyorix/client.go (FetchValue response decode had no cap)
+    paths:
+      exclude:
+        - server/http/handlers/**
+        - "**/*_test.go"
+    patterns:
+      - pattern-either:
+          - pattern: json.NewDecoder($X).Decode(...)
+          - pattern: |
+              $DEC := json.NewDecoder($X)
+              ...
+              $DEC.Decode(...)
+      - pattern-not: json.NewDecoder(io.LimitReader(...)).Decode(...)
+      - pattern-not: json.NewDecoder(http.MaxBytesReader(...)).Decode(...)
+      - pattern-not: |
+          $DEC := json.NewDecoder(io.LimitReader(...))
+          ...
+          $DEC.Decode(...)
+      - pattern-not: |
+          $DEC := json.NewDecoder(http.MaxBytesReader(...))
+          ...
+          $DEC.Decode(...)
+
+  - id: keyorix-raw-clipboard-write
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      Raw navigator.clipboard.writeText bypasses this app's clipboard
+      auto-clear utility (copyToClipboard, web/src/utils/index.ts), which
+      schedules an automatic wipe after CLIPBOARD_CLEAR_TIMEOUT. A credential
+      copied this way sits in the OS clipboard indefinitely instead of being
+      cleared, where a clipboard-history manager or clipboard-monitoring
+      malware can pick it up later. Use copyToClipboard(...) instead.
+    metadata:
+      category: security
+      references:
+        - web/src/features/machine-identities/MachineTokensPanel.tsx (fixed)
+        - web/src/features/dynamic-secrets/LeasesPanel.tsx (fixed)
+    pattern: navigator.clipboard.writeText(...)
+    paths:
+      exclude:
+        - web/src/utils/index.ts
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "**/__tests__/**"

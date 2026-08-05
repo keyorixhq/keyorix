@@ -979,16 +979,29 @@ jobs:
       - name: Render all 3 charts
         run: |
           # Reuses the same --set values as the helm-chart job's renders, so this
-          # job scans exactly what that job already proved schema-valid.
+          # job scans exactly what that job already proved schema-valid. Every
+          # chart's image is rendered with an explicit digest override so
+          # CKV_K8S_43 (image should use digest) checks the pinned-production
+          # shape rather than the ergonomic default (a mutable tag) every chart
+          # falls back to when no digest is given -- CKV_K8S_43 checks what's
+          # actually rendered, not whether the chart merely *supports* pinning,
+          # so an unpinned render would fail it regardless of chart capability.
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci --set ingress.enabled=true > keyorix-render.yaml
+            --set auth.adminPassword=ci --set ingress.enabled=true \
+            --set server.image.digest=sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+            --set web.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+            > keyorix-render.yaml
           helm template kx deploy/helm/keyorix-k8s-sync \
             --set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
             --set mappings[0].ref=e/n --set mappings[0].namespace=app \
             --set mappings[0].name=s --set mappings[0].key=K \
-            --set targetNamespaces='{app,web}' > k8s-sync-render.yaml
-          helm template kx deploy/helm/keyorix-operator > operator-render.yaml
+            --set targetNamespaces='{app,web}' \
+            --set image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333 \
+            > k8s-sync-render.yaml
+          helm template kx deploy/helm/keyorix-operator \
+            --set image.digest=sha256:4444444444444444444444444444444444444444444444444444444444444444 \
+            > operator-render.yaml
 
       - name: checkov (pod security + RBAC-escalation policy scan)
         run: |
@@ -1013,12 +1026,21 @@ jobs:
           #     image-matched UIDs already documented in the deployment templates
           #     (1001 server, 101 nginx, 999 postgres, 65532 distroless).
           #
+          # CKV_K8S_43 ("image should use digest") is included: keyorix-operator and
+          # keyorix-k8s-sync now support .Values.image.digest (mirroring the main
+          # chart), and this check is what actually catches a chart shipping without
+          # that pinning option -- a real, previously-unnoticed gap on exactly the two
+          # charts whose ServiceAccounts hold the most sensitive access (cluster/
+          # namespace-wide Secret RBAC, and a live Keyorix bearer token respectively).
+          # The render step above sets a digest for every chart so this doesn't
+          # regress to alert-fatigue noise on the ergonomic (tag-only) default.
+          #
           # --framework kubernetes: restricts the scan to K8s policy checks only,
           # skipping checkov's separate secrets-framework (gitleaks above already
           # covers secret scanning across full git history; these rendered files
           # are CI-only artifacts, not committed content, and contain only the
           # placeholder `ci` password values passed via --set above).
-          CHECKS="CKV_K8S_16,CKV_K8S_17,CKV_K8S_18,CKV_K8S_19,CKV_K8S_20,CKV_K8S_22,CKV_K8S_23,CKV_K8S_28,CKV_K8S_31,CKV_K8S_37,CKV_K8S_42,CKV_K8S_49,CKV_K8S_155,CKV_K8S_156,CKV_K8S_157,CKV_K8S_158"
+          CHECKS="CKV_K8S_16,CKV_K8S_17,CKV_K8S_18,CKV_K8S_19,CKV_K8S_20,CKV_K8S_22,CKV_K8S_23,CKV_K8S_28,CKV_K8S_31,CKV_K8S_37,CKV_K8S_42,CKV_K8S_43,CKV_K8S_49,CKV_K8S_155,CKV_K8S_156,CKV_K8S_157,CKV_K8S_158"
           checkov --framework kubernetes --compact --check "$CHECKS" \
             -f keyorix-render.yaml -f k8s-sync-render.yaml -f operator-render.yaml
 
