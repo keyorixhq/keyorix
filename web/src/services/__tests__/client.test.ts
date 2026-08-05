@@ -281,6 +281,34 @@ describe('response interceptor (error): 401 handling', () => {
         expect(result).toBe(retriedResponse);
     });
 
+    it('does not refresh+retry again when the same request already carries the _retry marker (loop guard)', async () => {
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        const retriedResponse = { data: { retried: true }, status: 200 };
+        mockRequest.mockResolvedValueOnce(retriedResponse);
+        const originalConfig: Record<string, unknown> = { url: '/secrets', method: 'get' };
+        const firstErr = axiosErr({ config: originalConfig, response: { status: 401, data: {} } });
+
+        // First 401: refresh + retry once, stamping the config with _retry.
+        const firstResult = await responseOnRejected(firstErr);
+        expect(firstResult).toBe(retriedResponse);
+        expect(store.refreshToken).toHaveBeenCalledTimes(1);
+        expect(mockRequest).toHaveBeenCalledTimes(1);
+        expect(originalConfig['_retry']).toBe(true);
+
+        // Second 401 on the SAME logical request (same config object, now
+        // carrying _retry) — simulates the retried request itself failing with
+        // 401 again despite the refresh having succeeded. Must NOT refresh or
+        // retry a second time, and must not force a logout (the session may
+        // still be valid — this could be an unrelated backend/proxy issue).
+        const secondErr = axiosErr({ config: originalConfig, response: { status: 401, data: {} } });
+        await expect(responseOnRejected(secondErr)).rejects.toBe(secondErr);
+
+        expect(store.refreshToken).toHaveBeenCalledTimes(1);
+        expect(mockRequest).toHaveBeenCalledTimes(1);
+        expect(store.logout).not.toHaveBeenCalled();
+    });
+
     it('refreshes the token but does not retry when the error carries no config to replay', async () => {
         const store = makeAuthStore({ isAuthenticated: true });
         mockGetState.mockReturnValue(store);
