@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync/atomic"
 )
@@ -46,6 +47,11 @@ type Server struct {
 	maxReads int64
 	// readCount is incremented atomically per successful keyorix_get_secret call.
 	readCount atomic.Int64
+	// maxMessageBytes caps a single inbound JSON-RPC message (see maxMessageReader).
+	// 0 (the default, i.e. never set by NewServer) means "use defaultMaxMessageBytes" —
+	// tests may override this field directly to exercise the cap without transferring
+	// megabytes of data.
+	maxMessageBytes int64
 }
 
 // NewServer builds a server over the given reader; version is reported in serverInfo.
@@ -99,19 +105,78 @@ const (
 	codeInvalidParams  = -32602
 )
 
+// defaultMaxMessageBytes bounds a single inbound JSON-RPC message, matching the
+// order-of-magnitude cap internal/mcp/keyorix.go's getJSON already applies to HTTP
+// response bodies (10<<20). Without it, a single oversized message (e.g. a multi-GB
+// string inside params) is fully buffered by json.Decoder before any of the tool's own
+// length checks ever run — a self-inflicted DoS on stdin, which a host process feeds
+// this binary with no size guarantee of its own.
+const defaultMaxMessageBytes = 10 << 20
+
+// maxMessageReader enforces a PER-MESSAGE byte budget on top of a single underlying
+// io.Reader that Serve's loop decodes many sequential JSON-RPC messages from. Naively
+// wrapping r once in io.LimitReader(r, N) before constructing the json.Decoder would
+// only bound the first N bytes read from the stream FOR ITS ENTIRE LIFETIME — once a
+// session's cumulative reads crossed N (routine after enough small messages), every
+// later message would fail to decode even though no single message was oversized.
+//
+// Instead, the Serve loop calls reset() before every dec.Decode() call, restoring a
+// full budget for that decode attempt. json.Decoder reads from the underlying reader in
+// internal chunks and may buffer a little past one JSON value's boundary when data is
+// immediately available, but Read here never returns more than the remaining budget in
+// a single call, so a decode attempt can never pull more than `limit` bytes from the
+// wire — a message that needs more than that fails with a explicit "too large" error
+// instead of growing an unbounded in-memory buffer, while a following normal-sized
+// message gets its own fresh budget on the next reset() and is unaffected.
+type maxMessageReader struct {
+	r         io.Reader
+	limit     int64
+	remaining int64
+}
+
+func newMaxMessageReader(r io.Reader, limit int64) *maxMessageReader {
+	return &maxMessageReader{r: r, limit: limit, remaining: limit}
+}
+
+// reset restores the full per-message budget; call before each dec.Decode().
+func (m *maxMessageReader) reset() {
+	m.remaining = m.limit
+}
+
+func (m *maxMessageReader) Read(p []byte) (int, error) {
+	if m.remaining <= 0 {
+		return 0, fmt.Errorf("mcp: message exceeds maximum size of %d bytes", m.limit)
+	}
+	if int64(len(p)) > m.remaining {
+		p = p[:m.remaining]
+	}
+	n, err := m.r.Read(p)
+	m.remaining -= int64(n)
+	return n, err
+}
+
 // Serve reads JSON-RPC messages from r and writes responses to w until EOF. It returns
 // nil on a clean EOF. Diagnostics must go to stderr (never to w); values are never
-// written anywhere but a tool result requested by the client.
+// written anywhere but a tool result requested by the client. Each message is bounded
+// to s.maxMessageBytes (see maxMessageReader) — an oversized message is a fatal parse
+// error for the session, same as any other unparseable input.
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
-	dec := json.NewDecoder(r)
+	limit := s.maxMessageBytes
+	if limit <= 0 {
+		limit = defaultMaxMessageBytes
+	}
+	mr := newMaxMessageReader(r, limit)
+	dec := json.NewDecoder(mr)
 	enc := json.NewEncoder(w)
 	for {
+		mr.reset()
 		var req rpcRequest
 		if err := dec.Decode(&req); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			// The stream is no longer parseable; report once and stop (id unknown).
+			// The stream is no longer parseable (including "message too large"); report
+			// once and stop (id unknown).
 			_ = enc.Encode(rpcResponse{JSONRPC: jsonrpcVersion, ID: json.RawMessage("null"),
 				Error: &rpcError{Code: codeParseError, Message: "parse error"}})
 			return err
