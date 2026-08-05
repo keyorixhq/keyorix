@@ -97,3 +97,27 @@ func TestNewKeyorixClient_RequiresHTTPS(t *testing.T) {
 		}
 	}
 }
+
+// TestKeyorixClient_RefusesRedirect pins the fix for a bearer-token-leak-on-downgrade
+// bug: Go's default http.Client only strips the Authorization header when a redirect's
+// Host differs from the original — never when only the scheme changes, so a same-host
+// https->http redirect would otherwise carry the bearer token (and the plaintext secret
+// value in the response) over cleartext. requireHTTPSURL only guards the INITIAL
+// request's scheme, not a mid-request redirect, so CheckRedirect must refuse every
+// redirect outright.
+func TestKeyorixClient_RefusesRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Fail(t, "the client must never actually reach the redirect target", "Authorization=%q", r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/api/v1/secrets/value", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	_, err := mustClient(t, redirector.URL, "tok").GetSecret(context.Background(), "a/b/c")
+	require.Error(t, err, "a redirect must be refused, not silently followed")
+	assert.Contains(t, err.Error(), "redirect")
+}
