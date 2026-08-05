@@ -23,5 +23,53 @@ Nice=10
 CPUQuota=400%
 MemoryMax=2G
 
+# Process-isolation hardening. This service holds a GH_TOKEN with
+# Pull-Requests read/write (and per config.env.example, potentially Contents
+# read/write) loaded via EnvironmentFile, and spends nearly all its time
+# running `go test -fuzz` against security-critical parsers (KEK
+# reconstruction, SAML XML, ASN.1/PKCS7, bundle verification). The realistic
+# worst case is a fuzz-discovered memory-corruption bug (or a
+# supply-chain-compromised test dependency) achieving code execution inside
+# the `go test` process -- these directives cap the blast radius of that.
+NoNewPrivileges=true
+ProtectSystem=strict
+# NOT "true": every git invocation in run-rotation.sh/notify-on-crash.sh
+# reads ~/.gitconfig for the `credential.helper` and `safe.directory` entries
+# README.md step 4 has the fuzzer user set up (ProtectHome=true makes /home/
+# fully inaccessible, including reads, which breaks git outright with a
+# "dubious ownership" refusal). The SSH deploy-key setup in README.md step 3
+# also reads ~/.ssh/id_ed25519. "read-only" keeps all of that working while
+# still blocking any write into /home, /root, or /run/user.
+ProtectHome=read-only
+PrivateTmp=true
+RestrictSUIDSGID=true
+# `go test -fuzz` needs a writable build/module cache; left unset it defaults
+# under $HOME, which ProtectHome=read-only above makes unwritable. Redirect
+# it under /opt/keyorix-fuzz instead of relying on $HOME -- `go` creates
+# these directories itself on first use, no manual `mkdir` needed as long as
+# /opt/keyorix-fuzz (already chowned to fuzzer per README.md step 2) is
+# writable.
+Environment=GOCACHE=/opt/keyorix-fuzz/go-cache
+Environment=GOMODCACHE=/opt/keyorix-fuzz/go-mod
+Environment=GOPATH=/opt/keyorix-fuzz/gopath
+# ProtectSystem=strict makes the entire filesystem read-only except what's
+# listed here. Every directory the scripts in this service actually write to,
+# matching config.env.example's defaults -- update this list if a deployment
+# overrides KEYORIX_REPO / FUZZ_CORPUS_WORKTREE / NOTIFIED_STATE_DIR away from
+# those defaults:
+#   - KEYORIX_REPO: run-rotation.sh does `git fetch`/`checkout`/`reset --hard`
+#     here and `go test` writes testdata/fuzz/<Func>/ on a crash;
+#     notify-on-crash.sh also `git fetch`s the fuzz-corpus branch here. The
+#     linked worktree's git-dir for FUZZ_CORPUS_WORKTREE lives under
+#     KEYORIX_REPO/.git/worktrees/, so it's covered by this entry too.
+#   - FUZZ_CORPUS_WORKTREE: sync-corpus.sh rsyncs new corpus files in and
+#     commits/pushes from here.
+#   - NOTIFIED_STATE_DIR: notify-on-crash.sh writes per-target logs, gh-error
+#     logs, and dedup marker files here.
+#   - the GOCACHE/GOMODCACHE/GOPATH dirs set above (also includes the
+#     non-crashing fuzz corpus cache under $GOCACHE/fuzz -- see
+#     sync-corpus.sh's comments).
+ReadWritePaths=/opt/keyorix-fuzz/keyorix /opt/keyorix-fuzz/keyorix-fuzz-corpus /opt/keyorix-fuzz/state /opt/keyorix-fuzz/go-cache /opt/keyorix-fuzz/go-mod /opt/keyorix-fuzz/gopath
+
 [Install]
 WantedBy=multi-user.target
