@@ -21,22 +21,27 @@ leaderElection: false
 metricsPort: 8080
 healthPort: 8081
 
-# watchNamespaces (OPTIONAL, #327/#427): restricts this operator instance to reconciling
+# watchNamespaces (OPTIONAL, ADR-076): restricts this operator instance to reconciling
 # KeyorixSecret CRs (and their target Secrets) in only the listed namespaces, instead of
-# the default cluster-wide behavior. When set, RBAC is scoped accordingly: the chart's
-# ClusterRole is bound via a namespace-scoped RoleBinding in each listed namespace instead
-# of a cluster-wide ClusterRoleBinding -- least privilege for deployments that run one
-# operator instance per namespace/tenant set. When empty (the default), a single instance
-# watches every namespace and needs the broader ClusterRoleBinding to do so.
+# the DEFAULT (this release's own namespace only). When set, RBAC is scoped accordingly:
+# the chart's ClusterRole is bound via a namespace-scoped RoleBinding in each listed
+# namespace instead -- for deployments that run one operator instance per bounded
+# namespace/tenant set (more than just its own, but still not cluster-wide). Mutually
+# exclusive with rbac.clusterScoped: true (the chart refuses to render if both are set).
 #   watchNamespaces: [team-a, team-b]
 watchNamespaces: []
 
 rbac:
-  # clusterScoped: ignored when watchNamespaces is set (that path always uses per-namespace
-  # RoleBindings). When watchNamespaces is empty, true (the default) preserves the original
-  # cluster-wide ClusterRoleBinding; set to false to instead use a RoleBinding scoped to the
-  # release namespace only — least-privilege for single-namespace deployments.
-  clusterScoped: true
+  # clusterScoped (ADR-076): the ONLY way to get a genuinely cluster-wide instance --
+  # watching every namespace in the cluster with no static list, bound via a
+  # ClusterRoleBinding. Ignored/rejected when watchNamespaces is also set (mutually
+  # exclusive, see watchNamespaces above). Defaults to false: an unmodified `helm install`
+  # now gets a namespace-scoped RoleBinding in its own release namespace only, not the
+  # broader cluster-wide grant this used to default to. Existing installs upgrading from a
+  # prior chart version that relied on the old cluster-wide default must set this to
+  # `true` explicitly to preserve that behavior across the upgrade -- see the CHANGELOG's
+  # BREAKING entry for this release.
+  clusterScoped: false
 
 serviceAccount:
   create: true

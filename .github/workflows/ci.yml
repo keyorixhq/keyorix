@@ -867,30 +867,40 @@ jobs:
             --set targetNamespaces='{app,web}' \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
 
-      - name: Lint + render keyorix-operator chart
+      - name: "Lint + render keyorix-operator chart (ADR-076: all 4 scope paths)"
         run: |
           helm lint deploy/helm/keyorix-operator
           helm lint deploy/helm/keyorix-operator --set 'watchNamespaces={team-a,team-b}'
+          helm lint deploy/helm/keyorix-operator --set rbac.clusterScoped=true
 
-          # Default (cluster-wide) mode: kubeconform-validate the rendered controller
-          # resources (CRDs ship under crds/, not templated, so none rendered here), and
-          # prove the Secret/KeyorixSecret RBAC is still bound via the existing
-          # cluster-wide ClusterRoleBinding — the #327/#427 backward-compatibility
-          # guarantee for deployments that don't opt into namespace scoping.
+          # For each of the 3 renderable paths this asserts the same two things: the
+          # rendered RBAC binding kind+namespace(s), and the rendered manager flag,
+          # actually AGREE with each other — not just that something renders. That
+          # agreement check is what #1224's chart-precedence bug (and the separate,
+          # previously-undocumented RBAC/cache wiring gap ADR-076's investigation found)
+          # would have violated; asserting it directly is what makes this bug class
+          # non-recurring rather than merely fixed once more.
+
+          # Path 1 (ADR-076 DEFAULT): rbac.clusterScoped=false, watchNamespaces=[] --
+          # RoleBinding in the release's own namespace only, matching the manager's own
+          # fail-closed default (operator/cmd/main.go, Commit 1): with no explicit flag,
+          # it would watch only its own namespace via POD_NAMESPACE. No longer the
+          # cluster-wide default this test asserted pre-ADR-076.
           helm template kx deploy/helm/keyorix-operator --set leaderElection=true \
             > default-render.yaml
           ./kubeconform -strict -summary -kubernetes-version 1.29.0 < default-render.yaml
-          if ! grep -q '^kind: ClusterRoleBinding$' default-render.yaml; then
-            echo "expected a ClusterRoleBinding in the default (unscoped) render"; exit 1
+          if grep -q '^kind: ClusterRoleBinding$' default-render.yaml; then
+            echo "did not expect a ClusterRoleBinding in the default (namespace-scoped) render"; exit 1
           fi
-          if grep -A2 '^kind: RoleBinding$' default-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
-            echo "unexpected namespace-scoped RoleBinding for the main Secret/CRD grant in the default render"
-            exit 1
+          if ! grep -A2 '^kind: RoleBinding$' default-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
+            echo "expected a RoleBinding named kx-keyorix-operator in the release namespace (default)"; exit 1
+          fi
+          if ! grep -q '^            - "-watch-namespaces=default"$' default-render.yaml; then
+            echo "expected the -watch-namespaces=default flag on the manager Deployment (must agree with the RoleBinding namespace above)"; exit 1
           fi
 
-          # Namespace-scoped mode (opt-in, #327/#427): prove the same RBAC is instead
-          # bound via a RoleBinding in each watchNamespaces entry, with NO cluster-wide
-          # ClusterRoleBinding — least privilege for a per-namespace deployment model.
+          # Path 2 (opt-in multi-namespace): watchNamespaces set -- RoleBinding per listed
+          # namespace, no ClusterRoleBinding.
           helm template kx deploy/helm/keyorix-operator --set 'watchNamespaces={team-a,team-b}' \
             > scoped-render.yaml
           ./kubeconform -strict -summary -kubernetes-version 1.29.0 < scoped-render.yaml
@@ -902,8 +912,40 @@ jobs:
               echo "expected a RoleBinding named kx-keyorix-operator in namespace $ns"; exit 1
             fi
           done
-          if ! grep -q -- '-watch-namespaces=team-a,team-b' scoped-render.yaml; then
-            echo "expected the -watch-namespaces flag on the manager Deployment"; exit 1
+          if ! grep -q '^            - "-watch-namespaces=team-a,team-b"$' scoped-render.yaml; then
+            echo "expected the -watch-namespaces=team-a,team-b flag on the manager Deployment"; exit 1
+          fi
+
+          # Path 3 (explicit cluster-wide opt-in): rbac.clusterScoped=true,
+          # watchNamespaces=[] -- ClusterRoleBinding, -all-namespaces flag. The ONLY route
+          # to cluster-wide (ADR-076) -- no longer reachable via any default.
+          helm template kx deploy/helm/keyorix-operator --set rbac.clusterScoped=true \
+            > cluster-render.yaml
+          ./kubeconform -strict -summary -kubernetes-version 1.29.0 < cluster-render.yaml
+          if ! grep -q '^kind: ClusterRoleBinding$' cluster-render.yaml; then
+            echo "expected a ClusterRoleBinding when rbac.clusterScoped=true"; exit 1
+          fi
+          if grep -A2 '^kind: RoleBinding$' cluster-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
+            echo "unexpected namespace-scoped RoleBinding for the main Secret/CRD grant when rbac.clusterScoped=true"
+            exit 1
+          fi
+          if ! grep -q '^            - "-all-namespaces"$' cluster-render.yaml; then
+            echo "expected the -all-namespaces flag on the manager Deployment"; exit 1
+          fi
+          if grep -q '^            - "-watch-namespaces=' cluster-render.yaml; then
+            echo "did not expect a -watch-namespaces flag when rbac.clusterScoped=true"; exit 1
+          fi
+
+          # Path 4 (contradictory config): rbac.clusterScoped=true AND watchNamespaces set
+          # -- must fail the render outright (ADR-076 decision B: no precedence-based
+          # resolution of this exact combination, since #1224 already showed what that
+          # produces). helm template must exit non-zero and never reach kubeconform.
+          if helm template kx deploy/helm/keyorix-operator --set rbac.clusterScoped=true \
+              --set 'watchNamespaces={team-a}' > contradictory-render.yaml 2> contradictory-error.txt; then
+            echo "expected helm template to fail for rbac.clusterScoped=true + watchNamespaces set"; exit 1
+          fi
+          if ! grep -q 'mutually exclusive' contradictory-error.txt; then
+            echo "expected the failure message to name the contradiction"; cat contradictory-error.txt; exit 1
           fi
 
   # helm-chart (above) validates chart/schema *shape* (helm lint + kubeconform
