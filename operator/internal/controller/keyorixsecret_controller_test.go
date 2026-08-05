@@ -58,8 +58,6 @@ func (f *fakeFetcher) FetchValue(_ context.Context, ref string) ([]byte, error) 
 	return v, nil
 }
 
-
-
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
