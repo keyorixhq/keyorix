@@ -66,6 +66,32 @@ assert_invalid "FOO<<EOF"
 # shellcheck disable=SC2016
 assert_invalid 'FOO$(whoami)'
 
+# --- A secret NAME that's a valid identifier but collides with a reserved,
+# security-sensitive env var (PATH substitution, LD_PRELOAD/BASH_ENV code
+# execution in a later, more-privileged step, etc.) must still be rejected —
+# the charset check above says nothing about the identifier being one of
+# these. Checked case-insensitively. ---
+assert_invalid "PATH"
+assert_invalid "LD_PRELOAD"
+assert_invalid "LD_LIBRARY_PATH"
+assert_invalid "BASH_ENV"
+assert_invalid "bash_env"
+assert_invalid "NODE_OPTIONS"
+assert_invalid "PYTHONPATH"
+assert_invalid "PYTHONSTARTUP"
+assert_invalid "PERL5LIB"
+assert_invalid "RUBYOPT"
+assert_invalid "GEM_PATH"
+assert_invalid "NODE_PATH"
+assert_invalid "IFS"
+assert_invalid "ENV"
+assert_invalid "SHELLOPTS"
+assert_invalid "PS4"
+# A denylisted name as a substring, not an exact match, must still be
+# accepted — only the exact reserved name is unsafe.
+assert_valid "PATH_TO_CONFIG"
+assert_valid "MY_BASH_ENV_VAR"
+
 if [[ "$fail" -ne 0 ]]; then
   echo
   echo "entrypoint_test.sh: FAILED"
