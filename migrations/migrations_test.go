@@ -7,14 +7,20 @@
 // indirectly via internal/storage/sqlitedialect), so no new test-only
 // dependency is introduced.
 //
-// It covers backlog finding #203: three destructive down-migrations
-// (002_rbac_enhancements, 004_add_auth_encryption, 005_secret_sharing) used
-// to DROP security-relevant data with no export step. Each now copies the
-// about-to-be-dropped data into a same-database backup table before the
-// DROP. These tests prove (1) real data present before rollback survives in
-// the backup location afterward, and (2) the down-migration still performs
-// its original structural change (the original column/table is genuinely
-// gone), so the fix doesn't silently turn the down-migration into a no-op.
+// It covers backlog finding #203 and its round-140 follow-up: five
+// destructive down-migrations (002_rbac_enhancements, 004_add_auth_encryption,
+// 005_secret_sharing, 007_rotation_policies, 008_scope_user_group_roles) used
+// to DROP (or, for 008, silently strip scoping from) security-relevant data
+// with no export step. Each now copies the about-to-be-dropped data into a
+// same-database backup table before the DROP/column-drop. These tests prove
+// (1) real data present before rollback survives in the backup location
+// afterward, and (2) the down-migration still performs its original
+// structural change (the original column/table is genuinely gone), so the
+// fix doesn't silently turn the down-migration into a no-op. 005's tests
+// additionally pin a deliberate scope decision: secret_nodes.owner_id is kept
+// (it's core ownership tracking used well beyond the sharing feature), only
+// the sharing-specific is_shared column is dropped — see the down-migration's
+// own comment for the investigation.
 package migrations
 
 import (
@@ -290,5 +296,238 @@ func TestShareRecordsDownMigration_PreservesShareHistory(t *testing.T) {
 	if ownerID != 1 || recipientID != 2 || permission != "read" {
 		t.Fatalf("share_records_backup row = (owner=%d, recipient=%d, permission=%q), want (1, 2, \"read\")",
 			ownerID, recipientID, permission)
+	}
+}
+
+// TestSecretNodesDownMigration_KeepsOwnerIDDropsIsShared pins the fix to
+// 005_secret_sharing.down.sql's previously-stubbed secret_nodes column
+// removal (see the file's own comment for the investigation: owner_id is
+// core ownership-tracking infrastructure used far beyond the "sharing"
+// feature — permissions.go's CheckSecretPermission, secret_ownership.go's
+// TransferSecretOwnership, access reviews, blast-radius/risk analysis, and
+// the inventory report all key off it — so only is_shared, which is
+// sharing-specific and fully recomputable from share_records, is dropped.
+func TestSecretNodesDownMigration_KeepsOwnerIDDropsIsShared(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "005_secret_sharing.up.sql")
+
+	if _, err := db.Exec(
+		`INSERT INTO users (username, email, password_hash) VALUES ('owner1', 'owner1@example.com', 'x')`,
+	); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO namespaces (name) VALUES ('ns1')`); err != nil {
+		t.Fatalf("seed namespaces: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO zones (name) VALUES ('zone1')`); err != nil {
+		t.Fatalf("seed zones: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO environments (name) VALUES ('env1')`); err != nil {
+		t.Fatalf("seed environments: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO secret_nodes (namespace_id, zone_id, environment_id, name, is_secret, type, created_by, owner_id, is_shared)
+		 VALUES (1, 1, 1, 's1', 1, 'secret', 'owner1', 1, 1)`,
+	); err != nil {
+		t.Fatalf("seed secret_nodes: %v", err)
+	}
+
+	execSQLFile(t, db, "005_secret_sharing.down.sql")
+
+	// Non-regression: is_shared is sharing-specific and genuinely dropped.
+	if columnExists(t, db, "secret_nodes", "is_shared") {
+		t.Fatal("secret_nodes.is_shared still exists after down-migration; the stub was never implemented")
+	}
+
+	// Regression fix, deliberate scope decision: owner_id is NOT dropped
+	// (it's core ownership tracking, not sharing-specific) and its data must
+	// survive the table rebuild intact.
+	if !columnExists(t, db, "secret_nodes", "owner_id") {
+		t.Fatal("secret_nodes.owner_id was dropped; it is core ownership tracking and must be preserved")
+	}
+	var ownerID int
+	if err := db.QueryRow(`SELECT owner_id FROM secret_nodes WHERE id = 1`).Scan(&ownerID); err != nil {
+		t.Fatalf("query secret_nodes.owner_id: %v", err)
+	}
+	if ownerID != 1 {
+		t.Fatalf("secret_nodes.owner_id = %d, want 1 (preserved across the table rebuild)", ownerID)
+	}
+
+	// The owner_id index must survive the rebuild too, since the column did.
+	if !tableExists(t, db, "secret_nodes") {
+		t.Fatal("secret_nodes table itself must still exist (only is_shared should be removed)")
+	}
+	var idxName string
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_secret_nodes_owner_id'`,
+	).Scan(&idxName)
+	if err != nil {
+		t.Fatalf("idx_secret_nodes_owner_id missing after rebuild: %v", err)
+	}
+}
+
+// TestSecretNodesDownMigration_ReapplyingUpFailsLoudlyOnPreservedOwnerID
+// documents an accepted, intentional consequence of keeping owner_id (see
+// the test above and the comment in 005_secret_sharing.down.sql): because
+// owner_id is deliberately NOT dropped, 005_secret_sharing.up.sql's
+// `ALTER TABLE secret_nodes ADD COLUMN owner_id ...` can no longer be
+// cleanly replayed after a down-migration — it now fails loudly with a
+// duplicate-column error instead of silently succeeding. That's the correct
+// trade-off (a loud, immediate failure beats silently duplicating or
+// losing ownership data), but it means down-then-up is no longer fully
+// symmetric for this migration; this test pins that as expected, not a
+// regression to "fix" by reintroducing the drop.
+func TestSecretNodesDownMigration_ReapplyingUpFailsLoudlyOnPreservedOwnerID(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "005_secret_sharing.up.sql")
+	execSQLFile(t, db, "005_secret_sharing.down.sql")
+
+	content, err := os.ReadFile(filepath.Join(".", "005_secret_sharing.up.sql"))
+	if err != nil {
+		t.Fatalf("read 005_secret_sharing.up.sql: %v", err)
+	}
+	_, execErr := db.Exec(string(content))
+	if execErr == nil {
+		t.Fatal("expected re-applying 005's up-migration to fail on the already-present owner_id column, got nil error")
+	}
+}
+
+// TestRotationPoliciesDownMigration_PreservesComplianceData pins the fix to
+// 007_rotation_policies.down.sql: rolling back must not silently destroy
+// rotation-policy/compliance data (which secrets require rotation, alert
+// thresholds, created_by accountability).
+//
+// 007_rotation_policies.up.sql uses PostgreSQL-only syntax (SERIAL, NOW())
+// that modernc.org/sqlite's driver cannot execute (see migrations/README.md:
+// these files are "dialect-inconsistent by construction" and "were never
+// executed end-to-end as a single unit against one database engine"), so
+// this test seeds the table directly with SQLite-compatible DDL matching the
+// up-migration's column set, rather than executing the up file.
+func TestRotationPoliciesDownMigration_PreservesComplianceData(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.Exec(`CREATE TABLE rotation_policies (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		description TEXT,
+		scope TEXT NOT NULL DEFAULT 'environment',
+		project_id INTEGER,
+		environment_id INTEGER,
+		interval_days INTEGER NOT NULL,
+		alert_days_before INTEGER NOT NULL DEFAULT 7,
+		notify_on_breach BOOLEAN NOT NULL DEFAULT 1,
+		is_active BOOLEAN NOT NULL DEFAULT 1,
+		created_by TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP
+	)`); err != nil {
+		t.Fatalf("seed rotation_policies schema: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO rotation_policies (name, description, scope, interval_days, alert_days_before, notify_on_breach, is_active, created_by)
+		 VALUES ('db-creds-90d', 'rotate DB creds quarterly', 'environment', 90, 14, 1, 1, 'alice')`,
+	); err != nil {
+		t.Fatalf("seed rotation_policies row: %v", err)
+	}
+
+	execSQLFile(t, db, "007_rotation_policies.down.sql")
+
+	// Non-regression: the down-migration must still actually drop the table.
+	if tableExists(t, db, "rotation_policies") {
+		t.Fatal("rotation_policies still exists after down-migration; down-migration is a no-op")
+	}
+
+	// Regression fix: the row must survive in the backup table.
+	var name, createdBy string
+	var intervalDays int
+	err := db.QueryRow(
+		`SELECT name, interval_days, created_by FROM rotation_policies_backup WHERE name = 'db-creds-90d'`,
+	).Scan(&name, &intervalDays, &createdBy)
+	if err != nil {
+		t.Fatalf("query rotation_policies_backup: %v", err)
+	}
+	if intervalDays != 90 || createdBy != "alice" {
+		t.Fatalf("rotation_policies_backup row = (interval_days=%d, created_by=%q), want (90, \"alice\")",
+			intervalDays, createdBy)
+	}
+}
+
+// TestScopeUserGroupRolesDownMigration_PreservesEnvironmentScoping pins the
+// fix to 008_scope_user_group_roles.down.sql: dropping environment_id must
+// not silently widen every previously environment-scoped role/group binding
+// to "all environments" (environment_id=0, per 008's up-migration and
+// internal/core/access_review.go's EnvironmentID doc comment) on a future
+// down-then-up cycle. The row itself (and its environment_id value) must
+// survive in a backup table, and the live table's other columns/rows must be
+// untouched by the column drop.
+func TestScopeUserGroupRolesDownMigration_PreservesEnvironmentScoping(t *testing.T) {
+	db := openTestDB(t)
+	execSQLFile(t, db, "002_rbac_enhancements.up.sql")
+	execSQLFile(t, db, "006_rename_namespace_to_project.up.sql")
+	execSQLFile(t, db, "008_scope_user_group_roles.up.sql")
+
+	if _, err := db.Exec(`INSERT INTO users (username, email, password_hash) VALUES ('alice', 'alice@example.com', 'x')`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO roles (name) VALUES ('admin')`); err != nil {
+		t.Fatalf("seed roles: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO groups (name) VALUES ('g1')`); err != nil {
+		t.Fatalf("seed groups: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO projects (name) VALUES ('proj1')`); err != nil {
+		t.Fatalf("seed projects: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO user_roles (user_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 7)`,
+	); err != nil {
+		t.Fatalf("seed user_roles: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO group_roles (group_id, role_id, project_id, environment_id) VALUES (1, 1, 1, 7)`,
+	); err != nil {
+		t.Fatalf("seed group_roles: %v", err)
+	}
+
+	execSQLFile(t, db, "008_scope_user_group_roles.down.sql")
+
+	// Non-regression: the down-migration must still actually drop the column.
+	if columnExists(t, db, "user_roles", "environment_id") {
+		t.Fatal("user_roles.environment_id still exists after down-migration; down-migration is a no-op")
+	}
+	if columnExists(t, db, "group_roles", "environment_id") {
+		t.Fatal("group_roles.environment_id still exists after down-migration; down-migration is a no-op")
+	}
+
+	// The row itself (minus environment_id) must survive the column drop.
+	var projectID int
+	if err := db.QueryRow(`SELECT project_id FROM user_roles WHERE user_id = 1 AND role_id = 1`).Scan(&projectID); err != nil {
+		t.Fatalf("user_roles row missing after down-migration: %v", err)
+	}
+	if projectID != 1 {
+		t.Fatalf("user_roles.project_id = %d, want 1 (untouched by the environment_id drop)", projectID)
+	}
+
+	// Regression fix: environment_id must survive in the backup tables.
+	var envID int
+	err := db.QueryRow(
+		`SELECT environment_id FROM user_roles_backup WHERE user_id = 1 AND role_id = 1 AND project_id = 1`,
+	).Scan(&envID)
+	if err != nil {
+		t.Fatalf("query user_roles_backup: %v", err)
+	}
+	if envID != 7 {
+		t.Fatalf("user_roles_backup.environment_id = %d, want 7", envID)
+	}
+
+	err = db.QueryRow(
+		`SELECT environment_id FROM group_roles_backup WHERE group_id = 1 AND role_id = 1 AND project_id = 1`,
+	).Scan(&envID)
+	if err != nil {
+		t.Fatalf("query group_roles_backup: %v", err)
+	}
+	if envID != 7 {
+		t.Fatalf("group_roles_backup.environment_id = %d, want 7", envID)
 	}
 }
