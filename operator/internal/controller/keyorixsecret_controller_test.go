@@ -565,7 +565,7 @@ func TestSetupController_SetsMaxConcurrentReconciles(t *testing.T) {
 	require.NoError(t, err)
 
 	v := reflect.ValueOf(c)
-	for v.Kind() == reflect.Ptr {
+	for v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	field := v.FieldByName("MaxConcurrentReconciles")
