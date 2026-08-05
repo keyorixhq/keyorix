@@ -31,6 +31,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532  # matches the distroless:nonroot image user
+        runAsGroup: 65532  # ditto (Trivy KSV-0021: GID must be > 10000)
         seccompProfile:
           type: RuntimeDefault
       containers:
