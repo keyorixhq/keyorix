@@ -9,11 +9,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 )
+
+// maxVaultResponseBytes caps how much of a Vault HTTP response body this
+// client will read into memory before decoding. Vault responses read here are
+// either a single KV secret's fields or a LIST of child key names under a
+// path — both normally small, but a generous cap is used to accommodate large
+// KV trees/secrets without tuning per call site, while still bounding a
+// malicious or misbehaving Vault response from exhausting client memory via
+// an unbounded json.Decode of resp.Body.
+const maxVaultResponseBytes = 10 << 20 // 10MB
 
 // vaultClient talks to a Vault KV engine over HTTP.
 type vaultClient struct {
@@ -219,7 +229,7 @@ func (c *vaultClient) do(ctx context.Context, url string, out interface{}) (int,
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("vault returned HTTP %d for %s", resp.StatusCode, url)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxVaultResponseBytes)).Decode(out); err != nil {
 		return resp.StatusCode, fmt.Errorf("decode vault response: %w", err)
 	}
 	return resp.StatusCode, nil

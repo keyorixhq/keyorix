@@ -50,6 +50,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -63,6 +64,16 @@ const (
 	bearerPrefix = "Bearer "
 	mimeJSON     = "application/json"
 )
+
+// maxK8sAPIResponseBytes caps how much of a Kubernetes API server response
+// body this backend will read into memory before decoding. Both call sites
+// that use it decode a single Kubernetes API object (a TokenRequest result or
+// a created Secret's metadata) — normally tiny — but the cap is kept generous
+// rather than tuned tight, since the API server is a semi-trusted but still
+// network-reachable peer whose response size this client does not otherwise
+// control. This bounds a misbehaving or compromised API server from
+// exhausting client memory via an unbounded json.Decode of resp.Body.
+const maxK8sAPIResponseBytes = 5 << 20 // 5MB
 
 // k8sMinExpirationSeconds is the Kubernetes TokenRequest minimum (10 minutes); the
 // API server silently bumps anything lower, so we floor it for an honest lease TTL.
@@ -366,7 +377,7 @@ func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount
 			ExpirationTimestamp string `json:"expirationTimestamp"`
 		} `json:"status"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxK8sAPIResponseBytes)).Decode(&out); err != nil {
 		return "", time.Time{}, fmt.Errorf("decode TokenRequest response: %w", err)
 	}
 	if out.Status.Token == "" {
@@ -426,7 +437,7 @@ func (m *realK8sMinter) createBoundSecret(ctx context.Context, namespace, name s
 			UID string `json:"uid"`
 		} `json:"metadata"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxK8sAPIResponseBytes)).Decode(&out); err != nil {
 		return "", fmt.Errorf("decode Secret response: %w", err)
 	}
 	if out.Metadata.UID == "" {

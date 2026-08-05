@@ -8,7 +8,7 @@
 //     validateWithConfig enabled → ValidateKeyFiles error path
 //   - shamir_split.go:       ssOutDir != "" → commitment.hex symlink → write error
 //   - auth_encryption_migrate.go: migrateAPIClients encrypt error (broken authEnc)
-//   - auth_encryption_validate.go: verbose=true paths for sessions/tokens/resets
+//   - auth_encryption_validate.go: verbose=true paths for tokens/resets
 //     with unmigrated rows
 //   - migrate_provider.go:   copyFile src read OK but dst dir fsync fails (non-existent dir)
 //     migrateProviderWithConfig → oldSvc.Initialize fails
@@ -215,34 +215,6 @@ func TestShamirSplit_S24_CommitmentSymlinkRejected(t *testing.T) {
 // is unconditional (no verbose guard). These tests cover the combined verbose
 // encrypted-row path together with unmigrated rows so the full function body
 // executes in one call.
-
-// TestValidateSessions_S24_VerboseWithUnmigrated calls validateSessions with
-// verbose=true when the DB contains both an encrypted (decryptable) session and
-// a plaintext-only (unmigrated) session. This exercises the verbose header
-// print, the per-row ✅ print, and the ⚠️ unmigrated print in one pass.
-func TestValidateSessions_S24_VerboseWithUnmigrated(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	// Insert one properly encrypted session.
-	encTok, encMeta, err := ae.EncryptSessionToken("s24-session-token", uint(50))
-	require.NoError(t, err)
-	require.NoError(t, db.Create(&models.Session{
-		UserID:                50,
-		SessionToken:          "",
-		EncryptedSessionToken: encTok,
-		SessionTokenMetadata:  encMeta,
-	}).Error)
-
-	// Insert one unmigrated (plaintext-only) session.
-	require.NoError(t, db.Create(&models.Session{
-		UserID:       51,
-		SessionToken: "plaintext-unmigrated-s24",
-	}).Error)
-
-	n, err := validateSessions(db, ae, true /* verbose */)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n, "one unmigrated session must be flagged")
-}
 
 // TestValidateAPITokens_S24_VerboseWithUnmigrated calls validateAPITokens with
 // verbose=true when the DB contains both an encrypted token and a plaintext-only

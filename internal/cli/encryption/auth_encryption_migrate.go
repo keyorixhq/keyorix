@@ -39,9 +39,24 @@ func runMigrateAuthData(cmd *cobra.Command, args []string) error {
 	if err := migrateAPIClients(db, authEnc, dryRun); err != nil {
 		return fmt.Errorf("failed to migrate API clients: %w", err)
 	}
-	if err := migrateSessions(db, authEnc, dryRun); err != nil {
-		return fmt.Errorf("failed to migrate sessions: %w", err)
-	}
+	// Sessions are deliberately NOT run through this migration. Unlike
+	// api_clients/api_tokens/password_resets, sessions.session_token has NEVER
+	// stored a plaintext value: store.CreateSession/RotateSession (see
+	// internal/storage/store/local_auth.go) hash the token with SHA-256 before
+	// writing it, and GetSession/GetSessionAny look sessions up by recomputing
+	// that hash and matching it against this same column. There is no plaintext
+	// state for this migration to move out of that column.
+	//
+	// A prior version of this file DID call a migrateSessions here. It matched
+	// on "session_token != ''" — which is true for every live session, since the
+	// column always holds a hash — "encrypted" the hash value as if it were a
+	// real secret, and then set session_token to NULL in the same UPDATE. That
+	// NULL landed on the exact column GetSession/GetSessionAny key their WHERE
+	// clause on, so every live session became permanently unfindable: an
+	// operator running this migration against a production database silently
+	// mass-invalidated every logged-in user's session while the CLI reported
+	// success. See git history for the removed migrateSessions/validateSessions
+	// (the latter had the identical false premise) if this ever needs revisiting.
 	if err := migrateAPITokens(db, authEnc, dryRun); err != nil {
 		return fmt.Errorf("failed to migrate API tokens: %w", err)
 	}
@@ -84,33 +99,6 @@ func migrateAPIClients(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun b
 			"client_secret":           nil,
 		}).Error; err != nil {
 			return fmt.Errorf("failed to update client %s: %w", client.ClientID, err)
-		}
-	}
-	return nil
-}
-
-func migrateSessions(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun bool) error {
-	var sessions []models.Session
-	if err := db.Where("session_token != '' AND encrypted_session_token IS NULL").Find(&sessions).Error; err != nil {
-		return err
-	}
-	fmt.Printf("🎫 Found %d sessions to migrate\n", len(sessions))
-	if dryRun {
-		return nil
-	}
-	for _, session := range sessions {
-		enc, meta, err := authEnc.EncryptSessionToken(session.SessionToken, session.UserID)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt session token for session %d: %w", session.ID, err)
-		}
-		// See migrateAPIClients for why the plaintext column is cleared (set to
-		// NULL, not "") in the same update as the encrypted write.
-		if err := db.Model(&session).Updates(map[string]interface{}{
-			"encrypted_session_token": enc,
-			"session_token_metadata":  meta,
-			"session_token":           nil,
-		}).Error; err != nil {
-			return fmt.Errorf("failed to update session %d: %w", session.ID, err)
 		}
 	}
 	return nil

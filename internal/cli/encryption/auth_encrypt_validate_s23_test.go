@@ -5,13 +5,10 @@
 //
 //   - runValidateAuthEncryption: full command path via keyorix.yaml + real SQLite DB
 //     → success (all-clean), → unmigrated rows (error return), → config-load error
-//   - validateSessions: verbose=true with only encrypted rows (no unmigrated)
-//     → decrypt-error path (garbage ciphertext)
 //   - validateAPITokens: verbose=true with only encrypted rows (no unmigrated)
 //     → decrypt-error path
 //   - validatePasswordResetTokens: verbose=true with only encrypted rows (no unmigrated)
 //     → decrypt-error path
-//   - migrateSessions: encrypt-error path via broken authEnc
 //   - migrateAPITokens: encrypt-error path via broken authEnc
 //   - migratePasswordResetTokens: encrypt-error path via broken authEnc
 //   - runMigrateAuthData: full command path via keyorix.yaml + real SQLite DB
@@ -33,28 +30,6 @@ import (
 )
 
 // ── validate helpers: verbose=true with ONLY encrypted rows (no unmigrated) ──
-
-// TestValidateSessions_S23_VerboseNoUnmigrated calls validateSessions with
-// verbose=true when ALL sessions are encrypted (zero unmigrated). This exercises
-// the verbose "Validating N encrypted sessions..." header print and the
-// per-row "✅ Session N: OK" print without hitting any "⚠️ needs migration" path.
-func TestValidateSessions_S23_VerboseNoUnmigrated(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	// Insert a single fully-encrypted session (session_token must be unique, so
-	// we insert only one with an empty string cleared via NULL-equivalent pointer).
-	enc, meta, err := ae.EncryptSessionToken("s23-sess-tok-only", uint(10))
-	require.NoError(t, err)
-	// Use Exec directly to set session_token to NULL (satisfies the unique constraint).
-	require.NoError(t, db.Exec(
-		`INSERT INTO sessions (user_id, session_token, encrypted_session_token, session_token_metadata) VALUES (?, NULL, ?, ?)`,
-		uint(10), enc, meta,
-	).Error)
-
-	n, err := validateSessions(db, ae, true /* verbose */)
-	require.NoError(t, err)
-	assert.Zero(t, n, "zero unmigrated rows expected")
-}
 
 // TestValidateAPITokens_S23_VerboseNoUnmigrated calls validateAPITokens with
 // verbose=true when ALL tokens are encrypted (zero unmigrated).
@@ -110,31 +85,6 @@ func brokenAuthEnc(t *testing.T, db *gorm.DB) *encryption.AuthEncryption {
 	}
 	// Return an uninitialized AuthEncryption so Encrypt* calls will fail.
 	return encryption.NewAuthEncryption(cfg, dir, db)
-}
-
-// TestMigrateSessions_S23_EncryptError drives the "failed to encrypt session
-// token" error path inside migrateSessions by providing a broken (uninitialized)
-// authEnc. The helper must return a non-nil error wrapping the encrypt failure.
-func TestMigrateSessions_S23_EncryptError(t *testing.T) {
-	// Open a fresh DB (not via setupMigrateValidateTest so authEnc is separate).
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "sessions_err.db")
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Session{}))
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
-
-	// Insert a plaintext session so the "found N … to migrate" branch fires.
-	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "plain-tok-s23"}).Error)
-
-	ae := brokenAuthEnc(t, db)
-	err = migrateSessions(db, ae, false /* dryRun */)
-	require.Error(t, err, "an uninitialized AuthEncryption must cause an encrypt error")
-	assert.Contains(t, err.Error(), "failed to encrypt session token")
 }
 
 // TestMigrateAPITokens_S23_EncryptError drives the "failed to encrypt API token"
@@ -272,9 +222,6 @@ func TestRunValidateAuthEncryption_S23_UnmigratedRows(t *testing.T) {
 		Name: "plain-s23", ClientID: "plain-client-s23",
 		ClientSecret: "plaintext-secret-s23", IsActive: true,
 	}).Error)
-	require.NoError(t, db.Create(&models.Session{
-		UserID: 99, SessionToken: "plaintext-sess-s23",
-	}).Error)
 
 	if sqlDB, err := db.DB(); err == nil {
 		_ = sqlDB.Close()
@@ -382,23 +329,6 @@ func TestRunMigrateAuthData_S23_DryRunConfigPath(t *testing.T) {
 }
 
 // ── validate helpers: decrypt-error paths ────────────────────────────────────
-
-// TestValidateSessions_S23_DecryptError drives the "failed to decrypt session
-// token" branch in validateSessions by inserting a row with a garbage
-// encrypted_session_token that cannot be decrypted.
-func TestValidateSessions_S23_DecryptError(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	// Insert a row with syntactically-present but garbage ciphertext.
-	require.NoError(t, db.Exec(
-		`INSERT INTO sessions (user_id, session_token, encrypted_session_token, session_token_metadata) VALUES (?, NULL, ?, ?)`,
-		uint(55), `{"data":"bm90cmVhbA==","metadata":{}}`, `{}`,
-	).Error)
-
-	_, err := validateSessions(db, ae, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decrypt session token")
-}
 
 // TestValidateAPITokens_S23_DecryptError drives the "failed to decrypt API
 // token" branch in validateAPITokens.

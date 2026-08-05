@@ -23,6 +23,16 @@ const (
 	mimeJSON       = "application/json"
 )
 
+// maxRemoteResponseBytes caps how much of a Keyorix server response body this
+// client will read into memory before decoding. RemoteClient backs every CLI
+// command's remote mode (projects, secrets, environments, users, audit
+// listings…), so a generous cap is used — matching the same 10MB idiom used
+// for the equivalent MCP client response decode (internal/mcp/keyorix.go) —
+// rather than a tight one tuned to any single endpoint's typical payload. This
+// bounds a malicious or misbehaving server response from exhausting client
+// memory via an unbounded json.Decode of resp.Body.
+const maxRemoteResponseBytes = 10 << 20 // 10MB
+
 // ResolveRemote returns the server endpoint and Bearer token from all config sources.
 //
 // Priority: env vars > ~/.keyorix/cli.yaml (written by 'keyorix connect')
@@ -216,7 +226,7 @@ func decodeEnvelope(resp *http.Response, out interface{}, path string) error {
 	var env struct {
 		Data json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRemoteResponseBytes)).Decode(&env); err != nil {
 		return fmt.Errorf("decode response from %s: %w", path, err)
 	}
 	if env.Data == nil {
