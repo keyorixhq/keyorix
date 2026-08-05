@@ -892,7 +892,7 @@ jobs:
           if grep -q '^kind: ClusterRoleBinding$' default-render.yaml; then
             echo "did not expect a ClusterRoleBinding in the default (namespace-scoped) render"; exit 1
           fi
-          if ! grep -B2 '  namespace: default$' default-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
+          if ! grep -A2 '^kind: RoleBinding$' default-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
             echo "expected a RoleBinding named kx-keyorix-operator in the release namespace (default)"; exit 1
           fi
           if ! grep -q '^            - "-watch-namespaces=default"$' default-render.yaml; then
