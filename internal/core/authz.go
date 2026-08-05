@@ -252,6 +252,34 @@ func (c *KeyorixCore) AuthorizeSecret(ctx context.Context, userID, secretID uint
 	return c.Authorize(ctx, userID, perm, scope)
 }
 
+// AuthorizeSecretPrincipal is the actor-aware counterpart to AuthorizeSecret,
+// mirroring AuthorizePrincipal's split between human users and machine
+// identities (ADR-030). It is the entrypoint the per-secret HTTP routes use
+// (RequireScopedSecretPermission) so a per-secret SecretACL grant (RBAC Phase 3)
+// is honored for the ~15 GET/PUT/DELETE routes gated on a specific secret ID,
+// not just the ListSecrets surface.
+//
+// SecretACL rows are inherently user-scoped (models.SecretACL.UserID; see
+// secret_acl.go's GrantSecretACL, which requires the grantee to be a project
+// member — a concept that doesn't apply to machine identities). A machine
+// identity's principal ID lives in an entirely separate ID space/table from
+// User, so treating it as a userID for the ACL lookup would risk an accidental
+// match against an unrelated human's grant purely by numeric coincidence.
+// Machine/OIDC-federated principals therefore always take the existing
+// role-based AuthorizePrincipal path unchanged — byte-for-byte the behavior
+// before this function existed. Fails closed.
+func (c *KeyorixCore) AuthorizeSecretPrincipal(ctx context.Context, actorType string, principalID, secretID uint, permission string) (bool, error) {
+	if actorType != ActorTypeMachine {
+		return c.AuthorizeSecret(ctx, principalID, secretID, permission)
+	}
+	secret, err := c.storage.GetSecret(ctx, secretID)
+	if err != nil {
+		return false, err
+	}
+	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+	return c.AuthorizePrincipal(ctx, actorType, principalID, permission, scope)
+}
+
 // IsGlobalAdmin reports whether userID holds an admin role assigned globally
 // (project 0, environment 0). Used to short-circuit scope-filtered listing.
 //

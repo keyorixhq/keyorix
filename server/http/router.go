@@ -580,11 +580,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/environments", catalogHandler.ListEnvironments)
 
 		// Secrets endpoints. Per-secret routes resolve scope from the secret's
-		// own project/environment. List authorizes against the project_id/
-		// environment_id query filter (a scoped reader must narrow to a project
-		// they can read; the same filter then bounds the returned rows). Create
-		// authorizes in-handler against the project/environment in the body.
-		secretScope := customMiddleware.ScopeFromSecretParam("id")
+		// own project/environment via RequireScopedSecretPermission, which ALSO
+		// consults per-secret SecretACL grants (RBAC Phase 3) in addition to the
+		// project-scope role check that ScopeFromSecretParam +
+		// RequireScopedPermission alone would give — a caller granted
+		// secrets.read/write on this one secret (or an ancestor folder) needs no
+		// project role at all, matching what ListSecrets already honors. List
+		// authorizes against the project_id/environment_id query filter (a
+		// scoped reader must narrow to a project they can read; the same filter
+		// then bounds the returned rows). Create authorizes in-handler against
+		// the project/environment in the body.
 		r.Route("/secrets", func(r chi.Router) {
 			// ListSecrets performs its own authorization inside the handler so that
 			// project-scoped readers receive the union of their accessible scopes
@@ -618,89 +623,89 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// RemoteStorage.GetSecretByName (#497) needs; a caller with only a secret's
 			// name (not its numeric ID) resolves it here. Static path, before /{id}.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/by-name", secretHandler.GetSecretByName)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}", secretHandler.GetSecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/versions/{from}/diff/{to}", secretHandler.DiffSecretVersions)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}", secretHandler.GetSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/versions", secretHandler.GetSecretVersions)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/versions/{from}/diff/{to}", secretHandler.DiffSecretVersions)
 
 			// Secret version comments — free-text annotations on a specific version.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/versions/{versionId}/comments", versionCommentHandler.ListComments)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/versions/{versionId}/comments", versionCommentHandler.CreateComment)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/versions/{versionId}/comments", versionCommentHandler.ListComments)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/versions/{versionId}/comments", versionCommentHandler.CreateComment)
 			// Delete is gated on secrets.manage (admin-only), matching the ACL delete pattern.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete("/{id}/versions/{versionId}/comments/{commentId}", versionCommentHandler.DeleteComment)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/risk", secretHandler.GetSecretRisk)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/shares", shareHandler.ListSecretShares)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/access", secretHandler.ListAccessors)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/access-log", secretHandler.AccessHistory)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/access-log/export", secretHandler.ExportAccessLog)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Delete("/{id}/versions/{versionId}/comments/{commentId}", versionCommentHandler.DeleteComment)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/risk", secretHandler.GetSecretRisk)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/shares", shareHandler.ListSecretShares)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/access", secretHandler.ListAccessors)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/access-log", secretHandler.AccessHistory)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/access-log/export", secretHandler.ExportAccessLog)
 			// Per-secret read statistics — lifetime total + recent-window summary.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/stats", secretHandler.GetSecretAccessStats)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/audit", secretHandler.AuditTrail)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/ownership-history", secretHandler.OwnershipHistory)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/tags", secretHandler.GetTags)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Put("/{id}/tags", secretHandler.SetTags)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/stats", secretHandler.GetSecretAccessStats)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/audit", secretHandler.AuditTrail)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/ownership-history", secretHandler.OwnershipHistory)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/tags", secretHandler.GetTags)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Put("/{id}/tags", secretHandler.SetTags)
 
 			// Secret dependency graph (ADR-052).
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/dependencies", secretHandler.ListSecretDependencies)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/dependencies", secretHandler.ListSecretDependencies)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/impact", secretHandler.GetSecretImpact)
 			// Blast-radius report: richer impact view with OwnerID, ProjectID, and risk level.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/blast-radius", secretHandler.GetBlastRadius)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/blast-radius", secretHandler.GetBlastRadius)
 			// Secret read aggregation report: top readers of a secret over a time window.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/read-summary", secretHandler.GetSecretReadSummary)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Get("/{id}/read-summary", secretHandler.GetSecretReadSummary)
 			// Impact preview: flat cascade-delete count/summary before committing a delete.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/impact-preview", secretHandler.GetSecretImpactPreview)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/impact-preview", secretHandler.GetSecretImpactPreview)
 
 			// Rotation state — per-policy execution state (idle/pending/rotating/succeeded/failed).
 			// Gated on secrets.read because it exposes metadata (when rotation last ran, any error)
 			// without disclosing the secret value.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/rotation-state", rotationPolicyHandler.GetRotationState)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/rotation-state", rotationPolicyHandler.GetRotationState)
 
 			// Per-secret ACLs (RBAC Phase 3): fine-grained user grants independent of project RBAC.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get("/{id}/acl", secretHandler.ListSecretACLs)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Post("/{id}/acl", secretHandler.GrantSecretACL)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete("/{id}/acl/{aclId}", secretHandler.RevokeSecretACL)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Get("/{id}/acl", secretHandler.ListSecretACLs)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Post("/{id}/acl", secretHandler.GrantSecretACL)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Delete("/{id}/acl/{aclId}", secretHandler.RevokeSecretACL)
 
 			// Temporal access schedule: restrict a secret's reads to a time window.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Get(pathIDSchedule, secretHandler.GetSecretSchedule)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Put(pathIDSchedule, secretHandler.SetSecretSchedule)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Delete(pathIDSchedule, secretHandler.DeleteSecretSchedule)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Get(pathIDSchedule, secretHandler.GetSecretSchedule)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Put(pathIDSchedule, secretHandler.SetSecretSchedule)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Delete(pathIDSchedule, secretHandler.DeleteSecretSchedule)
 
 			// Per-secret retention policy override: allows operators to give a
 			// specific secret a longer (or shorter) retention window than the global
 			// data-retention policy (ADR-032). Gated by secrets.manage because it
 			// changes how long the secret persists after deletion — a privileged
 			// policy decision, not a routine write.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsManage, secretScope)).Patch("/{id}/retention", secretHandler.SetRetentionOverride)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Patch("/{id}/retention", secretHandler.SetRetentionOverride)
 
 			// Certificate inspection (ADR-054) — public X.509 metadata, no value/key.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
 
 			// Create: authorized inside the handler (scope comes from the body).
 			r.Post("/", secretHandler.CreateSecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Put("/{id}", secretHandler.UpdateSecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/classification", secretHandler.ClassifySecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/description", secretHandler.DescribeSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Put("/{id}", secretHandler.UpdateSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/classification", secretHandler.ClassifySecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/description", secretHandler.DescribeSecret)
 			// Copy into another environment: read the source ({id}); the handler also
 			// authorizes secrets.write at the target environment's scope.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/copy", secretHandler.CopySecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Post("/{id}/copy", secretHandler.CopySecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/rotate", secretHandler.RotateSecret)
 			// Rotation dry-run / simulation (ADR-047): validates the rotation config without
 			// making any live change. Read-only — requires only secrets.read.
-			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, secretScope)).Post("/{id}/rotation/simulate", secretHandler.SimulateRotation)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/move", secretHandler.MoveSecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/suspend", secretHandler.SuspendSecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/resume", secretHandler.ResumeSecret)
-			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Post("/{id}/rotation/simulate", secretHandler.SimulateRotation)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/rollback", secretHandler.RollbackSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/move", secretHandler.MoveSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/suspend", secretHandler.SuspendSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/resume", secretHandler.ResumeSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/share", shareHandler.ShareSecret)
 			// Self-service: a recipient removes their OWN direct share. No scoped
 			// permission — the action is on the caller's own grant (core only removes a
 			// share whose RecipientID == the caller), so it needs just authentication.
 			r.Delete("/{id}/self-share", shareHandler.RemoveSelfFromShare)
 
-			r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, secretScope)).Delete("/{id}", secretHandler.DeleteSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsDelete, "id")).Delete("/{id}", secretHandler.DeleteSecret)
 			// Restore resolves scope from the (soft-deleted) secret via the unscoped resolver.
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, customMiddleware.ScopeFromDeletedSecretParam("id"))).Post(pathIDRestore, secretHandler.RestoreSecret)
 		})

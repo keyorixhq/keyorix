@@ -26,6 +26,7 @@ func newACLCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.User{}, &models.Role{}, &models.UserRole{},
 		&models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.MachineIdentityRole{},
 	))
 	// Seed project + environment.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
@@ -195,6 +196,62 @@ func TestAuthorizeSecret_ProjectRoleFallback(t *testing.T) {
 	ok, err := c.AuthorizeSecret(ctx, 200, sid, "secrets.read")
 	require.NoError(t, err)
 	assert.True(t, ok, "user with project role should get access via RBAC fallback")
+}
+
+// TestAuthorizeSecretPrincipal_UserACLGrant verifies the actor-aware entrypoint
+// (used by RequireScopedSecretPermission) honors a per-secret ACL grant for a
+// human user with no project role, mirroring TestAuthorizeSecret_ACLGrant.
+func TestAuthorizeSecretPrincipal_UserACLGrant(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+	sid := mkACLSecret(t, db, "principal-acl-only-secret")
+
+	require.NoError(t, c.GrantSecretACL(ctx, 1, sid, 100, []string{"secrets.read"}))
+
+	ok, err := c.AuthorizeSecretPrincipal(ctx, ActorTypeUser, 100, sid, "secrets.read")
+	require.NoError(t, err)
+	assert.True(t, ok, "user with ACL grant should be allowed via the actor-aware entrypoint")
+
+	// No ACL grant covers write.
+	ok2, err := c.AuthorizeSecretPrincipal(ctx, ActorTypeUser, 100, sid, "secrets.write")
+	require.NoError(t, err)
+	assert.False(t, ok2, "ACL grant covering only read must not authorize write")
+}
+
+// TestAuthorizeSecretPrincipal_MachineSkipsACL verifies that a machine identity
+// principal never consults SecretACL (which is user-scoped), even when a
+// SecretACL row happens to exist for a userID matching the machine's principal
+// ID — machine and user IDs are disjoint spaces, but this proves the isolation
+// is enforced structurally, not by accident of test data. A machine principal
+// with no role grant at the secret's scope must be denied.
+func TestAuthorizeSecretPrincipal_MachineSkipsACL(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+	sid := mkACLSecret(t, db, "machine-secret")
+
+	// Grant "user" 100 a SecretACL read grant on sid.
+	require.NoError(t, c.GrantSecretACL(ctx, 1, sid, 100, []string{"secrets.read"}))
+
+	// A machine principal with the SAME numeric ID (100) and no machine role
+	// grant must still be denied — the ACL row belongs to a human user, not
+	// this machine identity.
+	ok, err := c.AuthorizeSecretPrincipal(ctx, ActorTypeMachine, 100, sid, "secrets.read")
+	require.NoError(t, err)
+	assert.False(t, ok, "a machine identity must never be authorized via a user-scoped SecretACL grant")
+}
+
+// TestAuthorizeSecretPrincipal_MachineGetSecretError covers
+// AuthorizeSecretPrincipal's machine-actor error branch: when the secret
+// itself can't be resolved (e.g. it doesn't exist), the function must
+// propagate the storage error rather than falling through to
+// AuthorizePrincipal with a zero-value scope.
+func TestAuthorizeSecretPrincipal_MachineGetSecretError(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newACLCore(t)
+
+	ok, err := c.AuthorizeSecretPrincipal(ctx, ActorTypeMachine, 1, 999999, "secrets.read")
+	require.Error(t, err)
+	assert.False(t, ok, "an unresolvable secret must never authorize a machine principal")
 }
 
 // TestGrantSecretACL_Upsert verifies that a second grant on the same (secret, user)

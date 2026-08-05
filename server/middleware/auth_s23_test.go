@@ -447,3 +447,166 @@ func TestScopeFromRotationPolicyParam_NotFound(t *testing.T) {
 	_, err := ScopeFromRotationPolicyParam("policyId")(req, cs)
 	assert.Error(t, err)
 }
+
+// --- RequireScopedSecretPermission / handleScopedSecretPermissionRequest coverage ---
+//
+// server/http/scoped_rbac_integration_test.go already proves this middleware
+// works correctly end to end over real HTTP, but that test lives in a
+// different package (server/http) and this repo's coverage run doesn't pass
+// -coverpkg=./... (see Makefile/ci.yml), so a cross-package call is never
+// attributed to server/middleware's own coverage. These unit tests exercise
+// the same branches directly, in-package, so they actually count.
+
+// newScopedSecretTestDB is newScopedTestDB plus the SecretACL table, needed
+// because handleScopedSecretPermissionRequest's authorization path
+// (AuthorizeSecretPrincipal -> AuthorizeSecret) unconditionally consults
+// SecretACL before falling back to RBAC.
+func newScopedSecretTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db := newScopedTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.SecretACL{}))
+	return db
+}
+
+// TestRequireScopedSecretPermission_WrapsHandler covers the middleware
+// constructor itself (RequireScopedSecretPermission), proving it builds a
+// working http.Handler chain that delegates to
+// handleScopedSecretPermissionRequest rather than testing that function
+// directly, as every other test in this section does.
+func TestRequireScopedSecretPermission_WrapsHandler(t *testing.T) {
+	db := newScopedSecretTestDB(t)
+	seedAdmin(t, db, 1)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 7, ProjectID: 1, EnvironmentID: 1, Name: "KEY"}).Error)
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
+
+	nextCalled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := RequireScopedSecretPermission("secrets.read", "id")(next)
+	req := makeRequest(t, http.MethodGet, "/secrets/7", map[string]string{"id": "7"}, userCtx, cs)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.True(t, nextCalled, "next handler must be called for an authorized admin")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// TestHandleScopedSecretPermission_NoUserContext covers the requireUserAndCore
+// failure branch: no user in context must 401 without calling next.
+func TestHandleScopedSecretPermission_NoUserContext(t *testing.T) {
+	nextCalled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := makeRequest(t, http.MethodGet, "/secrets/7", map[string]string{"id": "7"}, nil, nil)
+	rec := httptest.NewRecorder()
+	handleScopedSecretPermissionRequest(next, rec, req, "secrets.read", "id")
+
+	assert.False(t, nextCalled, "next must not be called without a user context")
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestHandleScopedSecretPermission_InvalidTarget covers scopePathUint's error
+// branch: a non-numeric id param must 400.
+func TestHandleScopedSecretPermission_InvalidTarget(t *testing.T) {
+	db := newScopedSecretTestDB(t)
+	seedAdmin(t, db, 1)
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
+
+	req := makeRequest(t, http.MethodGet, "/secrets/xyz", map[string]string{"id": "xyz"}, userCtx, cs)
+	rec := httptest.NewRecorder()
+	handleScopedSecretPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), rec, req, "secrets.read", "id")
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// TestHandleScopedSecretPermission_SecretNotFound covers the GetSecret error
+// branch: an id that resolves to no row must reach
+// handleScopeResolutionError's errTargetNotFound path (403, since this admin
+// test user actually holds the permission globally — the "reveal only to
+// privileged callers" case is already covered by
+// TestHandleScopedPermission_NotFoundWithPermission for the shared helper).
+func TestHandleScopedSecretPermission_SecretNotFound(t *testing.T) {
+	db := newScopedSecretTestDB(t)
+	seedAdmin(t, db, 1)
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 1, ActorType: core.ActorTypeUser}
+
+	req := makeRequest(t, http.MethodGet, "/secrets/999", map[string]string{"id": "999"}, userCtx, cs)
+	rec := httptest.NewRecorder()
+	handleScopedSecretPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), rec, req, "secrets.read", "id")
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestHandleScopedSecretPermission_AllowedViaACL is the middleware-layer
+// counterpart to internal/core's TestAuthorizeSecretPrincipal_UserACLGrant and
+// server/http's TestSecretACL_EndToEnd_PerSecretRoutes: it proves a caller
+// with a per-secret SecretACL grant and NO project role reaches next()
+// through this exact function, covering the scope-construction and
+// AuthorizeSecretPrincipal call (lines specific to
+// handleScopedSecretPermissionRequest, not shared with
+// handleScopedPermissionRequest).
+func TestHandleScopedSecretPermission_AllowedViaACL(t *testing.T) {
+	db := newScopedSecretTestDB(t)
+	require.NoError(t, db.Create(&models.User{ID: 5, Username: "aclonly", AccountState: "active"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 7, ProjectID: 1, EnvironmentID: 1, Name: "KEY", IsSecret: true, Status: "active"}).Error)
+	// GrantSecretACL requires the grantee to already be a project member.
+	// RoleID 999 is a placeholder — IsProjectMember only filters on
+	// user_id + project_id, not role_id (see internal/core/secret_acl_test.go's
+	// newACLCore, which uses the same pattern).
+	require.NoError(t, db.Create(&models.UserRole{UserID: 5, RoleID: 999, ProjectID: 1}).Error)
+
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	require.NoError(t, cs.GrantSecretACL(context.Background(), 1, 7, 5, []string{"secrets.read"}))
+
+	userCtx := &UserContext{UserID: 5, ActorType: core.ActorTypeUser}
+	nextCalled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := makeRequest(t, http.MethodGet, "/secrets/7", map[string]string{"id": "7"}, userCtx, cs)
+	rec := httptest.NewRecorder()
+	handleScopedSecretPermissionRequest(next, rec, req, "secrets.read", "id")
+
+	assert.True(t, nextCalled, "an ACL-only grantee with no project role must reach next()")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// TestHandleScopedSecretPermission_Denied covers the disallowed branch of
+// AuthorizeSecretPrincipal's result: a user with neither a role nor an ACL
+// grant on the secret must be forbidden.
+func TestHandleScopedSecretPermission_Denied(t *testing.T) {
+	db := newScopedSecretTestDB(t)
+	require.NoError(t, db.Create(&models.User{ID: 6, Username: "nobody", AccountState: "active"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 7, ProjectID: 1, EnvironmentID: 1, Name: "KEY"}).Error)
+
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	userCtx := &UserContext{UserID: 6, ActorType: core.ActorTypeUser}
+
+	req := makeRequest(t, http.MethodGet, "/secrets/7", map[string]string{"id": "7"}, userCtx, cs)
+	rec := httptest.NewRecorder()
+	handleScopedSecretPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), rec, req, "secrets.read", "id")
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}

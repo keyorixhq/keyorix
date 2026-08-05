@@ -130,6 +130,31 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 		}
 	}
 
+	// Per-secret ACL fallback (RBAC Phase 3, additive — see secret_acl.go's design
+	// doc): a SecretACL grant on this exact secret (or an inherited ancestor
+	// folder, via HasSecretACL) satisfies read/write independently of any
+	// project role. Without this, a caller who only holds an ACL grant passed
+	// the HTTP router's RequireScopedSecretPermission gate but was silently
+	// denied here, because CheckSecretPermission previously recognized only
+	// ownership, share records, and project RBAC (r140) — the same
+	// two-authorization-models gap the RBAC fallback below closed for roles
+	// (#r124). ACL never grants secrets.delete/owner, so PermissionOwner
+	// requests skip this and fall straight to the RBAC fallback. SecretACL rows
+	// are user-scoped (see AuthorizeSecretPrincipal), so a machine-identity actor
+	// skips this and relies on the RBAC fallback exclusively, unchanged from
+	// before.
+	if aclPerm := permissionLevelToRBACPerm(requiredPermission); aclPerm != "" && aclPerm != "secrets.delete" &&
+		actorTypeFromContext(ctx) != ActorTypeMachine {
+		if hasACL, aerr := c.HasSecretACL(ctx, userID, secretID, aclPerm); aerr == nil && hasACL {
+			return &PermissionContext{
+				SecretID:   secretID,
+				UserID:     userID,
+				Permission: requiredPermission,
+				Source:     "acl",
+			}, nil
+		}
+	}
+
 	// RBAC fallback: a project editor/admin whose role grants secrets.write (or
 	// secrets.delete for owner-level operations) passes the HTTP router's
 	// RequireScopedPermission gate but was silently denied here because

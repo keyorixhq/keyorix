@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -106,6 +107,9 @@ func TestCheckSecretPermission(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
+				ms.On("GetSecretACL", mock.Anything, uint(1), uint(2)).Return(nil, errors.New("record not found"))
+				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
 				// RBAC fallback: no roles at this scope — deny.
 				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
@@ -141,6 +145,9 @@ func TestCheckSecretPermission(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(4)).Return([]*models.Group{}, nil)
+				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
+				ms.On("GetSecretACL", mock.Anything, uint(1), uint(4)).Return(nil, errors.New("record not found"))
+				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
 				// RBAC fallback: no roles at this scope — deny.
 				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
@@ -262,6 +269,9 @@ func TestEnforceSecretWritePermission(t *testing.T) {
 		},
 	}, nil)
 	mockStorage.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+	// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
+	mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(1)).Return(nil, errors.New("record not found"))
+	mockStorage.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
 	// RBAC fallback: no roles — deny.
 	mockStorage.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 	mockStorage.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
@@ -343,6 +353,9 @@ func TestCanUserModifySecret(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
+				ms.On("GetSecretACL", mock.Anything, uint(1), uint(1)).Return(nil, errors.New("record not found"))
+				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
 				// RBAC fallback: no roles — deny.
 				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
@@ -516,6 +529,9 @@ func TestGetEffectivePermission(t *testing.T) {
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
+				ms.On("GetSecretACL", mock.Anything, uint(1), uint(1)).Return(nil, errors.New("record not found"))
+				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
 				// RBAC fallback: no roles — deny.
 				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
@@ -659,6 +675,9 @@ func TestGetSecretWithPermissionCheck(t *testing.T) {
 		mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 		mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 		mockStorage.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+		// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
+		mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(2)).Return(nil, errors.New("record not found"))
+		mockStorage.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
 		// RBAC fallback: no roles — deny.
 		mockStorage.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 		mockStorage.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
@@ -689,6 +708,40 @@ func TestPermissionLevelToRBACPerm(t *testing.T) {
 	}
 }
 
+// TestCheckSecretPermission_ACLFallback_GrantsAccess verifies that a user
+// with no ownership, share record, or project role, but a per-secret
+// SecretACL grant covering the required permission, is admitted via the ACL
+// fallback path (r140) with Source "acl" -- the success branch that
+// TestCheckSecretPermission's own table only ever exercises the deny side of
+// (every case there mocks GetSecretACL to return "not found").
+func TestCheckSecretPermission_ACLFallback_GrantsAccess(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+
+	mockStorage := &MockStorage{}
+	secret := &models.SecretNode{
+		ID: 1, OwnerID: 99, Name: "acl-fallback-secret",
+		ProjectID: 5, EnvironmentID: 10,
+	}
+	mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
+	mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
+	mockStorage.On("GetUserGroups", mock.Anything, uint(8)).Return([]*models.Group{}, nil)
+	// ACL fallback (r140): a direct grant on this exact secret covers read.
+	mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(8)).Return(&models.SecretACL{
+		SecretID: 1, UserID: 8, Permissions: `["secrets.read"]`,
+	}, nil)
+
+	c := NewKeyorixCore(mockStorage)
+
+	permCtx, err := c.CheckSecretPermission(context.Background(), 1, 8, PermissionRead)
+	require.NoError(t, err)
+	require.NotNil(t, permCtx)
+	assert.Equal(t, "acl", permCtx.Source)
+	assert.Equal(t, PermissionRead, permCtx.Permission)
+	assert.Equal(t, uint(1), permCtx.SecretID)
+	assert.Equal(t, uint(8), permCtx.UserID)
+	mockStorage.AssertExpectations(t)
+}
+
 // TestCheckSecretPermission_RBACFallback_GrantsAccess verifies that a user
 // with no ownership or share record but a project-scoped RBAC role granting
 // secrets.read is still admitted via the RBAC fallback path (#r124).
@@ -704,6 +757,10 @@ func TestCheckSecretPermission_RBACFallback_GrantsAccess(t *testing.T) {
 	mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 	mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 	mockStorage.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
+	// ACL fallback (r140): no direct grant, and no ancestor folder grant either — falls
+	// through to the RBAC fallback below, proving ACL and RBAC compose correctly.
+	mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(7)).Return(nil, errors.New("record not found"))
+	mockStorage.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
 
 	// RBAC fallback: user 7 has role [55] in this project scope.
 	mockStorage.On("GetUserRoleIDsAt", mock.Anything, uint(7), mock.Anything).Return([]uint{55}, nil)
