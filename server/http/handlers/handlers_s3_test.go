@@ -22,6 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -202,7 +203,7 @@ func newAuthHandlerForTest(t *testing.T) *AuthHandler {
 		&models.User{}, &models.Role{}, &models.UserRole{},
 		&models.LoginAttempt{}, &models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.AuditEvent{},
+		&models.AuditEvent{}, &models.SystemMetadata{},
 	))
 	return NewAuthHandler(core.NewKeyorixCore(store.NewLocalStorage(db)), false)
 }
@@ -331,6 +332,37 @@ func TestAuthHandler_InitSystem_BadJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.InitSystem(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestAuthHandler_InitSystem_Success exercises the real success path (200)
+// against a fresh, never-initialized DB with a bootstrap token configured
+// (BootstrapSystem fails closed -- ErrInvalidBootstrapToken -- with no token
+// set at all). The other InitSystem tests in this package share a DB across
+// many tests (newHandlerCoreS4/S7's cache=shared singleton), so whether
+// system init still succeeds by the time they run depends on test order --
+// not a reliable way to exercise the 200 case. This test builds its own
+// private DB and core service, so init always succeeds here.
+func TestAuthHandler_InitSystem_Success(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.Role{}, &models.UserRole{},
+		&models.LoginAttempt{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.AuditEvent{}, &models.SystemMetadata{}, &models.PasswordHistory{},
+		&models.Project{}, &models.Environment{},
+	))
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs.SetBootstrapToken("test-bootstrap-token")
+	h := NewAuthHandler(cs, false)
+
+	body := `{"username":"sysadmin","email":"sysadmin@example.com","display_name":"Admin","password":"Kx#Vr9$Mn2!Zp4@Qw","bootstrap_token":"test-bootstrap-token"}`
+	req := httptest.NewRequest(http.MethodPost, "/system/init", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.InitSystem(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	contracttest.AssertOpenAPIResponse(t, req, w)
 }
 
 func TestExtractBearerToken(t *testing.T) {

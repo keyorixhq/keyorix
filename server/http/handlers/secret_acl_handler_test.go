@@ -22,6 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -135,6 +136,7 @@ func TestListSecretACLs_Empty(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ListSecretACLs(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+	contracttest.AssertOpenAPIResponse(t, req, w)
 	// Response should contain an empty list (null or []).
 	assert.Contains(t, w.Body.String(), "success")
 }
@@ -239,6 +241,12 @@ func TestGrantSecretACL_HappyPath(t *testing.T) {
 	// The response data should contain the ACL row with user_id 77.
 	body2 := w2.Body.String()
 	assert.Contains(t, body2, "77")
+	// TestListSecretACLs_Empty (this operation's other exercising test) only
+	// ever asserts against an empty array, which JSON Schema validates
+	// vacuously -- this call is what actually exercises the SecretACL item
+	// schema (registry.go's exercisingTests lists this test for
+	// listSecretACLs precisely so a populated response gets checked too).
+	contracttest.AssertOpenAPIResponse(t, req2, w2)
 }
 
 // ── RevokeSecretACL ────────────────────────────────────────────────────────────

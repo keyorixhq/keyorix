@@ -12,10 +12,45 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// secretACLResponse is the wire shape for a SecretACL grant, distinct from
+// models.SecretACL: that model stores Permissions as a JSON-encoded string
+// column (see its own doc comment), but openapi.yaml's SecretACL schema
+// declares permissions as a real JSON array. Marshaling the model directly
+// would emit permissions as an escaped string instead of an array, failing
+// schema validation -- caught by the contract-test harness's exercising
+// test for listSecretACLs once it validated a populated response instead of
+// only ever asserting against an empty list.
+type secretACLResponse struct {
+	ID          uint      `json:"id"`
+	SecretID    uint      `json:"secret_id"`
+	UserID      uint      `json:"user_id"`
+	Permissions []string  `json:"permissions"`
+	GrantedBy   uint      `json:"granted_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func toSecretACLResponse(acls []*models.SecretACL) []secretACLResponse {
+	out := make([]secretACLResponse, len(acls))
+	for i, a := range acls {
+		out[i] = secretACLResponse{
+			ID:          a.ID,
+			SecretID:    a.SecretID,
+			UserID:      a.UserID,
+			Permissions: core.DecodeSecretACLPerms(a.Permissions),
+			GrantedBy:   a.GrantedBy,
+			CreatedAt:   a.CreatedAt,
+		}
+	}
+	return out
+}
 
 // ListSecretACLs handles GET /api/v1/secrets/{id}/acl
 func (h *SecretHandler) ListSecretACLs(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +68,7 @@ func (h *SecretHandler) ListSecretACLs(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Error", err.Error(), aclErrorStatus(err.Error()), nil)
 		return
 	}
-	h.sendSuccess(w, acls, "")
+	h.sendSuccess(w, toSecretACLResponse(acls), "")
 }
 
 // GrantSecretACL handles POST /api/v1/secrets/{id}/acl
