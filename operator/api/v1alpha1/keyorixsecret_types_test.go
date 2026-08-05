@@ -12,32 +12,54 @@ import (
 // crdSchema is a narrow projection of just the pieces of the generated CRD's
 // openAPIV3Schema this test cares about.
 type crdSchema struct {
-	Spec struct {
-		Versions []struct {
-			Name   string `json:"name"`
-			Schema struct {
-				OpenAPIV3Schema struct {
-					Properties struct {
-						Spec struct {
-							Properties struct {
-								Data struct {
-									MaxItems int `json:"maxItems"`
-									MinItems int `json:"minItems"`
-									Items    struct {
-										Properties struct {
-											Ref struct {
-												MaxLength int `json:"maxLength"`
-											} `json:"ref"`
-										} `json:"properties"`
-									} `json:"items"`
-								} `json:"data"`
-							} `json:"properties"`
-						} `json:"spec"`
-					} `json:"properties"`
-				} `json:"openAPIV3Schema"`
-			} `json:"schema"`
-		} `json:"versions"`
-	} `json:"spec"`
+	Spec crdSchemaSpec `json:"spec"`
+}
+
+type crdSchemaSpec struct {
+	Versions []crdSchemaVersion `json:"versions"`
+}
+
+type crdSchemaVersion struct {
+	Name   string                 `json:"name"`
+	Schema crdSchemaVersionSchema `json:"schema"`
+}
+
+type crdSchemaVersionSchema struct {
+	OpenAPIV3Schema crdOpenAPIV3Schema `json:"openAPIV3Schema"`
+}
+
+type crdOpenAPIV3Schema struct {
+	Properties crdOpenAPIV3SchemaProperties `json:"properties"`
+}
+
+type crdOpenAPIV3SchemaProperties struct {
+	Spec crdSpecSchema `json:"spec"`
+}
+
+type crdSpecSchema struct {
+	Properties crdSpecSchemaProperties `json:"properties"`
+}
+
+type crdSpecSchemaProperties struct {
+	Data crdDataSchema `json:"data"`
+}
+
+type crdDataSchema struct {
+	MaxItems int                `json:"maxItems"`
+	MinItems int                `json:"minItems"`
+	Items    crdDataItemsSchema `json:"items"`
+}
+
+type crdDataItemsSchema struct {
+	Properties crdDataItemsProperties `json:"properties"`
+}
+
+type crdDataItemsProperties struct {
+	Ref crdRefSchema `json:"ref"`
+}
+
+type crdRefSchema struct {
+	MaxLength int `json:"maxLength"`
 }
 
 // The kubebuilder validation markers on KeyorixSecretSpec.Data and KeyorixSecretData.Ref
