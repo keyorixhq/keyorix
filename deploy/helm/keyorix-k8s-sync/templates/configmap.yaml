@@ -8,6 +8,14 @@ metadata:
 data:
   k8s-sync.yaml: |
     keyorix_url: {{ required "keyorix.url is required" .Values.keyorix.url | quote }}
+    {{- /* Sprig's `required` only rejects nil/empty-string, not a numeric zero value,
+    so a missing keyorix.projectID (default 0) would otherwise silently render
+    "project_id: 0" instead of failing here — deferring the failure all the way to
+    the agent's own LoadConfig validation at pod startup. Fail at render time instead. */}}
+    {{- if not .Values.keyorix.projectID }}
+    {{- fail "keyorix.projectID is required" }}
+    {{- end }}
+    project_id: {{ .Values.keyorix.projectID }}
     interval: {{ .Values.keyorix.interval | default "5m" | quote }}
     health_port: {{ .Values.healthPort | default 8080 }}
     cleanup: {{ .Values.cleanup | default false }}

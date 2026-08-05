@@ -15,7 +15,17 @@ import (
 // Secrets. The Keyorix auth token is NOT part of this file — it is read from the
 // KEYORIX_TOKEN environment variable so it can come from a mounted Secret.
 type Config struct {
-	KeyorixURL string          `yaml:"keyorix_url"`
+	KeyorixURL string `yaml:"keyorix_url"`
+	// ProjectID is the numeric id of the single Keyorix project this agent's
+	// machine-identity token belongs to (a MachineIdentity — and so its tokens — is
+	// always scoped to exactly one project). Every mapping's Ref names only an
+	// environment and a secret ("<environment>/<name>"), never a project, because
+	// environment names are unique per-project, not globally: two different
+	// projects can each have a "production" environment. Without ProjectID pinning
+	// every secret lookup to this one project server-side, the fetcher would have
+	// to search across every project/environment the token can see and could
+	// return a same-named secret from the WRONG project (#Bug1). Required.
+	ProjectID  uint            `yaml:"project_id"`
 	Interval   string          `yaml:"interval"`    // Go duration (e.g. "5m"); default 5m
 	HealthPort int             `yaml:"health_port"` // probe/status HTTP port; default 8080
 	Cleanup    bool            `yaml:"cleanup"`     // reap orphaned owned Secrets; default false
@@ -50,6 +60,9 @@ func (c *Config) validate() error {
 	// network. The operator (CRD) path already requires https; this matches it.
 	if err := requireHTTPSURL(c.KeyorixURL); err != nil {
 		return err
+	}
+	if c.ProjectID == 0 {
+		return fmt.Errorf("project_id is required")
 	}
 	if len(c.Mappings) == 0 {
 		return fmt.Errorf("at least one mapping is required")

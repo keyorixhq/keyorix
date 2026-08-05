@@ -14,6 +14,15 @@ image:
 keyorix:
   # url is the Keyorix server base URL (required), e.g. https://keyorix.internal
   url: ""
+  # projectID is the numeric id (required) of the single Keyorix project the
+  # tokenSecret's machine identity belongs to. Every mapping's ref below names only
+  # an environment and secret ("<environment>/<name>"), never a project, because
+  # environment names are unique per-project, not globally -- two different projects
+  # can each have a "production" environment. projectID pins every secret lookup to
+  # this one project server-side so a same-named secret in a DIFFERENT project can
+  # never be resolved instead. Find it in the Keyorix UI/CLI for the project this
+  # agent should read from.
+  projectID: 0
   # interval is the reconcile cadence (Go duration).
   interval: 5m
   # token is read from an existing Secret — never put the token in values.

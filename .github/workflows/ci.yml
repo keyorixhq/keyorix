@@ -859,7 +859,7 @@ jobs:
 
       - name: Lint + render keyorix-k8s-sync chart
         run: |
-          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok \
             --set mappings[0].ref=e/n --set mappings[0].namespace=app \
             --set mappings[0].name=s --set mappings[0].key=K"
           helm lint deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET
@@ -984,7 +984,7 @@ jobs:
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
             --set auth.adminPassword=ci --set ingress.enabled=true > keyorix-render.yaml
           helm template kx deploy/helm/keyorix-k8s-sync \
-            --set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+            --set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok \
             --set mappings[0].ref=e/n --set mappings[0].namespace=app \
             --set mappings[0].name=s --set mappings[0].key=K \
             --set targetNamespaces='{app,web}' > k8s-sync-render.yaml

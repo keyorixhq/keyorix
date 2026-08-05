@@ -116,23 +116,42 @@ var errNotManaged = fmt.Errorf("k8ssync: refusing to write: a pre-existing Secre
 // transient/network failure and report it distinctly rather than retrying forever.
 func ErrNotManaged(err error) bool { return errors.Is(err, errNotManaged) }
 
-// Apply create-or-updates the named Secret to hold exactly data, using Server-Side
-// Apply (idempotent, no resource-version handshake). The agent owns the data field
-// via its field manager, so keys it no longer maps are pruned on the next apply.
+// Apply create-or-updates the named Secret to hold exactly data. The agent owns the
+// data field via its field manager, so keys it no longer maps are pruned on the next
+// apply.
 //
 // Before writing, it checks whether a Secret ALREADY EXISTS at this name and, if so,
-// refuses unless it already carries this agent's managed-by label (#139). force=true
-// Server-Side Apply unconditionally takes ownership of every field it sets — including
-// on an object created and owned by something else entirely (an operator, a different
-// tool) — silently overwriting its data and, because Apply always stamps the
-// managed-by label, "branding" it as agent-owned; the next orphan-cleanup pass would
-// then DELETE that operator's Secret outright once Keyorix no longer wants it. Only a
-// Secret this agent already owns (or one that doesn't exist yet, a fresh create) is
-// ever written.
+// refuses unless it already carries this agent's managed-by label (#139). That
+// getOwnedMeta read and the write below are two separate requests, so — same as
+// Delete — there is a window between them for the observed state to change; unlike
+// Delete (which already pins uid+resourceVersion as DeleteOptions preconditions),
+// Apply used to issue an unconditional force=true Server-Side-Apply PATCH with no
+// precondition at all, so a Secret created in that window (e.g. by a namespace-scoped
+// attacker racing the agent's own target name) would be silently claimed and
+// overwritten with the real secret value (#Bug4). Two writes close this, matching
+// what each observed state actually needs:
+//
+//   - !exists: a plain POST create. Kubernetes create is atomic against the object's
+//     existence — if something raced into existence at this name between the read
+//     above and this request, the POST itself fails with 409 AlreadyExists rather
+//     than silently overwriting it. There is no read-then-write window at all.
+//   - exists && owned: a Server-Side-Apply PATCH, but with the exact resourceVersion
+//     just observed set on the submitted object as an optimistic-concurrency
+//     precondition. Kubernetes checks a submitted resourceVersion against the
+//     object's current stored value for any write, PATCH included, and rejects with
+//     a conflict if it no longer matches — resourceVersion is a cluster-wide,
+//     strictly-increasing etcd revision that is never reused, so even a delete
+//     immediately followed by a recreate under the same name between our read and
+//     this write yields a different resourceVersion and is still caught (uid
+//     preconditions, as Delete uses, would add nothing beyond what resourceVersion
+//     already catches here, since SSA has no DeleteOptions-equivalent to carry a uid
+//     precondition on a PATCH).
 func (s *RESTSink) Apply(ctx context.Context, namespace, name string, data map[string][]byte) error {
-	if _, _, exists, owned, err := s.getOwnedMeta(ctx, namespace, name); err != nil {
+	_, rv, exists, owned, err := s.getOwnedMeta(ctx, namespace, name)
+	if err != nil {
 		return err
-	} else if exists && !owned {
+	}
+	if exists && !owned {
 		return fmt.Errorf("%s/%s: %w", namespace, name, errNotManaged)
 	}
 
@@ -140,19 +159,58 @@ func (s *RESTSink) Apply(ctx context.Context, namespace, name string, data map[s
 	for k, v := range data {
 		encoded[k] = base64.StdEncoding.EncodeToString(v)
 	}
+	metadata := map[string]interface{}{
+		"name":      name,
+		"namespace": namespace,
+		// Stamp ownership so orphan cleanup can find Secrets this agent created
+		// (and only those) via a label selector.
+		"labels": map[string]string{managedByLabel: managedByValue},
+	}
 	payload := map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "Secret",
-		"metadata": map[string]interface{}{
-			"name":      name,
-			"namespace": namespace,
-			// Stamp ownership so orphan cleanup can find Secrets this agent created
-			// (and only those) via a label selector.
-			"labels": map[string]string{managedByLabel: managedByValue},
-		},
-		"type": "Opaque",
-		"data": encoded,
+		"metadata":   metadata,
+		"type":       "Opaque",
+		"data":       encoded,
 	}
+
+	if !exists {
+		return s.createSecret(ctx, namespace, name, payload)
+	}
+	metadata["resourceVersion"] = rv
+	return s.applyOwnedSecret(ctx, namespace, name, payload)
+}
+
+// createSecret POSTs a brand-new Secret to the namespace's collection endpoint. A 409
+// here means something raced into existence at this name since Apply's ownership
+// check — the create is left to fail rather than falling back to an unconditional
+// overwrite, so the race can never result in silently claiming a Secret this agent
+// never observed as its own.
+func (s *RESTSink) createSecret(ctx context.Context, namespace, name string, payload map[string]interface{}) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal secret %s/%s: %w", namespace, name, err)
+	}
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets", url.PathEscape(namespace))
+	req, err := s.newRequest(ctx, http.MethodPost, path, "application/json", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	resp, err := s.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("create secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
+	}
+	return nil
+}
+
+// applyOwnedSecret Server-Side-Applies payload (which must already carry
+// metadata.resourceVersion as an optimistic-concurrency precondition — see Apply) onto
+// a Secret this agent has already verified it owns.
+func (s *RESTSink) applyOwnedSecret(ctx context.Context, namespace, name string, payload map[string]interface{}) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal secret %s/%s: %w", namespace, name, err)

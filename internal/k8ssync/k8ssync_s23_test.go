@@ -327,7 +327,7 @@ func TestKeyorixFetcher_getJSON_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := NewKeyorixFetcher(srv.URL, "tok")
+	f := NewKeyorixFetcher(srv.URL, "tok", 1)
 	_, err := f.Fetch(context.Background(), "prod/secret")
 	require.Error(t, err)
 	// A 500 must not be confused with a definitive authorization/not-found failure.
@@ -505,9 +505,13 @@ func TestKeyorixFetcher_S23_FetchValue404(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		if r.URL.Path == "/api/v1/projects/1/environments" {
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"ID":5,"Name":"prod"}]}}`))
+			return
+		}
 		if r.URL.Path == "/api/v1/secrets" {
 			// List returns a known secret so resolveID succeeds.
-			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":42,"Name":"my-secret"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[{"ID":42,"Name":"my-secret"}]}}`))
 			return
 		}
 		// Value endpoint returns 404 (deleted between list and fetch).
@@ -515,7 +519,7 @@ func TestKeyorixFetcher_S23_FetchValue404(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	f := NewKeyorixFetcher(srv.URL, "tok")
+	f := NewKeyorixFetcher(srv.URL, "tok", 1)
 	_, err := f.Fetch(context.Background(), "prod/my-secret")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUpstreamGone, "a 404 on the value endpoint must wrap ErrUpstreamGone")

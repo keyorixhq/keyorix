@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,25 +22,46 @@ import (
 // indefinitely (which a plain, unclassified fetch error did).
 var ErrUpstreamGone = errors.New("k8ssync: secret not found or access revoked upstream")
 
+// maxServerPageSize is the Keyorix server's maximum accepted page_size for
+// GET /api/v1/secrets (server/http/handlers/secrets_list.go: 1 <= page_size <= 100;
+// anything outside that range is silently ignored and the server falls back to its
+// default of 20). Requesting more than this is not an error — it is silently
+// downgraded — so resolveID must both cap at this value AND paginate rather than
+// assume one page holds every secret (#Bug2).
+const maxServerPageSize = 100
+
 // KeyorixFetcher reads secret values from a Keyorix server over HTTP, resolving a
 // reference of the form "<environment>/<name>" (e.g. "production/db-password") to the
 // secret's current value. It satisfies Fetcher. Auth is a bearer token (typically a
 // machine-identity / service-account token); the token is sent on every request and
 // never logged.
+//
+// A ref names only an environment and a secret, never a project — environment names
+// are unique per-project, not globally (the same name, e.g. "production", can exist
+// in many different projects). projectID pins every lookup this fetcher performs to
+// the single project its token belongs to (a MachineIdentity, and so its token, is
+// always scoped to exactly one project), so a same-named secret in a DIFFERENT
+// project can never be resolved instead (#Bug1).
 type KeyorixFetcher struct {
-	baseURL string
-	token   string
-	hc      *http.Client
+	baseURL   string
+	token     string
+	projectID uint
+	hc        *http.Client
+
+	mu        sync.Mutex
+	envByName map[string]uint // environment name -> id, within projectID; lazily populated
 }
 
 // NewKeyorixFetcher builds a fetcher for the given Keyorix base URL (e.g.
-// https://keyorix.internal) and bearer token. A nil-safe default HTTP client with a
-// sane timeout is used.
-func NewKeyorixFetcher(baseURL, token string) *KeyorixFetcher {
+// https://keyorix.internal), bearer token, and the numeric id of the project the
+// token's machine identity belongs to. A nil-safe default HTTP client with a sane
+// timeout is used.
+func NewKeyorixFetcher(baseURL, token string, projectID uint) *KeyorixFetcher {
 	return &KeyorixFetcher{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		hc:      &http.Client{Timeout: 30 * time.Second},
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		token:     token,
+		projectID: projectID,
+		hc:        &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -67,28 +90,95 @@ func parseRef(ref string) (env, name string, err error) {
 	return ref[:i], ref[i+1:], nil
 }
 
-// resolveID finds the id of the secret named name in environment env. The list is
-// filtered server-side by environment; the name match is exact (case-insensitive).
+// resolveID finds the id of the secret named name in environment env, within this
+// fetcher's project. env is first resolved to its numeric id (resolveEnvironmentID)
+// so the list call below can scope by BOTH project_id and environment_id — the
+// server filters server-side on those, so the result set a same-named secret could
+// hide in is exactly one project's one environment, never a broader, unscoped list
+// (#Bug1). The list is paginated at the server's actual maximum page size, walking
+// every page until the target is found or the set is exhausted, so a secret ranked
+// past position 20 (the server's silent-fallback default) or 100 (page 1's cap) is
+// still found rather than wrongly reported gone (#Bug2). The name match is exact —
+// not case-insensitive — so a differently-cased duplicate created by another
+// principal in the same environment can never shadow the intended secret (#Bug3).
 func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (uint, error) {
-	q := url.Values{}
-	q.Set("environment", env)
-	q.Set("page_size", "1000")
-	q.Set("page", "1")
-	var body struct {
-		Secrets []struct {
-			ID   uint   `json:"ID"`
-			Name string `json:"Name"`
-		} `json:"secrets"`
+	envID, err := f.resolveEnvironmentID(ctx, env)
+	if err != nil {
+		return 0, err
 	}
-	if err := f.getJSON(ctx, "/api/v1/secrets?"+q.Encode(), &body); err != nil {
-		return 0, fmt.Errorf("list secrets in %q: %w", env, err)
-	}
-	for _, s := range body.Secrets {
-		if strings.EqualFold(s.Name, name) {
-			return s.ID, nil
+
+	for page := 1; ; page++ {
+		q := url.Values{}
+		q.Set("project_id", strconv.FormatUint(uint64(f.projectID), 10))
+		q.Set("environment_id", strconv.FormatUint(uint64(envID), 10))
+		q.Set("page_size", strconv.Itoa(maxServerPageSize))
+		q.Set("page", strconv.Itoa(page))
+
+		var body struct {
+			Secrets []struct {
+				ID   uint   `json:"ID"`
+				Name string `json:"Name"`
+			} `json:"secrets"`
+			TotalPages int `json:"total_pages"`
+		}
+		if err := f.getJSON(ctx, "/api/v1/secrets?"+q.Encode(), &body); err != nil {
+			return 0, fmt.Errorf("list secrets in project %d environment %q (page %d): %w", f.projectID, env, page, err)
+		}
+		for _, s := range body.Secrets {
+			if s.Name == name {
+				return s.ID, nil
+			}
+		}
+		if page >= body.TotalPages {
+			break
 		}
 	}
 	return 0, fmt.Errorf("secret %q not found in environment %q: %w", name, env, ErrUpstreamGone)
+}
+
+// resolveEnvironmentID resolves an environment NAME to its numeric id within this
+// fetcher's fixed project (GET /api/v1/projects/{project_id}/environments — scoped to
+// exactly one project, so it never has to search, or risk matching, an environment
+// belonging to a different project). The full list is fetched once and cached for the
+// life of the fetcher; a lookup miss triggers exactly one forced refresh (to pick up
+// an environment created after the cache was first populated) before failing.
+func (f *KeyorixFetcher) resolveEnvironmentID(ctx context.Context, name string) (uint, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.envByName != nil {
+		if id, ok := f.envByName[name]; ok {
+			return id, nil
+		}
+	}
+	if err := f.loadEnvironmentsLocked(ctx); err != nil {
+		return 0, fmt.Errorf("resolve environment %q: %w", name, err)
+	}
+	if id, ok := f.envByName[name]; ok {
+		return id, nil
+	}
+	return 0, fmt.Errorf("environment %q not found in project %d: %w", name, f.projectID, ErrUpstreamGone)
+}
+
+// loadEnvironmentsLocked fetches every environment in this fetcher's project and
+// (re)populates envByName. Caller must hold f.mu.
+func (f *KeyorixFetcher) loadEnvironmentsLocked(ctx context.Context) error {
+	var body struct {
+		Environments []struct {
+			ID   uint   `json:"ID"`
+			Name string `json:"Name"`
+		} `json:"environments"`
+	}
+	path := fmt.Sprintf("/api/v1/projects/%d/environments", f.projectID)
+	if err := f.getJSON(ctx, path, &body); err != nil {
+		return fmt.Errorf("list environments in project %d: %w", f.projectID, err)
+	}
+	m := make(map[string]uint, len(body.Environments))
+	for _, e := range body.Environments {
+		m[e.Name] = e.ID
+	}
+	f.envByName = m
+	return nil
 }
 
 // fetchValue returns the decrypted value of the secret with the given id.
