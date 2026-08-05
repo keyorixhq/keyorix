@@ -187,9 +187,19 @@ func TestAuditService_StreamAuditLogs_MaxConcurrentPerPrincipal(t *testing.T) {
 	svc, _ := newStreamCore(t)
 
 	var cancels []context.CancelFunc
+	var dones []chan error
 	t.Cleanup(func() {
 		for _, c := range cancels {
 			c()
+		}
+		// Wait for every streaming goroutine to actually return before this test is
+		// considered done — otherwise one can still be reading package-level state
+		// (e.g. auditStreamFallbackInterval) when the next test mutates it, racing.
+		for _, d := range dones {
+			select {
+			case <-d:
+			case <-time.After(time.Second):
+			}
 		}
 	})
 
@@ -198,6 +208,7 @@ func TestAuditService_StreamAuditLogs_MaxConcurrentPerPrincipal(t *testing.T) {
 		cancels = append(cancels, cancel)
 		stream := &fakeAuditStream{ctx: ctx}
 		done := make(chan error, 1)
+		dones = append(dones, done)
 		go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
 		// Give StreamAuditLogs time to reach acquireStreamSlot and register before the
 		// next iteration opens another one.
