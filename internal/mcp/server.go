@@ -166,7 +166,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 		limit = defaultMaxMessageBytes
 	}
 	mr := newMaxMessageReader(r, limit)
-	dec := json.NewDecoder(mr)
+	dec := json.NewDecoder(mr) // nosemgrep: keyorix-unbounded-json-decoder -- mr is maxMessageReader, a bespoke bounded reader (reset() per message below); semgrep's multi-line pattern-not can't see across the for-loop boundary to dec.Decode(), see .semgrep/keyorix-rules.yml
 	enc := json.NewEncoder(w)
 	for {
 		mr.reset()
