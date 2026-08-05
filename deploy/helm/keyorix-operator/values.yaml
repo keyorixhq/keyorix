@@ -7,8 +7,17 @@
 
 image:
   repository: ghcr.io/keyorixhq/keyorix-operator
-  # tag defaults to the chart's appVersion when empty.
+  # Empty defaults to this chart's own appVersion (a pinned `vX.Y.Z`). `latest`/`main`
+  # are MUTABLE -- the exact same tag can point at a different image tomorrow,
+  # defeating "what did I actually deploy" and any image-scan attestation pinned to
+  # this value -- only set this to a floating tag if you understand that tradeoff. A
+  # digest via `digest:` below (strongest pin) takes precedence over either. This
+  # operator's ServiceAccount can hold broad Secret-read/write RBAC (see rbac.yaml),
+  # so pinning by digest in production matters more here than for a typical workload.
   tag: ""
+  # digest, when set (e.g. "sha256:abc123..."), pins the exact image content --
+  # immune to a tag being retargeted after the fact -- and takes precedence over tag.
+  digest: ""
   pullPolicy: IfNotPresent
 
 # imagePullSecrets: names of existing Secrets (docker-registry type) in the release

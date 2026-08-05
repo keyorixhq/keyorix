@@ -23,8 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - name: Run Semgrep (community rules, no account required)
-        run: semgrep scan --config=auto --sarif --output=semgrep.sarif . || true
+      - name: Run Semgrep (community rules + repo-specific custom rules)
+        # .semgrep/keyorix-rules.yml catches patterns specific to this repo that the
+        # community ruleset has no way to know about (e.g. this project's one sanctioned
+        # clipboard-auto-clear helper). Non-blocking (`|| true`), same as the community
+        # config -- some of these rules currently have real, unaddressed findings (see
+        # .semgrep/keyorix-rules.yml's own comments); flipping to blocking is a separate,
+        # deliberate follow-up once those are triaged, not a side effect of adding the rule.
+        run: semgrep scan --config=auto --config=.semgrep/keyorix-rules.yml --sarif --output=semgrep.sarif . || true
 
       - name: Upload results
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
