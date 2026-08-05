@@ -143,6 +143,49 @@ type valueFetcher interface {
 	FetchValue(ctx context.Context, ref string) ([]byte, error)
 }
 
+// RBAC (#327/#427): `make manifests` generates operator/config/rbac/role.yaml
+// from these markers via controller-gen, which fully regenerates that file on
+// every run and does not preserve hand-written content in it -- so the
+// rationale below lives here, at the actual source of truth, not in the
+// generated output where a routine regen would silently discard it (as
+// happened once already: an unpinned `make manifests` run stripped this exact
+// explanation from role.yaml before anyone had committed it).
+//
+// This grants a ClusterRole (not a namespaced Role) because by DEFAULT the
+// operator is deployed as a single cluster-wide instance that watches
+// KeyorixSecret CRs (a namespaced CRD) across every namespace -- with no
+// static namespace list configured it genuinely cannot predict ahead of time
+// which namespace the next CR (and its TokenSecretRef/target Secret) will
+// land in. Kubernetes RBAC also has no way to scope list/watch by
+// resourceNames or to a dynamically changing namespace set, so narrowing this
+// to per-namespace RoleBindings isn't possible for that deployment model.
+//
+// Operators who instead run one instance PER namespace (or per bounded tenant
+// set) can opt into least-privilege, namespace-scoped RBAC: see the
+// watchNamespaces value in deploy/helm/keyorix-operator, which passes the
+// corresponding -watch-namespaces flag (operator/cmd/main.go) and swaps this
+// same ClusterRole's binding from a cluster-wide ClusterRoleBinding to a
+// namespace-scoped RoleBinding per watched namespace -- the ClusterRole
+// definition here stays reusable across both modes (ADR-076).
+//
+// The verbs below are the minimum the reconcile logic actually uses:
+// create/update/patch/get/list/watch to materialise and refresh the target
+// Secret, and delete for wipeTargetSecret (this file), which removes the
+// target Secret once the upstream Keyorix reference is confirmed gone (#428)
+// -- no broader verb (e.g. deletecollection) is granted.
+//
+// What operator/cmd/main.go ALSO does to bound the blast radius of this (in
+// the default cluster-wide mode, necessarily cluster-wide) grant: it scopes
+// the manager's Secret informer cache to only Secrets carrying the operator's
+// managed-by label (see secretCacheOptions in operator/cmd/main.go), so a
+// compromised operator process can't trivially dump every cluster Secret
+// straight out of its own in-memory cache -- only ones it already owns via
+// this same RBAC.
+//
+// No marker is declared for keyorixsecrets/finalizers: this controller has no
+// finalizer logic (garbage collection of the target Secret relies solely on
+// the Kubernetes owner-reference GC, not a finalizer), so that grant would be
+// unused, excess RBAC.
 // +kubebuilder:rbac:groups=secrets.keyorix.io,resources=keyorixsecrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=secrets.keyorix.io,resources=keyorixsecrets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete

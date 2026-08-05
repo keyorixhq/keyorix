@@ -1,7 +1,20 @@
 # Makefile for the Keyorix operator (a separate Go module from the repo root).
 # All Go commands run with GOWORK=off so this module resolves independently.
 
-CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+# Pinned, not @latest: an unpinned `go run ...@latest` here is exactly the
+# same class of gap as an unpinned CI action -- a code-generation tool that
+# can silently change its output between runs with no gate in front of it.
+# This isn't hypothetical: an unpinned controller-gen run against this exact
+# repo once regenerated role.yaml and, in doing so, silently discarded a
+# hand-written explanatory comment that lived in the generated file at the
+# time (controller-gen's rbac generator does not preserve hand-written
+# content in its output -- confirmed directly, not assumed -- which is also
+# why that explanation now lives in operator/internal/controller/
+# keyorixsecret_controller.go next to the +kubebuilder:rbac markers instead
+# of in role.yaml itself). Bump deliberately, the same way GOSEC_VERSION /
+# GOLANGCI_LINT_VERSION / etc. are pinned in the root ci.yml.
+CONTROLLER_TOOLS_VERSION ?= v0.21.0
+CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
 GO ?= GOWORK=off go
 
 CHART_CRD_DIR ?= ../deploy/helm/keyorix-operator/crds

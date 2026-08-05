@@ -36,3 +36,19 @@ repos:
         language: system
         files: \.go$
         pass_filenames: false
+
+      - id: actionlint
+        name: actionlint (GitHub Actions workflow syntax + shellcheck)
+        # Every hook above is scoped `files: \.go$`, so a workflow-YAML-only
+        # commit never ran any of them -- exactly the gap that once let an
+        # unquoted `: ` inside a step name (a genuine YAML syntax error, not a
+        # lint nit) land in .github/workflows/ci.yml, breaking the ENTIRE
+        # workflow file's parse -- no job in it could run at all until the
+        # next commit fixed it. actionlint's own bundled shellcheck pass also
+        # catches issues inside `run:` blocks. pass_filenames is left at its
+        # default (true): actionlint takes individual file paths, so only the
+        # workflow file(s) actually being committed are checked, not every
+        # workflow in the repo on every commit.
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
