@@ -96,10 +96,12 @@ function validatedOutputPath(rawArg) {
     if (!rawArg) {
         console.error('[frontend-sbom] usage: build-frontend-sbom.mjs <output-file>');
         process.exit(1);
+        return undefined; // unreachable -- process.exit() above halts the script
     }
     const resolved = resolve(rawArg);
     if (resolved !== repoRoot && !resolved.startsWith(repoRoot + sep)) {
         fail(`output path resolves outside the repository (${repoRoot}): ${resolved}`);
+        return undefined; // unreachable -- fail() exits the process
     }
     return resolved;
 }
