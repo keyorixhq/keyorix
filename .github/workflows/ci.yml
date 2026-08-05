@@ -867,7 +867,7 @@ jobs:
             --set targetNamespaces='{app,web}' \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
 
-      - name: Lint + render keyorix-operator chart (ADR-076: all 4 scope paths)
+      - name: "Lint + render keyorix-operator chart (ADR-076: all 4 scope paths)"
         run: |
           helm lint deploy/helm/keyorix-operator
           helm lint deploy/helm/keyorix-operator --set 'watchNamespaces={team-a,team-b}'
