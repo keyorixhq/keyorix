@@ -5,28 +5,33 @@ generated RBAC (operator/config/rbac/role.yaml) -- including `delete`, which
 `wipeTargetSecret` uses to remove the target Secret once the upstream Keyorix reference is
 confirmed gone (#428).
 
-NOTE (#327/#427): a single ClusterRole definition is always used (for manifest
-reusability), but how it's BOUND depends on `watchNamespaces`:
+NOTE (ADR-076, superseding the #327/#427 default): a single ClusterRole definition is
+always used (for manifest reusability), but how it's BOUND is resolved ONCE by the
+`kxop.scope` helper (_helpers.tpl) and rendered here from its result -- this template does
+not read `.Values.rbac.clusterScoped` / `.Values.watchNamespaces` directly, so it cannot
+diverge from what deployment.yaml's `-watch-namespaces`/`-all-namespaces` flag actually
+tells the manager to watch (the #1224 failure mode this ADR exists to close).
 
-  - Default (`watchNamespaces` empty): bound cluster-wide via a `ClusterRoleBinding`. This
-    matches the operator's default deployment model -- a single cluster-wide instance
-    watching KeyorixSecret CRs (a namespaced CRD) across every namespace, with no static
-    namespace list configured, so it genuinely cannot predict ahead of time which namespace
-    the next CR (and its TokenSecretRef/target Secret) will land in. Kubernetes RBAC has no
-    way to scope list/watch by resourceNames or to a dynamically changing namespace set, so
-    per-namespace RoleBindings aren't possible in this mode.
-
+  - Default (`rbac.clusterScoped: false`, `watchNamespaces` empty): bound via a
+    namespace-scoped `RoleBinding` in this release's own namespace -- least privilege,
+    matching the manager's own fail-closed default (operator/cmd/main.go, ADR-076): with
+    no explicit flag set, it watches only its own namespace (read from `POD_NAMESPACE`).
   - `watchNamespaces` set: bound via a namespace-scoped `RoleBinding` in each listed
-    namespace instead -- least privilege for deployments that run one operator instance per
-    namespace/tenant set (matching the corresponding `-watch-namespaces` flag passed to the
-    manager in deployment.yaml, which restricts the manager's own watch/cache to the same
-    namespaces).
+    namespace instead -- for deployments that run one operator instance per bounded
+    namespace/tenant set.
+  - `rbac.clusterScoped: true` (and `watchNamespaces` empty): bound cluster-wide via a
+    `ClusterRoleBinding` -- the explicit opt-in for a single instance watching every
+    namespace in the cluster, with no static namespace list. Kubernetes RBAC has no way to
+    scope list/watch by resourceNames or to a dynamically changing namespace set, so this
+    is the only way to support that deployment model.
+  - `rbac.clusterScoped: true` AND `watchNamespaces` set: rejected by `kxop.scope` with a
+    `fail` naming both values, not resolved by precedence.
 
-To further bound the blast radius of this (in the default mode, necessarily cluster-wide)
-Secret grant (e.g. if the operator process is ever compromised via #184/#240),
-operator/cmd/main.go also scopes the manager's Secret informer cache to only Secrets
-carrying the operator's managed-by label, so the operator does not hold an in-memory cache
-of every Secret it can see -- only the ones it already owns via this same RBAC.
+To further bound the blast radius of this Secret grant (e.g. if the operator process is
+ever compromised via #184/#240), operator/cmd/main.go also scopes the manager's Secret
+informer cache to only Secrets carrying the operator's managed-by label, so the operator
+does not hold an in-memory cache of every Secret it can see -- only the ones it already
+owns via this same RBAC.
 */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -48,9 +53,26 @@ rules:
     resources: ["keyorixsecrets/finalizers"]
     verbs: ["update"]
 ---
-{{- if .Values.watchNamespaces }}
+{{- $scope := include "kxop.scope" . | fromYaml }}
+{{- if eq $scope.mode "cluster" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kxop.fullname" . }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kxop.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kxop.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+{{- else }}
 {{- $root := . }}
-{{- range .Values.watchNamespaces }}
+{{- range $scope.namespaces }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -68,39 +90,6 @@ subjects:
     namespace: {{ $root.Release.Namespace }}
 ---
 {{- end }}
-{{- else if .Values.rbac.clusterScoped }}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ include "kxop.fullname" . }}
-  labels:
-    {{- include "kxop.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "kxop.fullname" . }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "kxop.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
----
-{{- else }}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "kxop.fullname" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "kxop.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "kxop.fullname" . }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "kxop.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
----
 {{- end }}
 # Leader election (used when replicas > 1 / leaderElection=true) and event emission.
 apiVersion: rbac.authorization.k8s.io/v1
