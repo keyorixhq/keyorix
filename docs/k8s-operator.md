@@ -57,6 +57,11 @@ helm install keyorix-operator-team-a deploy/helm/keyorix-operator -n team-a \
 
 See the chart's [README](../deploy/helm/keyorix-operator/README.md#rbac) for details.
 
+For an air-gapped install that mirrors the operator image to a private, authenticated
+registry, set `image.repository` to the mirror and `imagePullSecrets` to a
+`docker-registry` Secret in the release namespace — see the chart's
+[README](../deploy/helm/keyorix-operator/README.md#private-registries).
+
 ## Usage
 
 1. Create a least-privilege machine-identity token (ADR-030) Secret in your app
