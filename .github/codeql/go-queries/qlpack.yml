@@ -1,0 +1,5 @@
+name: keyorixhq/go-custom-queries
+version: 0.1.0
+description: Custom CodeQL queries for patterns specific to this repo, run alongside the standard security-and-quality suite.
+dependencies:
+  codeql/go-all: "*"
