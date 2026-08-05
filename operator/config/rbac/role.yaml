@@ -1,4 +1,3 @@
----
 # NOTE (#327/#427): this is a ClusterRole/ClusterRoleBinding, not a namespaced Role, because
 # by DEFAULT the operator is deployed as a single cluster-wide instance that watches
 # KeyorixSecret CRs (a namespaced CRD) across every namespace -- with no static namespace
@@ -26,6 +25,12 @@
 # secretCacheOptions in operator/cmd/main.go), so a compromised operator process can't
 # trivially dump every cluster Secret straight out of its own in-memory cache -- only ones
 # it already owns via this same RBAC.
+#
+# No RBAC is granted for keyorixsecrets/finalizers: this controller has no finalizer logic
+# (garbage collection of the target Secret relies solely on the Kubernetes owner-reference
+# GC, not a finalizer), so the marker previously here was unused, excess RBAC -- pruned for
+# least privilege.
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -51,12 +56,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - secrets.keyorix.io
-  resources:
-  - keyorixsecrets/finalizers
-  verbs:
-  - update
 - apiGroups:
   - secrets.keyorix.io
   resources:
