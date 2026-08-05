@@ -80,12 +80,24 @@ can never disagree with each other (`_helpers.tpl`'s `kxop.scope` — see the ch
   to render (`helm template`/`helm install` fails with an error naming both values), rather
   than silently picking one.
 
-**Upgrading from a chart version older than this default change?** An unmodified prior
-install relied on the old cluster-wide default. To preserve that behavior across the
-upgrade, add `--set rbac.clusterScoped=true` to your `helm upgrade` — see the CHANGELOG's
-`BREAKING` entry for this release for the full detail. Without it, the upgrade narrows the
-operator to its own release namespace only, which may stop it from reconciling
-`KeyorixSecret` CRs in other namespaces it previously watched.
+**Upgrading from a chart version older than this default change?** Two scenarios:
+
+- **You relied on the old cluster-wide default (neither value set).** Add
+  `--set rbac.clusterScoped=true` to your `helm upgrade` to preserve that behavior across
+  the upgrade. Without it, the operator narrows to its own release namespace only, which
+  may stop it from reconciling `KeyorixSecret` CRs in other namespaces it previously
+  watched.
+- **You already set `watchNamespaces`.** `rbac.clusterScoped` defaulted to `true` before
+  this release, and a plain `helm upgrade` (without `--reset-values`) carries forward a
+  release's previously-recorded values by default — so your install is very likely already
+  in the now-rejected combination (`rbac.clusterScoped=true` + `watchNamespaces` set). The
+  upgrade will refuse to render at all, with an error containing:
+  `rbac.clusterScoped=true and watchNamespaces=[...] are both set -- these are mutually
+  exclusive (ADR-076)`. This is a hard block on the upgrade itself, not a permissions
+  change — add `--set rbac.clusterScoped=false` explicitly to your `helm upgrade` (or the
+  equivalent in your values file) to clear it.
+
+See the CHANGELOG's `BREAKING` entry for this release for the full detail.
 
 ## Usage
 

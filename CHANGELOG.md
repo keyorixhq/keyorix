@@ -10,15 +10,23 @@ All notable changes to Keyorix are documented here. This project follows
   (ADR-076)** — an unmodified `helm install deploy/helm/keyorix-operator` now binds a
   namespace-scoped `RoleBinding` in its own release namespace and watches only that
   namespace, instead of the previous default of a cluster-wide `ClusterRoleBinding`
-  granting full CRUD on every Secret in the cluster. **Upgrading an existing install that
-  relies on the old default? Add `--set rbac.clusterScoped=true` to your `helm upgrade`**
-  to preserve current behavior — without it, the operator stops reconciling
-  `KeyorixSecret` CRs outside its own release namespace after the upgrade. Two opt-in
-  modes cover broader deployments: `watchNamespaces: [ns, ...]` for a bounded
-  multi-namespace instance, or `rbac.clusterScoped: true` for the original cluster-wide
-  behavior — see the [operator docs](docs/k8s-operator.md#choosing-a-namespace-scope-adr-076)
-  for detail. See ADR-076 for the full rationale, including why this is the third attempt
-  at this narrowing and what's different this time.
+  granting full CRUD on every Secret in the cluster. **Relied on the old default (set
+  neither value)? Add `--set rbac.clusterScoped=true` to your `helm upgrade`** to preserve
+  current behavior — without it, the operator stops reconciling `KeyorixSecret` CRs outside
+  its own release namespace after the upgrade. **Already set `watchNamespaces`?**
+  `rbac.clusterScoped` defaulted to `true` before this release, and a plain `helm upgrade`
+  (without `--reset-values`) carries forward a release's previously-recorded values by
+  default — so your install is very likely already in the now-rejected combination
+  (`rbac.clusterScoped=true` + `watchNamespaces` set), and the upgrade will refuse to
+  render at all: `rbac.clusterScoped=true and watchNamespaces=[...] are both set -- these
+  are mutually exclusive (ADR-076)`. **Add `--set rbac.clusterScoped=false` explicitly to
+  your `helm upgrade`** (or the equivalent in your values file) to clear it — this is a
+  hard block on the upgrade, not a permissions change, until you do. Two opt-in modes cover
+  broader deployments: `watchNamespaces: [ns, ...]` for a bounded multi-namespace instance,
+  or `rbac.clusterScoped: true` for the original cluster-wide behavior — see the [operator
+  docs](docs/k8s-operator.md#choosing-a-namespace-scope-adr-076) for detail. See ADR-076
+  for the full rationale, including why this is the third attempt at this narrowing and
+  what's different this time.
 - **Frontend monorepo consolidation (ADR-070)** — `keyorix-web` (the dashboard)
   is folded into this repository at `web/`, full commit history preserved via
   `git subtree`. One `vX.Y.Z` tag now triggers both the server and web image
