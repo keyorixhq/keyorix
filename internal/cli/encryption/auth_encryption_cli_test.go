@@ -206,7 +206,7 @@ func TestValidateAuthEncryption_CleanWhenFullyMigrated(t *testing.T) {
 // recomputing that same hash and matching it against this column.
 //
 // A previous version of runMigrateAuthData ran every session through a
-// migrateSessions helper that matched on "session_token != ''" — true for
+// migrateSessions helper that matched on "session_token != ”" — true for
 // every live session, since the column always holds a hash — "encrypted" the
 // hash value as if it were a real secret, and then set session_token to NULL
 // in the same UPDATE. NULL landed on the exact column GetSession keys its
