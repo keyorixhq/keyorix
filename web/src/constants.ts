@@ -93,6 +93,7 @@ export const ROUTES = {
     SETTINGS_AUTH: '/settings/auth',
     SETTINGS_ENCRYPTION: '/settings/encryption',
     SETTINGS_HEALTH: '/settings/health',
+    SETTINGS_LICENSE: '/settings/license',
     ROADMAP: '/roadmap',
 } as const;
 

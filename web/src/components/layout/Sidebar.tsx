@@ -133,6 +133,7 @@ const NAV: NavItem[] = [
             { kind: 'leaf', name: 'Appearance', href: '/settings/appearance' },
             { kind: 'leaf', name: 'Authentication', href: '/settings/auth', adminOnly: true },
             { kind: 'leaf', name: 'Encryption & Keys', href: '/settings/encryption', adminOnly: true },
+            { kind: 'leaf', name: 'License', href: '/settings/license', adminOnly: true },
             { kind: 'leaf', name: 'System Health', href: '/settings/health', adminOnly: true },
         ],
     },
