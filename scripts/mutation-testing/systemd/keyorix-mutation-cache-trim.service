@@ -1,0 +1,24 @@
+[Unit]
+Description=Trim keyorix mutation-testing's GOCACHE when disk usage runs high
+
+[Service]
+Type=oneshot
+User=mutation
+Group=mutation
+ExecStart=/opt/keyorix-mutation/keyorix/scripts/mutation-testing/trim-gocache.sh
+
+# Deliberately no Nice=/CPUQuota=/MemoryMax= here, unlike keyorix-mutation.service
+# -- this is a lightweight `df` check plus, on the rare over-threshold run, a
+# `find`+`rm` pass, not a CPU/memory-heavy compile-and-test workload.
+
+# Process-isolation hardening (mirrors keyorix-mutation.service's rationale).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+Environment=GOCACHE=/opt/keyorix-mutation/go-cache
+# Only GOCACHE itself needs to be writable -- this script never touches the
+# git checkout, state dir, module cache, or GOPATH that keyorix-mutation.service
+# also needs write access to.
+ReadWritePaths=/opt/keyorix-mutation/go-cache
