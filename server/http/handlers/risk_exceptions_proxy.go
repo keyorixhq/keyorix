@@ -32,17 +32,22 @@
 // persist/return the resulting row. Exactly the same class of mistake the
 // human-facing /groups routes were for #514's Group-CRUD proxy fix.
 //
-// Atomicity: storage.Storage.UpdateRiskException (local_risk_exceptions.go) is an
-// unconditional full-row `Save`, not a conditional/optimistic-concurrency write —
-// there is no LockXForUpdate/SELECT ... FOR UPDATE anywhere in this subsystem to
-// preserve across the wire. internal/core.RevokeRiskException/ApproveRiskException
-// already re-fetch the exception and check its revoked/approved/expiry state
-// before mutating it — a check-then-act sequence with exactly the same (small,
-// pre-existing, accepted) race window against a local backend as against this
-// proxy. This fix preserves that behavior exactly rather than introducing a
-// stricter guarantee the local backend itself doesn't have (mirrors
-// dynamic_secrets_proxy.go's UpdateDynamicSecretConfigProxy/
-// UpdateDynamicSecretLeaseProxy reasoning).
+// Atomicity: storage.Storage.UpdateRiskException (local_risk_exceptions.go)
+// remains an unconditional full-row `Save`, but RevokeRiskException/
+// ApproveRiskException (internal/core/risk_exceptions.go) no longer call it for
+// their own revoke/approve transitions — a CodeQL query
+// (StateTransitionMissingCAS.ql) confirmed the read-then-conditionally-
+// mutate-then-Save sequence those two functions ran was a real TOCTOU: two
+// callers racing the same exception (e.g. one admin revoking while another is
+// mid-approve) could silently clobber each other's write, no error to either
+// side. RevokeRiskExceptionIfNotRevoked/ApproveRiskExceptionIfPending
+// (storage.Storage; implemented in local_risk_exceptions.go as a conditional
+// GORM UPDATE) close it exactly like UpdateProjectInvitation's
+// `WHERE id = ? AND state = 'pending'` (#412) and TransitionMachineIdentityState's
+// `WHERE id = ? AND state = ?` (#388) did for their own TOCTOU classes.
+// RevokeRiskExceptionProxy/ApproveRiskExceptionProxy below are the dedicated
+// single-round-trip routes backing those two methods for RemoteStorage — see
+// their own doc comments.
 //
 // Response envelope: like dynamic_secrets_proxy.go/project_memberships_proxy.go,
 // these do NOT use the package's generic sendSuccess/sendError helpers — they
@@ -205,4 +210,55 @@ func (h *DashboardHandler) UpdateRiskExceptionProxy(w http.ResponseWriter, r *ht
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
+}
+
+// RevokeRiskExceptionProxy handles PUT /api/v1/system/risk-exceptions/{id}/revoke.
+// Runs the SAME conditional "WHERE id = ? AND revoked = false" write
+// core.KeyorixCore.RevokeRiskException now relies on against a local backend,
+// closing the TOCTOU race a plain UpdateRiskExceptionProxy call would reopen
+// across this HTTP hop — see the package doc's atomicity note.
+func (h *DashboardHandler) RevokeRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid exception id")
+		return
+	}
+	var body riskExceptionProxyWire
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	body.ID = uint(id)
+	matched, err := h.coreService.Storage().RevokeRiskExceptionIfNotRevoked(r.Context(), body.toModel())
+	if err != nil {
+		log.Printf("risk-exceptions proxy: revoke failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
+}
+
+// ApproveRiskExceptionProxy handles PUT /api/v1/system/risk-exceptions/{id}/approve.
+// Runs the SAME conditional "WHERE id = ? AND revoked = false AND approved =
+// false" write core.KeyorixCore.ApproveRiskException now relies on against a
+// local backend — see RevokeRiskExceptionProxy's doc for the race this closes.
+func (h *DashboardHandler) ApproveRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid exception id")
+		return
+	}
+	var body riskExceptionProxyWire
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	body.ID = uint(id)
+	matched, err := h.coreService.Storage().ApproveRiskExceptionIfPending(r.Context(), body.toModel())
+	if err != nil {
+		log.Printf("risk-exceptions proxy: approve failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
 }

@@ -271,6 +271,61 @@ func TestRemoteStorage_UpdateUser(t *testing.T) {
 	assert.Equal(t, "Alice Updated", user.DisplayName)
 }
 
+// --- UpdateUserIfActiveStateMatches ---
+
+func TestRemoteStorage_UpdateUserIfActiveStateMatches(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/api/v1/system/users/4/active-transition", r.URL.Path)
+		var body map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, false, body["active"])
+		assert.Equal(t, true, body["from_active"])
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": true}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	matched, err := rs.UpdateUserIfActiveStateMatches(context.Background(),
+		&models.User{ID: 4, Username: "frank", Email: "frank@example.com", IsActive: false}, true)
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
+func TestRemoteStorage_UpdateUserIfActiveStateMatches_NotMatched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": false}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	matched, err := rs.UpdateUserIfActiveStateMatches(context.Background(),
+		&models.User{ID: 4, IsActive: false}, true)
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
+
+func TestRemoteStorage_UpdateUserIfActiveStateMatches_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   map[string]string{"code": "DUPLICATE_EMAIL", "message": "duplicate email"},
+		})
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	_, err = rs.UpdateUserIfActiveStateMatches(context.Background(), &models.User{ID: 4}, true)
+	require.Error(t, err)
+}
+
 func TestRemoteStorage_UpdateUser_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

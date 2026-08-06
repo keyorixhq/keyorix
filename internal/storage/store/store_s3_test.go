@@ -869,6 +869,70 @@ func TestDynamicSecretConfig_GetListUpdate(t *testing.T) {
 	assert.Equal(t, "mysql", got2.BackendType)
 }
 
+// TestTransitionDynamicSecretConfigDisabled_ClosesRace proves the
+// StateTransitionMissingCAS fix: two callers racing to flip the SAME config's
+// Disabled field (both having read the SAME pre-transition value) can no
+// longer both silently win. The first conditional write matches and persists;
+// the second — still gated on the now-STALE fromDisabled value the first
+// caller also observed — is rejected (matched=false), exactly mirroring
+// TestTransitionMachineIdentityState's #388/#518 proof.
+func TestTransitionDynamicSecretConfigDisabled_ClosesRace(t *testing.T) {
+	ctx := context.Background()
+	ls := newDynamicFullStore(t)
+
+	cfg, err := ls.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
+		Name: "race-config", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres",
+		Disabled: false,
+	})
+	require.NoError(t, err)
+
+	// Both racing callers observed Disabled=false via GetDynamicSecretConfig
+	// before mutating their own in-memory copy to Disabled=true.
+	first := *cfg
+	first.Disabled = true
+	second := *cfg
+	second.Disabled = true
+
+	// First writer wins: the row's persisted disabled value still matches the
+	// fromDisabled it observed (false).
+	matched1, err := ls.TransitionDynamicSecretConfigDisabled(ctx, &first, false)
+	require.NoError(t, err)
+	assert.True(t, matched1)
+
+	// Second writer — racing off the SAME stale fromDisabled=false — must lose:
+	// the row's persisted disabled value has already moved to true.
+	matched2, err := ls.TransitionDynamicSecretConfigDisabled(ctx, &second, false)
+	require.NoError(t, err)
+	assert.False(t, matched2)
+
+	// The persisted row reflects the FIRST writer's change only, and was not
+	// clobbered by the second (rejected) write.
+	got, err := ls.GetDynamicSecretConfig(ctx, cfg.ID)
+	require.NoError(t, err)
+	assert.True(t, got.Disabled)
+
+	// A THIRD call gated on the now-current value (true) succeeds, proving the
+	// conditional write isn't permanently stuck — it tracks whatever is
+	// actually persisted.
+	third := *cfg
+	third.Disabled = false
+	matched3, err := ls.TransitionDynamicSecretConfigDisabled(ctx, &third, true)
+	require.NoError(t, err)
+	assert.True(t, matched3)
+}
+
+// TestTransitionDynamicSecretConfigDisabled_NotFound verifies the
+// RowsAffected == 0 path when the config id doesn't exist at all.
+func TestTransitionDynamicSecretConfigDisabled_NotFound(t *testing.T) {
+	ctx := context.Background()
+	ls := newDynamicFullStore(t)
+
+	matched, err := ls.TransitionDynamicSecretConfigDisabled(ctx,
+		&models.DynamicSecretConfig{ID: 9999, Disabled: true}, false)
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
+
 func TestCountDynamicSecretConfigsByClassification(t *testing.T) {
 	ctx := context.Background()
 	ls := newDynamicFullStore(t)

@@ -51,6 +51,25 @@ func (ls *LocalStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models
 	return ls.db.WithContext(ctx).Save(c).Error
 }
 
+// TransitionDynamicSecretConfigDisabled persists c's full row via a conditional
+// UPDATE gated on the row's CURRENT disabled value still being fromDisabled (see
+// the interface doc in internal/core/storage/interface.go for why this exists
+// alongside — not instead of — GetDynamicSecretConfig/UpdateDynamicSecretConfig).
+// Mirrors TransitionMachineIdentityState's `WHERE id = ? AND state = ?` +
+// `Select("*")` shape exactly, so every field the caller mutated on c (Disabled,
+// UpdatedAt, ...) is persisted in the same statement, not just a hardcoded
+// column subset.
+func (ls *LocalStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).
+		Where("id = ? AND disabled = ?", c.ID, fromDisabled).
+		Select("*").
+		Updates(c)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // CountDynamicSecretConfigsByClassification returns config counts keyed by
 // classification label ("" = unclassified), install-wide, via a GROUP BY.
 func (ls *LocalStorage) CountDynamicSecretConfigsByClassification(ctx context.Context) (map[string]int, error) {

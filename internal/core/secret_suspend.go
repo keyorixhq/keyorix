@@ -36,19 +36,27 @@ func (c *KeyorixCore) SuspendSecret(ctx context.Context, secretID, actorID uint,
 	if secret.Status == SecretStatusSuspended {
 		return secret, nil // already suspended — no-op, no duplicate audit
 	}
+	fromStatus := secret.Status
 	secret.Status = SecretStatusSuspended
 	secret.UpdatedAt = c.now()
-	updated, err := c.storage.UpdateSecret(ctx, secret)
+	matched, err := c.storage.TransitionSecretStatus(ctx, secret, fromStatus)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	if !matched {
+		// Lost the race: the row's persisted status moved away from fromStatus
+		// between the GetSecret read above and this write (a concurrent
+		// suspend/resume, or any other concurrent writer of this row) — treat
+		// as a failed write rather than silently overwriting the winner.
+		return nil, fmt.Errorf("secret %d's status changed concurrently; retry", secretID)
+	}
 	uid, sid := actorID, secretID
-	desc := fmt.Sprintf("suspended secret %q", updated.Name)
+	desc := fmt.Sprintf("suspended secret %q", secret.Name)
 	if reason != "" {
 		desc += ": " + reason
 	}
 	c.writeAuditEvent(ctx, EventSecretSuspended, &uid, &sid, desc)
-	return updated, nil
+	return secret, nil
 }
 
 const projectSuspendPageSize = 500
@@ -128,13 +136,21 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 	if secret.Status != SecretStatusSuspended {
 		return secret, nil // not suspended — no-op
 	}
+	fromStatus := secret.Status
 	secret.Status = SecretStatusActive
 	secret.UpdatedAt = c.now()
-	updated, err := c.storage.UpdateSecret(ctx, secret)
+	matched, err := c.storage.TransitionSecretStatus(ctx, secret, fromStatus)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	if !matched {
+		// Lost the race: the row's persisted status moved away from fromStatus
+		// between the GetSecret read above and this write (a concurrent
+		// suspend/resume, or any other concurrent writer of this row) — treat
+		// as a failed write rather than silently overwriting the winner.
+		return nil, fmt.Errorf("secret %d's status changed concurrently; retry", secretID)
+	}
 	uid, sid := actorID, secretID
-	c.writeAuditEvent(ctx, EventSecretResumed, &uid, &sid, fmt.Sprintf("resumed secret %q", updated.Name))
-	return updated, nil
+	c.writeAuditEvent(ctx, EventSecretResumed, &uid, &sid, fmt.Sprintf("resumed secret %q", secret.Name))
+	return secret, nil
 }

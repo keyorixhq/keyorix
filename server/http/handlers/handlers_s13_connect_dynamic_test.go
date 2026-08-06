@@ -706,6 +706,79 @@ func TestDynProxy_UpdateConfig_BadBody_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TransitionDynamicSecretConfigDisabledProxy — bad id
+func TestDynProxy_TransitionConfigDisabled_BadID_S13(t *testing.T) {
+	h := newDynamicSecretHandlerProxyS13(t)
+	body, _ := json.Marshal(map[string]interface{}{
+		"config":        map[string]interface{}{"name": "x", "project_id": 1, "disabled": true},
+		"from_disabled": false,
+	})
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/system/dynamic-secrets/configs/notanint/transition", bytes.NewReader(body)),
+		"id", "notanint",
+	)
+	w := httptest.NewRecorder()
+	h.TransitionDynamicSecretConfigDisabledProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TransitionDynamicSecretConfigDisabledProxy — bad body
+func TestDynProxy_TransitionConfigDisabled_BadBody_S13(t *testing.T) {
+	h := newDynamicSecretHandlerProxyS13(t)
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/api/v1/system/dynamic-secrets/configs/1/transition", bytes.NewBufferString("not-json")),
+		"id", "1",
+	)
+	w := httptest.NewRecorder()
+	h.TransitionDynamicSecretConfigDisabledProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TransitionDynamicSecretConfigDisabledProxy — proves the StateTransitionMissingCAS
+// race is closed end-to-end through the HTTP proxy layer: two racing callers that
+// both observed disabled=false cannot both win. The first conditional write
+// matches; the second, replaying the SAME stale from_disabled, is rejected
+// (matched=false) rather than silently clobbering the first.
+func TestDynProxy_TransitionConfigDisabled_ClosesRace_S13(t *testing.T) {
+	h := newDynamicSecretHandlerProxyS13(t)
+	created, err := h.coreService.Storage().CreateDynamicSecretConfig(context.Background(), &models.DynamicSecretConfig{
+		Name: "race-proxy-config", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres", Disabled: false,
+	})
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"config":        map[string]interface{}{"name": created.Name, "project_id": created.ProjectID, "disabled": true},
+		"from_disabled": false,
+	})
+	path := "/api/v1/system/dynamic-secrets/configs/" + strconv.FormatUint(uint64(created.ID), 10) + "/transition"
+
+	// First racer: still-current from_disabled=false → matches.
+	req1 := withChiParam(httptest.NewRequest(http.MethodPut, path, bytes.NewReader(body)), "id", strconv.FormatUint(uint64(created.ID), 10))
+	w1 := httptest.NewRecorder()
+	h.TransitionDynamicSecretConfigDisabledProxy(w1, req1)
+	require.Equal(t, http.StatusOK, w1.Code)
+	var result1 struct {
+		Data struct {
+			Matched bool `json:"matched"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &result1))
+	assert.True(t, result1.Data.Matched)
+
+	// Second racer: replays the SAME stale from_disabled=false → loses the race.
+	req2 := withChiParam(httptest.NewRequest(http.MethodPut, path, bytes.NewReader(body)), "id", strconv.FormatUint(uint64(created.ID), 10))
+	w2 := httptest.NewRecorder()
+	h.TransitionDynamicSecretConfigDisabledProxy(w2, req2)
+	require.Equal(t, http.StatusOK, w2.Code)
+	var result2 struct {
+		Data struct {
+			Matched bool `json:"matched"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &result2))
+	assert.False(t, result2.Data.Matched)
+}
+
 // CreateDynamicSecretLeaseProxy — bad body
 func TestDynProxy_CreateLease_BadBody_S13(t *testing.T) {
 	h := newDynamicSecretHandlerProxyS13(t)

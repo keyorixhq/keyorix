@@ -475,6 +475,24 @@ func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretN
 	return secret, nil
 }
 
+// TransitionSecretStatus persists secret's full row via a conditional UPDATE
+// gated on the row's CURRENT status still being fromStatus (see the interface
+// doc in internal/core/storage/interface.go for why this exists alongside —
+// not instead of — UpdateSecret). Mirrors TransitionMachineIdentityState's
+// `WHERE id = ? AND state = ?` + `Select("*")` shape exactly, so every field
+// the caller mutated on secret (Status, UpdatedAt, ...) is persisted in the
+// same statement, not just a hardcoded column subset.
+func (ls *LocalStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ? AND status = ?", secret.ID, fromStatus).
+		Select("*").
+		Updates(secret)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // SetSecretCertNotAfter caches a certificate-typed secret's parsed leaf expiry — a
 // targeted single-column update that touches nothing else (ADR-056).
 func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error {

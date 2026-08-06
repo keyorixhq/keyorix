@@ -12,6 +12,16 @@ import (
 // MockStorage is a complete mock implementation of the Storage interface for testing
 type MockStorage struct {
 	mock.Mock
+
+	// GetDynamicSecretConfigFunc/TransitionDynamicSecretConfigDisabledFunc, when
+	// set, override the fixed-stub return values GetDynamicSecretConfig/
+	// TransitionDynamicSecretConfigDisabled otherwise give (see those methods'
+	// doc comments for why they use this settable-func escape hatch instead of
+	// the usual testify .On()/m.Called() pattern). nil by default; a test that
+	// specifically needs to control the return value (e.g. simulating a lost
+	// dynamic-secret-config CAS race deterministically) sets the field directly.
+	GetDynamicSecretConfigFunc                func(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
+	TransitionDynamicSecretConfigDisabledFunc func(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error)
 }
 
 // WithSchedulerLock runs fn directly in tests (single instance, no DB lock).
@@ -485,6 +495,16 @@ func (m *MockStorage) UpdateRiskException(ctx context.Context, e *models.RiskExc
 	return args.Error(0)
 }
 
+func (m *MockStorage) RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *models.RiskException) (bool, error) {
+	args := m.Called(ctx, e)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) ApproveRiskExceptionIfPending(ctx context.Context, e *models.RiskException) (bool, error) {
+	args := m.Called(ctx, e)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) CreateSSOLoginState(ctx context.Context, s *models.SSOLoginState) error {
 	args := m.Called(ctx, s)
 	return args.Error(0)
@@ -587,6 +607,11 @@ func (m *MockStorage) UpdateSecret(ctx context.Context, secret *models.SecretNod
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.SecretNode), args.Error(1)
+}
+
+func (m *MockStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
+	args := m.Called(ctx, secret, fromStatus)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) DeleteSecret(ctx context.Context, id uint) error {
@@ -866,6 +891,11 @@ func (m *MockStorage) UpdateUser(ctx context.Context, user *models.User) (*model
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error) {
+	args := m.Called(ctx, user, fromActive)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
@@ -2063,11 +2093,18 @@ func (m *MockStorage) ConsumeMFAChallenge(_ context.Context, _ string, _ time.Ti
 }
 
 // Dynamic-secrets stubs (the dynamic-secrets core logic is tested against real
-// SQLite + a fake engine, not this mock).
+// SQLite + a fake engine, not this mock). GetDynamicSecretConfig/
+// TransitionDynamicSecretConfigDisabled below are FIXED stubs by default (see
+// the GetDynamicSecretConfigFunc/TransitionDynamicSecretConfigDisabledFunc
+// doc on the struct above for why they use a settable-func escape hatch
+// instead of the usual testify .On()/m.Called() pattern).
 func (m *MockStorage) CreateDynamicSecretConfig(_ context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error) {
 	return c, nil
 }
-func (m *MockStorage) GetDynamicSecretConfig(_ context.Context, _ uint) (*models.DynamicSecretConfig, error) {
+func (m *MockStorage) GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error) {
+	if m.GetDynamicSecretConfigFunc != nil {
+		return m.GetDynamicSecretConfigFunc(ctx, id)
+	}
 	return nil, nil
 }
 func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
@@ -2075,6 +2112,12 @@ func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]
 }
 func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
 	return nil
+}
+func (m *MockStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
+	if m.TransitionDynamicSecretConfigDisabledFunc != nil {
+		return m.TransitionDynamicSecretConfigDisabledFunc(ctx, c, fromDisabled)
+	}
+	return true, nil
 }
 func (m *MockStorage) CountDynamicSecretConfigsByClassification(_ context.Context) (map[string]int, error) {
 	return nil, nil

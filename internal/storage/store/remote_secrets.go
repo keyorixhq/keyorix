@@ -229,6 +229,49 @@ func (rs *RemoteStorage) UpdateSecret(ctx context.Context, secret *models.Secret
 	return &result, nil
 }
 
+// transitionSecretStatusWireRequest is TransitionSecretStatus's request body:
+// the full secret row the caller already mutated in memory (secret.Status/
+// UpdatedAt already set to the target values), plus the fromStatus the caller
+// observed via GetSecret immediately before mutating it, mirroring
+// transitionMachineIdentityStateBody's shape exactly. The Secret field
+// marshals *models.SecretNode directly — it carries no json tags of its own
+// beyond ValueStored's `json:"-"`, so a Go-to-Go round trip between this
+// client and the handler's identical type preserves every field exactly, the
+// same choice GetSecretIncludingDeleted already makes for the identical type.
+type transitionSecretStatusWireRequest struct {
+	Secret     *models.SecretNode `json:"secret"`
+	FromStatus string             `json:"from_status"`
+}
+
+// TransitionSecretStatus persists secret's full row via a single conditional
+// PUT to /api/v1/system/secrets/{id}/transition-status (mirroring
+// TransitionMachineIdentityState's #388 pattern), carrying fromStatus
+// alongside so the upstream applies the exact SAME conditional
+// "WHERE id = ? AND status = ?" write its own LocalStorage would — see the
+// interface doc (internal/core/storage/interface.go) for why this exists as a
+// single round-trip primitive rather than a generic GetSecret-then-
+// UpdateSecret proxy pair (RemoteStorage.WithTransaction is a no-op
+// passthrough, so that two-call sequence would reopen the exact race this
+// closes).
+func (rs *RemoteStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/secrets/%d/transition-status", secret.ID)
+	body := transitionSecretStatusWireRequest{Secret: secret, FromStatus: fromStatus}
+	resp, err := rs.client.Put(ctx, path, body)
+	if err != nil {
+		return false, fmt.Errorf("failed to transition secret status: %w", err)
+	}
+	if !resp.Success {
+		return false, fmt.Errorf("transition secret status failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Matched bool `json:"matched"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return false, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Matched, nil
+}
+
 // DeleteSecret deletes a secret by ID via remote API.
 func (rs *RemoteStorage) DeleteSecret(ctx context.Context, id uint) error {
 	path := fmt.Sprintf("/api/v1/secrets/%d", id)

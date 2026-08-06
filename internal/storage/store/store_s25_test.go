@@ -736,6 +736,16 @@ func TestListAllMachineIdentities_S25_BrokenDB(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestTransitionDynamicSecretConfigDisabled_S25_BrokenDB exercises the DB-error
+// path (StateTransitionMissingCAS fix), mirroring
+// TestTransitionMachineIdentityState_S25_BrokenDB above.
+func TestTransitionDynamicSecretConfigDisabled_S25_BrokenDB(t *testing.T) {
+	ls := newBrokenDB(t)
+	_, err := ls.TransitionDynamicSecretConfigDisabled(context.Background(),
+		&models.DynamicSecretConfig{ID: 1, Disabled: true}, false)
+	require.Error(t, err)
+}
+
 // ---------------------------------------------------------------------------
 // local_rbac.go — error paths for simple functions
 // ---------------------------------------------------------------------------

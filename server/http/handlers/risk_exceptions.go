@@ -93,6 +93,8 @@ func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.R
 		switch {
 		case strings.Contains(msg, "dual control"):
 			status = http.StatusForbidden
+		case strings.Contains(msg, "concurrently"):
+			status = http.StatusConflict
 		case strings.Contains(msg, "cannot approve") || strings.Contains(msg, "already approved"):
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "not found"):
@@ -122,6 +124,8 @@ func (h *DashboardHandler) RevokeRiskException(w http.ResponseWriter, r *http.Re
 		switch {
 		case strings.Contains(msg, "already revoked"):
 			status = http.StatusBadRequest
+		case strings.Contains(msg, "concurrently"):
+			status = http.StatusConflict
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
 		default:

@@ -186,3 +186,108 @@ func TestRemoteStorageRiskExceptions_ActiveOnlyExcludesRevoked_RealServer(t *tes
 	require.Len(t, directRows, 1)
 	assert.Equal(t, kept.ID, directRows[0].ID)
 }
+
+// TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServer
+// proves the StateTransitionMissingCAS.ql fix end-to-end, over a real HTTP hop
+// through the downstream's RemoteStorage against the upstream's REAL router —
+// not a protocol mock: two callers racing RevokeRiskExceptionIfNotRevoked for
+// the SAME exception (mirroring internal/core.RevokeRiskException's own
+// read-then-write) must not both "win". The first conditional write must
+// match (matched=true) and persist its attribution; the second, racing against
+// a row the first already moved to revoked=true, must be rejected
+// (matched=false) rather than silently re-applied over the winner.
+func TestRemoteStorageRiskExceptions_RevokeIfNotRevoked_ConditionalRace_RealServer(t *testing.T) {
+	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
+	ctx := context.Background()
+	now := time.Now()
+	expiresAt := now.Add(30 * 24 * time.Hour)
+
+	exc, err := downstream.Storage().CreateRiskException(ctx, buildRiskException(now, 1, "Racing revoke", "other", expiresAt))
+	require.NoError(t, err)
+
+	// Two admins independently read the still-unrevoked row (the TOCTOU window
+	// internal/core.RevokeRiskException's own GetRiskException-then-write
+	// sequence has), each preparing their own conditional revoke write.
+	firstRead, err := downstream.Storage().GetRiskException(ctx, exc.ID)
+	require.NoError(t, err)
+	firstRevokedAt := time.Now()
+	firstRead.Revoked = true
+	firstRead.RevokedBy = 1
+	firstRead.RevokedAt = &firstRevokedAt
+
+	secondRead, err := downstream.Storage().GetRiskException(ctx, exc.ID)
+	require.NoError(t, err)
+	secondRevokedAt := time.Now()
+	secondRead.Revoked = true
+	secondRead.RevokedBy = 2
+	secondRead.RevokedAt = &secondRevokedAt
+
+	// First admin's conditional revoke lands and wins.
+	matched, err := downstream.Storage().RevokeRiskExceptionIfNotRevoked(ctx, firstRead)
+	require.NoError(t, err)
+	assert.True(t, matched, "the first writer must win")
+
+	// Second admin's conditional revoke, racing against a row the first write
+	// already moved to revoked=true, must be rejected — not silently
+	// re-applied (re-attributing the revoke away from admin 1 to admin 2, the
+	// exact clobber this fix closes).
+	matched, err = downstream.Storage().RevokeRiskExceptionIfNotRevoked(ctx, secondRead)
+	require.NoError(t, err)
+	assert.False(t, matched, "the second writer must lose, not clobber the first revoke")
+
+	// The upstream's own persisted row must reflect the FIRST admin's
+	// attribution, proving the second write never landed.
+	final, err := upstream.Storage().GetRiskException(ctx, exc.ID)
+	require.NoError(t, err)
+	assert.True(t, final.Revoked)
+	assert.Equal(t, uint(1), final.RevokedBy, "the winning first admin's attribution must be the persisted state")
+}
+
+// TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer
+// is the approve analogue, end-to-end over real HTTP: a revoke and an approve
+// racing the SAME exception must not both land — an exception left in a
+// "revoked AND approved" state would defeat dual control's whole purpose (an
+// approved exception suppresses its matched violation from the compliance
+// posture, so a revoked-then-approved exception would wrongly keep suppressing
+// it).
+func TestRemoteStorageRiskExceptions_ApproveIfPending_ConditionalRace_RealServer(t *testing.T) {
+	upstream, downstream := newUpstreamDownstreamForRiskExceptions(t)
+	ctx := context.Background()
+	now := time.Now()
+	expiresAt := now.Add(30 * 24 * time.Hour)
+
+	exc, err := downstream.Storage().CreateRiskException(ctx, buildRiskException(now, 9, "Racing revoke vs approve", "other", expiresAt))
+	require.NoError(t, err)
+
+	// The revoker and the (different, dual-control-compliant) approver both
+	// read the same still-pending row before either write lands.
+	revokeRead, err := downstream.Storage().GetRiskException(ctx, exc.ID)
+	require.NoError(t, err)
+	revokedAt := time.Now()
+	revokeRead.Revoked = true
+	revokeRead.RevokedBy = 1
+	revokeRead.RevokedAt = &revokedAt
+
+	approveRead, err := downstream.Storage().GetRiskException(ctx, exc.ID)
+	require.NoError(t, err)
+	approvedAt := time.Now()
+	approveRead.Approved = true
+	approveRead.ApprovedBy = 2
+	approveRead.ApprovedAt = &approvedAt
+
+	// Revoke lands first.
+	matched, err := downstream.Storage().RevokeRiskExceptionIfNotRevoked(ctx, revokeRead)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	// The approve, racing against a row that is no longer unrevoked, must be
+	// rejected.
+	matched, err = downstream.Storage().ApproveRiskExceptionIfPending(ctx, approveRead)
+	require.NoError(t, err)
+	assert.False(t, matched, "an approve racing a revoke must lose, not mark a revoked exception approved")
+
+	final, err := upstream.Storage().GetRiskException(ctx, exc.ID)
+	require.NoError(t, err)
+	assert.True(t, final.Revoked)
+	assert.False(t, final.Approved, "the revoked exception must never end up approved")
+}

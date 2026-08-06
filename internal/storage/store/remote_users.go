@@ -370,6 +370,71 @@ func (rs *RemoteStorage) UpdateUser(ctx context.Context, user *models.User) (*mo
 	return decodeUserResponse(resp.Data)
 }
 
+// userActiveTransitionWireRequest carries the full row UpdateUser already
+// mutated in memory (username/email/display_name/active/updated_at) plus
+// fromActive — the value UpdateUser observed via GetUser (wasActive) before
+// applying any of the request's field changes — for
+// UpdateUserIfActiveStateMatches's conditional write. Unlike
+// userUpdateWireRequest's PATCH-style semantics, every field here is always
+// meaningful: this is a full-row persist (mirroring
+// TransitionMachineIdentityState's transitionMachineIdentityStateBody shape),
+// not a partial update, so there is no need for optional pointers.
+//
+// UpdatedAt is carried explicitly (unlike userUpdateWireRequest) because this
+// route is a raw storage-primitive passthrough, not the human-facing PUT
+// /api/v1/users/{id} route — there is no server-side core.UpdateUser call on
+// the receiving end to recompute it from the upstream's own clock, so leaving
+// it off the wire would zero the column on every conditional write.
+type userActiveTransitionWireRequest struct {
+	Username    string    `json:"username"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+	Active      bool      `json:"active"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	FromActive  bool      `json:"from_active"`
+}
+
+// UpdateUserIfActiveStateMatches persists user's full row via a single
+// conditional PUT to /api/v1/system/users/{id}/active-transition (mirroring
+// TransitionMachineIdentityState's #518 `WHERE id = ? AND state = ?` pattern
+// for this codebase's other TOCTOU class — see the interface doc in
+// internal/core/storage/interface.go), carrying fromActive alongside so the
+// upstream applies the exact SAME conditional "WHERE id = ? AND is_active = ?"
+// write its own LocalStorage would. This deliberately does NOT reuse the
+// human-facing PUT /api/v1/users/{id} route (UpdateUser above): that route
+// re-runs the upstream's OWN core.KeyorixCore.UpdateUser end to end (including
+// its own GetUser read and uniqueness checks) against the caller's request
+// body — the wrong shape for a caller (this client's own core.UpdateUser) that
+// has ALREADY performed all of that validation itself against proxied reads
+// and only needs the FINAL persist to be atomic. Exactly the same
+// raw-storage-primitive-passthrough reasoning as
+// machine_identities_proxy.go's TransitionMachineIdentityStateProxy.
+func (rs *RemoteStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/users/%d/active-transition", user.ID)
+	body := userActiveTransitionWireRequest{
+		Username:    user.Username,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		Active:      user.IsActive,
+		UpdatedAt:   user.UpdatedAt,
+		FromActive:  fromActive,
+	}
+	resp, err := rs.client.Put(ctx, path, body)
+	if err != nil {
+		return false, fmt.Errorf("failed to update user active state: %w", err)
+	}
+	if !resp.Success {
+		return false, fmt.Errorf("update user active state failed: %s", resp.Error.Error())
+	}
+	var result struct {
+		Matched bool `json:"matched"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return false, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Matched, nil
+}
+
 // UpdateLastLogin is not available in remote mode — last_login_at is stamped
 // server-side inside the login handler, which always runs against LocalStorage.
 func (rs *RemoteStorage) UpdateLastLogin(_ context.Context, _ uint, _ time.Time) error {

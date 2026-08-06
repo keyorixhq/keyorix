@@ -79,13 +79,30 @@ func TestRevokeRiskException(t *testing.T) {
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x"}, nil)
-	store.On("UpdateRiskException", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
+	store.On("RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
 		return e.ID == 5 && e.Revoked && e.RevokedBy == 3 && e.RevokedAt != nil
-	})).Return(nil)
+	})).Return(true, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	c := riskCore(store, now)
 	require.NoError(t, c.RevokeRiskException(context.Background(), 3, 5))
+}
+
+// StateTransitionMissingCAS.ql: a lost race — the row's persisted revoked flag
+// moved to true between the GetRiskException read and this write (e.g. a
+// concurrent racing RevokeRiskException/ApproveRiskException) — must surface as
+// a clear error, not be silently swallowed or retried.
+func TestRevokeRiskException_LostRaceReturnsError(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x"}, nil)
+	store.On("RevokeRiskExceptionIfNotRevoked", mock.Anything, mock.Anything).Return(false, nil)
+
+	c := riskCore(store, now)
+	err := c.RevokeRiskException(context.Background(), 3, 5)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "concurrently revoked")
+	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 }
 
 // #170: the creator of a risk exception cannot approve their own exception — dual
@@ -111,7 +128,7 @@ func TestApproveRiskException_DeniesSelfApproval(t *testing.T) {
 	require.NotNil(t, audited, "the denial must still be audited")
 	require.NotNil(t, audited.Success)
 	assert.False(t, *audited.Success)
-	store.AssertNotCalled(t, "UpdateRiskException", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "ApproveRiskExceptionIfPending", mock.Anything, mock.Anything)
 }
 
 // A DIFFERENT principal than the creator may approve — the exception is marked
@@ -120,13 +137,30 @@ func TestApproveRiskException_DifferentActorSucceeds(t *testing.T) {
 	now := time.Now()
 	store := new(MockStorage)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
-	store.On("UpdateRiskException", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
+	store.On("ApproveRiskExceptionIfPending", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
 		return e.ID == 5 && e.Approved && e.ApprovedBy == 3 && e.ApprovedAt != nil
-	})).Return(nil)
+	})).Return(true, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	c := riskCore(store, now)
 	require.NoError(t, c.ApproveRiskException(context.Background(), 3, 5))
+}
+
+// StateTransitionMissingCAS.ql: a lost race on approve — the row's persisted
+// revoked/approved flags moved between the GetRiskException read and this
+// write (e.g. a concurrent racing revoke or a racing approve that landed
+// first) — must surface as a clear error, not be silently swallowed.
+func TestApproveRiskException_LostRaceReturnsError(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
+	store.On("ApproveRiskExceptionIfPending", mock.Anything, mock.Anything).Return(false, nil)
+
+	c := riskCore(store, now)
+	err := c.ApproveRiskException(context.Background(), 3, 5)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "concurrently revoked or approved")
+	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 }
 
 // An already-approved exception cannot be approved again.
