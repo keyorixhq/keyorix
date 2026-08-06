@@ -128,9 +128,28 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      # Keyed on the lockfile hash, not a hand-extracted Playwright version --
+      # ANY dependency bump invalidates this (coarser than strictly necessary,
+      # but simpler and correct: a change to the pinned Playwright version
+      # always changes pnpm-lock.yaml too). Caching the browser binary dir
+      # alone doesn't cover --with-deps' apt-installed system libraries, so a
+      # cache hit still runs the cheap, idempotent install-deps-only pass
+      # below rather than skipping browser setup entirely.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
+
       # Chromium-only (playwright.config.ts) to keep this job fast.
       - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Playwright OS dependencies (cache hit -- browser binary already present)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
 
       - name: E2E tests
         run: pnpm test:e2e

@@ -3,6 +3,7 @@ name: Anchore Syft SBOM scan
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
 
 permissions: {}
 

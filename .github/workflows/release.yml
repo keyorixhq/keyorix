@@ -53,8 +53,24 @@ jobs:
       # Pinned: supply-chain tooling is itself an attack surface. The Makefile
       # `release` target shells out to cyclonedx-gomod to emit a per-binary
       # CycloneDX SBOM (covered by checksums.txt, uploaded with dist/*).
+      - name: Cache cyclonedx-gomod binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/cyclonedx-gomod
+          key: cyclonedx-gomod-v1.10.0-${{ runner.os }}
+
       - name: Install SBOM generator
-        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0 # NOSONAR githubactions:S8545 -- pinned to v1.10.0; go.sum not applicable for a standalone build-time tool outside the module graph (same pattern as dast.yml's nuclei install)
+        run: '[ -x ~/go/bin/cyclonedx-gomod ] || go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0' # NOSONAR githubactions:S8545 -- pinned to v1.10.0; go.sum not applicable for a standalone build-time tool outside the module graph (same pattern as dast.yml's nuclei install)
+
+      # actions/setup-node's own `cache:` input above is already spent on pnpm
+      # (keyed to web/pnpm-lock.yaml, one cache slot per action call) -- this
+      # is a second, independent cache for npm's own package cache, keyed to
+      # the ROOT package-lock.json that `npm ci` below actually reads.
+      - name: Cache npm packages (root package-lock.json)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       # Pinned via the root package-lock.json + npm ci, same pattern as
       # openapi-lint's Spectral install (Scorecard #533): `npm install -g` has
