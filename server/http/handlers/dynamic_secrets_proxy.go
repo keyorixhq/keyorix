@@ -233,7 +233,7 @@ func (h *DynamicSecretHandler) CreateDynamicSecretConfigProxy(w http.ResponseWri
 func (h *DynamicSecretHandler) GetDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid config id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
 		return
 	}
 	cfg, err := h.coreService.Storage().GetDynamicSecretConfig(r.Context(), uint(id))
@@ -277,7 +277,7 @@ func (h *DynamicSecretHandler) ListDynamicSecretConfigsProxy(w http.ResponseWrit
 func (h *DynamicSecretHandler) UpdateDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid config id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
 		return
 	}
 	var body dynamicSecretConfigProxyWire
@@ -314,7 +314,7 @@ type transitionDynamicSecretConfigDisabledBody struct {
 func (h *DynamicSecretHandler) TransitionDynamicSecretConfigDisabledProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid config id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
 		return
 	}
 	var body transitionDynamicSecretConfigDisabledBody

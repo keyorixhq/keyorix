@@ -132,7 +132,7 @@ func (w riskExceptionProxyWire) toModel() *models.RiskException {
 func (h *DashboardHandler) CreateRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	var body riskExceptionProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	if body.Title == "" || body.Justification == "" {
@@ -152,7 +152,7 @@ func (h *DashboardHandler) CreateRiskExceptionProxy(w http.ResponseWriter, r *ht
 func (h *DashboardHandler) GetRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid exception id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
 		return
 	}
 	e, err := h.coreService.Storage().GetRiskException(r.Context(), uint(id))
@@ -195,12 +195,12 @@ func (h *DashboardHandler) ListRiskExceptionsProxy(w http.ResponseWriter, r *htt
 func (h *DashboardHandler) UpdateRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid exception id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
 		return
 	}
 	var body riskExceptionProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -220,12 +220,12 @@ func (h *DashboardHandler) UpdateRiskExceptionProxy(w http.ResponseWriter, r *ht
 func (h *DashboardHandler) RevokeRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid exception id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
 		return
 	}
 	var body riskExceptionProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
@@ -245,12 +245,12 @@ func (h *DashboardHandler) RevokeRiskExceptionProxy(w http.ResponseWriter, r *ht
 func (h *DashboardHandler) ApproveRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid exception id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
 		return
 	}
 	var body riskExceptionProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
 	body.ID = uint(id)
