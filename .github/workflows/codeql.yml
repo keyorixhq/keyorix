@@ -28,7 +28,8 @@ jobs:
   # Actions has no mechanism for one workflow file to consume another's job
   # outputs.
   #
-  # Gates analyze/analyze-web/summary below via job-level `if:`, NOT a
+  # Gates analyze-server/analyze-operator/analyze-web/summary below via
+  # job-level `if:`, NOT a
   # workflow-level `paths-ignore` on the `on:` trigger above. Verified via
   # the actual branch-protection API (not assumed): "Analyze (server)" and
   # "Analyze (operator)" ARE required status checks. A job skipped via
@@ -43,14 +44,32 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
+      # True when every changed file is in a category verified to contain no
+      # Go/JS/TS source and nothing any CodeQL build step reads -- same
+      # allowlist as ci.yml's own go_unaffected (scripts/, .semgrep/, demo/,
+      # integrations/, root repo-metadata files, any workflow file EXCEPT
+      # this one). Excludes codeql.yml itself, not ci.yml, since THIS file
+      # is what defines the gating logic below -- mirrors ci.yml's identical
+      # self-exclusion reasoning for the same reason. A change to ci.yml
+      # itself IS safely coverable here (it can't affect CodeQL findings).
+      go_unaffected: ${{ steps.filter.outputs.go_unaffected }}
+      # True when every changed file is under operator/ -- a separate Go
+      # module, so a diff confined to it cannot change the ROOT module's
+      # (Analyze (server)) or web/'s (Analyze (javascript-typescript))
+      # findings. Deliberately does NOT gate Analyze (operator) itself.
+      operator_only: ${{ steps.filter.outputs.operator_only }}
     steps:
-      - name: Detect docs-only changes
+      - name: Detect docs-only / go-unaffected / operator-only changes
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "docs_only=false"
+              echo "go_unaffected=false"
+              echo "operator_only=false"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
@@ -61,30 +80,39 @@ jobs:
           else
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           fi
+          # codeql.yml itself defines this gating logic -- a change to it
+          # must always run the full analysis regardless of what else it
+          # matches below, so it's checked first and short-circuits to false.
+          if echo "$changed" | grep -qx '\.github/workflows/codeql\.yml'; then
+            echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$changed" ] || echo "$changed" | grep -vE '^(scripts/|\.semgrep/|demo/|integrations/|\.github/workflows/|\.gitignore$|\.gitattributes$|LICENSE$|COPYRIGHT$)' > /dev/null; then
+            echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go_unaffected=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$changed" ] || echo "$changed" | grep -vE '^operator/' > /dev/null; then
+            echo "operator_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "operator_only=true" >> "$GITHUB_OUTPUT"
+          fi
 
-  analyze:
-    name: Analyze (${{ matrix.name }})
+  # Was a single matrixed `analyze` job (server + operator legs). Split into
+  # two jobs because a job-level `if:` cannot reference the `matrix` context
+  # (actionlint: "context matrix is not allowed here") -- the "server" leg
+  # needs a condition ("operator" leg) doesn't, so per-leg `if:` values are
+  # required, which a shared matrix `if:` can't express. Steps are otherwise
+  # identical to the pre-split matrix job; only working-directory/GOWORK/
+  # category differ, hardcoded per job instead of via ${{ matrix.* }}.
+  analyze-server:
+    name: Analyze (server)
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    # Additionally skips when operator_only -- an operator-only diff can't
+    # affect root-module CodeQL findings.
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Root module: server, CLI, operator excluded (its own module below).
-          - name: server
-            working-directory: .
-            gowork: auto
-          # The operator is a separate Go module (controller-runtime/client-go
-          # kept out of the root go.work) — same reasoning as ci.yml's
-          # dedicated `operator` job, so it needs its own CodeQL build+analyze
-          # pass rather than being swept up by the root module's build.
-          - name: operator
-            working-directory: operator
-            gowork: off
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -103,15 +131,14 @@ jobs:
           # suite doesn't: an io.Reader from an outbound client response or a stdin
           # parameter reaching json.NewDecoder unbounded, and a path-based
           # chmod/chown that follows an os.Lstat check on the same path (TOCTOU).
-          # Applies to both matrix legs (server, operator) -- init always resolves
-          # this path against the repo-root checkout, independent of each leg's
-          # later build working-directory.
+          # Applies to both legs (server, operator) -- init always resolves this
+          # path against the repo-root checkout, independent of each leg's later
+          # build working-directory.
           queries: +./.github/codeql/go-queries
 
-      - name: Build (${{ matrix.name }})
-        working-directory: ${{ matrix.working-directory }}
+      - name: Build (server)
         env:
-          GOWORK: ${{ matrix.gowork }}
+          GOWORK: auto
         run: |
           go build ./...
           go test -run=^$ ./...
@@ -119,21 +146,64 @@ jobs:
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
-          category: '/language:go-${{ matrix.name }}'
+          category: /language:go-server
+
+  # The operator is a separate Go module (controller-runtime/client-go kept
+  # out of the root go.work) — same reasoning as ci.yml's dedicated
+  # `operator` job, so it needs its own CodeQL build+analyze pass rather
+  # than being swept up by the root module's build. Deliberately NOT gated
+  # on operator_only, matching ci.yml's `operator` job -- that's exactly the
+  # diff shape this job must still run for.
+  analyze-operator:
+    name: Analyze (operator)
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          languages: go
+          build-mode: manual
+          queries: +./.github/codeql/go-queries
+
+      - name: Build (operator)
+        working-directory: operator
+        env:
+          GOWORK: off
+        run: |
+          go build ./...
+          go test -run=^$ ./...
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          category: /language:go-operator
 
   # web/ (ADR-070) is JavaScript/TypeScript, not Go -- a separate job rather
   # than a third matrix entry above, since the Go entries' init/build/analyze
   # steps (build-mode: manual, `go build`+`go test -run=^$`) don't apply here
   # at all: JS/TS uses autobuild (no compile step to run) and its own
-  # queries suite. Gated on docs_only via job-level `if:` (see the `changes`
-  # job above) -- unlike analyze's two legs, "Analyze (javascript-typescript)"
-  # is NOT currently a required status check (verified via the branch-
-  # protection API), so this gate is a pure efficiency win with no stuck-
-  # pending-check risk either way.
+  # queries suite. Gated on docs_only/go_unaffected/operator_only via
+  # job-level `if:` (see the `changes` job above) -- unlike analyze's two
+  # legs, "Analyze (javascript-typescript)" is NOT currently a required
+  # status check (verified via the branch-protection API), so this gate is
+  # a pure efficiency win with no stuck-pending-check risk either way.
+  # operator_only applies here too: an operator-only diff can't touch web/.
   analyze-web:
     name: Analyze (javascript-typescript)
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -160,21 +230,26 @@ jobs:
   # workflow at a glance. NOT currently a required status check itself
   # (verified via the branch-protection API -- only "Analyze (server)" and
   # "Analyze (operator)" are), so this job's own gating has no stuck-pending
-  # risk. Still gated on docs_only, matching analyze/analyze-web above:
-  # without it, a skipped `needs.analyze.result`/`needs.analyze-web.result`
-  # (not "success") would make the check below report "failed or was
-  # cancelled" on every docs-only PR, which is wrong -- skipped is the
-  # expected, correct outcome there, not a failure.
+  # risk. Gated on docs_only/go_unaffected (NOT operator_only -- when
+  # operator_only is true, analyze-operator still runs for real, so there's
+  # still a meaningful result here to report, unlike the docs_only/
+  # go_unaffected cases where every dependency is skipped). The check below
+  # treats "skipped" as acceptable, not just "success", since operator_only
+  # skips analyze-server and analyze-web outright while analyze-operator
+  # runs for real -- only an explicit failure/cancellation should fail this
+  # check.
   summary:
     name: CodeQL
-    needs: [changes, analyze, analyze-web]
+    needs: [changes, analyze-server, analyze-operator, analyze-web]
     runs-on: ubuntu-latest
-    if: always() && needs.changes.outputs.docs_only != 'true'
+    if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     steps:
       - name: Check analysis results
         run: |
-          if [ "${{ needs.analyze.result }}" != "success" ] || [ "${{ needs.analyze-web.result }}" != "success" ]; then
-            echo "CodeQL analysis failed or was cancelled"
-            exit 1
-          fi
-          echo "All CodeQL analyses passed"
+          for result in "${{ needs.analyze-server.result }}" "${{ needs.analyze-operator.result }}" "${{ needs.analyze-web.result }}"; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "CodeQL analysis failed or was cancelled: $result"
+              exit 1
+            fi
+          done
+          echo "All CodeQL analyses passed (or were correctly skipped)"
