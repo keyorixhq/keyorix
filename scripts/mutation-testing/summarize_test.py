@@ -1,6 +1,6 @@
 """Tests for summarize.py: gremlins-JSON -> summary-JSON, and the CLI's
 own argument/path handling (the surface pinned down by pythonsecurity:S8707 —
-see summarize.py's resolved_path check)."""
+see summarize.py's MUTATION_STATE_DIR containment check)."""
 import json
 import sys
 
@@ -32,7 +32,35 @@ def test_wrong_arg_count_exits_2(capsys, monkeypatch):
     assert "usage:" in capsys.readouterr().err
 
 
+def test_missing_state_dir_env_exits_2(capsys, monkeypatch, tmp_path):
+    result = tmp_path / "result.json"
+    _write_gremlins_json(result, [])
+    monkeypatch.delenv("MUTATION_STATE_DIR", raising=False)
+    monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
+    with pytest.raises(SystemExit) as exc:
+        summarize.main()
+    assert exc.value.code == 2
+    assert "MUTATION_STATE_DIR" in capsys.readouterr().err
+
+
+def test_path_outside_state_dir_rejected(capsys, monkeypatch, tmp_path):
+    # A resolved, real, regular file -- but outside MUTATION_STATE_DIR --
+    # must still be rejected (pythonsecurity:S8707): realpath()/isfile()
+    # alone don't restrict *where* the file lives.
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    _write_gremlins_json(outside, [{"status": "KILLED", "line": 1, "column": 1, "type": "t"}])
+
+    monkeypatch.setenv("MUTATION_STATE_DIR", str(state_dir))
+    monkeypatch.setattr(sys, "argv", ["summarize.py", str(outside), "core"])
+    with pytest.raises(SystemExit) as exc:
+        summarize.main()
+    assert exc.value.code == 2
+
+
 def test_missing_file_exits_2_without_opening(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
     missing = tmp_path / "does-not-exist.json"
     monkeypatch.setattr(sys, "argv", ["summarize.py", str(missing), "core"])
     with pytest.raises(SystemExit) as exc:
@@ -44,6 +72,7 @@ def test_missing_file_exits_2_without_opening(capsys, monkeypatch, tmp_path):
 def test_directory_path_rejected(capsys, monkeypatch, tmp_path):
     # A directory resolves via realpath but must still be rejected — only a
     # regular file is a valid gremlins result.
+    monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["summarize.py", str(tmp_path), "core"])
     with pytest.raises(SystemExit) as exc:
         summarize.main()
@@ -56,6 +85,7 @@ def test_symlink_to_real_file_is_resolved_and_read(capsys, monkeypatch, tmp_path
     link = tmp_path / "link.json"
     link.symlink_to(real)
 
+    monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["summarize.py", str(link), "core"])
     summarize.main()
 
@@ -75,6 +105,7 @@ def test_summary_counts_and_efficacy(capsys, monkeypatch, tmp_path):
         ],
     )
 
+    monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
     summarize.main()
 
@@ -93,6 +124,7 @@ def test_efficacy_is_none_when_nothing_scored(capsys, monkeypatch, tmp_path):
     result = tmp_path / "result.json"
     _write_gremlins_json(result, [{"status": "NOT_VIABLE", "line": 1, "column": 1, "type": "t"}])
 
+    monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
     summarize.main()
 
@@ -105,6 +137,7 @@ def test_no_files_key_produces_empty_summary(capsys, monkeypatch, tmp_path):
     result = tmp_path / "result.json"
     result.write_text(json.dumps({}))
 
+    monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
     summarize.main()
 

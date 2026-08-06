@@ -19,14 +19,30 @@ def main():
         sys.exit(2)
     result_path, label = sys.argv[1], sys.argv[2]
 
-    # Resolve symlinks/relative segments to a canonical absolute path and
-    # confirm it names a real, regular file before ever opening it, rather
-    # than handing json.load() whatever string a caller (human, script, or
-    # an LLM agent driving this CLI with a hallucinated or malformed
-    # argument) happened to pass.
+    # This is only ever invoked by run-mutation.sh with a path it built
+    # itself under MUTATION_STATE_DIR (see run-mutation.sh). Resolving
+    # symlinks/relative segments to a canonical absolute path is not enough
+    # sanitization on its own for a CLI argument (pythonsecurity:S8707,
+    # "agentic workflows should not be vulnerable to path injection
+    # attacks") -- confirm the resolved path is actually contained inside
+    # that trusted root, not just that it names a file, before ever handing
+    # it to open()/json.load(). A caller (human, script, or an LLM agent
+    # driving this CLI with a hallucinated or malformed argument) can't use
+    # this to read a file outside the state directory.
+    state_dir = os.environ.get("MUTATION_STATE_DIR")
+    if not state_dir:
+        print("error: MUTATION_STATE_DIR must be set", file=sys.stderr)
+        sys.exit(2)
+    allowed_root = os.path.realpath(state_dir)
     resolved_path = os.path.realpath(result_path)
-    if not os.path.isfile(resolved_path):
-        print(f"error: {result_path!r} is not a regular file", file=sys.stderr)
+    if (
+        os.path.commonpath([resolved_path, allowed_root]) != allowed_root
+        or not os.path.isfile(resolved_path)
+    ):
+        print(
+            f"error: {result_path!r} is not a regular file inside {allowed_root!r}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     with open(resolved_path) as fh:

@@ -24,6 +24,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MUTATION_WORKERS:=4}"
 : "${MUTATION_EFFICACY_DROP_THRESHOLD:=5}" # percentage points
 
+# summarize.py (invoked below as a child process) validates its result-path
+# argument against MUTATION_STATE_DIR -- a plain `:` default-assignment
+# doesn't export to child processes, so make sure it's actually visible
+# there even when this script is run standalone (outside systemd, which
+# already exports it via config.env's EnvironmentFile).
+export MUTATION_STATE_DIR
+
 mkdir -p "$MUTATION_STATE_DIR"
 
 # Packages to mutation-test, one per line: "<go-package-path>|<label>". Widen

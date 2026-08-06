@@ -111,7 +111,7 @@ jobs:
 
       - name: Generate mutation-testing script coverage report
         run: |
-          python3 -m pip install --quiet -r scripts/mutation-testing/requirements-test.txt
+          python3 -m pip install --quiet --require-hashes -r scripts/mutation-testing/requirements-test.txt
           python3 -m coverage run --branch -m pytest scripts/mutation-testing
           python3 -m coverage xml -o coverage-python.xml --include='scripts/mutation-testing/summarize.py'
 
