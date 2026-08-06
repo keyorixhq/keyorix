@@ -517,10 +517,23 @@ jobs:
     needs: [preflight, test-suite, static-analysis, changes]
     # always() so this still runs (and reports the failure below) even when
     # test-suite/static-analysis genuinely fail, not just when they're
-    # skipped -- combined with the docs_only check so the whole aggregator
-    # itself is skipped (not run at all) on a docs-only PR, matching
-    # test-suite/static-analysis being skipped too.
-    if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    # skipped -- combined with the docs_only/go_unaffected/operator_only
+    # checks so the whole aggregator itself is skipped (not run at all) when
+    # test-suite/static-analysis are skipped too.
+    #
+    # needs.changes.result == 'success' is required too, and NOT redundant
+    # with always(): if the `changes` job itself is cancelled (e.g. a
+    # concurrency-group supersession mid-run) its outputs are unset, so every
+    # `!= 'true'` comparison above reads as true regardless -- always() then
+    # lets build-and-test run anyway, find test-suite/static-analysis
+    # auto-skipped (they have no always(), so they correctly skip when a
+    # dependency is cancelled), and fail with a misleading
+    # "test-suite=skipped" error on a PR that never actually had a code
+    # failure. Gating on changes' own result keeps build-and-test in sync
+    # with test-suite/static-analysis's implicit skip-on-cancelled-dependency
+    # behavior instead of being the one job immune to it. (root-caused on
+    # #1368, whose docs-only CI run hit exactly this.)
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     # download-artifact needs actions: read beyond the workflow-level
     # contents: read default, even for same-run artifacts.
