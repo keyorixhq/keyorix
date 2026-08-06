@@ -24,6 +24,7 @@ helm install kx-sync oci://ghcr.io/keyorixhq/charts/keyorix-k8s-sync --version <
 helm install kx-sync deploy/helm/keyorix-k8s-sync \
   --namespace keyorix --create-namespace \
   --set keyorix.url=https://keyorix.internal \
+  --set keyorix.projectID=42 \
   --set keyorix.tokenSecret.name=keyorix-token \
   --set 'mappings[0].ref=production/db-password' \
   --set 'mappings[0].namespace=app' \
@@ -37,6 +38,7 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 | Key | Description |
 | --- | --- |
 | `keyorix.url` | Keyorix server base URL (**required**) |
+| `keyorix.projectID` | Numeric id of the Keyorix project the token's machine identity belongs to (**required**) — every `mappings[].ref` names only an environment and secret, never a project, since environment names are unique per-project, not globally |
 | `keyorix.interval` | Reconcile cadence (Go duration; default `5m`) |
 | `cleanup` | Reap orphaned owned Secrets when a mapping is removed (default `false`) |
 | `keyorix.tokenSecret.name` | Existing Secret holding the Keyorix token (**required**) |
@@ -51,7 +53,12 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 
 The chart creates a `ClusterRole` (`secrets`: `get`/`list`/`create`/`patch`/`delete`)
 and a namespaced `RoleBinding` in each `targetNamespaces` entry — least privilege, no
-cluster-wide Secret access. The agent uses Server-Side Apply (field manager
-`keyorix-sync`), so it owns the Secret `data` it writes and prunes keys it no longer
-maps. `list`/`delete` are exercised only when `cleanup: true` (orphan reaping); see
+cluster-wide Secret access. `get`/`patch`/`delete` are further scoped with
+`resourceNames` to exactly the Secret names in `mappings`, so the ClusterRole cannot
+touch any Secret this release doesn't manage; `create` and `list` cannot be
+`resourceNames`-scoped (a Kubernetes RBAC limitation, not an oversight — see the
+comment in `templates/rbac.yaml`) and so remain granted on the `secrets` resource type
+as a whole. The agent uses Server-Side Apply (field manager `keyorix-sync`), so it
+owns the Secret `data` it writes and prunes keys it no longer maps. `list`/`delete`
+are exercised only when `cleanup: true` (orphan reaping); see
 [docs/k8s-sync.md](../../../docs/k8s-sync.md#orphan-cleanup-cleanup).

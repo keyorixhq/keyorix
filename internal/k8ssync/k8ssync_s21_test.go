@@ -105,16 +105,25 @@ func TestLoadConfig_S21(t *testing.T) {
 
 	t.Run("missing keyorix_url returns error", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "cfg.yaml")
-		yaml := "mappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
+		yaml := "project_id: 1\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
 		require.NoError(t, os.WriteFile(f, []byte(yaml), 0600))
 		_, err := LoadConfig(f)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "keyorix_url is required")
 	})
 
+	t.Run("missing project_id returns error", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "cfg.yaml")
+		yaml := "keyorix_url: https://keyorix.example.com\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
+		require.NoError(t, os.WriteFile(f, []byte(yaml), 0600))
+		_, err := LoadConfig(f)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "project_id is required")
+	})
+
 	t.Run("no mappings returns error", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "cfg.yaml")
-		yaml := "keyorix_url: https://keyorix.example.com\n"
+		yaml := "keyorix_url: https://keyorix.example.com\nproject_id: 1\n"
 		require.NoError(t, os.WriteFile(f, []byte(yaml), 0600))
 		_, err := LoadConfig(f)
 		require.Error(t, err)
@@ -123,7 +132,7 @@ func TestLoadConfig_S21(t *testing.T) {
 
 	t.Run("invalid interval returns error", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "cfg.yaml")
-		yaml := "keyorix_url: https://keyorix.example.com\ninterval: badval\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
+		yaml := "keyorix_url: https://keyorix.example.com\nproject_id: 1\ninterval: badval\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
 		require.NoError(t, os.WriteFile(f, []byte(yaml), 0600))
 		_, err := LoadConfig(f)
 		require.Error(t, err)
@@ -132,7 +141,7 @@ func TestLoadConfig_S21(t *testing.T) {
 
 	t.Run("invalid mapping returns error", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "cfg.yaml")
-		yaml := "keyorix_url: https://keyorix.example.com\nmappings:\n  - ref: \"\"\n    namespace: default\n    name: creds\n    key: DB\n"
+		yaml := "keyorix_url: https://keyorix.example.com\nproject_id: 1\nmappings:\n  - ref: \"\"\n    namespace: default\n    name: creds\n    key: DB\n"
 		require.NoError(t, os.WriteFile(f, []byte(yaml), 0600))
 		_, err := LoadConfig(f)
 		require.Error(t, err)
@@ -141,11 +150,12 @@ func TestLoadConfig_S21(t *testing.T) {
 
 	t.Run("valid config loads successfully", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "cfg.yaml")
-		yaml := "keyorix_url: https://keyorix.example.com\ninterval: 10m\nhealth_port: 9090\ncleanup: true\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
+		yaml := "keyorix_url: https://keyorix.example.com\nproject_id: 42\ninterval: 10m\nhealth_port: 9090\ncleanup: true\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
 		require.NoError(t, os.WriteFile(f, []byte(yaml), 0600))
 		cfg, err := LoadConfig(f)
 		require.NoError(t, err)
 		assert.Equal(t, "https://keyorix.example.com", cfg.KeyorixURL)
+		assert.EqualValues(t, 42, cfg.ProjectID)
 		assert.Equal(t, 10*time.Minute, cfg.GetInterval())
 		assert.Equal(t, 9090, cfg.GetHealthPort())
 		assert.True(t, cfg.Cleanup)
@@ -154,7 +164,7 @@ func TestLoadConfig_S21(t *testing.T) {
 
 	t.Run("http non-loopback url rejected", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "cfg.yaml")
-		yaml := "keyorix_url: http://keyorix.example.com\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
+		yaml := "keyorix_url: http://keyorix.example.com\nproject_id: 1\nmappings:\n  - ref: prod/db\n    namespace: default\n    name: creds\n    key: DB\n"
 		require.NoError(t, os.WriteFile(f, []byte(yaml), 0600))
 		_, err := LoadConfig(f)
 		require.Error(t, err)

@@ -3,7 +3,28 @@ The agent needs to read and write Secrets in each target namespace. A single
 ClusterRole holds the permission set; a namespaced RoleBinding grants it to the
 agent's ServiceAccount in each target namespace (least privilege — no cluster-wide
 Secret access).
+
+The target Secret names are fully known and static at render time (the same
+.Values.mappings list templates/configmap.yaml renders into the agent's config), so
+get/patch/delete are further scoped with resourceNames to exactly those names —
+without it, the ClusterRole would grant get/patch (and, with cleanup on, delete) on
+EVERY Secret in each target namespace, not just the ones this release actually
+manages (#Bug5). Two verbs are necessarily left unscoped to the "secrets" resource
+type as a whole, both for the same underlying reason — the Kubernetes authorizer only
+evaluates resourceNames for requests that target one already-existing, named object:
+  - create: there is no object yet at authorization time, so no name to match.
+  - list (cleanup only): a list request targets the whole collection, not one name;
+    per the Kubernetes RBAC docs, a rule carrying resourceNames "cannot be used for
+    the list, watch, or deletecollection" verbs — orphan discovery still scopes
+    itself at the application layer via the managed-by label selector in
+    RESTSink.List, just not via RBAC resourceNames.
+These two gaps are inherent to Kubernetes RBAC, not an oversight here.
 */}}
+{{- $secretNames := list }}
+{{- range .Values.mappings }}
+{{- $secretNames = append $secretNames .name }}
+{{- end }}
+{{- $secretNames = $secretNames | uniq }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -11,12 +32,21 @@ metadata:
   labels:
     {{- include "kxsync.labels" . | nindent 4 }}
 rules:
+  # create (always) and list (cleanup only) cannot be resourceNames-scoped — see note
+  # above — so they are granted on the resource type as a whole.
   - apiGroups: [""]
     resources: ["secrets"]
-    # list + delete are needed only for orphan cleanup (cleanup: true) — granted only
-    # when that behavior is actually enabled, so RBAC matches the configured
-    # capability instead of granting secrets:delete cluster-wide by default (#186).
-    verbs: ["get", "create", "patch"{{ if .Values.cleanup }}, "list", "delete"{{ end }}]
+    verbs: ["create"{{ if .Values.cleanup }}, "list"{{ end }}]
+{{- if $secretNames }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      {{- toYaml $secretNames | nindent 6 }}
+    # delete is needed only for orphan cleanup (cleanup: true) — granted only when
+    # that behavior is actually enabled, so RBAC matches the configured capability
+    # instead of granting secrets:delete cluster-wide by default (#186).
+    verbs: ["get", "patch"{{ if .Values.cleanup }}, "delete"{{ end }}]
+{{- end }}
 ---
 {{- $ns := .Values.targetNamespaces | default (list .Release.Namespace) }}
 {{- $root := . }}

@@ -22,6 +22,7 @@ func writeConfig(t *testing.T, body string) string {
 func TestLoadConfig_Valid(t *testing.T) {
 	p := writeConfig(t, `
 keyorix_url: https://keyorix.internal
+project_id: 42
 interval: 2m
 mappings:
   - ref: production/db-password
@@ -36,6 +37,7 @@ mappings:
 	cfg, err := LoadConfig(p)
 	require.NoError(t, err)
 	assert.Equal(t, "https://keyorix.internal", cfg.KeyorixURL)
+	assert.EqualValues(t, 42, cfg.ProjectID)
 	assert.Equal(t, 2*time.Minute, cfg.GetInterval())
 	require.Len(t, cfg.Mappings, 2)
 	assert.Equal(t, "production/db-password", cfg.Mappings[0].Ref)
@@ -45,6 +47,7 @@ mappings:
 func TestLoadConfig_DefaultInterval(t *testing.T) {
 	p := writeConfig(t, `
 keyorix_url: https://k
+project_id: 1
 mappings:
   - {ref: e/n, namespace: ns, name: s, key: K}
 `)
@@ -56,25 +59,35 @@ mappings:
 func TestLoadConfig_Invalid(t *testing.T) {
 	cases := map[string]string{
 		"missing url": `
+project_id: 1
+mappings:
+  - {ref: e/n, namespace: ns, name: s, key: K}
+`,
+		"missing project_id": `
+keyorix_url: https://k
 mappings:
   - {ref: e/n, namespace: ns, name: s, key: K}
 `,
 		"no mappings": `
 keyorix_url: https://k
+project_id: 1
 `,
 		"bad mapping": `
 keyorix_url: https://k
+project_id: 1
 mappings:
   - {ref: e/n, namespace: ns, name: s}
 `,
 		"bad interval": `
 keyorix_url: https://k
+project_id: 1
 interval: "soon"
 mappings:
   - {ref: e/n, namespace: ns, name: s, key: K}
 `,
 		"cleartext url": `
 keyorix_url: http://keyorix.internal
+project_id: 1
 mappings:
   - {ref: e/n, namespace: ns, name: s, key: K}
 `,
@@ -87,6 +100,19 @@ mappings:
 	}
 }
 
+// TestLoadConfig_MissingProjectID verifies the specific error message for a missing
+// project_id (#Bug1: without it, secret lookups can't be scoped to one project).
+func TestLoadConfig_MissingProjectID(t *testing.T) {
+	p := writeConfig(t, `
+keyorix_url: https://keyorix.internal
+mappings:
+  - {ref: e/n, namespace: ns, name: s, key: K}
+`)
+	_, err := LoadConfig(p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project_id is required")
+}
+
 func TestLoadConfig_MissingFile(t *testing.T) {
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "nope.yaml"))
 	assert.Error(t, err)
@@ -97,6 +123,7 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 // established #122/#544 convention (internal/mcp.NewKeyorixClient).
 func TestLoadConfig_KeyorixURLScheme(t *testing.T) {
 	mappings := `
+project_id: 1
 mappings:
   - {ref: e/n, namespace: ns, name: s, key: K}
 `

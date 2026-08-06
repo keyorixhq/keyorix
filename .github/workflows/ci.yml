@@ -897,7 +897,7 @@ jobs:
 
       - name: Lint + render keyorix-k8s-sync chart
         run: |
-          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok \
             --set mappings[0].ref=e/n --set mappings[0].namespace=app \
             --set mappings[0].name=s --set mappings[0].key=K"
           # $K8S_SYNC_SET is deliberately unquoted below: it holds multiple
@@ -1037,7 +1037,7 @@ jobs:
             --set web.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
             > keyorix-render.yaml
           helm template kx deploy/helm/keyorix-k8s-sync \
-            --set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+            --set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok \
             --set mappings[0].ref=e/n --set mappings[0].namespace=app \
             --set mappings[0].name=s --set mappings[0].key=K \
             --set targetNamespaces='{app,web}' \
