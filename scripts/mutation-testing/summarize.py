@@ -4,48 +4,52 @@
 used by run-mutation.sh to compare consecutive runs and by notify-summary.sh
 to build notification text.
 
-Usage: summarize.py <gremlins-result.json> <label>
-Writes the summary to stdout as JSON.
+Usage: summarize.py <label>
+Reads MUTATION_STATE_DIR/last-<label>.json, writes the summary to stdout as
+JSON. Takes a label, not a path: see the LABEL_RE check below for why.
 """
 import json
 import os
+import re
 import sys
 from collections import Counter
 
+# run-mutation.sh only ever passes one of the fixed labels from its own
+# PACKAGES list (e.g. "core", "storage-store") -- constrain to that shape
+# rather than accepting an arbitrary path. This is the actual fix for
+# pythonsecurity:S8707 ("agentic workflows should not be vulnerable to path
+# injection attacks"): earlier revisions took a full file path as a CLI
+# argument and tried to sanitize it after the fact (realpath + is-file, then
+# realpath + a MUTATION_STATE_DIR containment check) -- Sonar's taint
+# engine doesn't treat either as clearing the taint, because the sink
+# (open()) still ultimately receives a value derived from the raw argument.
+# Validating the argument against a strict allowlist regex *before* using it
+# to build a path -- rather than validating the constructed path itself --
+# is the pattern generally recognized as sanitization by taint analyzers.
+LABEL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
 
 def main():
-    if len(sys.argv) != 3:
-        print("usage: summarize.py <gremlins-result.json> <label>", file=sys.stderr)
+    if len(sys.argv) != 2:
+        print("usage: summarize.py <label>", file=sys.stderr)
         sys.exit(2)
-    result_path, label = sys.argv[1], sys.argv[2]
+    label = sys.argv[1]
 
-    # This is only ever invoked by run-mutation.sh with a path it built
-    # itself under MUTATION_STATE_DIR (see run-mutation.sh). Resolving
-    # symlinks/relative segments to a canonical absolute path is not enough
-    # sanitization on its own for a CLI argument (pythonsecurity:S8707,
-    # "agentic workflows should not be vulnerable to path injection
-    # attacks") -- confirm the resolved path is actually contained inside
-    # that trusted root, not just that it names a file, before ever handing
-    # it to open()/json.load(). A caller (human, script, or an LLM agent
-    # driving this CLI with a hallucinated or malformed argument) can't use
-    # this to read a file outside the state directory.
+    if not LABEL_RE.fullmatch(label):
+        print(f"error: {label!r} is not a valid label (expected {LABEL_RE.pattern})", file=sys.stderr)
+        sys.exit(2)
+
     state_dir = os.environ.get("MUTATION_STATE_DIR")
     if not state_dir:
         print("error: MUTATION_STATE_DIR must be set", file=sys.stderr)
         sys.exit(2)
-    allowed_root = os.path.realpath(state_dir)
-    resolved_path = os.path.realpath(result_path)
-    if (
-        os.path.commonpath([resolved_path, allowed_root]) != allowed_root
-        or not os.path.isfile(resolved_path)
-    ):
-        print(
-            f"error: {result_path!r} is not a regular file inside {allowed_root!r}",
-            file=sys.stderr,
-        )
+
+    result_path = os.path.join(os.path.realpath(state_dir), f"last-{label}.json")
+    if not os.path.isfile(result_path):
+        print(f"error: {result_path!r} is not a regular file", file=sys.stderr)
         sys.exit(2)
 
-    with open(resolved_path) as fh:
+    with open(result_path) as fh:
         data = json.load(fh)
 
     counts = Counter()

@@ -1,6 +1,6 @@
 """Tests for summarize.py: gremlins-JSON -> summary-JSON, and the CLI's
-own argument/path handling (the surface pinned down by pythonsecurity:S8707 —
-see summarize.py's MUTATION_STATE_DIR containment check)."""
+own argument handling (the surface pinned down by pythonsecurity:S8707 —
+see summarize.py's LABEL_RE check)."""
 import json
 import sys
 
@@ -25,68 +25,61 @@ def _write_gremlins_json(path, mutations):
 
 
 def test_wrong_arg_count_exits_2(capsys, monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["summarize.py", "only-one-arg"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py"])
     with pytest.raises(SystemExit) as exc:
         summarize.main()
     assert exc.value.code == 2
     assert "usage:" in capsys.readouterr().err
 
 
-def test_missing_state_dir_env_exits_2(capsys, monkeypatch, tmp_path):
-    result = tmp_path / "result.json"
-    _write_gremlins_json(result, [])
+def test_invalid_label_rejected_before_touching_filesystem(capsys, monkeypatch):
+    # A path-shaped "label" (traversal, absolute path, embedded separator)
+    # must be rejected by the allowlist regex before it ever reaches a
+    # filesystem call -- this is the actual fix for pythonsecurity:S8707:
+    # validate the untrusted argument itself, rather than validating a path
+    # built from it after the fact.
     monkeypatch.delenv("MUTATION_STATE_DIR", raising=False)
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "../../etc/passwd"])
+    with pytest.raises(SystemExit) as exc:
+        summarize.main()
+    assert exc.value.code == 2
+    assert "not a valid label" in capsys.readouterr().err
+
+
+def test_missing_state_dir_env_exits_2(capsys, monkeypatch):
+    monkeypatch.delenv("MUTATION_STATE_DIR", raising=False)
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "core"])
     with pytest.raises(SystemExit) as exc:
         summarize.main()
     assert exc.value.code == 2
     assert "MUTATION_STATE_DIR" in capsys.readouterr().err
 
 
-def test_path_outside_state_dir_rejected(capsys, monkeypatch, tmp_path):
-    # A resolved, real, regular file -- but outside MUTATION_STATE_DIR --
-    # must still be rejected (pythonsecurity:S8707): realpath()/isfile()
-    # alone don't restrict *where* the file lives.
-    state_dir = tmp_path / "state"
-    state_dir.mkdir()
-    outside = tmp_path / "outside.json"
-    _write_gremlins_json(outside, [{"status": "KILLED", "line": 1, "column": 1, "type": "t"}])
-
-    monkeypatch.setenv("MUTATION_STATE_DIR", str(state_dir))
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(outside), "core"])
-    with pytest.raises(SystemExit) as exc:
-        summarize.main()
-    assert exc.value.code == 2
-
-
-def test_missing_file_exits_2_without_opening(capsys, monkeypatch, tmp_path):
+def test_missing_result_file_exits_2(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
-    missing = tmp_path / "does-not-exist.json"
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(missing), "core"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "core"])
     with pytest.raises(SystemExit) as exc:
         summarize.main()
     assert exc.value.code == 2
-    assert str(missing) in capsys.readouterr().err
+    assert "last-core.json" in capsys.readouterr().err
 
 
-def test_directory_path_rejected(capsys, monkeypatch, tmp_path):
-    # A directory resolves via realpath but must still be rejected — only a
-    # regular file is a valid gremlins result.
+def test_directory_in_place_of_result_file_rejected(capsys, monkeypatch, tmp_path):
+    (tmp_path / "last-core.json").mkdir()
     monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(tmp_path), "core"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "core"])
     with pytest.raises(SystemExit) as exc:
         summarize.main()
     assert exc.value.code == 2
 
 
-def test_symlink_to_real_file_is_resolved_and_read(capsys, monkeypatch, tmp_path):
+def test_symlinked_result_file_is_read(capsys, monkeypatch, tmp_path):
     real = tmp_path / "real.json"
     _write_gremlins_json(real, [{"status": "KILLED", "line": 1, "column": 1, "type": "t"}])
-    link = tmp_path / "link.json"
-    link.symlink_to(real)
+    (tmp_path / "last-core.json").symlink_to(real)
 
     monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(link), "core"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "core"])
     summarize.main()
 
     summary = json.loads(capsys.readouterr().out)
@@ -94,9 +87,8 @@ def test_symlink_to_real_file_is_resolved_and_read(capsys, monkeypatch, tmp_path
 
 
 def test_summary_counts_and_efficacy(capsys, monkeypatch, tmp_path):
-    result = tmp_path / "result.json"
     _write_gremlins_json(
-        result,
+        tmp_path / "last-core.json",
         [
             {"status": "KILLED", "line": 10, "column": 2, "type": "ARITHMETIC_BASE"},
             {"status": "KILLED", "line": 11, "column": 2, "type": "CONDITIONALS_BOUNDARY"},
@@ -106,7 +98,7 @@ def test_summary_counts_and_efficacy(capsys, monkeypatch, tmp_path):
     )
 
     monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "core"])
     summarize.main()
 
     summary = json.loads(capsys.readouterr().out)
@@ -121,11 +113,12 @@ def test_summary_counts_and_efficacy(capsys, monkeypatch, tmp_path):
 
 
 def test_efficacy_is_none_when_nothing_scored(capsys, monkeypatch, tmp_path):
-    result = tmp_path / "result.json"
-    _write_gremlins_json(result, [{"status": "NOT_VIABLE", "line": 1, "column": 1, "type": "t"}])
+    _write_gremlins_json(
+        tmp_path / "last-core.json", [{"status": "NOT_VIABLE", "line": 1, "column": 1, "type": "t"}]
+    )
 
     monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "core"])
     summarize.main()
 
     summary = json.loads(capsys.readouterr().out)
@@ -134,11 +127,10 @@ def test_efficacy_is_none_when_nothing_scored(capsys, monkeypatch, tmp_path):
 
 
 def test_no_files_key_produces_empty_summary(capsys, monkeypatch, tmp_path):
-    result = tmp_path / "result.json"
-    result.write_text(json.dumps({}))
+    (tmp_path / "last-core.json").write_text(json.dumps({}))
 
     monkeypatch.setenv("MUTATION_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(sys, "argv", ["summarize.py", str(result), "core"])
+    monkeypatch.setattr(sys, "argv", ["summarize.py", "core"])
     summarize.main()
 
     summary = json.loads(capsys.readouterr().out)

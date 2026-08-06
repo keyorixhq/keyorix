@@ -24,11 +24,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MUTATION_WORKERS:=4}"
 : "${MUTATION_EFFICACY_DROP_THRESHOLD:=5}" # percentage points
 
-# summarize.py (invoked below as a child process) validates its result-path
-# argument against MUTATION_STATE_DIR -- a plain `:` default-assignment
-# doesn't export to child processes, so make sure it's actually visible
-# there even when this script is run standalone (outside systemd, which
-# already exports it via config.env's EnvironmentFile).
+# summarize.py (invoked below as a child process) reads MUTATION_STATE_DIR
+# itself to locate its input file -- a plain `:` default-assignment doesn't
+# export to child processes, so make sure it's actually visible there even
+# when this script is run standalone (outside systemd, which already
+# exports it via config.env's EnvironmentFile).
 export MUTATION_STATE_DIR
 
 mkdir -p "$MUTATION_STATE_DIR"
@@ -79,7 +79,7 @@ while IFS='|' read -r pkg label; do
   fi
   mv "$result_json_tmp" "$result_json"
 
-  python3 "$SCRIPT_DIR/summarize.py" "$result_json" "$label" >"$summary_json"
+  python3 "$SCRIPT_DIR/summarize.py" "$label" >"$summary_json"
 
   "$SCRIPT_DIR/notify-summary.sh" "$label" "$summary_json" "${summary_json_prev:-}"
 done <<<"$PACKAGES"
