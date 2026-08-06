@@ -249,7 +249,7 @@ func (ls *LocalStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]s
 	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Select("project_id, environment_id").
 		Where("user_id = ?", userID).
-		Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
+		Where(sqlWhereURNotExpired, time.Now().UTC()).
 		Group("project_id, environment_id").
 		Scan(&direct).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -358,6 +358,7 @@ func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context,
 	}
 	var userRows []models.UserRole
 	if err := userQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
+		Where(sqlWhereURNotExpired, time.Now().UTC()).
 		Find(&userRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -374,6 +375,7 @@ func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context,
 	}
 	var groupRows []models.GroupRole
 	if err := groupQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
+		Where(sqlWhereGRNotExpired, time.Now().UTC()).
 		Find(&groupRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -447,7 +449,7 @@ func (ls *LocalStorage) IsProjectMember(ctx context.Context, userID, projectID u
 	var direct int64
 	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
-		Where("expires_at IS NULL OR expires_at > ?", now).
+		Where(sqlWhereURNotExpired, now).
 		Count(&direct).Error; err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -620,12 +622,18 @@ func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([
 	return grants, nil
 }
 
-// ListGroupRoleAssignments returns every role grant held by groupID across all
+// ListGroupRoleAssignments returns every LIVE role grant held by groupID across all
 // scopes, unlike GetGroupRoles/GetGroupRoleGrants which return the role but not
-// which scope it was granted at.
+// which scope it was granted at. Excludes expired grants -- matching every other
+// role-lookup function in this file -- since callers (validateGroupJoinRoles's
+// SoD/escalation checks, the admin group-roles view) treat this as "what does the
+// group currently confer," not a historical record.
 func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
 	var rows []models.GroupRole
-	if err := ls.db.WithContext(ctx).Where("group_id = ?", groupID).Find(&rows).Error; err != nil {
+	if err := ls.db.WithContext(ctx).
+		Where("group_id = ?", groupID).
+		Where(sqlWhereGRNotExpired, time.Now().UTC()).
+		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	out := make([]storage.RoleAssignment, 0, len(rows))
@@ -700,7 +708,7 @@ func (ls *LocalStorage) assignGroupRole(ctx context.Context, groupID, roleID uin
 // non-NULL and at or before the cutoff, returning the removed grants so the caller
 // can audit each expiry. Runs in a transaction so the rows it reports are exactly
 // the rows it deleted.
-func (ls *LocalStorage) DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]storage.RoleAssignment, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776
+func (ls *LocalStorage) DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]storage.RoleAssignment, error) { // NOSONAR -- cognitive complexity 19, suppress go:S3776 // nosemgrep: keyorix-role-grant-query-missing-expiry-filter -- this IS the expiry sweep job; it intentionally selects expired rows to delete them
 	cutoff := before.UTC()
 	var removed []storage.RoleAssignment
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

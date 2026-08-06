@@ -267,7 +267,7 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 // writeWebAuthnErr maps a core error to an HTTP status: disabled → 501, else 400.
 func (h *AuthHandler) writeWebAuthnErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, core.ErrWebAuthnDisabled) {
-		sendError(w, "NotImplemented", err.Error(), http.StatusNotImplemented, nil)
+		sendError(w, "NotImplemented", err.Error(), http.StatusNotImplemented, nil) // nosemgrep: keyorix-raw-error-to-client -- ErrWebAuthnDisabled is a fixed sentinel with a known-safe message, not a raw backend/driver error
 		return
 	}
 	sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)

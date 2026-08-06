@@ -315,7 +315,7 @@ func (c *KeyorixCore) scopedRoleIDs(ctx context.Context, userID uint, scope Scop
 }
 
 // roleSetContainsAdmin reports whether any role ID in the set is an admin role.
-func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) bool {
+func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) bool { // nosemgrep: keyorix-unbounded-bulk-slice-param -- roleIDs is a principal's resolved current role set (scopedRoleIDs/GetUserRoleIDsAt), not a raw client-supplied array; every call site passes an internally-computed list
 	if len(roleIDs) == 0 {
 		return false
 	}

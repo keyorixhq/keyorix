@@ -135,6 +135,15 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 	return createdUser, nil
 }
 
+// maxUserCreateAssignments bounds how many project-scoped role assignments a
+// single CreateUserWithAssignments call may carry. Each entry costs at least
+// one GetRole/rolePermissionNameSet round trip via
+// requireGrantSetNoSoDViolation's SoD evaluation below; an unbounded
+// assignments list submitted in one request is a per-request
+// resource-exhaustion vector, the same class of bug as
+// maxBulkAccessRequestBatchSize (internal/core/bulk_access_requests.go).
+const maxUserCreateAssignments = 500
+
 // CreateUserWithAssignments creates a user and grants a system role plus a set of
 // project-scoped roles in one transaction (ADR-028 atomic provisioning). All role
 // names and project IDs are resolved and validated up front, so an invalid input
@@ -149,6 +158,9 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 // mint a brand-new super_admin account directly — no invite/accept step an admin
 // could notice or revoke in between, unlike InviteGlobal.
 func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *CreateUserRequest, systemRole string, assignments []ProjectAssignment, actorID uint) (*models.User, error) {
+	if len(assignments) > maxUserCreateAssignments {
+		return nil, fmt.Errorf("assignments exceeds the maximum batch size of %d", maxUserCreateAssignments)
+	}
 	user, hash, err := c.buildUserForCreate(ctx, req)
 	if err != nil {
 		return nil, err

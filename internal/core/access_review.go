@@ -278,7 +278,7 @@ func (r *accessReviewResolver) resolveMachine(ctx context.Context, id uint) stri
 
 // appendRoleEntries adds role-based standing access entries for all project assignments
 // (role grants whose role confers a secrets.* permission).
-func (c *KeyorixCore) appendRoleEntries(ctx context.Context, assignments []storage.RoleAssignment, entries *[]*AccessReviewEntry, res *accessReviewResolver) error {
+func (c *KeyorixCore) appendRoleEntries(ctx context.Context, assignments []storage.RoleAssignment, entries *[]*AccessReviewEntry, res *accessReviewResolver) error { // nosemgrep: keyorix-unbounded-bulk-slice-param -- assignments is a storage query result (existing role grants in the DB), not a raw client-supplied array in one request
 	for _, a := range assignments {
 		ri, err := res.resolveRole(ctx, a.RoleID)
 		if err != nil {
