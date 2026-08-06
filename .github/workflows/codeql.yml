@@ -20,8 +20,52 @@ env:
   GO_VERSION: '1.26.5'
 
 jobs:
+  # Detects PR changes that touch nothing but *.md/docs/** -- mirrors
+  # ci.yml's own `changes` job exactly (same detection logic, same
+  # pull_request-only scoping: push-to-main and the weekly schedule always
+  # get docs_only=false, since those aren't diffed against a base). A
+  # separate job here, not a cross-workflow reference, because GitHub
+  # Actions has no mechanism for one workflow file to consume another's job
+  # outputs.
+  #
+  # Gates analyze/analyze-web/summary below via job-level `if:`, NOT a
+  # workflow-level `paths-ignore` on the `on:` trigger above. Verified via
+  # the actual branch-protection API (not assumed): "Analyze (server)" and
+  # "Analyze (operator)" ARE required status checks. A job skipped via
+  # job-level `if:` still reports a check-run (conclusion "skipped"), which
+  # branch protection treats as satisfying a required check -- a workflow
+  # that never triggers at all (paths-ignore) produces no check-run and
+  # would leave those two stuck pending forever on a docs-only PR.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - name: Detect docs-only changes
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
+          echo "Changed files:"
+          echo "$changed"
+          if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
   analyze:
     name: Analyze (${{ matrix.name }})
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -81,14 +125,15 @@ jobs:
   # than a third matrix entry above, since the Go entries' init/build/analyze
   # steps (build-mode: manual, `go build`+`go test -run=^$`) don't apply here
   # at all: JS/TS uses autobuild (no compile step to run) and its own
-  # queries suite. Unconditional (no path filter), matching the two Go jobs
-  # above -- this is a required-status-check-shaped workflow (see the
-  # `summary` fan-in below); a workflow triggered by an unrelated path never
-  # produces a check-run at all, which would leave that required check stuck
-  # pending forever on a backend-only PR, so exhaustiveness here (always run)
-  # is deliberate, not an oversight.
+  # queries suite. Gated on docs_only via job-level `if:` (see the `changes`
+  # job above) -- unlike analyze's two legs, "Analyze (javascript-typescript)"
+  # is NOT currently a required status check (verified via the branch-
+  # protection API), so this gate is a pure efficiency win with no stuck-
+  # pending-check risk either way.
   analyze-web:
     name: Analyze (javascript-typescript)
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -111,15 +156,20 @@ jobs:
         with:
           category: /language:javascript-typescript
 
-  # Fan-in job that satisfies the "CodeQL" required status check in branch
-  # protection. The matrix jobs above are each required too (Analyze (server)
-  # and Analyze (operator)), but branch protection also requires a "CodeQL"
-  # context which this single-name job provides.
+  # Fan-in convenience job giving a single "CodeQL" status for the whole
+  # workflow at a glance. NOT currently a required status check itself
+  # (verified via the branch-protection API -- only "Analyze (server)" and
+  # "Analyze (operator)" are), so this job's own gating has no stuck-pending
+  # risk. Still gated on docs_only, matching analyze/analyze-web above:
+  # without it, a skipped `needs.analyze.result`/`needs.analyze-web.result`
+  # (not "success") would make the check below report "failed or was
+  # cancelled" on every docs-only PR, which is wrong -- skipped is the
+  # expected, correct outcome there, not a failure.
   summary:
     name: CodeQL
-    needs: [analyze, analyze-web]
+    needs: [changes, analyze, analyze-web]
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && needs.changes.outputs.docs_only != 'true'
     steps:
       - name: Check analysis results
         run: |
