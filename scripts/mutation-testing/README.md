@@ -39,12 +39,26 @@ second box when one already exists for the fuzzing setup's sibling need.
 ## Resource limits
 
 `systemd/keyorix-mutation.service` caps this service to `CPUQuota=400%` and
-`MemoryMax=4G`, alongside `Nice=10` — same shape as
+`MemoryMax=7G`, alongside `Nice=10` — same shape as
 `scripts/fuzzing/systemd/keyorix-fuzz.service`, adjust both to fit your own
 hardware. Unlike fuzzing's `-fuzztime` (wall-clock, so a lower `CPUQuota`
 makes a rotation *shallower*, not longer), a mutation run's total work is
 fixed — every covered mutant gets tested exactly once regardless of quota —
 so a lower `CPUQuota` here only makes a run take longer, never less thorough.
+
+Provision the container/VM itself with at least 8G RAM (some headroom above
+`MemoryMax` for the OS/systemd/other overhead) and set `MUTATION_GOMAXPROCS`
+(`config.env`) so `MUTATION_WORKERS * MUTATION_GOMAXPROCS` roughly matches
+`CPUQuota`'s equivalent core count (400% -> 4 cores; workers=4 ->
+GOMAXPROCS=1 each) — leaving `GOMAXPROCS` unset lets every worker's `go
+build`/`go test` subprocesses assume the host's full visible thread count
+each, oversubscribing the quota and starving individual runs past gremlins'
+per-mutant timeout (every mutant comes back `TIMED OUT` instead of a real
+result). And an undersized `MemoryMax` doesn't fail cleanly either --
+`MemorySwapMax` defaults to `infinity`, so hitting the cap means swapping,
+not an OOM kill: silent thrashing that's easy to mistake for the CPUQuota
+problem above if you haven't also checked
+`systemctl show keyorix-mutation.service -p MemoryCurrent -p MemoryMax`.
 
 ## One-time setup (on the LXC/VM)
 
