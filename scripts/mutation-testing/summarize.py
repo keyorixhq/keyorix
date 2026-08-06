@@ -39,6 +39,12 @@ def main():
         print(f"error: {label!r} is not a valid label (expected {LABEL_RE.pattern})", file=sys.stderr)
         sys.exit(2)
 
+    # Belt-and-suspenders on top of the regex above: os.path.basename()
+    # strips any directory component outright, so even if LABEL_RE were
+    # ever loosened, this call alone still prevents label from steering
+    # result_path outside MUTATION_STATE_DIR.
+    label = os.path.basename(label)
+
     state_dir = os.environ.get("MUTATION_STATE_DIR")
     if not state_dir:
         print("error: MUTATION_STATE_DIR must be set", file=sys.stderr)
