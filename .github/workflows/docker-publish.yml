@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # GitHub does not evaluate path filters for tag pushes at all ("Path filters
+    # are not evaluated for pushes of tags" -- GitHub Actions docs), so this only
+    # constrains the branches:[main] case above: a docs-only merge to main no
+    # longer triggers a full 5-image build+push+SBOM+cosign-sign pipeline. A real
+    # `v*` release tag always runs this workflow regardless of what it touches.
+    paths-ignore: ['**/*.md', 'docs/**']
 
 # Lock down GITHUB_TOKEN defaults: no permissions at the top level; each job
 # below requests only what it needs (packages/id-token for image publish).

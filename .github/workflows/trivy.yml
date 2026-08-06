@@ -21,7 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - name: Run Trivy (Dockerfile / Helm / k8s misconfigs) -- SARIF, always uploaded
+      # A single trivy-action invocation both produces SARIF (for the Security-tab
+      # upload below) and enforces the exit-code gate -- `format` and `exit-code`
+      # are independent Trivy CLI options, both just passed through as separate
+      # TRIVY_* env vars to one underlying `trivy fs .` call (verified against
+      # aquasecurity/trivy-action's entrypoint.sh at the pinned SHA: it runs Trivy
+      # exactly once and exits with Trivy's own return code). Previously ran this
+      # exact scan twice -- once with format:sarif and no exit-code (so it could
+      # never fail the job), once with exit-code:1 and no format -- to get both
+      # behaviors; that was two full filesystem misconfig scans per run for no
+      # reason, since a single run already gives both.
+      - name: Run Trivy (Dockerfile / Helm / k8s misconfigs)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
@@ -30,24 +40,13 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH,MEDIUM
+          exit-code: '1'
         if: always()
 
+      # Runs regardless of the step above's exit code (a failing scan still needs
+      # its SARIF uploaded, not just a passing one).
       - name: Upload results
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: trivy-results.sarif
         if: always()
-
-      # The step above uploads to the Security tab but, with no exit-code set, NEVER
-      # fails this job regardless of what it finds -- CRITICAL misconfigs have been
-      # silently non-blocking. This second run makes MEDIUM+ misconfigs an actual gate,
-      # respecting .trivyignore for the handful of documented false positives (see that
-      # file's comments) rather than raising the bar and leaving them unaddressed.
-      - name: Run Trivy (Dockerfile / Helm / k8s misconfigs) -- blocking
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: misconfig
-          severity: CRITICAL,HIGH,MEDIUM
-          exit-code: '1'
