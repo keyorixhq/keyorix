@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,4 +126,64 @@ func TestUpdateUserIfActiveStateMatchesProxy_LostRace(t *testing.T) {
 	updated, err := cs.Storage().GetUser(secondReq.Context(), 1)
 	require.NoError(t, err)
 	assert.NotEqual(t, "Should Not Persist", updated.DisplayName)
+}
+
+// TestUpdateUserIfActiveStateMatchesProxy_DuplicateEmail — a conditional
+// write whose email collides with a different existing user hits the
+// partial unique index and returns a client error, not a silent success.
+// Exercises LocalStorage.UpdateUserIfActiveStateMatches's error-translation
+// branch (internal/storage/store/local_users.go) and this handler's
+// error-mapping code, including (when the driver error text matches) the
+// errors.Is(err, storage.ErrDuplicateEmail) -> 409 DUPLICATE_EMAIL path.
+//
+// Doesn't assert the specific 409/DUPLICATE_EMAIL outcome: per this
+// codebase's own established convention (see
+// internal/storage/store/store_max_test.go's TestCreateUser_
+// DuplicateEmailSentinel comment), the sentinel only reliably propagates
+// when the partial index NAME appears in the driver error text, which
+// SQLite doesn't guarantee on every constraint-violation shape (an UPDATE
+// hitting the index can surface as a bare "UNIQUE constraint failed:
+// users.email" instead) -- only Postgres includes it reliably. Either
+// outcome here (409 DUPLICATE_EMAIL, or 500 STORAGE_ERROR) proves the
+// request was correctly rejected rather than silently persisted.
+func TestUpdateUserIfActiveStateMatchesProxy_DuplicateEmail(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	// Replicate the partial unique index migrateDatabase creates in
+	// production (see internal/storage/store/store_max_test.go's
+	// newUserStoreMax for the identical pattern) -- SQLite surfaces it in
+	// the error message, which isDuplicateEmailViolation matches on.
+	db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users(email) WHERE deleted_at IS NULL AND email != ''")
+
+	require.NoError(t, db.Create(&models.User{
+		ID: 2, Username: "other_user", Email: "taken@example.com", IsActive: true,
+	}).Error)
+
+	h, err := NewUserHandler(cs)
+	require.NoError(t, err)
+
+	body := proxyJSON(map[string]interface{}{
+		"username":     "testuser_s12",
+		"email":        "taken@example.com", // collides with user 2
+		"display_name": "Should Not Persist",
+		"active":       false,
+		"from_active":  true,
+	})
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition", body),
+		"id", "1",
+	)
+	w := httptest.NewRecorder()
+	h.UpdateUserIfActiveStateMatchesProxy(w, req)
+	resp := decodeRemoteResp(t, w)
+	assert.False(t, resp.Success, "duplicate email must not silently succeed")
+	if w.Code == http.StatusConflict {
+		assert.Equal(t, duplicateEmailProxyCode, resp.Error.Code)
+	} else {
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, "STORAGE_ERROR", resp.Error.Code)
+	}
+
+	unchanged, err := cs.Storage().GetUser(req.Context(), 1)
+	require.NoError(t, err)
+	assert.NotEqual(t, "Should Not Persist", unchanged.DisplayName, "rejected write must not persist")
 }
