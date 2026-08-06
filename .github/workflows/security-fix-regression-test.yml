@@ -1,0 +1,72 @@
+name: Security Fix Regression Test
+
+on:
+  pull_request:
+    branches: [main]
+
+# Read-only: this job only inspects PR metadata and the diff already in the
+# PR, it never needs to write anything.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A generous fixed depth, matching dco.yml's own reasoning: NOT
+          # fetch-depth: 0 (fetches every other branch too) and NOT a
+          # computed depth (GitHub Actions expressions don't support
+          # arithmetic, so a `${{ }}` depth expression silently fails to
+          # parse the whole workflow). 100 comfortably covers this repo's
+          # real PR sizes.
+          fetch-depth: 100
+
+      # Self-contained check (no third-party Action), mirroring dco.yml's own
+      # style. This repo's adversarial-review campaign titles every PR that
+      # closes a real security bug `fix(security): ...` (see the git log) --
+      # that title is the precise signal that this PR claims to close a
+      # vulnerability, not just annotate an already-safe pattern with a
+      # `// nosemgrep`/`#nosec` comment (which needs no new test, since
+      # nothing behaviorally changed -- diffing for added suppression
+      # comments directly was tried and rejected: several legitimate
+      # `// nosemgrep` annotations this campaign added were pure comments on
+      # unchanged, already-safe code, and would have been false positives
+      # under that heuristic). A PR titled this way is expected to carry a
+      # regression test proving the bug is actually closed, mirroring this
+      # repo's own established convention (every fix(security) PR in the
+      # campaign history includes one) -- this makes that convention a gate
+      # instead of a reviewer's memory.
+      - name: Require a test file in fix(security) PRs
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case "$PR_TITLE" in
+            'fix(security):'*) ;;
+            *)
+              echo "PR title doesn't match the fix(security): convention -- nothing to check."
+              exit 0
+              ;;
+          esac
+
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          changed="$(git diff --name-only "$base..$head")"
+
+          test_files="$(printf '%s\n' "$changed" | grep -E '(_test\.go|\.test\.tsx?|/__tests__/)' || true)"
+
+          if [ -z "$test_files" ]; then
+            echo "::error::This PR's title matches the fix(security): convention but touches no test file."
+            echo ""
+            echo "Every fix(security) PR in this repo's adversarial-review campaign history"
+            echo "carries a regression test proving the specific bug is closed -- a static"
+            echo "rule alone (Semgrep/CodeQL) only proves the PATTERN is gone, not that the"
+            echo "runtime behavior is actually fixed. Add one, or if this PR genuinely needs"
+            echo "no new test (e.g. a pure CI/tooling change mislabeled with this prefix),"
+            echo "rename it to a different type (ci:, chore:, ...)."
+            exit 1
+          fi
+
+          echo "Test file(s) touched:"
+          printf '%s\n' "$test_files"
