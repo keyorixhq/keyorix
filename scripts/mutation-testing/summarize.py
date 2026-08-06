@@ -8,6 +8,7 @@ Usage: summarize.py <gremlins-result.json> <label>
 Writes the summary to stdout as JSON.
 """
 import json
+import os
 import sys
 from collections import Counter
 
@@ -18,7 +19,17 @@ def main():
         sys.exit(2)
     result_path, label = sys.argv[1], sys.argv[2]
 
-    with open(result_path) as fh:
+    # Resolve symlinks/relative segments to a canonical absolute path and
+    # confirm it names a real, regular file before ever opening it, rather
+    # than handing json.load() whatever string a caller (human, script, or
+    # an LLM agent driving this CLI with a hallucinated or malformed
+    # argument) happened to pass.
+    resolved_path = os.path.realpath(result_path)
+    if not os.path.isfile(resolved_path):
+        print(f"error: {result_path!r} is not a regular file", file=sys.stderr)
+        sys.exit(2)
+
+    with open(resolved_path) as fh:
         data = json.load(fh)
 
     counts = Counter()

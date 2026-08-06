@@ -1,0 +1,5 @@
+# Pinned dev/test-only dependencies for summarize_test.py's coverage run in
+# .github/workflows/sonarcloud.yml. Not a runtime dependency of any shipped
+# script — summarize.py itself uses only the Python standard library.
+pytest==9.1.1
+coverage==7.15.3

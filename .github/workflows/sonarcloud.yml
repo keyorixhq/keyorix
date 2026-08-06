@@ -99,6 +99,22 @@ jobs:
           pnpm test:coverage --run
         continue-on-error: true
 
+      # scripts/mutation-testing/summarize.py's coverage, feeding
+      # sonar.python.coverage.reportPaths below. Always run (not gated by the
+      # changes job like the Go/web steps above) — it's a single tiny test
+      # file, well under a second, and skipping it is exactly how this
+      # script's "New Code Coverage" gate ended up at 0% in the first place
+      # (PR #1353).
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.14'
+
+      - name: Generate mutation-testing script coverage report
+        run: |
+          python3 -m pip install --quiet -r scripts/mutation-testing/requirements-test.txt
+          python3 -m coverage run --branch -m pytest scripts/mutation-testing
+          python3 -m coverage xml -o coverage-python.xml --include='scripts/mutation-testing/summarize.py'
+
       # SonarCloud resolves lcov SF: paths relative to sonar.projectBaseDir
       # (this workflow's `.`, i.e. the repo root) -- vitest writes them
       # relative to wherever it ran (web/, via working-directory above), e.g.
@@ -118,6 +134,7 @@ jobs:
             -Dsonar.projectKey=keyorixhq_keyorix
             -Dsonar.organization=keyorixhq
             -Dsonar.go.coverage.reportPaths=coverage.out
+            -Dsonar.python.coverage.reportPaths=coverage-python.xml
             -Dsonar.sourceEncoding=UTF-8
             -Dsonar.qualitygate.wait=false
           projectBaseDir: .
