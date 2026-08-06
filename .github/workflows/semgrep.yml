@@ -27,22 +27,22 @@ jobs:
         # .semgrep/keyorix-rules.yml catches patterns specific to this repo that the
         # community ruleset has no way to know about, each modeled directly on a real
         # historical fix and validated (before being added) to have zero findings on
-        # main and to fire on that fix's pre-fix code. WARNING/ERROR severity only --
-        # excludes the one INFO-severity rule (keyorix-new-remotestorage-unsupported-stub),
-        # which is a structural nudge that's EXPECTED to match every existing stub, old
-        # and new, and isn't meant to gate the build on its own (see that rule's message
-        # for what it actually asks the author to do). A new WARNING/ERROR-severity rule
-        # must be verified zero-noise against main (and any pre-existing findings fixed
-        # or annotated with `// nosemgrep: <rule-id> -- <reason>`) before being added here
-        # -- that verification is what makes blocking safe; skipping it turns this gate
-        # into exactly the noisy, ignored check the non-blocking community scan below is.
+        # main and to fire on that fix's pre-fix code. WARNING/ERROR severity only. A
+        # new rule must be verified zero-noise against main (and any pre-existing
+        # findings fixed or annotated with `// nosemgrep: <rule-id> -- <reason>`)
+        # before being added here -- that verification is what makes blocking safe;
+        # skipping it turns this gate into exactly the noisy, ignored check the
+        # non-blocking community scan below is. Structural "every match is expected,
+        # old and new" rules do NOT belong in this file -- see .semgrep/keyorix-nudges.yml.
         run: semgrep scan --config=.semgrep/keyorix-rules.yml --severity=WARNING --severity=ERROR --error --quiet
 
       - name: Run Semgrep (community rules + repo-specific custom rules — advisory)
-        # Full run (including --config=auto and the INFO-severity rule) for the Security
-        # tab's SARIF upload. Non-blocking: the community ruleset hasn't been through the
-        # same per-rule triage as .semgrep/keyorix-rules.yml above, so a false positive
-        # here shouldn't fail the build.
+        # Full run (including --config=auto) for the Security tab's SARIF upload.
+        # Non-blocking: the community ruleset hasn't been through the same per-rule
+        # triage as .semgrep/keyorix-rules.yml above, so a false positive here
+        # shouldn't fail the build. Deliberately excludes .semgrep/keyorix-nudges.yml --
+        # those rules match every occurrence of a pattern by design (old and new) and
+        # must never be uploaded as SARIF/code-scanning alerts, see that file's header.
         if: always()
         run: semgrep scan --config=auto --config=.semgrep/keyorix-rules.yml --sarif --output=semgrep.sarif . || true
 
@@ -51,3 +51,22 @@ jobs:
         with:
           sarif_file: semgrep.sarif
         if: always()
+
+      - name: Fetch PR base for diff-scoped nudge rules
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+      - name: Run Semgrep (structural nudge rules — PR summary only, never uploaded)
+        # .semgrep/keyorix-nudges.yml rules are expected to match every existing
+        # occurrence of a pattern, so --baseline-commit restricts this to lines
+        # actually introduced by this PR -- giving each rule its intended UX (a nudge
+        # on NEW matches) instead of re-surfacing the entire existing inventory.
+        if: github.event_name == 'pull_request'
+        run: |
+          semgrep scan --config=.semgrep/keyorix-nudges.yml \
+            --baseline-commit="$BASE_SHA" \
+            --text >> "$GITHUB_STEP_SUMMARY" || true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
