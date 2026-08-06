@@ -2,6 +2,7 @@ package securefiles
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -240,21 +241,36 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cogn
 	unresolved := false  // a problem REMAINS — stat/chmod/chown failed, so autofix didn't help
 
 	for _, f := range files {
-		// Lstat (not Stat) so a symlink is detected rather than dereferenced: os.Chmod /
-		// os.Chown FOLLOW symlinks, so a symlink planted in the key directory would
-		// otherwise redirect the perm/owner fix to an arbitrary target (an arbitrary chown
-		// when running as root). Refuse to "fix" a symlinked path.
-		info, err := os.Lstat(f.Path)
+		// Open with O_NOFOLLOW so a symlink at the final path component is refused
+		// (ELOOP) rather than followed. This replaces a prior Lstat-then-Chmod/Chown-
+		// by-path design: Lstat correctly detected a symlink up front, but the
+		// subsequent os.Chmod(f.Path, ...) / os.Chown(f.Path, ...) calls re-resolved
+		// the path and FOLLOW a final-component symlink, leaving a TOCTOU window
+		// between the check and the fix — a symlink swapped in after Lstat (or simply
+		// never seen by it, e.g. a race with a concurrent attacker) would redirect the
+		// chmod/chown to an arbitrary target (an arbitrary chown when running as
+		// root). Operating on the returned *os.File's Chmod/Chown (fd-based, not
+		// path-based) closes that window: the fd stays bound to the exact inode
+		// opened here, immune to the path being swapped out from under us afterward —
+		// mirrors SecureWriteFile/SecureWriteFileSync in this file.
+		file, err := os.OpenFile(f.Path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- caller-controlled key-file list, not network input
 		if err != nil {
-			fmt.Printf("[WARN] Cannot stat file %s: %v\n", f.Path, err)
+			if errors.Is(err, syscall.ELOOP) {
+				fmt.Printf("[WARN] Refusing to fix %s: it is a symlink (won't follow it to an arbitrary target)\n", f.Path)
+			} else {
+				fmt.Printf("[WARN] Cannot open file %s: %v\n", f.Path, err)
+			}
 			hasWarnings = true
 			unresolved = true
 			continue
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			fmt.Printf("[WARN] Refusing to fix %s: it is a symlink (won't follow it to an arbitrary target)\n", f.Path)
+
+		info, err := file.Stat()
+		if err != nil {
+			fmt.Printf("[WARN] Cannot stat file %s: %v\n", f.Path, err)
 			hasWarnings = true
 			unresolved = true
+			_ = file.Close()
 			continue
 		}
 
@@ -264,7 +280,7 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cogn
 			msg := fmt.Sprintf("File %s has mode %o but expected %o", f.Path, actualMode, f.Mode)
 			hasWarnings = true
 			if autofix {
-				if err := os.Chmod(f.Path, f.Mode); err != nil {
+				if err := file.Chmod(f.Mode); err != nil {
 					fmt.Printf("[ERROR] Failed to chmod %s: %v\n", f.Path, err)
 					unresolved = true
 				} else {
@@ -281,6 +297,7 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cogn
 			fmt.Printf("[WARN] Cannot get stat_t for %s\n", f.Path)
 			hasWarnings = true
 			unresolved = true
+			_ = file.Close()
 			continue
 		}
 
@@ -289,7 +306,7 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cogn
 			msg := fmt.Sprintf("File %s is owned by uid %d, expected uid %d", f.Path, fileUID, currentUID)
 			hasWarnings = true
 			if autofix {
-				if err := os.Chown(f.Path, currentUID, int(stat.Gid)); err != nil {
+				if err := file.Chown(currentUID, int(stat.Gid)); err != nil {
 					fmt.Printf("[ERROR] Failed to chown %s: %v\n", f.Path, err)
 					unresolved = true
 				} else {
@@ -299,6 +316,8 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error { // NOSONAR -- cogn
 				fmt.Printf("[WARN] %s\n", msg)
 			}
 		}
+
+		_ = file.Close()
 	}
 
 	// Fail closed when a problem remains: either autofix was off and a mismatch exists,

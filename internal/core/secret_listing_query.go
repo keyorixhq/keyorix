@@ -324,7 +324,7 @@ func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userI
 	return result, nil
 }
 
-func (c *KeyorixCore) applySecretFilters(ctx context.Context, secrets []*models.SecretWithSharingInfo, filter *models.SecretListFilter) []*models.SecretWithSharingInfo {
+func (c *KeyorixCore) applySecretFilters(ctx context.Context, secrets []*models.SecretWithSharingInfo, filter *models.SecretListFilter) []*models.SecretWithSharingInfo { // nosemgrep: keyorix-unbounded-bulk-slice-param -- secrets is an already-fetched, storage-bounded listing result, not a raw client-supplied array in one request
 	// Tag filter: require every requested tag (AND). Resolved per secret only when a
 	// tag filter is present, so the common no-tag list path does no extra queries.
 	want := normalizeTagFilter(filter.Tags)

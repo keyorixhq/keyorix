@@ -7,3 +7,15 @@ User=fuzzer
 Group=fuzzer
 EnvironmentFile=/etc/keyorix-fuzz/config.env
 ExecStart=/opt/keyorix-fuzz/keyorix/scripts/fuzzing/heartbeat.sh
+
+# Process-isolation hardening (see keyorix-fuzz.service for the full
+# rationale). heartbeat.sh only runs `systemctl is-active` and `curl`s
+# ntfy.sh -- unlike keyorix-fuzz.service it never touches git, ~/.ssh, or
+# ~/.gitconfig, so ProtectHome can be the stricter "true" here. It writes
+# nothing outside the curl config scratch file it creates under the private
+# /tmp PrivateTmp=true provides, so no ReadWritePaths= entry is needed.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true

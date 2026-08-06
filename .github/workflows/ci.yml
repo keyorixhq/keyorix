@@ -34,6 +34,12 @@ env:
   # asset and pinned here, matching the gitleaks/kubeconform convention above.
   CHECKOV_VERSION: 3.3.6
   CHECKOV_LINUX_X64_SHA256: 0b4f043603225acc55812d896233c98fdfe13e8de31dbbcb18edc669812fb667
+  # actionlint publishes an official checksums.txt; verified it against a
+  # locally-recomputed sha256 of the same asset before pinning here, matching
+  # the gitleaks/kubeconform convention above rather than trusting either
+  # source alone.
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_LINUX_AMD64_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
   COVERAGE_FLOOR: '80'
 
 jobs:
@@ -128,6 +134,34 @@ jobs:
             exit 1
           fi
           echo "OK: no root-level pnpm workspace files."
+
+  # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
+  # not a replacement for it. That hook is the PRIMARY guard: it runs on the
+  # contributor's own machine before a broken workflow file is ever pushed,
+  # which matters specifically because a job defined INSIDE ci.yml cannot run
+  # to catch ci.yml's own syntax error breaking its own parse -- if this file
+  # itself is what's unparseable, no job in it starts, this one included. This
+  # job exists for what pre-commit can't cover: a bypassed hook (--no-verify),
+  # a contributor without it installed, or a GitHub web-UI edit -- and it
+  # protects every OTHER workflow file unconditionally, which stays possible
+  # even when ci.yml itself is the one that's broken elsewhere in history.
+  # Not gated by docs_only, matching pnpm-workspace-root-guard's reasoning: a
+  # workflow file is never classified as docs (doesn't match \.md$ or
+  # ^docs/), and this is a single static-analysis pass, cheap enough to
+  # always run regardless of what this specific PR touches.
+  workflow-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: actionlint
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_LINUX_AMD64_SHA256}  actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | sha256sum -c -
+          tar -xz -f "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" actionlint
+          ./actionlint
 
   # Fast compile gate (~30s). Catches redeclarations, type errors, and build
   # failures before the expensive test-suite/static-analysis jobs start -- those
@@ -370,6 +404,10 @@ jobs:
               run_filter="^($(echo "$selected" | paste -sd '|'))\$"
               ;;
           esac
+          # $pkgs is deliberately unquoted below: it holds a space-separated
+          # list of Go package paths meant to word-split into separate
+          # `go test` arguments, not one literal string.
+          # shellcheck disable=SC2086
           go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       - name: Upload coverage artifact
@@ -411,7 +449,7 @@ jobs:
 
       - name: gosec
         run: |
-          [ -x ~/go/bin/gosec ] || go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           # -exclude-generated skips files with the "DO NOT EDIT" header
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
@@ -563,7 +601,7 @@ jobs:
 
       - name: gosec
         run: |
-          [ -x ~/go/bin/gosec ] || go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION} # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
+          [ -x ~/go/bin/gosec ] || go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" # NOSONAR githubactions:S8545 -- version is pinned via GOSEC_VERSION env var
           gosec -severity medium -exclude-generated ./...
 
   # scripts/fuzzing/targets.conf is a hand-maintained list consumed by the
@@ -708,7 +746,7 @@ jobs:
 
       - name: Install go-licenses
         run: |
-          [ -x ~/go/bin/go-licenses ] || go install github.com/google/go-licenses@${GO_LICENSES_VERSION} # NOSONAR -- go:S8545: version is pinned via GO_LICENSES_VERSION env
+          [ -x ~/go/bin/go-licenses ] || go install "github.com/google/go-licenses@${GO_LICENSES_VERSION}" # NOSONAR -- go:S8545: version is pinned via GO_LICENSES_VERSION env
 
       # `--ignore` excludes each module's OWN code from the license check --
       # this repo is itself AGPL-3.0, which is expected and not a dependency
@@ -859,38 +897,54 @@ jobs:
 
       - name: Lint + render keyorix-k8s-sync chart
         run: |
-          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok \
             --set mappings[0].ref=e/n --set mappings[0].namespace=app \
             --set mappings[0].name=s --set mappings[0].key=K"
+          # $K8S_SYNC_SET is deliberately unquoted below: it holds multiple
+          # space-separated `--set` flags meant to word-split into separate
+          # helm arguments, not one literal string.
+          # shellcheck disable=SC2086
           helm lint deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET
+          # Same reason as above.
+          # shellcheck disable=SC2086
           helm template kx deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET \
             --set targetNamespaces='{app,web}' \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
 
-      - name: Lint + render keyorix-operator chart
+      - name: "Lint + render keyorix-operator chart (ADR-076: all 4 scope paths)"
         run: |
           helm lint deploy/helm/keyorix-operator
           helm lint deploy/helm/keyorix-operator --set 'watchNamespaces={team-a,team-b}'
+          helm lint deploy/helm/keyorix-operator --set rbac.clusterScoped=true
 
-          # Default (cluster-wide) mode: kubeconform-validate the rendered controller
-          # resources (CRDs ship under crds/, not templated, so none rendered here), and
-          # prove the Secret/KeyorixSecret RBAC is still bound via the existing
-          # cluster-wide ClusterRoleBinding — the #327/#427 backward-compatibility
-          # guarantee for deployments that don't opt into namespace scoping.
+          # For each of the 3 renderable paths this asserts the same two things: the
+          # rendered RBAC binding kind+namespace(s), and the rendered manager flag,
+          # actually AGREE with each other — not just that something renders. That
+          # agreement check is what #1224's chart-precedence bug (and the separate,
+          # previously-undocumented RBAC/cache wiring gap ADR-076's investigation found)
+          # would have violated; asserting it directly is what makes this bug class
+          # non-recurring rather than merely fixed once more.
+
+          # Path 1 (ADR-076 DEFAULT): rbac.clusterScoped=false, watchNamespaces=[] --
+          # RoleBinding in the release's own namespace only, matching the manager's own
+          # fail-closed default (operator/cmd/main.go, Commit 1): with no explicit flag,
+          # it would watch only its own namespace via POD_NAMESPACE. No longer the
+          # cluster-wide default this test asserted pre-ADR-076.
           helm template kx deploy/helm/keyorix-operator --set leaderElection=true \
             > default-render.yaml
           ./kubeconform -strict -summary -kubernetes-version 1.29.0 < default-render.yaml
-          if ! grep -q '^kind: ClusterRoleBinding$' default-render.yaml; then
-            echo "expected a ClusterRoleBinding in the default (unscoped) render"; exit 1
+          if grep -q '^kind: ClusterRoleBinding$' default-render.yaml; then
+            echo "did not expect a ClusterRoleBinding in the default (namespace-scoped) render"; exit 1
           fi
-          if grep -A2 '^kind: RoleBinding$' default-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
-            echo "unexpected namespace-scoped RoleBinding for the main Secret/CRD grant in the default render"
-            exit 1
+          if ! grep -A2 '^kind: RoleBinding$' default-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
+            echo "expected a RoleBinding named kx-keyorix-operator in the release namespace (default)"; exit 1
+          fi
+          if ! grep -q '^            - "-watch-namespaces=default"$' default-render.yaml; then
+            echo "expected the -watch-namespaces=default flag on the manager Deployment (must agree with the RoleBinding namespace above)"; exit 1
           fi
 
-          # Namespace-scoped mode (opt-in, #327/#427): prove the same RBAC is instead
-          # bound via a RoleBinding in each watchNamespaces entry, with NO cluster-wide
-          # ClusterRoleBinding — least privilege for a per-namespace deployment model.
+          # Path 2 (opt-in multi-namespace): watchNamespaces set -- RoleBinding per listed
+          # namespace, no ClusterRoleBinding.
           helm template kx deploy/helm/keyorix-operator --set 'watchNamespaces={team-a,team-b}' \
             > scoped-render.yaml
           ./kubeconform -strict -summary -kubernetes-version 1.29.0 < scoped-render.yaml
@@ -902,8 +956,40 @@ jobs:
               echo "expected a RoleBinding named kx-keyorix-operator in namespace $ns"; exit 1
             fi
           done
-          if ! grep -q -- '-watch-namespaces=team-a,team-b' scoped-render.yaml; then
-            echo "expected the -watch-namespaces flag on the manager Deployment"; exit 1
+          if ! grep -q '^            - "-watch-namespaces=team-a,team-b"$' scoped-render.yaml; then
+            echo "expected the -watch-namespaces=team-a,team-b flag on the manager Deployment"; exit 1
+          fi
+
+          # Path 3 (explicit cluster-wide opt-in): rbac.clusterScoped=true,
+          # watchNamespaces=[] -- ClusterRoleBinding, -all-namespaces flag. The ONLY route
+          # to cluster-wide (ADR-076) -- no longer reachable via any default.
+          helm template kx deploy/helm/keyorix-operator --set rbac.clusterScoped=true \
+            > cluster-render.yaml
+          ./kubeconform -strict -summary -kubernetes-version 1.29.0 < cluster-render.yaml
+          if ! grep -q '^kind: ClusterRoleBinding$' cluster-render.yaml; then
+            echo "expected a ClusterRoleBinding when rbac.clusterScoped=true"; exit 1
+          fi
+          if grep -A2 '^kind: RoleBinding$' cluster-render.yaml | grep -q 'name: kx-keyorix-operator$'; then
+            echo "unexpected namespace-scoped RoleBinding for the main Secret/CRD grant when rbac.clusterScoped=true"
+            exit 1
+          fi
+          if ! grep -q '^            - "-all-namespaces"$' cluster-render.yaml; then
+            echo "expected the -all-namespaces flag on the manager Deployment"; exit 1
+          fi
+          if grep -q '^            - "-watch-namespaces=' cluster-render.yaml; then
+            echo "did not expect a -watch-namespaces flag when rbac.clusterScoped=true"; exit 1
+          fi
+
+          # Path 4 (contradictory config): rbac.clusterScoped=true AND watchNamespaces set
+          # -- must fail the render outright (ADR-076 decision B: no precedence-based
+          # resolution of this exact combination, since #1224 already showed what that
+          # produces). helm template must exit non-zero and never reach kubeconform.
+          if helm template kx deploy/helm/keyorix-operator --set rbac.clusterScoped=true \
+              --set 'watchNamespaces={team-a}' > contradictory-render.yaml 2> contradictory-error.txt; then
+            echo "expected helm template to fail for rbac.clusterScoped=true + watchNamespaces set"; exit 1
+          fi
+          if ! grep -q 'mutually exclusive' contradictory-error.txt; then
+            echo "expected the failure message to name the contradiction"; cat contradictory-error.txt; exit 1
           fi
 
   # helm-chart (above) validates chart/schema *shape* (helm lint + kubeconform
@@ -937,16 +1023,29 @@ jobs:
       - name: Render all 3 charts
         run: |
           # Reuses the same --set values as the helm-chart job's renders, so this
-          # job scans exactly what that job already proved schema-valid.
+          # job scans exactly what that job already proved schema-valid. Every
+          # chart's image is rendered with an explicit digest override so
+          # CKV_K8S_43 (image should use digest) checks the pinned-production
+          # shape rather than the ergonomic default (a mutable tag) every chart
+          # falls back to when no digest is given -- CKV_K8S_43 checks what's
+          # actually rendered, not whether the chart merely *supports* pinning,
+          # so an unpinned render would fail it regardless of chart capability.
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.auth.password=ci \
-            --set auth.adminPassword=ci --set ingress.enabled=true > keyorix-render.yaml
+            --set auth.adminPassword=ci --set ingress.enabled=true \
+            --set server.image.digest=sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+            --set web.image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+            > keyorix-render.yaml
           helm template kx deploy/helm/keyorix-k8s-sync \
-            --set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+            --set keyorix.url=https://k --set keyorix.projectID=1 --set keyorix.tokenSecret.name=tok \
             --set mappings[0].ref=e/n --set mappings[0].namespace=app \
             --set mappings[0].name=s --set mappings[0].key=K \
-            --set targetNamespaces='{app,web}' > k8s-sync-render.yaml
-          helm template kx deploy/helm/keyorix-operator > operator-render.yaml
+            --set targetNamespaces='{app,web}' \
+            --set image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333 \
+            > k8s-sync-render.yaml
+          helm template kx deploy/helm/keyorix-operator \
+            --set image.digest=sha256:4444444444444444444444444444444444444444444444444444444444444444 \
+            > operator-render.yaml
 
       - name: checkov (pod security + RBAC-escalation policy scan)
         run: |
@@ -971,12 +1070,21 @@ jobs:
           #     image-matched UIDs already documented in the deployment templates
           #     (1001 server, 101 nginx, 999 postgres, 65532 distroless).
           #
+          # CKV_K8S_43 ("image should use digest") is included: keyorix-operator and
+          # keyorix-k8s-sync now support .Values.image.digest (mirroring the main
+          # chart), and this check is what actually catches a chart shipping without
+          # that pinning option -- a real, previously-unnoticed gap on exactly the two
+          # charts whose ServiceAccounts hold the most sensitive access (cluster/
+          # namespace-wide Secret RBAC, and a live Keyorix bearer token respectively).
+          # The render step above sets a digest for every chart so this doesn't
+          # regress to alert-fatigue noise on the ergonomic (tag-only) default.
+          #
           # --framework kubernetes: restricts the scan to K8s policy checks only,
           # skipping checkov's separate secrets-framework (gitleaks above already
           # covers secret scanning across full git history; these rendered files
           # are CI-only artifacts, not committed content, and contain only the
           # placeholder `ci` password values passed via --set above).
-          CHECKS="CKV_K8S_16,CKV_K8S_17,CKV_K8S_18,CKV_K8S_19,CKV_K8S_20,CKV_K8S_22,CKV_K8S_23,CKV_K8S_28,CKV_K8S_31,CKV_K8S_37,CKV_K8S_42,CKV_K8S_49,CKV_K8S_155,CKV_K8S_156,CKV_K8S_157,CKV_K8S_158"
+          CHECKS="CKV_K8S_16,CKV_K8S_17,CKV_K8S_18,CKV_K8S_19,CKV_K8S_20,CKV_K8S_22,CKV_K8S_23,CKV_K8S_28,CKV_K8S_31,CKV_K8S_37,CKV_K8S_42,CKV_K8S_43,CKV_K8S_49,CKV_K8S_155,CKV_K8S_156,CKV_K8S_157,CKV_K8S_158"
           checkov --framework kubernetes --compact --check "$CHECKS" \
             -f keyorix-render.yaml -f k8s-sync-render.yaml -f operator-render.yaml
 

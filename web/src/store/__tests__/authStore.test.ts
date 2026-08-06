@@ -504,6 +504,59 @@ describe('authStore', () => {
 
             expect(authService.getProfile).toHaveBeenCalled();
         });
+
+        it('resets hasCheckedAuth to false synchronously, before the async re-validation resolves (matches the initial-mount pending-state guard)', async () => {
+            // A same-origin-writable localStorage value (e.g. written by a
+            // malicious extension content script or XSS in a sibling tab)
+            // could claim an elevated role. Route guards (ProtectedRoute/
+            // AdminRoute) gate purely on hasCheckedAuth + isAuthenticated +
+            // user.role, so this must go pending immediately — not just after
+            // checkAuth() eventually corrects it.
+            let resolveProfile!: (v: ReturnType<typeof profileFixture>) => void;
+            vi.mocked(authService.getProfile).mockReturnValueOnce(
+                new Promise((resolve) => {
+                    resolveProfile = resolve;
+                })
+            );
+            useAuthStore.setState({ hasCheckedAuth: true, isAuthenticated: true, user: makeUser({ role: 'user' }) });
+            localStorage.setItem(
+                'auth-storage',
+                JSON.stringify({ state: { isAuthenticated: true, user: makeUser({ role: 'admin' }) }, version: 0 })
+            );
+
+            window.dispatchEvent(mkStorageEvent('auth-storage'));
+
+            // Synchronous assertion — before rehydrate()/checkAuth() have had
+            // any chance to resolve.
+            expect(useAuthStore.getState().hasCheckedAuth).toBe(false);
+
+            resolveProfile(profileFixture(makeUser({ username: 'other-tab', role: 'admin' })));
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(useAuthStore.getState().hasCheckedAuth).toBe(true);
+            expect(authService.getProfile).toHaveBeenCalled();
+        });
+
+        it('settles hasCheckedAuth back to true when the rehydrated state is unauthenticated (checkAuth never runs to do it)', async () => {
+            useAuthStore.setState({ hasCheckedAuth: true, isAuthenticated: true });
+            // e.g. a logout in the other tab clears auth-storage to a logged-out shape.
+            localStorage.setItem(
+                'auth-storage',
+                JSON.stringify({ state: { isAuthenticated: false, user: null }, version: 0 })
+            );
+
+            window.dispatchEvent(mkStorageEvent('auth-storage'));
+            expect(useAuthStore.getState().hasCheckedAuth).toBe(false);
+
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(useAuthStore.getState().hasCheckedAuth).toBe(true);
+            expect(authService.getProfile).not.toHaveBeenCalled();
+        });
     });
 
     describe('isTokenExpired helper (wraps utils/auth isTokenValid)', () => {

@@ -15,6 +15,27 @@ LOGFILE="${3:?path to the log file for this run}"
 : "${KEYORIX_REPO:?}"
 : "${FUZZ_CORPUS_BRANCH:=fuzz-corpus}"
 
+# Scratch file for curl's --config (-K) file, used below to keep the
+# NTFY_TOPIC URL — the bearer secret protecting the ntfy.sh channel; see
+# config.env.example — out of curl's argv, where `ps auxww`/
+# `/proc/<pid>/cmdline` would expose it to any other local account for the
+# life of the curl call.
+ntfy_curl_cfg=""
+cleanup_ntfy_curl_cfg() {
+  # `if`, not `[[ ]] && rm`: this runs as an EXIT trap, and both early-exit
+  # paths below (already-notified, no-reproducer) return before
+  # ntfy_curl_cfg is ever set -- a short-circuited `&&` returning false
+  # would make the trap itself return nonzero, which bash then reports as
+  # THIS SCRIPT's exit status, silently turning an intended `exit 0` into an
+  # observed exit 1. Under run-rotation.sh's `set -euo pipefail`, that
+  # aborts the entire fuzzing rotation loop on exactly the two cases this
+  # script exists to handle as a quiet no-op.
+  if [[ -n "$ntfy_curl_cfg" ]]; then
+    rm -f "$ntfy_curl_cfg"
+  fi
+}
+trap cleanup_ntfy_curl_cfg EXIT
+
 cd "$KEYORIX_REPO"
 
 fail_line="$(grep -m1 -E 'FAIL|panic:' "$LOGFILE" || true)"
@@ -46,7 +67,11 @@ summary="$(grep -m8 -E 'FAIL|panic:|--- FAIL|Fatalf|\.go:[0-9]+' "$LOGFILE" | he
 
 # ntfy.sh push notification (optional — skip if NTFY_TOPIC is unset or empty)
 if [[ -n "${NTFY_TOPIC:-}" ]]; then
+  ntfy_curl_cfg="$(mktemp)"
+  chmod 600 "$ntfy_curl_cfg"
+  printf 'url = "%s"\n' "$NTFY_TOPIC" >"$ntfy_curl_cfg"
   curl -fsS \
+    -K "$ntfy_curl_cfg" \
     -H "Title: keyorix fuzz: $FUNC crashed" \
     -H "Priority: high" \
     -H "Tags: rotating_light" \
@@ -55,7 +80,7 @@ if [[ -n "${NTFY_TOPIC:-}" ]]; then
 ${summary:-see log on the fuzz box}
 
 Reproducer pushed to the $FUZZ_CORPUS_BRANCH branch." \
-    "$NTFY_TOPIC" >/dev/null || true
+    >/dev/null || true
 fi
 
 # GitHub PR — open from fuzz-corpus to main, or comment on the existing one.

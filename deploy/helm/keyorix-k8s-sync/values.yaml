@@ -7,13 +7,31 @@
 
 image:
   repository: ghcr.io/keyorixhq/keyorix-k8s-sync
-  # tag defaults to the chart's appVersion when empty.
+  # Empty defaults to this chart's own appVersion (a pinned `vX.Y.Z`). `latest`/`main`
+  # are MUTABLE -- the exact same tag can point at a different image tomorrow,
+  # defeating "what did I actually deploy" and any image-scan attestation pinned to
+  # this value -- only set this to a floating tag if you understand that tradeoff. A
+  # digest via `digest:` below (strongest pin) takes precedence over either. This
+  # agent holds a live Keyorix machine-identity bearer token, so pinning by digest in
+  # production matters more here than for a typical workload.
   tag: ""
+  # digest, when set (e.g. "sha256:abc123..."), pins the exact image content --
+  # immune to a tag being retargeted after the fact -- and takes precedence over tag.
+  digest: ""
   pullPolicy: IfNotPresent
 
 keyorix:
   # url is the Keyorix server base URL (required), e.g. https://keyorix.internal
   url: ""
+  # projectID is the numeric id (required) of the single Keyorix project the
+  # tokenSecret's machine identity belongs to. Every mapping's ref below names only
+  # an environment and secret ("<environment>/<name>"), never a project, because
+  # environment names are unique per-project, not globally -- two different projects
+  # can each have a "production" environment. projectID pins every secret lookup to
+  # this one project server-side so a same-named secret in a DIFFERENT project can
+  # never be resolved instead. Find it in the Keyorix UI/CLI for the project this
+  # agent should read from.
+  projectID: 0
   # interval is the reconcile cadence (Go duration).
   interval: 5m
   # token is read from an existing Secret — never put the token in values.

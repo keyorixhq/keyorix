@@ -215,7 +215,7 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 // policy this run. A secret covered by several policies is rotated at most once, under
 // the first active policy it is due under (first-policy-wins). dueOrder preserves
 // discovery order so project grouping in the caller is deterministic.
-func (c *KeyorixCore) collectDueRotations(ctx context.Context, policies []*models.RotationPolicy, now time.Time) (map[uint]*dueRotation, []uint) {
+func (c *KeyorixCore) collectDueRotations(ctx context.Context, policies []*models.RotationPolicy, now time.Time) (map[uint]*dueRotation, []uint) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- policies is admin-configured rotation policies fetched from storage, not a raw client-supplied array in one request
 	due := map[uint]*dueRotation{}
 	var dueOrder []uint
 	for _, policy := range policies {
@@ -309,7 +309,7 @@ func (c *KeyorixCore) rotateProject(ctx context.Context, pid uint, ids []uint, d
 // rotateProjectWaves rotates secrets in dependency-ordered waves. A secret whose
 // dependency did not rotate this run is DEFERRED rather than rotated against a stale
 // dependency. Returns (failures, rotated count).
-func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, due map[uint]*dueRotation, dependsOnInRun map[uint][]uint) (failed map[uint]string, rotated int) {
+func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, due map[uint]*dueRotation, dependsOnInRun map[uint][]uint) (failed map[uint]string, rotated int) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- waves is computed internally by the rotation scheduler from due secrets in this project, not a raw client-supplied array
 	failed = map[uint]string{}
 	blocked := map[uint]bool{}
 	for _, wave := range waves {

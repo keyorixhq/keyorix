@@ -6,6 +6,27 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Changed
+- **BREAKING: keyorix-operator default RBAC/watch scope narrowed to own-namespace-only
+  (ADR-076)** — an unmodified `helm install deploy/helm/keyorix-operator` now binds a
+  namespace-scoped `RoleBinding` in its own release namespace and watches only that
+  namespace, instead of the previous default of a cluster-wide `ClusterRoleBinding`
+  granting full CRUD on every Secret in the cluster. **Relied on the old default (set
+  neither value)? Add `--set rbac.clusterScoped=true` to your `helm upgrade`** to preserve
+  current behavior — without it, the operator stops reconciling `KeyorixSecret` CRs outside
+  its own release namespace after the upgrade. **Already set `watchNamespaces`?**
+  `rbac.clusterScoped` defaulted to `true` before this release, and a plain `helm upgrade`
+  (without `--reset-values`) carries forward a release's previously-recorded values by
+  default — so your install is very likely already in the now-rejected combination
+  (`rbac.clusterScoped=true` + `watchNamespaces` set), and the upgrade will refuse to
+  render at all: `rbac.clusterScoped=true and watchNamespaces=[...] are both set -- these
+  are mutually exclusive (ADR-076)`. **Add `--set rbac.clusterScoped=false` explicitly to
+  your `helm upgrade`** (or the equivalent in your values file) to clear it — this is a
+  hard block on the upgrade, not a permissions change, until you do. Two opt-in modes cover
+  broader deployments: `watchNamespaces: [ns, ...]` for a bounded multi-namespace instance,
+  or `rbac.clusterScoped: true` for the original cluster-wide behavior — see the [operator
+  docs](docs/k8s-operator.md#choosing-a-namespace-scope-adr-076) for detail. See ADR-076
+  for the full rationale, including why this is the third attempt at this narrowing and
+  what's different this time.
 - **Frontend monorepo consolidation (ADR-070)** — `keyorix-web` (the dashboard)
   is folded into this repository at `web/`, full commit history preserved via
   `git subtree`. One `vX.Y.Z` tag now triggers both the server and web image
@@ -34,6 +55,15 @@ All notable changes to Keyorix are documented here. This project follows
   ([#1225])
 
 ### Fixed
+- **keyorix-operator `rbac.clusterScoped: false` never actually worked (ADR-076)** — this
+  opt-out (added in [#1224]) bound namespace-scoped RBAC without ever telling the manager
+  to narrow its own watch scope correspondingly, so it silently attempted a cluster-wide
+  watch against namespace-scoped RBAC — in practice, repeated `Forbidden` errors on every
+  namespace outside the release namespace, likely fatal to controller startup. Never
+  worked correctly; fixed as part of ADR-076's broader scope-resolution rework before its
+  first tagged release — `git tag --contains` confirms no released version ever shipped
+  it (it landed three days after `v0.88.0`, the most recent tag at the time), so no
+  affected versions to name.
 - **SQLite RBAC grant-expiry timezone mismatch** — GORM formats `time.Time` using
   the process `Location`; mixed UTC/local `ExpiresAt` values broke SQLite string
   comparisons so grants appeared expired or perpetual depending on the host

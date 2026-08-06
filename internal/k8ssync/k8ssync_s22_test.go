@@ -308,7 +308,7 @@ func TestKeyorixFetcher_S22_HTTP5xxError(t *testing.T) {
 	// from the stub's default case — which the list endpoint maps to ErrUpstreamGone.
 	// Separately verify that a completely unreachable host returns a transport error
 	// (not ErrUpstreamGone) — covering the getJSON http.Do error branch.
-	f := NewKeyorixFetcher("http://127.0.0.1:1", "tok") // port 1 is always refused
+	f := NewKeyorixFetcher("http://127.0.0.1:1", "tok", 1) // port 1 is always refused
 	_, err := f.Fetch(context.Background(), "prod/secret")
 	require.Error(t, err)
 	// Transport error must not be mistaken for an authorisation/not-found issue.
@@ -316,16 +316,10 @@ func TestKeyorixFetcher_S22_HTTP5xxError(t *testing.T) {
 }
 
 // TestKeyorixFetcher_S22_MalformedJSONResponse verifies that a non-JSON body from
-// the stub (the value endpoint returns garbage for id=99999) returns a decode error.
-// The stub's default case returns 404, so we test the decode path via the
-// keyorixStub returning a body whose inner data is not valid for the struct.
+// the server returns a decode error. Every path (including the environment-list
+// lookup resolveID performs first) responds with garbage, so the decode-error path is
+// exercised at the earliest possible request.
 func TestKeyorixFetcher_S22_MalformedJSONResponse(t *testing.T) {
-	srv := keyorixStub(t, "tok")
-	defer srv.Close()
-
-	// "production/db-password" resolves to id=7; the value endpoint returns the
-	// real response already. We test the decode-error path by pointing at a server
-	// that responds with non-JSON for the list endpoint. Use a custom stub:
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -335,24 +329,30 @@ func TestKeyorixFetcher_S22_MalformedJSONResponse(t *testing.T) {
 	}))
 	defer bad.Close()
 
-	f := NewKeyorixFetcher(bad.URL, "tok")
+	f := NewKeyorixFetcher(bad.URL, "tok", 1)
 	_, err := f.Fetch(context.Background(), "prod/secret")
 	require.Error(t, err)
 }
 
 // TestKeyorixFetcher_S22_EmptyDataEnvelope verifies that a response with no "data"
-// key at all returns the "empty data in response" error from getJSON. The list
-// endpoint returns a valid secrets list so resolveID succeeds; only the value fetch
-// (the second request) returns an envelope with a missing "data" field.
+// key at all returns the "empty data in response" error from getJSON. The
+// environment-list and secrets-list endpoints return valid bodies so resolveID
+// succeeds; only the value fetch (the final request) returns an envelope with a
+// missing "data" field.
 func TestKeyorixFetcher_S22_EmptyDataEnvelope(t *testing.T) {
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		// Return a valid environment list so resolveEnvironmentID succeeds.
+		if r.URL.Path == "/api/v1/projects/1/environments" {
+			_, _ = w.Write([]byte(`{"data":{"environments":[{"ID":5,"Name":"prod"}]}}`))
+			return
+		}
 		// Return a valid list so resolveID finds the secret (id=1).
 		if r.URL.Path == "/api/v1/secrets" {
-			_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":1,"Name":"secret"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[{"ID":1,"Name":"secret"}]}}`))
 			return
 		}
 		// Value endpoint returns a JSON object with no "data" key → env.Data == nil.
@@ -360,7 +360,7 @@ func TestKeyorixFetcher_S22_EmptyDataEnvelope(t *testing.T) {
 	}))
 	defer bad.Close()
 
-	f := NewKeyorixFetcher(bad.URL, "tok")
+	f := NewKeyorixFetcher(bad.URL, "tok", 1)
 	_, err := f.Fetch(context.Background(), "prod/secret")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty data")
@@ -374,7 +374,7 @@ func TestKeyorixFetcher_S22_ForbiddenWrapsErrUpstreamGone(t *testing.T) {
 	}))
 	defer bad.Close()
 
-	f := NewKeyorixFetcher(bad.URL, "tok")
+	f := NewKeyorixFetcher(bad.URL, "tok", 1)
 	_, err := f.Fetch(context.Background(), "prod/secret")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUpstreamGone)

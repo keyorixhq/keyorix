@@ -100,6 +100,15 @@ type KeyorixSecretStatus struct {
 	// ObservedGeneration is the spec generation last reconciled.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// LastTargetName is the target Secret name materialised by the most recent
+	// successful sync. spec.target.name is mutable — when it changes, the Secret
+	// previously created under this OLD name would otherwise never be revisited by any
+	// later reconcile (Reconcile only ever looks at the CURRENT secretName) and would
+	// linger in the cluster indefinitely with its last-synced, possibly since-rotated,
+	// plaintext value. Reconcile compares this field against the current target name on
+	// every pass and wipes the orphaned Secret under the old name before proceeding.
+	// +optional
+	LastTargetName string `json:"lastTargetName,omitempty"`
 }
 
 // +kubebuilder:object:root=true

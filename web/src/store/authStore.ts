@@ -336,6 +336,24 @@ export const useAuthStore = create<AuthStore>()(
             // in sequence under isLoading: true, which keeps the guards in the
             // spinner state until the server validates the session.
             skipHydration: true,
+            // Force hasCheckedAuth: false as part of the SAME atomic state
+            // replacement that applies a rehydrated isAuthenticated/user pair
+            // (initial mount OR the cross-tab storage-sync path below) — never
+            // as a separate setState call before/after. A separate call would
+            // (a) itself go through persist's wrapped setState, which
+            // re-serializes and writes the CURRENT (pre-rehydrate) state back
+            // to the 'auth-storage' key, clobbering whatever the other tab
+            // just wrote there before rehydrate() gets a chance to read it,
+            // and (b) leave a render-cycle window where a same-origin-
+            // writable (so potentially tampered) rehydrated value is visible
+            // under a stale hasCheckedAuth. Folding it into merge() keeps both
+            // atomic with the single `set(stateFromStorage, true)` call
+            // zustand's hydrate() performs internally.
+            merge: (persistedState, currentState) => ({
+                ...(currentState as AuthStore),
+                ...(persistedState as Partial<AuthStore>),
+                hasCheckedAuth: false,
+            }),
         }
     )
 );
@@ -351,6 +369,15 @@ export const useAuthStore = create<AuthStore>()(
 if (typeof window !== 'undefined') {
     window.addEventListener('storage', (event) => {
         if (event.key === 'auth-storage' || event.key === null) {
+            // Match the initial-mount defense: rehydrate() applies
+            // hasCheckedAuth: false atomically with the incoming
+            // isAuthenticated/user pair (see the `merge` option above), so
+            // route guards (ProtectedRoute/AdminRoute — gated purely on
+            // hasCheckedAuth + isAuthenticated + user.role) never observe a
+            // same-origin-writable (so potentially tampered — e.g. a
+            // malicious extension content script or XSS in a sibling tab)
+            // rehydrated value before it's marked pending re-validation.
+            //
             // Re-validate with the server after accepting cross-tab state.
             // Rehydrate alone is insufficient: a tampered auth-storage written
             // by another same-origin context would set isAuthenticated: true
@@ -359,6 +386,11 @@ if (typeof window !== 'undefined') {
                 const { isAuthenticated } = useAuthStore.getState();
                 if (isAuthenticated) {
                     useAuthStore.getState().checkAuth();
+                } else {
+                    // Nothing to re-validate (e.g. a cross-tab logout/clear) —
+                    // checkAuth() won't run to flip this back, so settle it
+                    // here instead of leaving guards pending forever.
+                    useAuthStore.setState({ hasCheckedAuth: true });
                 }
             });
         }

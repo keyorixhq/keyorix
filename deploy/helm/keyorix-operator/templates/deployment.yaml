@@ -1,3 +1,4 @@
+{{- $scope := include "kxop.scope" . | fromYaml }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,6 +31,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532  # matches the distroless:nonroot image user
+        runAsGroup: 65532  # ditto (Trivy KSV-0021: GID must be > 10000)
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -40,9 +42,24 @@ spec:
             - "-health-probe-bind-address=:{{ .Values.healthPort | default 8081 }}"
             - "-metrics-bind-address=:{{ .Values.metricsPort | default 8080 }}"
             - "-leader-elect={{ .Values.leaderElection | default false }}"
-            {{- if .Values.watchNamespaces }}
-            - "-watch-namespaces={{ join "," .Values.watchNamespaces }}"
-            {{- end }}
+            # The single flag kxop.scope resolved (_helpers.tpl, ADR-076): either
+            # -all-namespaces or -watch-namespaces=a,b,c. Always rendered explicitly here
+            # (never left for the binary's own POD_NAMESPACE fallback to decide) for
+            # manifest readability, and because the CI chart-render assertion (Commit 3)
+            # needs an actual flag value to assert agrees with the rendered RBAC binding.
+            - {{ $scope.flag | quote }}
+          env:
+            # Backs the manager's own fail-closed default (operator/cmd/main.go,
+            # ADR-076): if neither -watch-namespaces nor -all-namespaces is set, it
+            # watches only this value. Always set, even though this chart always renders
+            # an explicit flag above -- this is what makes that default SAFE under a
+            # version-skewed chart/image pair (an old chart or hand-rolled deployment
+            # that forgets the flag still fails closed to its own namespace instead of
+            # falling back to a cluster-wide watch).
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort | default 8080 }}

@@ -379,6 +379,40 @@ func TestRemoteStorage_ListSecretVersions(t *testing.T) {
 	assert.Equal(t, 1, versions[0].VersionNumber)
 }
 
+// --- TransitionSecretStatus ---
+
+func TestRemoteStorage_TransitionSecretStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/api/v1/system/secrets/42/transition-status", r.URL.Path)
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": true}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	matched, err := rs.TransitionSecretStatus(context.Background(),
+		&models.SecretNode{ID: 42, Status: "suspended"}, "active")
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
+func TestRemoteStorage_TransitionSecretStatus_NotMatched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": false}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	matched, err := rs.TransitionSecretStatus(context.Background(),
+		&models.SecretNode{ID: 42, Status: "active"}, "suspended")
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
+
 func TestRemoteStorage_GetSecretVersions(t *testing.T) {
 	// GetSecretVersions is an alias for ListSecretVersions; same URL.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

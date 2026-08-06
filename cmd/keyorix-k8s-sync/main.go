@@ -58,7 +58,7 @@ func main() {
 	if cfg.Cleanup || *cleanup {
 		engineOpts = append(engineOpts, k8ssync.WithCleanup())
 	}
-	engine := k8ssync.NewEngine(k8ssync.NewKeyorixFetcher(cfg.KeyorixURL, token), sink, engineOpts...)
+	engine := k8ssync.NewEngine(k8ssync.NewKeyorixFetcher(cfg.KeyorixURL, token, cfg.ProjectID), sink, engineOpts...)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

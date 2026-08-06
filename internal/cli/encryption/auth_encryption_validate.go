@@ -42,11 +42,13 @@ func runValidateAuthEncryption(cmd *cobra.Command, args []string) error {
 	}
 	unmigrated += n
 
-	n, err = validateSessions(db, authEnc, verbose)
-	if err != nil {
-		return fmt.Errorf("session validation failed: %w", err)
-	}
-	unmigrated += n
+	// Sessions are deliberately not validated here — see the comment in
+	// auth_encryption_migrate.go's runMigrateAuthData for why: session_token
+	// stores a SHA-256 hash, never plaintext, so there is no "unmigrated
+	// plaintext" state for a session row to be in. A prior validateSessions
+	// queried "session_token != ''" (true for every live session) and reported
+	// every one of them as needing migration — a permanent false positive that
+	// would fail this command on any deployment with active sessions.
 
 	n, err = validateAPITokens(db, authEnc, verbose)
 	if err != nil {
@@ -104,33 +106,6 @@ func validateAPIClients(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose
 	}
 	for _, client := range unmigrated {
 		fmt.Printf("  ⚠️  Client %s: plaintext client_secret with no encrypted counterpart — needs migration\n", client.ClientID)
-	}
-	return len(unmigrated), nil
-}
-
-func validateSessions(db *gorm.DB, authEnc *encryption.AuthEncryption, verbose bool) (int, error) {
-	var sessions []models.Session
-	if err := db.Where("encrypted_session_token IS NOT NULL").Find(&sessions).Error; err != nil {
-		return 0, err
-	}
-	if verbose {
-		fmt.Printf("🎫 Validating %d encrypted sessions...\n", len(sessions))
-	}
-	for _, session := range sessions {
-		if _, err := authEnc.DecryptSessionToken(session.EncryptedSessionToken, []byte(session.SessionTokenMetadata), session.UserID); err != nil {
-			return 0, fmt.Errorf("failed to decrypt session token for session %d: %w", session.ID, err)
-		}
-		if verbose {
-			fmt.Printf("  ✅ Session %d: OK\n", session.ID)
-		}
-	}
-
-	var unmigrated []models.Session
-	if err := db.Where("session_token != '' AND session_token IS NOT NULL AND encrypted_session_token IS NULL").Find(&unmigrated).Error; err != nil {
-		return 0, err
-	}
-	for _, session := range unmigrated {
-		fmt.Printf("  ⚠️  Session %d: plaintext session_token with no encrypted counterpart — needs migration\n", session.ID)
 	}
 	return len(unmigrated), nil
 }

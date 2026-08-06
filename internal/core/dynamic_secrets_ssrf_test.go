@@ -54,6 +54,19 @@ func TestParseDSNHost_UnrecognisedReturnsEmpty(t *testing.T) {
 	assert.Equal(t, "", parseDSNHost("not-a-dsn"))
 }
 
+func TestParseDSNHost_KubernetesJSONConfig(t *testing.T) {
+	dsn := `{"api_server":"https://k8s.internal:6443","token":"tok","ca_cert":"cert"}`
+	assert.Equal(t, "k8s.internal", parseDSNHost(dsn))
+
+	dsnIP := `{"api_server":"https://10.0.0.9:6443","token":"tok","ca_cert":"cert"}`
+	assert.Equal(t, "10.0.0.9", parseDSNHost(dsnIP))
+
+	// No api_server (in-cluster mode) — nothing to extract, not a validation gap:
+	// the actual host then comes from KUBERNETES_SERVICE_HOST/PORT, which isn't
+	// attacker-influenceable.
+	assert.Equal(t, "", parseDSNHost(`{"token":"tok","ca_cert":"cert"}`))
+}
+
 // -- validateAdminDSNHost -----------------------------------------------------
 
 func TestValidateAdminDSNHost_PrivateLiteralIPRejected(t *testing.T) {
@@ -69,6 +82,8 @@ func TestValidateAdminDSNHost_PrivateLiteralIPRejected(t *testing.T) {
 		{"shared CGN 100.64.x.x", "postgres://admin:pass@100.64.0.1:5432/app"},
 		{"key-value private", "host=10.1.2.3 port=5432 user=admin dbname=app"},
 		{"mysql tcp private", "admin:pass@tcp(192.168.0.5:3306)/app"},
+		{"kubernetes JSON config, private IP", `{"api_server":"https://10.0.0.9:6443","token":"tok","ca_cert":"cert"}`},
+		{"kubernetes JSON config, cloud IMDS", `{"api_server":"http://169.254.169.254","token":"tok","ca_cert":"cert"}`},
 	}
 	for _, tc := range cases {
 		err := validateAdminDSNHost(tc.dsn)
@@ -134,6 +149,30 @@ func TestDynamicSecrets_CreateConfig_SSRFGuardBypassed(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.NotZero(t, cfg.ID)
+}
+
+func TestDynamicSecrets_CreateConfig_SSRFGuardRejectsKubernetesPrivateAPIServer(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+
+	// The kubernetes backend's admin_dsn is a JSON blob ({"api_server": ...}), not a
+	// URL/wrapper/key-value DSN string. Before parseDSNHost learned to parse it, this
+	// silently bypassed the SSRF guard entirely for this one backend type -- a
+	// project-scoped admin (requireDynamicSecretAdminAuthority, not a system-level
+	// admin) could point a kubernetes dynamic-secrets config's api_server at the
+	// cloud IMDS endpoint or any other private-network service and mint a live
+	// ServiceAccount token via the TokenRequest API against it.
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name:          "k8s-imds-attempt",
+		ProjectID:     1,
+		EnvironmentID: 2,
+		BackendType:   "kubernetes",
+		AdminDSN:      `{"api_server":"http://169.254.169.254","token":"tok","ca_cert":"cert"}`,
+		CreatedBy:     "alice",
+		ActorID:       testAdminActorID,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "private or link-local")
 }
 
 func TestDynamicSecrets_CreateConfig_SSRFGuardLinkLocal(t *testing.T) {

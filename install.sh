@@ -114,28 +114,31 @@ else
 fi
 
 # Verify SHA-256 checksum of the downloaded binary against the (now-verified) checksums.txt.
+# Both "no matching entry for this platform" and "no sha256 tool available" used
+# to only log an informational line and proceed to install the binary anyway —
+# that fails OPEN exactly where entrypoint.sh's own pinned-install path (see its
+# install_cli comment) is deliberate about failing CLOSED, since a missing
+# checksum entry (naming drift, partial publish) or a missing hash tool leaves
+# no other integrity signal for this download. Abort instead in both cases.
 info "Verifying checksum..."
 EXPECTED=$(awk -v n="$BINARY_NAME" '$2==n {print $1}' "$TMP_CHECKSUMS")
 
-if [ -n "$EXPECTED" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-        ACTUAL=$(sha256sum "$TMP_BIN" | awk '{print $1}')
-    elif command -v shasum >/dev/null 2>&1; then
-        ACTUAL=$(shasum -a 256 "$TMP_BIN" | awk '{print $1}')
-    else
-        ACTUAL=""
-    fi
-    if [ -n "$ACTUAL" ] && [ "$ACTUAL" != "$EXPECTED" ]; then
-        error "Checksum mismatch for ${BINARY_NAME}: expected ${EXPECTED}, got ${ACTUAL}. Aborting."
-    fi
-    if [ -n "$ACTUAL" ]; then
-        success "Checksum verified"
-    else
-        info "No sha256 tool found; skipping checksum verification"
-    fi
-else
-    info "No checksum published for ${BINARY_NAME}; skipping verification"
+if [ -z "$EXPECTED" ]; then
+    error "No checksum published for ${BINARY_NAME} in checksums.txt; refusing to install an unverified binary. Check https://github.com/${REPO}/releases/${LATEST}"
 fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum "$TMP_BIN" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 "$TMP_BIN" | awk '{print $1}')
+else
+    error "No sha256sum or shasum tool found; cannot verify the downloaded binary's checksum — refusing to install unverified. Install coreutils (sha256sum) or perl (shasum) and re-run."
+fi
+
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+    error "Checksum mismatch for ${BINARY_NAME}: expected ${EXPECTED}, got ${ACTUAL}. Aborting."
+fi
+success "Checksum verified"
 
 # Make executable
 chmod +x "$TMP_BIN"

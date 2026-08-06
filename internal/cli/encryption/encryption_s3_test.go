@@ -1,5 +1,5 @@
 // encryption_s3_test.go — coverage push for cli/encryption (batch s3).
-// Targets the zero-coverage validate helpers (validateSessions, validateAPITokens,
+// Targets the zero-coverage validate helpers (validateAPITokens,
 // validatePasswordResetTokens) and low-coverage paths in runValidateAuthEncryption,
 // runEnableAuthEncryption, migrate helpers, upgradeAADWithConfig, fixPermsWithConfig.
 //
@@ -70,47 +70,6 @@ func getSharedS3Fixture(t *testing.T) (*encryption.AuthEncryption, *gorm.DB) {
 		s3Fixture = &sharedS3Fixture{authEnc: ae, db: db, tempDir: tempDir}
 	})
 	return s3Fixture.authEnc, s3Fixture.db
-}
-
-// ── validateSessions ──────────────────────────────────────────────────────────
-
-func TestValidateSessions_EmptyDB(t *testing.T) {
-	ae, db := getSharedS3Fixture(t)
-	n, err := validateSessions(db, ae, false)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
-
-func TestValidateSessions_VerboseEmptyDB(t *testing.T) {
-	ae, db := getSharedS3Fixture(t)
-	n, err := validateSessions(db, ae, true) // verbose=true covers the Printf path
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
-}
-
-func TestValidateSessions_UnmigratedRow(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t) // isolated DB — safe to write
-
-	// Insert an unmigrated session (plaintext present, no encrypted counterpart).
-	s := &models.Session{UserID: 42, SessionToken: "plaintext-session"}
-	require.NoError(t, db.Create(s).Error)
-
-	n, err := validateSessions(db, ae, false)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n, "one unmigrated session must be flagged")
-}
-
-func TestValidateSessions_EncryptedRow_Verbose(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-
-	enc, meta, err := ae.EncryptSessionToken("valid-session-token", uint(1))
-	require.NoError(t, err)
-	s := &models.Session{UserID: 1, EncryptedSessionToken: enc, SessionTokenMetadata: meta}
-	require.NoError(t, db.Create(s).Error)
-
-	n, err := validateSessions(db, ae, true)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
 }
 
 // ── validateAPITokens ─────────────────────────────────────────────────────────
@@ -229,14 +188,7 @@ func TestShowAuthEncryptionStats_EncryptionEnabled(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// ── migrateSessions dry-run=false ─────────────────────────────────────────────
-
-func TestMigrateSessions_NonDryRun_Empty(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	// No matching rows → migrate does nothing and returns nil.
-	err := migrateSessions(db, ae, false)
-	require.NoError(t, err)
-}
+// ── migrateAPITokens dry-run=false ────────────────────────────────────────────
 
 func TestMigrateAPITokens_NonDryRun_Empty(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)
@@ -250,19 +202,7 @@ func TestMigratePasswordResetTokens_NonDryRun_Empty(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// dry-run=true paths for sessions/tokens/resets (covers the "return nil" early branch)
-
-func TestMigrateSessions_DryRun(t *testing.T) {
-	ae, db := setupMigrateValidateTest(t)
-	s := &models.Session{UserID: 1, SessionToken: "tok"}
-	require.NoError(t, db.Create(s).Error)
-	err := migrateSessions(db, ae, true)
-	require.NoError(t, err)
-	// Token must still be plaintext (dry-run).
-	var got models.Session
-	require.NoError(t, db.First(&got, s.ID).Error)
-	assert.Equal(t, "tok", got.SessionToken)
-}
+// dry-run=true paths for tokens/resets (covers the "return nil" early branch)
 
 func TestMigrateAPITokens_DryRun(t *testing.T) {
 	ae, db := setupMigrateValidateTest(t)

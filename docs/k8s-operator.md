@@ -43,19 +43,66 @@ helm upgrade keyorix-operator deploy/helm/keyorix-operator -n keyorix-system \
   --set replicas=2 --set leaderElection=true
 ```
 
-By default a single operator instance watches `KeyorixSecret` CRs across every namespace in
-the cluster, so its RBAC (`ClusterRole`) is bound cluster-wide via a `ClusterRoleBinding` —
-the only way to grant access to a namespace it can't predict ahead of time. If your
-deployment instead runs one operator instance per namespace (or per bounded tenant set), set
-`watchNamespaces` to scope both the manager's watch and its RBAC binding down to a
-namespace-scoped `RoleBinding` per listed namespace:
+### Choosing a namespace scope (ADR-076)
 
-```sh
-helm install keyorix-operator-team-a deploy/helm/keyorix-operator -n team-a \
-  --set 'watchNamespaces={team-a}'
-```
+**By default, a single operator instance watches `KeyorixSecret` CRs in its own release
+namespace only** — its RBAC (a `Role`/`RoleBinding` pair) is scoped accordingly, and the
+manager itself defaults to the same namespace (read from `POD_NAMESPACE`, set via the
+Downward API). This is the least-privilege choice: an unmodified `helm install` never
+grants the operator access to Secrets outside the namespace you installed it into.
 
-See the chart's [README](../deploy/helm/keyorix-operator/README.md#rbac) for details.
+Two opt-in modes cover broader deployments, both resolved from the same two values so they
+can never disagree with each other (`_helpers.tpl`'s `kxop.scope` — see the chart's
+[README](../deploy/helm/keyorix-operator/README.md#rbac) for the underlying mechanism):
+
+- **Bounded multi-namespace** — one operator instance managing a known, fixed set of
+  namespaces (e.g. all of one team's tenants). Set `watchNamespaces`:
+
+  ```sh
+  helm install keyorix-operator-team-a deploy/helm/keyorix-operator -n team-a \
+    --set 'watchNamespaces={team-a,team-b}'
+  ```
+
+  RBAC is bound via a namespace-scoped `RoleBinding` in each listed namespace; the manager
+  watches exactly those namespaces.
+
+- **Cluster-wide** — one operator instance managing `KeyorixSecret` CRs in *every*
+  namespace, with no static list. Set `rbac.clusterScoped: true` explicitly:
+
+  ```sh
+  helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system \
+    --create-namespace --set rbac.clusterScoped=true
+  ```
+
+  RBAC is bound via a cluster-wide `ClusterRoleBinding` — this is now the **only** way to
+  get that grant; it is no longer the default. `watchNamespaces` and
+  `rbac.clusterScoped: true` are mutually exclusive — setting both makes the chart refuse
+  to render (`helm template`/`helm install` fails with an error naming both values), rather
+  than silently picking one.
+
+**Upgrading from a chart version older than this default change?** Two scenarios:
+
+- **You relied on the old cluster-wide default (neither value set).** Add
+  `--set rbac.clusterScoped=true` to your `helm upgrade` to preserve that behavior across
+  the upgrade. Without it, the operator narrows to its own release namespace only, which
+  may stop it from reconciling `KeyorixSecret` CRs in other namespaces it previously
+  watched.
+- **You already set `watchNamespaces`.** `rbac.clusterScoped` defaulted to `true` before
+  this release, and a plain `helm upgrade` (without `--reset-values`) carries forward a
+  release's previously-recorded values by default — so your install is very likely already
+  in the now-rejected combination (`rbac.clusterScoped=true` + `watchNamespaces` set). The
+  upgrade will refuse to render at all, with an error containing:
+  `rbac.clusterScoped=true and watchNamespaces=[...] are both set -- these are mutually
+  exclusive (ADR-076)`. This is a hard block on the upgrade itself, not a permissions
+  change — add `--set rbac.clusterScoped=false` explicitly to your `helm upgrade` (or the
+  equivalent in your values file) to clear it.
+
+See the CHANGELOG's `BREAKING` entry for this release for the full detail.
+
+For an air-gapped install that mirrors the operator image to a private, authenticated
+registry, set `image.repository` to the mirror and `imagePullSecrets` to a
+`docker-registry` Secret in the release namespace — see the chart's
+[README](../deploy/helm/keyorix-operator/README.md#private-registries).
 
 For an air-gapped install that mirrors the operator image to a private, authenticated
 registry, set `image.repository` to the mirror and `imagePullSecrets` to a

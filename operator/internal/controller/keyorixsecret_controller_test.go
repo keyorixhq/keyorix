@@ -29,18 +29,24 @@ import (
 )
 
 // fakeFetcher serves values from a map. Refs in failRefs error with a plain
-// (non-ErrSecretGone) error, simulating a transient failure (network/5xx/401). Refs in
+// (non-ErrSecretGone) error, simulating a transient failure (network/5xx). Refs in
 // goneRefs error wrapping keyorix.ErrSecretGone, simulating a confirmed 404/403 from
-// the upstream Keyorix server (#428).
+// the upstream Keyorix server (#428). Refs in unauthorizedRefs error wrapping
+// keyorix.ErrUnauthorized, simulating a 401 (revoked/rotated machine-identity
+// credential).
 type fakeFetcher struct {
-	values   map[string][]byte
-	failRefs map[string]bool
-	goneRefs map[string]bool
+	values           map[string][]byte
+	failRefs         map[string]bool
+	goneRefs         map[string]bool
+	unauthorizedRefs map[string]bool
 }
 
 func (f *fakeFetcher) FetchValue(_ context.Context, ref string) ([]byte, error) {
 	if f.goneRefs[ref] {
 		return nil, fmt.Errorf("ref %q gone: %w", ref, keyorix.ErrSecretGone)
+	}
+	if f.unauthorizedRefs[ref] {
+		return nil, fmt.Errorf("ref %q unauthorized: %w", ref, keyorix.ErrUnauthorized)
 	}
 	if f.failRefs[ref] {
 		return nil, errors.New("boom")
@@ -261,9 +267,12 @@ func TestReconcile_UpstreamGoneWipesTargetSecret(t *testing.T) {
 }
 
 // TestReconcile_TransientFetchFailureLeavesTargetSecretUntouched pins #428's other
-// half: a transient failure (network error, timeout, 5xx, or an ambiguous 401) must
-// NOT touch a previously synced target Secret. Wiping it on every hiccup would cause
-// unnecessary outages for every workload depending on it.
+// half: a genuinely transient/ambiguous failure (network error, timeout, 5xx — anything
+// that is neither ErrSecretGone nor ErrUnauthorized) must NOT touch a previously synced
+// target Secret. Wiping it on every hiccup would cause unnecessary outages for every
+// workload depending on it. (A 401/ErrUnauthorized is deliberately NOT exercised here
+// any more — see TestReconcile_UnauthorizedWipesTargetSecretWithDistinctReason below,
+// which now DOES wipe on 401, since it's treated as a revoked/rotated credential.)
 func TestReconcile_TransientFetchFailureLeavesTargetSecretUntouched(t *testing.T) {
 	fetcher := &fakeFetcher{values: map[string][]byte{
 		"app/production/db-password": []byte("p4ss"),
@@ -293,6 +302,216 @@ func TestReconcile_TransientFetchFailureLeavesTargetSecretUntouched(t *testing.T
 	require.Len(t, ks.Status.Conditions, 1)
 	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
 	assert.Equal(t, "SyncError", ks.Status.Conditions[0].Reason, "a transient failure keeps the generic SyncError reason")
+}
+
+// TestReconcile_UnauthorizedWipesTargetSecretWithDistinctReason pins the fix for the
+// bug where only a confirmed-gone 404/403 wiped the target Secret: revoking or rotating
+// the machine-identity credential (the overwhelmingly common real-world way an admin
+// cuts a workload's access) surfaces as a 401, not a 404/403, and a 401 was previously
+// routed into the generic r.fail() branch that leaves the previously-synced target
+// Secret untouched — so every Pod mounting it kept reading the revoked value
+// indefinitely. A 401 (keyorix.ErrUnauthorized) must now wipe the target Secret the same
+// way ErrSecretGone does, with a status reason ("UpstreamAccessRevoked") that is still
+// distinguishable from a confirmed-gone secret ("UpstreamSecretGone").
+func TestReconcile_UnauthorizedWipesTargetSecretWithDistinctReason(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var got corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got),
+		"precondition: the target Secret exists after a successful sync")
+
+	// The bearer token is now rejected (401) — e.g. the machine-identity credential was
+	// revoked or rotated by an admin.
+	fetcher.unauthorizedRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err, "a 401 still requeues with error for backoff")
+	assert.True(t, errors.Is(err, keyorix.ErrUnauthorized))
+
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got)
+	assert.Error(t, err, "a 401 must wipe the target Secret the same way a confirmed-gone 404/403 does")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	require.Len(t, ks.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
+	assert.Equal(t, "UpstreamAccessRevoked", ks.Status.Conditions[0].Reason,
+		"a 401 gets a status reason distinct from a confirmed-gone 404/403")
+}
+
+// deleteBlockingClient wraps a client.Client but fails every Delete call for an object
+// named blockDeleteName, simulating a delete-blocking admission webhook, RBAC drift, or
+// a transient API error during wipeTargetSecret — used to exercise the wipe-failure-
+// surfaced-in-status path (Bug 3) and the retarget-wipe-failure path (Bug 2's failure
+// branch).
+type deleteBlockingClient struct {
+	client.Client
+	blockDeleteName string
+}
+
+func (c *deleteBlockingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if obj.GetName() == c.blockDeleteName {
+		return fmt.Errorf("simulated delete-blocking webhook rejected deletion of %s", obj.GetName())
+	}
+	return c.Client.Delete(ctx, obj, opts...)
+}
+
+// TestReconcile_WipeFailureSurfacedInStatus pins the fix for the bug where a
+// wipeTargetSecret failure (e.g. a delete-blocking admission webhook, RBAC drift, or a
+// transient API error) was only passed to logger.Error and otherwise discarded: the
+// CR's Ready condition still read as an ordinary confirmed-gone sync failure
+// ("UpstreamSecretGone") with no indication the stale, possibly-revoked target Secret
+// was NOT actually removed. The reason must now carry a distinct "WipeFailed" suffix and
+// the message must say the wipe itself failed.
+func TestReconcile_WipeFailureSurfacedInStatus(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	s := testScheme(t)
+	inner := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&secretsv1alpha1.KeyorixSecret{}).
+		WithObjects(ksFixture(), tokenSecret()).
+		Build()
+	blocked := &deleteBlockingClient{Client: inner, blockDeleteName: "db-creds"}
+	r := &KeyorixSecretReconciler{
+		Client:         blocked,
+		Scheme:         s,
+		AllowedServers: []string{"https://keyorix.internal"},
+		newClient:      func(_, _ string) valueFetcher { return fetcher },
+		hashKey:        []byte("test-fixture-hmac-key"),
+	}
+
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	// Confirmed gone on the next reconcile, but Delete is blocked (simulated webhook).
+	fetcher.goneRefs = map[string]bool{"app/production/db-password": true}
+	_, err = reconcile(t, r)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, keyorix.ErrSecretGone))
+
+	// The Secret is still there — the wipe was blocked.
+	var got corev1.Secret
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got),
+		"the wipe was blocked, so the stale Secret must still exist")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	require.Len(t, ks.Status.Conditions, 1)
+	assert.Equal(t, "UpstreamSecretGoneWipeFailed", ks.Status.Conditions[0].Reason,
+		"a wipe failure must be distinguishable in status from a successful wipe")
+	assert.Contains(t, ks.Status.Conditions[0].Message, "wiping the stale target Secret failed",
+		"the message must say the wipe itself failed, not just that the fetch failed")
+}
+
+// TestReconcile_RetargetWipesOrphanedSecretUnderOldName pins the fix for the bug where
+// changing spec.target.name orphaned the previously-materialised Secret forever: no
+// later reconcile ever revisited it by the OLD name, so it lingered indefinitely with
+// its last-synced (possibly since-rotated) plaintext value. status.LastTargetName must
+// track the materialised name, and a mismatch on the next reconcile must wipe the OLD
+// Secret before syncing the new one.
+func TestReconcile_RetargetWipesOrphanedSecretUnderOldName(t *testing.T) {
+	ks := ksFixture()
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ks, tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var oldSecret corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &oldSecret),
+		"precondition: the target Secret exists under the original name")
+
+	var got secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	assert.Equal(t, "db-creds", got.Status.LastTargetName, "LastTargetName tracks the materialised target after a successful sync")
+
+	// Retarget: spec.target.name changes to a brand-new name.
+	got.Spec.Target.Name = "db-creds-v2"
+	require.NoError(t, c.Update(context.Background(), &got))
+
+	_, err = reconcile(t, r)
+	require.NoError(t, err)
+
+	// The Secret orphaned under the OLD name is gone.
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &oldSecret)
+	assert.Error(t, err, "the Secret orphaned under the OLD target name must be wiped on retarget")
+
+	// The new Secret exists with the synced data.
+	var newSecret corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds-v2", Namespace: "app"}, &newSecret))
+	assert.Equal(t, []byte("p4ss"), newSecret.Data["DB_PASSWORD"])
+
+	// status.LastTargetName now tracks the new name.
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	assert.Equal(t, "db-creds-v2", got.Status.LastTargetName)
+}
+
+// TestReconcile_RetargetWipeFailureKeepsOldLastTargetNameAndWarns exercises Bug 2's
+// failure branch together with Bug 3's status-surfacing fix: if wiping the orphaned OLD
+// Secret fails during a retarget, the new target's sync must still succeed (a blocked
+// cleanup of an unrelated old resource shouldn't hold the CR's real sync hostage), but
+// status.LastTargetName must NOT advance to the new name — so the next reconcile retries
+// the orphan wipe instead of silently forgetting about it — and the Ready message must
+// say so.
+func TestReconcile_RetargetWipeFailureKeepsOldLastTargetNameAndWarns(t *testing.T) {
+	ks := ksFixture()
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	s := testScheme(t)
+	inner := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&secretsv1alpha1.KeyorixSecret{}).
+		WithObjects(ks, tokenSecret()).
+		Build()
+	blocked := &deleteBlockingClient{Client: inner, blockDeleteName: "db-creds"}
+	r := &KeyorixSecretReconciler{
+		Client:         blocked,
+		Scheme:         s,
+		AllowedServers: []string{"https://keyorix.internal"},
+		newClient:      func(_, _ string) valueFetcher { return fetcher },
+		hashKey:        []byte("test-fixture-hmac-key"),
+	}
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var got secretsv1alpha1.KeyorixSecret
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	require.Equal(t, "db-creds", got.Status.LastTargetName)
+
+	got.Spec.Target.Name = "db-creds-v2"
+	require.NoError(t, blocked.Update(context.Background(), &got))
+
+	_, err = reconcile(t, r)
+	require.NoError(t, err, "the new target's sync must succeed even though the OLD Secret's wipe was blocked")
+
+	// The new Secret exists.
+	var newSecret corev1.Secret
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db-creds-v2", Namespace: "app"}, &newSecret))
+
+	// The old Secret still exists — its wipe was blocked.
+	var oldSecret corev1.Secret
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &oldSecret))
+
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	assert.Equal(t, "db-creds", got.Status.LastTargetName,
+		"LastTargetName must stay at the OLD name so the next reconcile retries the orphan wipe")
+	require.Len(t, got.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionTrue, got.Status.Conditions[0].Status, "the new target's own sync still succeeded")
+	assert.Contains(t, got.Status.Conditions[0].Message, "failed to wipe the orphaned Secret",
+		"a blocked orphan wipe must be visible in the Ready message, not just logged")
 }
 
 // A target Secret this operator does NOT manage (no ManagedByLabel — applySecret

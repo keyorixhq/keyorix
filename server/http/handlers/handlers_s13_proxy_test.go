@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -942,6 +943,151 @@ func TestUpdateRiskExceptionProxy_BadBody_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	resp := decodeRemoteResp(t, w)
 	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
+}
+
+// TestRevokeRiskExceptionProxy_BadID_S13 — non-numeric id → 400.
+func TestRevokeRiskExceptionProxy_BadID_S13(t *testing.T) {
+	h := freshDashboardHandlerS13(t)
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/bad/revoke", strings.NewReader("{}")),
+		"id", "bad",
+	)
+	w := httptest.NewRecorder()
+	h.RevokeRiskExceptionProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_PARAMETER", resp.Error.Code)
+}
+
+// TestRevokeRiskExceptionProxy_BadBody_S13 — valid id, malformed JSON body → 400.
+func TestRevokeRiskExceptionProxy_BadBody_S13(t *testing.T) {
+	h := freshDashboardHandlerS13(t)
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/1/revoke", strings.NewReader("{bad")),
+		"id", "1",
+	)
+	w := httptest.NewRecorder()
+	h.RevokeRiskExceptionProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
+}
+
+// TestRevokeRiskExceptionProxy_LostRace_S13 — a second revoke attempt asserting
+// the same (now-stale) revoked=false state as a call that already won must
+// report matched:false, not silently re-apply, proving the CAS race closes at
+// the HTTP-proxy boundary too (not just LocalStorage).
+func TestRevokeRiskExceptionProxy_LostRace_S13(t *testing.T) {
+	h := freshDashboardHandlerS13(t)
+
+	createBody := proxyJSON(map[string]interface{}{
+		"title":         "Revoke Race S13",
+		"category":      "operational",
+		"justification": "Testing revoke CAS",
+		"created_by":    1,
+		"expires_at":    time.Now().Add(30 * 24 * time.Hour),
+	})
+	createReq := httptest.NewRequest(http.MethodPost, "/system/risk-exceptions", createBody)
+	createW := httptest.NewRecorder()
+	h.CreateRiskExceptionProxy(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+	createResp := decodeRemoteResp(t, createW)
+	created, ok := createResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	id := uint(created["id"].(float64))
+	idStr := strconv.FormatUint(uint64(id), 10)
+
+	revokeBody := func() *bytes.Buffer {
+		return proxyJSON(map[string]interface{}{"revoked": true, "revoked_by": 2})
+	}
+
+	firstReq := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/revoke", revokeBody()),
+		"id", idStr,
+	)
+	firstW := httptest.NewRecorder()
+	h.RevokeRiskExceptionProxy(firstW, firstReq)
+	assert.Equal(t, http.StatusOK, firstW.Code)
+	firstResp := decodeRemoteResp(t, firstW)
+	firstData, ok := firstResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, firstData["matched"], "first revoke must win")
+
+	secondReq := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/revoke", revokeBody()),
+		"id", idStr,
+	)
+	secondW := httptest.NewRecorder()
+	h.RevokeRiskExceptionProxy(secondW, secondReq)
+	assert.Equal(t, http.StatusOK, secondW.Code)
+	secondResp := decodeRemoteResp(t, secondW)
+	secondData, ok := secondResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, false, secondData["matched"], "second (racing) revoke must lose — already revoked")
+}
+
+// TestApproveRiskExceptionProxy_BadID_S13 — non-numeric id → 400.
+func TestApproveRiskExceptionProxy_BadID_S13(t *testing.T) {
+	h := freshDashboardHandlerS13(t)
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/bad/approve", strings.NewReader("{}")),
+		"id", "bad",
+	)
+	w := httptest.NewRecorder()
+	h.ApproveRiskExceptionProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_PARAMETER", resp.Error.Code)
+}
+
+// TestApproveRiskExceptionProxy_BadBody_S13 — valid id, malformed JSON body → 400.
+func TestApproveRiskExceptionProxy_BadBody_S13(t *testing.T) {
+	h := freshDashboardHandlerS13(t)
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/1/approve", strings.NewReader("{bad")),
+		"id", "1",
+	)
+	w := httptest.NewRecorder()
+	h.ApproveRiskExceptionProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
+}
+
+// TestApproveRiskExceptionProxy_HappyPath_S13 — a pending (not revoked, not
+// approved) exception approves cleanly and reports matched:true.
+func TestApproveRiskExceptionProxy_HappyPath_S13(t *testing.T) {
+	h := freshDashboardHandlerS13(t)
+
+	createBody := proxyJSON(map[string]interface{}{
+		"title":         "Approve Happy S13",
+		"category":      "operational",
+		"justification": "Testing approve happy path",
+		"created_by":    1,
+		"expires_at":    time.Now().Add(30 * 24 * time.Hour),
+	})
+	createReq := httptest.NewRequest(http.MethodPost, "/system/risk-exceptions", createBody)
+	createW := httptest.NewRecorder()
+	h.CreateRiskExceptionProxy(createW, createReq)
+	require.Equal(t, http.StatusOK, createW.Code)
+	createResp := decodeRemoteResp(t, createW)
+	created, ok := createResp.Data.(map[string]interface{})
+	require.True(t, ok)
+	id := uint(created["id"].(float64))
+	idStr := strconv.FormatUint(uint64(id), 10)
+
+	approveBody := proxyJSON(map[string]interface{}{"approved": true, "approved_by": 2})
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/approve", approveBody),
+		"id", idStr,
+	)
+	w := httptest.NewRecorder()
+	h.ApproveRiskExceptionProxy(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	resp := decodeRemoteResp(t, w)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, data["matched"])
 }
 
 // ── risk_exceptions.go (non-proxy) ───────────────────────────────────────────

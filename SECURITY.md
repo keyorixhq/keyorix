@@ -115,6 +115,16 @@ Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
   ref interpolation, secret-template parsing) run for hours at a time on
   dedicated infrastructure, well beyond what a CI job's budget allows — see
   [`scripts/fuzzing/README.md`](scripts/fuzzing/README.md)
+- Recurring bug classes get a permanent, blocking check, not just a one-off
+  fix: every confirmed vulnerability is checked against the fix history for
+  the same underlying pattern recurring 3+ times, and each one that does gets
+  a custom CodeQL query or Semgrep rule modeled on the real fix and validated
+  against it before merge — see
+  [`.semgrep/RULE-MINING-PROCESS.md`](.semgrep/RULE-MINING-PROCESS.md) for
+  the process and `.github/codeql/go-queries/`/`.semgrep/keyorix-rules.yml`
+  for the current rule set. Every `fix(security)` PR is required to carry a
+  regression test proving the specific bug is closed, not just that the
+  static pattern is gone from the diff.
 - [CODEOWNERS](.github/CODEOWNERS) requires review on cryptography, auth/RBAC,
   middleware, database migrations, the CI/CD pipeline itself, and this policy
 - GitHub-native repository security: secret scanning, push protection (blocks

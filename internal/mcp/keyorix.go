@@ -39,8 +39,23 @@ func NewKeyorixClient(baseURL, token string) (*KeyorixClient, error) {
 	return &KeyorixClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
-		hc:      &http.Client{Timeout: 30 * time.Second},
+		hc:      &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
 	}, nil
+}
+
+// refuseRedirect blocks the http.Client from following ANY redirect. Go's default
+// redirect behavior only strips the Authorization header when the redirect target's
+// Host differs from the original — it never checks scheme. A same-host redirect from
+// https:// to http:// (a misconfigured reverse proxy in front of the Keyorix server, or
+// a compromised server) would otherwise keep this client's bearer token attached and
+// send it — and the plaintext secret value in the response — over cleartext.
+// requireHTTPSURL above already refuses a non-loopback http:// baseURL up front, but
+// that only checks the INITIAL request's scheme; Go's redirect-following would still
+// happily downgrade mid-request without this. This client only ever talks to a single,
+// fixed, caller-supplied KEYORIX_URL and has no legitimate reason to follow a redirect
+// at all, so refusing every redirect outright is the simplest and safest fix.
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
 }
 
 // requireHTTPSURL rejects a Keyorix base URL that is not https (http is allowed only

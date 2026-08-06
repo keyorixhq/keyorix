@@ -91,3 +91,45 @@ func TestClient_FetchValueNetworkErrorIsNotGone(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrSecretGone), "a connection-refused error must not be classified as ErrSecretGone")
 }
+
+// TestClient_FetchValueUnauthorizedWrapsErrUnauthorized pins the 401 classification the
+// operator controller relies on: a 401 must wrap ErrUnauthorized (distinct from
+// ErrSecretGone, which stays reserved for a confirmed 404/403) so the controller can
+// treat a revoked/rotated bearer token as an access-cut signal worth wiping the target
+// Secret for, while still recording a status reason distinct from a confirmed-gone
+// secret.
+func TestClient_FetchValueUnauthorizedWrapsErrUnauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, "tok").FetchValue(context.Background(), "a/b/c")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnauthorized), "a 401 must wrap ErrUnauthorized")
+	assert.False(t, errors.Is(err, ErrSecretGone), "a 401 must NOT wrap ErrSecretGone — it says nothing about the referenced secret's own fate")
+}
+
+// TestClient_RefusesRedirect pins the fix for a bearer-token-leak-on-downgrade bug: Go's
+// default http.Client only strips the Authorization header when a redirect's Host
+// differs from the original — never when only the scheme changes, so a same-host
+// https->http redirect would otherwise carry the bearer token (and the plaintext secret
+// value in the response) over cleartext. This client has no legitimate reason to follow
+// any redirect, so CheckRedirect must refuse every one outright.
+func TestClient_RefusesRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If a redirect were followed, the Authorization header would land here.
+		assert.Fail(t, "the client must never actually reach the redirect target", "Authorization=%q", r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/api/v1/secrets/value", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	_, err := New(redirector.URL, "tok").FetchValue(context.Background(), "a/b/c")
+	require.Error(t, err, "a redirect must be refused, not silently followed")
+	assert.Contains(t, err.Error(), "redirect")
+}

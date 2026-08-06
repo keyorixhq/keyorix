@@ -56,12 +56,19 @@ jobs:
       - name: Install SBOM generator
         run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0 # NOSONAR githubactions:S8545 -- pinned to v1.10.0; go.sum not applicable for a standalone build-time tool outside the module graph (same pattern as dast.yml's nuclei install)
 
-      # Pinned for the same reason as cyclonedx-gomod above (ADR-073: the
-      # frontend SBOM generator). `npm install -g`, not `pnpm add -g` — cdxgen
-      # is a standalone global CLI tool here, not a project dependency
-      # resolved against web/pnpm-lock.yaml.
-      - name: Install frontend SBOM generator
-        run: npm install -g @cyclonedx/cdxgen@12.8.2 # NOSONAR githubactions:S8545 -- pinned to v12.8.2, verified (ADR-073) against this repo's actual pnpm-lock.yaml; not in any lockfile since it's a standalone build-time tool, same pattern as cyclonedx-gomod above
+      # Pinned via the root package-lock.json + npm ci, same pattern as
+      # openapi-lint's Spectral install (Scorecard #533): `npm install -g` has
+      # no integrity hash for Scorecard's Pinned-Dependencies check to verify
+      # against, whereas a committed lockfile records the exact SHA of every
+      # package in the tree (Scorecard #636). node_modules/.bin is added to
+      # PATH (not pnpm's install, and not a project dependency resolved
+      # against web/pnpm-lock.yaml) since build-frontend-sbom.mjs resolves
+      # cdxgen from PATH by absolute directory (ADR-073).
+      - name: Install frontend SBOM generator (lockfile-pinned)
+        run: npm ci --ignore-scripts
+
+      - name: Add npm-installed CLI tools to PATH
+        run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
       # VERSION is passed via env, not interpolated into the `run:` string (#115):
       # a tag name can contain shell metacharacters ($, `, ;, |, &, ( ) are all

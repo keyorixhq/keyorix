@@ -23,8 +23,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
-      - name: Run Semgrep (community rules, no account required)
-        run: semgrep scan --config=auto --sarif --output=semgrep.sarif . || true
+      - name: Run Semgrep (repo-specific custom rules — blocking)
+        # .semgrep/keyorix-rules.yml catches patterns specific to this repo that the
+        # community ruleset has no way to know about, each modeled directly on a real
+        # historical fix and validated (before being added) to have zero findings on
+        # main and to fire on that fix's pre-fix code. WARNING/ERROR severity only --
+        # excludes the one INFO-severity rule (keyorix-new-remotestorage-unsupported-stub),
+        # which is a structural nudge that's EXPECTED to match every existing stub, old
+        # and new, and isn't meant to gate the build on its own (see that rule's message
+        # for what it actually asks the author to do). A new WARNING/ERROR-severity rule
+        # must be verified zero-noise against main (and any pre-existing findings fixed
+        # or annotated with `// nosemgrep: <rule-id> -- <reason>`) before being added here
+        # -- that verification is what makes blocking safe; skipping it turns this gate
+        # into exactly the noisy, ignored check the non-blocking community scan below is.
+        run: semgrep scan --config=.semgrep/keyorix-rules.yml --severity=WARNING --severity=ERROR --error --quiet
+
+      - name: Run Semgrep (community rules + repo-specific custom rules — advisory)
+        # Full run (including --config=auto and the INFO-severity rule) for the Security
+        # tab's SARIF upload. Non-blocking: the community ruleset hasn't been through the
+        # same per-rule triage as .semgrep/keyorix-rules.yml above, so a false positive
+        # here shouldn't fail the build.
+        if: always()
+        run: semgrep scan --config=auto --config=.semgrep/keyorix-rules.yml --sarif --output=semgrep.sarif . || true
 
       - name: Upload results
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3

@@ -377,6 +377,40 @@ type Storage interface {
 	ListRiskExceptions(ctx context.Context, activeOnly bool) ([]*models.RiskException, error)
 	GetRiskException(ctx context.Context, id uint) (*models.RiskException, error)
 	UpdateRiskException(ctx context.Context, e *models.RiskException) error
+	// RevokeRiskExceptionIfNotRevoked persists e's full row (Revoked/RevokedBy/
+	// RevokedAt already set by the caller) via a single conditional UPDATE —
+	// "WHERE id = ? AND revoked = false" — succeeding only if the row's CURRENT
+	// persisted revoked flag is still false, mirroring TransitionMachineIdentityState's
+	// `WHERE id = ? AND state = ?` pattern (#388) and UpdateProjectInvitation's
+	// `WHERE id = ? AND state = 'pending'` pattern (#412) for this same TOCTOU class.
+	// The bool reports whether the row matched and was updated; false means the
+	// exception was already revoked by a prior or racing call (e.g. a concurrent
+	// RevokeRiskException or ApproveRiskException) and this write was rejected, not
+	// silently applied. core.RevokeRiskException's own precondition check
+	// (e.Revoked) only protects against the case where the initial read already
+	// showed revoked=true — it does nothing for a revoke that happens in the
+	// window between that read and this write, which is exactly the gap this
+	// conditional UPDATE closes.
+	//
+	// This exists — rather than a plain UpdateRiskException call — for the same
+	// reason TransitionMachineIdentityState does: RemoteStorage.WithTransaction is
+	// a no-op passthrough (remote_transaction.go), so a caller-driven
+	// read-then-conditional-write sequence run against RemoteStorage gets none of
+	// the atomicity a real DB transaction + row lock would give LocalStorage.
+	// Routing the write through this one conditional round trip — a single
+	// LocalStorage conditional SQL UPDATE, or a single proxied HTTP call to a
+	// dedicated upstream route — restores the guarantee across both backends.
+	RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *models.RiskException) (bool, error)
+	// ApproveRiskExceptionIfPending persists e's full row (Approved/ApprovedBy/
+	// ApprovedAt already set by the caller) via a single conditional UPDATE —
+	// "WHERE id = ? AND revoked = false AND approved = false" — succeeding only if
+	// the row is CURRENTLY still un-revoked AND un-approved. See
+	// RevokeRiskExceptionIfNotRevoked's doc for why this exists as a dedicated
+	// conditional round trip rather than a plain UpdateRiskException call. The
+	// bool reports whether the row matched and was updated; false means the
+	// exception was concurrently revoked, or already approved, by a prior or
+	// racing call and this write was rejected, not silently applied.
+	ApproveRiskExceptionIfPending(ctx context.Context, e *models.RiskException) (bool, error)
 
 	// SSO login state (OIDC human SSO) — short-lived CSRF/nonce state.
 	// ConsumeSSOLoginState is single-use: it returns the row and deletes it.
@@ -555,6 +589,33 @@ type Storage interface {
 	GetSecretsByIDs(ctx context.Context, ids []uint) ([]*models.SecretNode, error)
 	GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error)
 	UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
+	// TransitionSecretStatus persists secret's full row via a single conditional
+	// write — "UPDATE ... WHERE id = ? AND status = ?" — succeeding only if the
+	// row's CURRENT persisted status still equals fromStatus (the value the
+	// caller observed via GetSecret immediately before mutating secret.Status in
+	// memory), mirroring UpdateProjectInvitation's `WHERE id = ? AND state =
+	// 'pending'` pattern and TransitionMachineIdentityState's `WHERE id = ? AND
+	// state = ?` pattern exactly, just for SecretNode.Status. Returns whether the
+	// write actually matched a row.
+	//
+	// This exists because SuspendSecret/ResumeSecret (internal/core/
+	// secret_suspend.go) previously did a plain read-then-unconditional-
+	// UpdateSecret: a suspend racing a resume on the same secret could silently
+	// clobber each other depending on write order with no error to either
+	// caller, and — because UpdateSecret persists the FULL in-memory struct —
+	// any OTHER field mutated by a concurrent, unrelated operation between the
+	// read and this write would be silently reverted to the stale value read at
+	// the top, a general lost-update problem. And because RemoteStorage.
+	// WithTransaction is a no-op passthrough (remote_transaction.go: "there is
+	// no client-side transaction to open over HTTP"), a naive two-call
+	// GetSecret-then-UpdateSecret sequence gets NONE of the atomicity a real DB
+	// transaction + conditional write provides, reopening the same race across
+	// the HTTP hop for a downstream server booted with storage.type: remote.
+	// Routing the write through this one conditional round trip instead
+	// restores the same guarantee LocalStorage already has: a false match
+	// result must be treated exactly like a lost race — surfaced as an error to
+	// the caller — not retried or silently overwritten.
+	TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error)
 	DeleteSecret(ctx context.Context, id uint) error
 	// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033).
 	RestoreSecret(ctx context.Context, id uint) error
@@ -685,6 +746,36 @@ type Storage interface {
 	LockUserForUpdate(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
+	// UpdateUserIfActiveStateMatches persists user's full row — every field
+	// UpdateUser already applied to it in memory from the same request
+	// (username/email/display name, plus the new IsActive value) — via a single
+	// conditional "UPDATE ... WHERE id = ? AND is_active = ?", succeeding only if
+	// the row's CURRENT persisted is_active still equals fromActive (the value
+	// UpdateUser observed via GetUser, i.e. wasActive, before applying any of the
+	// request's field changes in memory). Returns whether the write actually
+	// matched a row, mirroring TransitionMachineIdentityState's `WHERE id = ? AND
+	// state = ?` / UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'`
+	// pattern (#388/#412) for this codebase's other state-transition TOCTOU class.
+	//
+	// UpdateUser is a general-purpose multi-field update (username, email,
+	// display name, IsActive, ...), not a single-purpose state-transition
+	// function, so a plain c.storage.UpdateUser write is fine for requests that
+	// leave IsActive untouched. But whenever req.IsActive != nil, UpdateUser
+	// routes its final persist through THIS method instead: IsActive can flip
+	// concurrently with any other UpdateUser call touching the same user (a
+	// profile edit racing an admin deactivation, or two deactivation attempts
+	// racing each other), and a plain write silently clobbers whichever change
+	// lost the race, with no error to either caller. This exists for the exact
+	// same reason TransitionMachineIdentityState does: RemoteStorage.WithTransaction
+	// is a no-op passthrough (remote_transaction.go), so a naive
+	// GetUser-then-UpdateUser sequence gets none of the atomicity LocalStorage
+	// provides via a real DB transaction once proxied over HTTP — routing the
+	// actual write through this one conditional round trip restores the same
+	// guarantee LocalStorage already has, without making any validation decision
+	// here: the caller (core.UpdateUser) still decides which fields to mutate and
+	// what fromActive to assert before calling this; a false match result must be
+	// treated as a lost-race error, not retried or silently overwritten.
+	UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error)
 	// UpdateLastLogin stamps the user's last_login_at column without touching any
 	// other field (no updated_at bump). Called on every successful login.
 	UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error
@@ -1117,6 +1208,32 @@ type Storage interface {
 	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
 	ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error)
 	UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error
+	// TransitionDynamicSecretConfigDisabled persists cfg's full row via a single
+	// conditional write — "UPDATE ... WHERE id = ? AND disabled = ?" — succeeding
+	// only if the row's CURRENT persisted disabled value still equals fromDisabled
+	// (the value SetDynamicSecretConfigEnabled observed via GetDynamicSecretConfig
+	// immediately before mutating cfg.Disabled in memory), mirroring
+	// UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'` pattern (#412)
+	// and TransitionMachineIdentityState's `WHERE id = ? AND state = ?` pattern
+	// (#388/#518) exactly, just gated on DynamicSecretConfig.Disabled instead of a
+	// string state column. Returns whether the write actually matched a row.
+	//
+	// This exists for the same reason TransitionMachineIdentityState does:
+	// RemoteStorage.WithTransaction is a no-op passthrough (remote_transaction.go:
+	// "there is no client-side transaction to open over HTTP"), so a plain
+	// GetDynamicSecretConfig-then-UpdateDynamicSecretConfig sequence — the shape
+	// SetDynamicSecretConfigEnabled used before this fix — has no atomicity at all
+	// against RemoteStorage: two racing callers (e.g. one admin enabling while
+	// another is mid-disable, or an unrelated concurrent edit landing between the
+	// read and the write) can silently clobber each other's change, or clobber an
+	// unrelated field mutated by the other racer, with no error surfaced. Routing
+	// the actual write through this one conditional round trip instead of a
+	// separate proxied Update restores the same guarantee LocalStorage's
+	// conditional UPDATE already provides, without making any enable/disable
+	// decision here: the caller (core.SetDynamicSecretConfigEnabled) still decides
+	// the target Disabled value before calling this; a false match result must be
+	// treated as a lost race, not retried or silently overwritten.
+	TransitionDynamicSecretConfigDisabled(ctx context.Context, cfg *models.DynamicSecretConfig, fromDisabled bool) (bool, error)
 	// CountDynamicSecretConfigsByClassification returns install-wide config counts
 	// keyed by classification label ("" = unclassified) for the compliance posture.
 	CountDynamicSecretConfigsByClassification(ctx context.Context) (map[string]int, error)

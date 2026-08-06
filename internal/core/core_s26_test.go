@@ -174,6 +174,115 @@ func TestUpdateUser_StorageError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// ── users.go — UpdateUser IsActive TOCTOU (the StateTransitionMissingCAS fix) ──
+//
+// UpdateUser is a general-purpose multi-field update, so only requests that
+// explicitly touch IsActive (req.IsActive != nil) need CAS protection — these
+// tests prove (a) such requests route through
+// storage.Storage.UpdateUserIfActiveStateMatches instead of the plain
+// UpdateUser, in BOTH the deactivating and non-deactivating branches, (b) a
+// lost race (matched=false) surfaces as ErrUserActiveStateConflict rather
+// than being silently retried or ignored, and — mirroring #388's "second
+// racing transition" test — that losing the race skips the deactivating
+// branch's session/PAT revocation side effects, and (c) a plain field-only
+// update (no IsActive in the request) is completely unaffected: it still
+// goes through the unconditional plain UpdateUser path, exactly as before.
+
+// TestUpdateUser_Reactivate_UsesConditionalPath verifies a non-deactivating
+// IsActive assertion (re-activating an inactive user) is routed through
+// UpdateUserIfActiveStateMatches, not the plain UpdateUser.
+func TestUpdateUser_Reactivate_UsesConditionalPath(t *testing.T) {
+	ms := new(MockStorage)
+	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: false}
+	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+		return u.ID == 1 && u.IsActive
+	}), false).Return(true, nil)
+	c := NewKeyorixCore(ms)
+	active := true
+	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &active})
+	require.NoError(t, err)
+	assert.True(t, u.IsActive)
+	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+}
+
+// TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath verifies that
+// even a "set to the same value it already is" IsActive assertion (wasActive
+// == the requested value, so deactivating is false) still routes through the
+// conditional path — the caller explicitly cares about this field either way.
+func TestUpdateUser_RedundantSameValueAssertion_UsesConditionalPath(t *testing.T) {
+	ms := new(MockStorage)
+	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
+	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+		return u.ID == 1 && u.IsActive
+	}), true).Return(true, nil)
+	c := NewKeyorixCore(ms)
+	active := true
+	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &active})
+	require.NoError(t, err)
+	assert.True(t, u.IsActive)
+	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+}
+
+// TestUpdateUser_Reactivate_LostRace_ReturnsConflictError proves the
+// non-deactivating branch's race is closed: a concurrent write that already
+// moved is_active away from the value this call observed must surface as
+// ErrUserActiveStateConflict, not be silently retried or dropped.
+func TestUpdateUser_Reactivate_LostRace_ReturnsConflictError(t *testing.T) {
+	ms := new(MockStorage)
+	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: false}
+	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+		return u.ID == 1 && u.IsActive
+	}), false).Return(false, nil)
+	c := NewKeyorixCore(ms)
+	active := true
+	_, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &active})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUserActiveStateConflict), "expected ErrUserActiveStateConflict, got: %v", err)
+}
+
+// TestUpdateUser_Deactivate_LostRace_ReturnsConflictError proves the
+// deactivating branch (inside WithTransaction) closes the same race, and that
+// losing it skips PAT revocation / session deletion — the loser must not
+// apply any part of its write, not just IsActive.
+func TestUpdateUser_Deactivate_LostRace_ReturnsConflictError(t *testing.T) {
+	ms := new(MockStorage)
+	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
+	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
+	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(1)).Return([]string{}, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+		return u.ID == 1 && !u.IsActive
+	}), true).Return(false, nil)
+	c := NewKeyorixCore(ms)
+	inactive := false
+	_, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, IsActive: &inactive})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUserActiveStateConflict), "expected ErrUserActiveStateConflict, got: %v", err)
+	ms.AssertNotCalled(t, "RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything)
+	ms.AssertNotCalled(t, "DeleteSessionsForUserExcept", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestUpdateUser_PlainFieldUpdate_DoesNotUseActiveStateConditionalPath proves
+// a plain field-only update (no IsActive in the request) is completely
+// unaffected by this fix: it still persists via the unconditional plain
+// UpdateUser, exactly as before, and never touches
+// UpdateUserIfActiveStateMatches — so it cannot be spuriously rejected by an
+// unrelated concurrent is_active change on the same row.
+func TestUpdateUser_PlainFieldUpdate_DoesNotUseActiveStateConditionalPath(t *testing.T) {
+	ms := new(MockStorage)
+	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
+	updated := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice Renamed", IsActive: true}
+	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
+	ms.On("UpdateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(updated, nil)
+	c := NewKeyorixCore(ms)
+	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, DisplayName: "Alice Renamed"})
+	require.NoError(t, err)
+	assert.Equal(t, "Alice Renamed", u.DisplayName)
+	ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
+}
+
 // ── users.go — RestoreUser ───────────────────────────────────────────────────
 
 func TestRestoreUser_ZeroID(t *testing.T) {

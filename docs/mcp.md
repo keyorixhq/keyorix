@@ -32,18 +32,24 @@ The server needs two environment variables:
   `keyorix machine create …`. The token is read from the environment, never from a tool
   argument, so the model can't coax it out.
 
-Two more are optional, opt-in **defense-in-depth on top of** (never instead of) the
-token's own server-side RBAC scope — useful when an agent's task only needs a narrow
-slice of what the token can technically reach:
+Two more provide **defense-in-depth on top of** (never instead of) the token's own
+server-side RBAC scope — `KEYORIX_MCP_ALLOWED_REFS` is optional and opt-in;
+`KEYORIX_MCP_MAX_READS` applies a safe default even when left unset:
 
 - `KEYORIX_MCP_ALLOWED_REFS` — a comma-separated list of `project/environment/name`
   glob patterns (e.g. `app/production/*,app/staging/db-*`). When set, both tools refuse
   any ref that doesn't match at least one pattern — `keyorix_list_secrets` also omits
-  non-matching refs from its output, so they're never even named to the agent.
+  non-matching refs from its output, so they're never even named to the agent. If set,
+  it must contain at least one usable pattern after parsing (e.g. not just a stray
+  comma) — the server refuses to start otherwise, rather than silently running
+  unrestricted while logging that a restriction is active.
 - `KEYORIX_MCP_MAX_READS` — a positive integer capping how many `keyorix_get_secret`
   calls this server process will serve for its whole session. Once reached, every
   further read is refused (a fresh MCP server process — e.g. the next agent session —
-  gets a fresh budget). See "Prompt injection" below for why this exists.
+  gets a fresh budget). **Defaults to 100 when left unset** — the cap is a backstop
+  against a manipulated agent sweeping every secret a broadly-scoped token can read, so
+  it is on by default rather than opt-in; raise it if a legitimate task needs more
+  reads in one session. See "Prompt injection" below for why this exists.
 
 ### Claude Desktop / Claude Code
 
@@ -121,7 +127,7 @@ remain the primary controls.
 
 | Symptom | Likely cause |
 |---|---|
-| Server exits immediately | `KEYORIX_URL` or `KEYORIX_TOKEN` unset, `KEYORIX_URL` is not https (and not loopback), or `KEYORIX_MCP_MAX_READS` is not a positive integer — it logs which to stderr. |
+| Server exits immediately | `KEYORIX_URL` or `KEYORIX_TOKEN` unset, `KEYORIX_URL` is not https (and not loopback), `KEYORIX_MCP_MAX_READS` is not a positive integer, or `KEYORIX_MCP_ALLOWED_REFS` is set but has no usable patterns after parsing — it logs which to stderr. |
 | `could not read the requested secret` from `keyorix_get_secret` | The token lacks `secrets.read` for that ref, the ref doesn't exist, the ref is outside `KEYORIX_MCP_ALLOWED_REFS`, or the per-process read cap is exhausted — check stderr for the specific reason. |
 | `could not list secrets` | The token's `ListSecrets` call failed — check stderr for the specific reason. |
 | `invalid request …` | `ref` is not a three-part `project/environment/name`. |

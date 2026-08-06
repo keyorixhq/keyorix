@@ -54,6 +54,15 @@ jobs:
         with:
           languages: go
           build-mode: manual
+          # `+` appends to (doesn't replace) CodeQL's default Go query suite. The
+          # custom pack (.github/codeql/go-queries) covers bug classes the default
+          # suite doesn't: an io.Reader from an outbound client response or a stdin
+          # parameter reaching json.NewDecoder unbounded, and a path-based
+          # chmod/chown that follows an os.Lstat check on the same path (TOCTOU).
+          # Applies to both matrix legs (server, operator) -- init always resolves
+          # this path against the repo-root checkout, independent of each leg's
+          # later build working-directory.
+          queries: +./.github/codeql/go-queries
 
       - name: Build (${{ matrix.name }})
         working-directory: ${{ matrix.working-directory }}

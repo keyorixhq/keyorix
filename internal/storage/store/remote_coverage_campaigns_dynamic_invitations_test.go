@@ -368,6 +368,37 @@ func TestRemoteCov_UpdateDynamicSecretConfig_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "update dynamic-secret config failed")
 }
 
+func TestRemoteCov_TransitionDynamicSecretConfigDisabled_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(apiNotOK("INTERNAL", "transition config failed"))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	matched, err := rs.TransitionDynamicSecretConfigDisabled(context.Background(),
+		&models.DynamicSecretConfig{ID: 1, Disabled: true}, false)
+	assert.Error(t, err)
+	assert.False(t, matched)
+	assert.Contains(t, err.Error(), "transition dynamic-secret config failed")
+}
+
+func TestRemoteCov_TransitionDynamicSecretConfigDisabled_MalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(apiOK("{bad}"))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	matched, err := rs.TransitionDynamicSecretConfigDisabled(context.Background(),
+		&models.DynamicSecretConfig{ID: 1, Disabled: true}, false)
+	assert.Error(t, err)
+	assert.False(t, matched)
+}
+
 func TestRemoteCov_GetDynamicSecretLease_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(apiNotOK("NOT_FOUND", "lease not found"))

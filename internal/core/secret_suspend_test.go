@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -81,5 +82,57 @@ func TestSuspendResumeSecret(t *testing.T) {
 		s, err := c.ResumeSecret(ctx, id, 1)
 		require.NoError(t, err)
 		assert.Equal(t, SecretStatusActive, s.Status)
+	})
+}
+
+// newMockSuspendCore builds a KeyorixCore backed by MockStorage — mirrors
+// newMachineCore (machine_identities_test.go) — so SuspendSecret/ResumeSecret's
+// lost-race handling can be exercised without needing a real concurrent
+// second caller: TransitionSecretStatus is simply stubbed to report the race
+// already lost.
+func newMockSuspendCore(store *MockStorage) *KeyorixCore {
+	fixed := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	return &KeyorixCore{storage: store, now: func() time.Time { return fixed }}
+}
+
+// TestSuspendResumeSecret_LostRace proves the StateTransitionMissingCAS fix:
+// when TransitionSecretStatus reports matched=false (the row's persisted
+// status moved away from the value GetSecret observed, between that read and
+// this write — e.g. a concurrent suspend/resume won the race), SuspendSecret/
+// ResumeSecret must surface a clear error instead of pretending the write
+// landed, and must NOT write an audit event for a change that never
+// persisted. Mirrors TestTransitionMachineIdentity's "lost race on the
+// conditional write is reported like an illegal transition" subtest.
+func TestSuspendResumeSecret_LostRace(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("SuspendSecret", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newMockSuspendCore(store)
+		store.On("GetSecret", ctx, uint(10)).
+			Return(&models.SecretNode{ID: 10, Name: "db", Status: SecretStatusActive}, nil)
+		store.On("TransitionSecretStatus", ctx, mock.MatchedBy(func(s *models.SecretNode) bool {
+			return s.Status == SecretStatusSuspended
+		}), SecretStatusActive).Return(false, nil)
+
+		_, err := c.SuspendSecret(ctx, 10, 1, "suspected leak")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "changed concurrently")
+		store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+	})
+
+	t.Run("ResumeSecret", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newMockSuspendCore(store)
+		store.On("GetSecret", ctx, uint(20)).
+			Return(&models.SecretNode{ID: 20, Name: "db", Status: SecretStatusSuspended}, nil)
+		store.On("TransitionSecretStatus", ctx, mock.MatchedBy(func(s *models.SecretNode) bool {
+			return s.Status == SecretStatusActive
+		}), SecretStatusSuspended).Return(false, nil)
+
+		_, err := c.ResumeSecret(ctx, 20, 1)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "changed concurrently")
+		store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 	})
 }

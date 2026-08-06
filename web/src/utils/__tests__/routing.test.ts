@@ -31,6 +31,7 @@ import {
     getFallbackRoute,
     canAccessRoute,
     createAuthAwareNavigate,
+    isSafeReturnTo,
 } from '../routing';
 import { ROUTES } from '../../constants';
 
@@ -52,6 +53,34 @@ describe('storeIntendedRoute', () => {
     it('stores an ordinary path', () => {
         storeIntendedRoute('/projects/42/secrets');
         expect(getAndClearIntendedRoute()).toBe('/projects/42/secrets');
+    });
+
+    it('does not store a protocol-relative path (open-redirect defense-in-depth)', () => {
+        storeIntendedRoute('//evil.example/x');
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+
+    it('does not store a backslash-leading path (some browsers treat "/\\" as protocol-relative too)', () => {
+        storeIntendedRoute('/\\evil.example/x');
+        expect(getAndClearIntendedRoute()).toBeNull();
+    });
+});
+
+describe('isSafeReturnTo', () => {
+    it('accepts an ordinary in-app path', () => {
+        expect(isSafeReturnTo('/secrets/7')).toBe(true);
+    });
+
+    it('rejects a protocol-relative path', () => {
+        expect(isSafeReturnTo('//evil.example/x')).toBe(false);
+    });
+
+    it('rejects a backslash-leading path', () => {
+        expect(isSafeReturnTo('/\\evil.example/x')).toBe(false);
+    });
+
+    it('rejects a path that does not start with a leading slash', () => {
+        expect(isSafeReturnTo('evil.example/x')).toBe(false);
     });
 });
 
@@ -106,6 +135,17 @@ describe('getPostLoginRedirect', () => {
         expect(getPostLoginRedirect('/custom-landing')).toBe('/secrets/7');
         // consumed: a second call falls through to the default again
         expect(getPostLoginRedirect('/custom-landing')).toBe('/custom-landing');
+    });
+
+    it('falls back to the default when a protocol-relative path was written directly to storage, bypassing storeIntendedRoute', () => {
+        // Defense-in-depth: storeIntendedRoute already rejects this, but
+        // getPostLoginRedirect must not trust storage blindly either (e.g. a
+        // stale value from before this fix, or a future write path that
+        // bypasses storeIntendedRoute).
+        memStore.set('intendedRoute', '//evil.example/x');
+        expect(getPostLoginRedirect('/custom-landing')).toBe('/custom-landing');
+        // consumed even though rejected, so it doesn't linger in storage
+        expect(getAndClearIntendedRoute()).toBeNull();
     });
 });
 

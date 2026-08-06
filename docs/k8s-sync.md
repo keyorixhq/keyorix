@@ -23,6 +23,7 @@ A YAML file (default `/etc/keyorix/k8s-sync.yaml`, override with `-config` or
 
 ```yaml
 keyorix_url: https://keyorix.internal   # the Keyorix server base URL
+project_id: 42                          # the Keyorix project the token's machine identity belongs to
 interval: 5m                            # reconcile interval (Go duration; default 5m)
 cleanup: false                          # reap orphaned owned Secrets (see below; default off)
 mappings:
@@ -42,6 +43,14 @@ The Keyorix auth token is **not** in this file — it is read from the `KEYORIX_
 environment variable (mount it from a Kubernetes Secret). Give that token a
 least-privilege machine identity that can read only the referenced secrets.
 
+`project_id` is required: a mapping's `ref` names only an environment and a secret
+(`<environment>/<name>`), never a project, because environment names are unique
+per-project, not globally — two different projects can each have a `production`
+environment. `project_id` pins every secret lookup this agent performs to the one
+project its token belongs to (a machine identity, and so its tokens, always belongs to
+exactly one project), so a same-named secret in a *different* project can never be
+resolved instead of the intended one.
+
 ## Kubernetes RBAC
 
 The agent's service account needs to read and write Secrets in each target namespace:
@@ -54,8 +63,12 @@ resources: [secrets]
 `list` and `delete` are used **only** by orphan cleanup (below); with `cleanup` off the
 agent exercises just `get`, `create`, and `patch`. Bind a `Role` with these permissions
 in every target namespace (or a `ClusterRole` with namespace-scoped `RoleBinding`s). The
-agent uses Server-Side Apply with the field manager `keyorix-sync`, so it owns the
-`data` it writes and prunes keys it no longer maps.
+Helm chart further restricts `get`/`patch`/`delete` with `resourceNames` to exactly the
+Secret names in `mappings` — `create` and `list` can't be `resourceNames`-scoped (a
+Kubernetes RBAC limitation: those verbs don't target a single named object), so they
+remain granted on the `secrets` resource type as a whole. The agent uses Server-Side
+Apply with the field manager `keyorix-sync`, so it owns the `data` it writes and prunes
+keys it no longer maps.
 
 ## Orphan cleanup (`cleanup`)
 

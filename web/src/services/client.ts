@@ -72,6 +72,12 @@ apiClient.interceptors.request.use(
     }
 );
 
+// Marks a request config as already having gone through one refresh+retry
+// round trip — the conventional axios interceptor loop guard. Kept as a
+// narrow intersection type rather than augmenting AxiosRequestConfig globally,
+// since only handle401 ever reads/writes this flag.
+type RetriableConfig = AxiosRequestConfig & { _retry?: boolean };
+
 const handle401 = async (
     error: AxiosError,
     authStore: ReturnType<typeof useAuthStore.getState>
@@ -84,11 +90,22 @@ const handle401 = async (
         authStore.setError('Your session has expired. Please log in again.');
         return;
     }
+    // Loop guard: this exact request has already been retried once after a
+    // successful refresh and still came back 401. That means the failure
+    // isn't session expiry (refreshToken() would have thrown otherwise) — it's
+    // something else about this endpoint (a backend bug, a step-up-auth
+    // requirement, a flaky proxy). Refreshing and retrying again would loop
+    // forever, hammering /auth/refresh. Don't force a logout either — the
+    // session may still be perfectly valid — just fail through to the caller.
+    if ((error.config as RetriableConfig | undefined)?._retry) {
+        return;
+    }
     try {
         await authStore.refreshToken();
         // The retry rides the rotated session cookie automatically —
         // no header to reattach, unlike the old Bearer-token flow.
         if (error.config) {
+            (error.config as RetriableConfig)._retry = true;
             return apiClient.request(error.config);
         }
     } catch {

@@ -143,6 +143,49 @@ type valueFetcher interface {
 	FetchValue(ctx context.Context, ref string) ([]byte, error)
 }
 
+// RBAC (#327/#427): `make manifests` generates operator/config/rbac/role.yaml
+// from these markers via controller-gen, which fully regenerates that file on
+// every run and does not preserve hand-written content in it -- so the
+// rationale below lives here, at the actual source of truth, not in the
+// generated output where a routine regen would silently discard it (as
+// happened once already: an unpinned `make manifests` run stripped this exact
+// explanation from role.yaml before anyone had committed it).
+//
+// This grants a ClusterRole (not a namespaced Role) because by DEFAULT the
+// operator is deployed as a single cluster-wide instance that watches
+// KeyorixSecret CRs (a namespaced CRD) across every namespace -- with no
+// static namespace list configured it genuinely cannot predict ahead of time
+// which namespace the next CR (and its TokenSecretRef/target Secret) will
+// land in. Kubernetes RBAC also has no way to scope list/watch by
+// resourceNames or to a dynamically changing namespace set, so narrowing this
+// to per-namespace RoleBindings isn't possible for that deployment model.
+//
+// Operators who instead run one instance PER namespace (or per bounded tenant
+// set) can opt into least-privilege, namespace-scoped RBAC: see the
+// watchNamespaces value in deploy/helm/keyorix-operator, which passes the
+// corresponding -watch-namespaces flag (operator/cmd/main.go) and swaps this
+// same ClusterRole's binding from a cluster-wide ClusterRoleBinding to a
+// namespace-scoped RoleBinding per watched namespace -- the ClusterRole
+// definition here stays reusable across both modes (ADR-076).
+//
+// The verbs below are the minimum the reconcile logic actually uses:
+// create/update/patch/get/list/watch to materialise and refresh the target
+// Secret, and delete for wipeTargetSecret (this file), which removes the
+// target Secret once the upstream Keyorix reference is confirmed gone (#428)
+// -- no broader verb (e.g. deletecollection) is granted.
+//
+// What operator/cmd/main.go ALSO does to bound the blast radius of this (in
+// the default cluster-wide mode, necessarily cluster-wide) grant: it scopes
+// the manager's Secret informer cache to only Secrets carrying the operator's
+// managed-by label (see secretCacheOptions in operator/cmd/main.go), so a
+// compromised operator process can't trivially dump every cluster Secret
+// straight out of its own in-memory cache -- only ones it already owns via
+// this same RBAC.
+//
+// No marker is declared for keyorixsecrets/finalizers: this controller has no
+// finalizer logic (garbage collection of the target Secret relies solely on
+// the Kubernetes owner-reference GC, not a finalizer), so that grant would be
+// unused, excess RBAC.
 // +kubebuilder:rbac:groups=secrets.keyorix.io,resources=keyorixsecrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=secrets.keyorix.io,resources=keyorixsecrets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -177,23 +220,53 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		secretName = ks.Name
 	}
 
+	// spec.target.name is mutable — if it changed since the last successful sync, the
+	// Secret materialised under the OLD name is now orphaned: no later reconcile ever
+	// revisits it by name again (Reconcile only ever looks at the CURRENT secretName),
+	// so it would otherwise sit in the cluster forever with its last-synced, possibly
+	// since-rotated, plaintext value, still owned by this (now-repurposed) CR, mountable
+	// by any workload with ordinary Secret-read RBAC in the namespace. Wipe it BEFORE
+	// doing anything else this reconcile, using the same ownership-and-label-checked
+	// wipeTargetSecret used for the confirmed-gone path below — it's a no-op if nothing
+	// exists under the old name, or if this is the CR's first-ever reconcile
+	// (LastTargetName is unset).
+	//
+	// If the wipe itself fails, orphanWipeErr is threaded through to succeed() below:
+	// status.LastTargetName is deliberately NOT advanced to the new name in that case,
+	// so the next reconcile retries the orphan wipe instead of forgetting about it.
+	var orphanWipeErr error
+	if ks.Status.LastTargetName != "" && ks.Status.LastTargetName != secretName {
+		if wipeErr := r.wipeTargetSecret(ctx, &ks, ks.Status.LastTargetName); wipeErr != nil {
+			orphanWipeErr = wipeErr
+			logger.Error(wipeErr, "failed to wipe orphaned target Secret after spec.target.name changed",
+				"oldTargetName", ks.Status.LastTargetName, "newTargetName", secretName)
+		}
+	}
+
 	desired, err := r.buildDesired(ctx, &ks)
 	if err != nil {
 		logger.Error(err, "failed to assemble secret data")
-		if errors.Is(err, keyorix.ErrSecretGone) {
+		switch {
+		case errors.Is(err, keyorix.ErrSecretGone):
 			// The upstream Keyorix server AFFIRMATIVELY reported (404/403) that a
 			// referenced secret no longer exists or is no longer accessible — as
-			// opposed to a transient failure (network error, timeout, 5xx, or a bad
-			// token) where the target Secret must be left untouched. Without this,
-			// a revoked/deleted upstream secret leaves the previously synced target
-			// Secret sitting in the cluster indefinitely, fully readable by every
-			// workload that mounts it, with no indication anything is wrong (#428).
-			if wipeErr := r.wipeTargetSecret(ctx, &ks, secretName); wipeErr != nil {
-				logger.Error(wipeErr, "failed to wipe target Secret after upstream secret became inaccessible")
-			}
-			return r.failGone(ctx, &ks, err)
+			// opposed to a transient failure (network error, timeout, 5xx) where the
+			// target Secret must be left untouched. Without this, a revoked/deleted
+			// upstream secret leaves the previously synced target Secret sitting in
+			// the cluster indefinitely, fully readable by every workload that mounts
+			// it, with no indication anything is wrong (#428).
+			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamSecretGone", err)
+		case errors.Is(err, keyorix.ErrUnauthorized):
+			// A 401 doesn't confirm the referenced secret itself is gone, but in
+			// practice it overwhelmingly means the machine-identity credential was
+			// revoked or rotated — an admin deliberately cut this workload's access.
+			// That's the same "stop serving the stale value" signal as a confirmed
+			// 404/403, so it gets the same wipe treatment, just with a distinct
+			// status reason so it's clear from .status which of the two happened.
+			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamAccessRevoked", err)
+		default:
+			return r.fail(ctx, &ks, err)
 		}
-		return r.fail(ctx, &ks, err)
 	}
 
 	hash := hashData(r.hashKey, desired)
@@ -203,7 +276,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.fail(ctx, &ks, err)
 	}
 
-	if err := r.succeed(ctx, &ks, hash); err != nil {
+	if err := r.succeed(ctx, &ks, hash, secretName, orphanWipeErr); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: interval}, nil
@@ -235,6 +308,14 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 		reader = r.Client
 	}
 	if err := reader.Get(ctx, ref, &tokenSecret); err != nil {
+		// Deliberately NOT treated as a wipe-worthy "access confirmed cut" signal (unlike
+		// ErrSecretGone/ErrUnauthorized in Reconcile): a missing/unreadable token Secret
+		// means the operator couldn't even ASK the Keyorix server whether access is still
+		// valid — it could be a typo in tokenSecretRef, an accidental deletion, transient
+		// RBAC drift, or a GC race, none of which confirm the upstream secret or grant was
+		// actually revoked. Wiping the target Secret on a merely-ambiguous "we don't know"
+		// failure would cause an unnecessary outage for every workload depending on it,
+		// the same reasoning that already keeps network errors/5xx out of the wipe path.
 		return nil, fmt.Errorf("read token secret %s: %w", ref, err)
 	}
 	// A CRD-write-only principal (the CRD's own documented least-privilege deployment
@@ -340,13 +421,41 @@ func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.
 	return ctrl.Result{}, cause
 }
 
-// failGone is fail's counterpart for a confirmed-gone upstream secret (#428): it
-// records a distinct reason ("UpstreamSecretGone" rather than the generic
-// "SyncError") so the CR's status makes the wipe visible and explicable, rather than
-// looking like an ordinary transient sync failure. The target Secret has already been
-// wiped by wipeTargetSecret before this is called.
-func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
-	r.setReady(ks, metav1.ConditionFalse, "UpstreamSecretGone", cause.Error())
+// wipeAndFailGone wipes the target Secret and records the failure on the Ready
+// condition via failGone, distinguishing a successful wipe from one that itself failed.
+// Before this, a wipeTargetSecret failure was only passed to logger.Error and otherwise
+// discarded: the CR's Ready condition would still read as an ordinary confirmed-gone
+// sync failure with no indication the stale (possibly revoked/rotated) Secret was NOT
+// actually removed — a delete-blocking admission webhook, RBAC drift, or a transient API
+// error could leave it silently mounted into every workload that references it, with
+// nothing in .status to say so.
+func (r *KeyorixSecretReconciler) wipeAndFailGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, secretName, reason string, cause error) (ctrl.Result, error) {
+	var wipeErr error
+	if err := r.wipeTargetSecret(ctx, ks, secretName); err != nil {
+		wipeErr = err
+		log.FromContext(ctx).Error(err, "failed to wipe target Secret after upstream access was confirmed cut off")
+	}
+	return r.failGone(ctx, ks, reason, cause, wipeErr)
+}
+
+// failGone is fail's counterpart for a confirmed access-cut upstream failure (#428): it
+// records a distinct reason ("UpstreamSecretGone" for a confirmed-gone 404/403,
+// "UpstreamAccessRevoked" for a 401 — see the ErrSecretGone/ErrUnauthorized handling in
+// Reconcile) so the CR's status makes the wipe visible and explicable, rather than
+// looking like an ordinary transient sync failure.
+//
+// wipeErr, when non-nil, means wipeTargetSecret itself failed: the reason gets a
+// "WipeFailed" suffix (e.g. "UpstreamSecretGoneWipeFailed") and the message says so
+// explicitly, so a reader of .status alone can tell the stale target Secret may still be
+// sitting in the cluster with revoked/rotated data, not just that the upstream fetch
+// failed.
+func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, reason string, cause, wipeErr error) (ctrl.Result, error) {
+	msg := cause.Error()
+	if wipeErr != nil {
+		reason += "WipeFailed"
+		msg = fmt.Sprintf("%s — additionally, wiping the stale target Secret failed, it may still contain revoked/rotated data: %v", cause.Error(), wipeErr)
+	}
+	r.setReady(ks, metav1.ConditionFalse, reason, msg)
 	if err := r.Status().Update(ctx, ks); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -356,8 +465,11 @@ func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alp
 }
 
 // wipeTargetSecret deletes the target Secret when the upstream Keyorix reference has
-// been confirmed gone (404/403 — see the ErrSecretGone handling in Reconcile). Only a
-// Secret this operator actually manages AND that THIS CR controls is ever touched. Two
+// been confirmed gone (404/403, or the credential itself was rejected with a 401 — see
+// the ErrSecretGone/ErrUnauthorized handling in Reconcile) or when a retarget
+// (spec.target.name change) has orphaned the Secret previously materialised under an
+// old name. Only a Secret this operator actually manages AND that THIS CR controls is
+// ever touched. Two
 // checks, mirroring applySecret's write-side rigor:
 //   - ManagedByLabel: applySecret already refuses to adopt a pre-existing unmanaged
 //     Secret sharing the target name, so wiping an unlabeled Secret here too would risk
@@ -386,13 +498,32 @@ func (r *KeyorixSecretReconciler) wipeTargetSecret(ctx context.Context, ks *secr
 	return client.IgnoreNotFound(r.Delete(ctx, &secret))
 }
 
-// succeed records Ready=True and the synced fingerprint.
-func (r *KeyorixSecretReconciler) succeed(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, hash string) error {
+// succeed records Ready=True and the synced fingerprint. targetName is the CURRENT
+// target Secret name (secretName in Reconcile); orphanWipeErr, when non-nil, means a
+// retarget (spec.target.name change) was detected this reconcile but wiping the
+// Secret orphaned under the OLD name failed.
+func (r *KeyorixSecretReconciler) succeed(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, hash, targetName string, orphanWipeErr error) error {
 	now := metav1.Now()
 	ks.Status.LastSyncTime = &now
 	ks.Status.SyncedHash = hash
 	ks.Status.ObservedGeneration = ks.Generation
-	r.setReady(ks, metav1.ConditionTrue, "Synced", "target Secret is up to date")
+	if orphanWipeErr == nil {
+		// The common case (no retarget, or the retarget's orphan wipe succeeded):
+		// advance LastTargetName so a later retarget compares against the right name.
+		ks.Status.LastTargetName = targetName
+		r.setReady(ks, metav1.ConditionTrue, "Synced", "target Secret is up to date")
+	} else {
+		// The new target Secret synced fine, but the operator failed to wipe the
+		// Secret orphaned under the OLD target name. Deliberately leave
+		// LastTargetName pointing at the OLD name (NOT targetName) so the next
+		// reconcile retries that wipe instead of silently forgetting about it, and
+		// surface the failure in the message so it isn't lost the way a
+		// log-only wipeErr previously was (mirrors the wipeAndFailGone fix for the
+		// ErrSecretGone/ErrUnauthorized path).
+		r.setReady(ks, metav1.ConditionTrue, "Synced",
+			fmt.Sprintf("target Secret is up to date; WARNING: failed to wipe the orphaned Secret %q left behind by a spec.target.name change, it may still contain stale data: %v",
+				ks.Status.LastTargetName, orphanWipeErr))
+	}
 	return r.Status().Update(ctx, ks)
 }
 

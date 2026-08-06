@@ -49,6 +49,12 @@ metadata:
     # seccomp RuntimeDefault at the pod level), so only this one property is
     # suppressed, not the whole check family.
     checkov.io/skip1: CKV_K8S_22=postgres requires a writable root filesystem for its socket/temp files
+    # This is a third-party image (not one this project builds/publishes), already
+    # pinned to a specific repository:tag; digest-pinning a bundled upstream
+    # dependency is a separate, larger undertaking (tracking and rotating upstream
+    # digests) than pinning the images this project builds itself (server, web,
+    # operator, k8s-sync -- all of which support .Values.<component>.image.digest).
+    checkov.io/skip2: CKV_K8S_43=third-party bundled dependency, already tag-pinned; digest tracking is a separate undertaking from this project's own images
 spec:
   replicas: 1
   strategy:

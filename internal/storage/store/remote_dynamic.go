@@ -46,6 +46,17 @@
 // this proxy. This fix preserves that behavior exactly rather than introducing a
 // stricter guarantee the local backend itself doesn't have.
 //
+// TransitionDynamicSecretConfigDisabled is the one exception: a new CodeQL
+// query (StateTransitionMissingCAS) flagged SetDynamicSecretConfigEnabled's
+// read-then-write of DynamicSecretConfig.Disabled as the exact TOCTOU class
+// #388/#412 already closed for MachineIdentity.State/ProjectInvitation.State —
+// two racing enable/disable calls (or an unrelated concurrent edit landing
+// between the read and the write) could silently clobber each other with no
+// error surfaced. That one field now goes through a dedicated conditional
+// "WHERE id = ? AND disabled = ?" round trip instead of this file's plain
+// UpdateDynamicSecretConfig — see its doc below and the interface doc in
+// internal/core/storage/interface.go.
+//
 // For the local (GORM) equivalent of every primitive here see local_dynamic.go.
 package store
 
@@ -270,6 +281,22 @@ func (rs *RemoteStorage) UpdateDynamicSecretConfig(ctx context.Context, c *model
 		return fmt.Errorf("update dynamic-secret config failed: %s", resp.Error.Error())
 	}
 	return nil
+}
+
+// TransitionDynamicSecretConfigDisabled persists c's full row via a single
+// conditional PUT to /api/v1/system/dynamic-secrets/configs/{id}/transition
+// (mirroring TransitionMachineIdentityState's #388/#518 conditional-write route
+// pattern), carrying fromDisabled alongside so the upstream applies the exact
+// SAME conditional "WHERE id = ? AND disabled = ?" write its own LocalStorage
+// would — see the interface doc's atomicity note for why this exists as a
+// single round-trip primitive rather than a generic proxied UpdateDynamicSecretConfig.
+func (rs *RemoteStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/dynamic-secrets/configs/%d/transition", c.ID)
+	body := struct {
+		Config       dynamicSecretConfigWire `json:"config"`
+		FromDisabled bool                    `json:"from_disabled"`
+	}{Config: newDynamicSecretConfigWire(c), FromDisabled: fromDisabled}
+	return rs.putConditionalTransition(ctx, path, body, "transition dynamic-secret config")
 }
 
 // CountDynamicSecretConfigsByClassification returns install-wide config counts

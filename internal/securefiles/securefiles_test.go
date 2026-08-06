@@ -3,6 +3,8 @@ package securefiles
 import (
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -135,6 +137,83 @@ func TestFixFilePerms_RefusesSymlink(t *testing.T) {
 	info, statErr := os.Stat(target)
 	require.NoError(t, statErr)
 	assert.Equal(t, os.FileMode(0644), info.Mode().Perm(), "the symlink target's mode must be unchanged")
+}
+
+// TestFixFilePerms_TOCTOUSymlinkSwapNeverFollowed is the regression test for a
+// TOCTOU race: FixFilePerms used to Lstat a path to detect a symlink, then
+// separately call os.Chmod(path, ...) / os.Chown(path, ...) — both of which
+// re-resolve the path and FOLLOW a final-component symlink. A symlink swapped
+// into place after the Lstat check (or a race between the check and the fix)
+// could redirect the chmod/chown to an arbitrary target outside the caller's
+// control (an arbitrary chown when running as root).
+//
+// This test hammers that exact window: one goroutine repeatedly swaps path
+// between a regular file and a symlink pointing at a "sensitive" file outside
+// the directory (via atomic renames, mirroring how an attacker would swing the
+// directory entry), while another goroutine repeatedly calls FixFilePerms on
+// that same path with autofix=true. Throughout, the sensitive file's mode and
+// ownership must never change — proving the fix operates on the fd obtained by
+// an O_NOFOLLOW open (immune to the path being swapped out from under it), not
+// on the path a second time after the initial check.
+func TestFixFilePerms_TOCTOUSymlinkSwapNeverFollowed(t *testing.T) {
+	dir := t.TempDir()
+
+	// The attacker's target: a file outside the directory FixFilePerms is
+	// meant to operate on. If the symlink is ever followed by a fix, this
+	// file's mode changes to 0600 (the spec below) or its owner changes.
+	sensitive := filepath.Join(t.TempDir(), "sensitive-outside-file")
+	require.NoError(t, os.WriteFile(sensitive, []byte("do-not-touch"), 0644))
+
+	path := filepath.Join(dir, "target.key")
+	spec := FilePermSpec{Path: path, Mode: 0600}
+
+	const iterations = 500
+	var stop int32
+
+	// require/assert's fatal ("FailNow") helpers are documented as unsafe to call
+	// from a goroutine other than the test's own, so this goroutine reports setup
+	// failures via plain t.Errorf (safe for concurrent use) instead of require.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer atomic.StoreInt32(&stop, 1)
+		for i := 0; i < iterations; i++ {
+			// Swing path to a regular (wrong-mode) file via an atomic rename.
+			tmp := path + ".regular"
+			if err := os.WriteFile(tmp, []byte("x"), 0644); err != nil {
+				t.Errorf("setup: write regular file: %v", err)
+				return
+			}
+			if err := os.Rename(tmp, path); err != nil {
+				t.Errorf("setup: rename to regular file: %v", err)
+				return
+			}
+
+			// Swing path to a symlink pointing at the sensitive file, also via
+			// an atomic rename — this is the exact swap-after-check shape a
+			// TOCTOU exploit relies on.
+			tmpLink := path + ".link"
+			_ = os.Remove(tmpLink)
+			if err := os.Symlink(sensitive, tmpLink); err != nil {
+				t.Errorf("setup: create symlink: %v", err)
+				return
+			}
+			if err := os.Rename(tmpLink, path); err != nil {
+				t.Errorf("setup: rename to symlink: %v", err)
+				return
+			}
+		}
+	}()
+
+	for atomic.LoadInt32(&stop) == 0 {
+		_ = FixFilePerms([]FilePermSpec{spec}, true) // result ignored — either outcome (fixed regular file, or refused symlink) is valid
+	}
+	wg.Wait()
+
+	info, err := os.Lstat(sensitive)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0644), info.Mode().Perm(), "the sensitive file outside the directory must never be modified, even under a concurrent symlink swap")
 }
 
 func TestSyncDir(t *testing.T) {

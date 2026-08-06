@@ -9,7 +9,6 @@
 //
 //   - auth_encryption_migrate.go:
 //     migrateAPIClients:          "failed to update client" DB error branch
-//     migrateSessions:            "failed to update session" DB error branch
 //     migrateAPITokens:           "failed to update API token" DB error branch
 //     migratePasswordResetTokens: "failed to update password reset token" DB error branch
 //
@@ -325,29 +324,6 @@ func TestMigrateAPIClients_S27_UpdateFails(t *testing.T) {
 	err := migrateAPIClients(db, ae, false /* dryRun */)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to update client")
-}
-
-// TestMigrateSessions_S27_UpdateFails exercises the
-// "failed to update session %d" error branch inside migrateSessions.
-func TestMigrateSessions_S27_UpdateFails(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "migrate_sess_update_err.db")
-	ae, db := setupMigrateValidateTestAt(t, dir, dbPath)
-
-	require.NoError(t, db.Create(&models.Session{
-		UserID:       1,
-		SessionToken: "s27-sess-plain",
-	}).Error)
-
-	require.NoError(t, db.Exec(
-		`CREATE TRIGGER abort_sessions_update BEFORE UPDATE ON sessions BEGIN
-			SELECT RAISE(ABORT, 'trigger: update aborted for test');
-		END`,
-	).Error)
-
-	err := migrateSessions(db, ae, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to update session")
 }
 
 // TestMigrateAPITokens_S27_UpdateFails exercises the

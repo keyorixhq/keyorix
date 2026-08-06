@@ -43,8 +43,14 @@ func TestRESTSink_GetDecodesData(t *testing.T) {
 	assert.Equal(t, []byte("p4ss"), data["DB"])
 }
 
-func TestRESTSink_ApplyServerSideApply(t *testing.T) {
-	var gotMethod, gotCT, gotFM string
+// TestRESTSink_ApplyCreatesNewSecretViaPOST verifies that when no Secret exists yet
+// at the target name, Apply issues a plain POST create rather than a Server-Side
+// Apply PATCH (#Bug4): Kubernetes create is atomic against the object's existence, so
+// a name collision that raced into existence between the ownership read and this
+// write fails the POST outright (see TestRESTSink_ApplyCreateRace_Bug4) instead of
+// silently claiming/overwriting whatever is there.
+func TestRESTSink_ApplyCreatesNewSecretViaPOST(t *testing.T) {
+	var gotMethod, gotPath, gotCT string
 	var gotBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -54,8 +60,8 @@ func TestRESTSink_ApplyServerSideApply(t *testing.T) {
 			return
 		}
 		gotMethod = r.Method
+		gotPath = r.URL.Path
 		gotCT = r.Header.Get("Content-Type")
-		gotFM = r.URL.Query().Get("fieldManager")
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &gotBody)
 		_, _ = w.Write([]byte(`{"kind":"Secret"}`))
@@ -65,9 +71,9 @@ func TestRESTSink_ApplyServerSideApply(t *testing.T) {
 	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("p4ss")})
 	require.NoError(t, err)
 
-	assert.Equal(t, http.MethodPatch, gotMethod)
-	assert.Equal(t, "application/apply-patch+yaml", gotCT)
-	assert.Equal(t, "keyorix-sync", gotFM)
+	assert.Equal(t, http.MethodPost, gotMethod, "a fresh create must be an atomic POST, not an unconditional force=true PATCH")
+	assert.Equal(t, "/api/v1/namespaces/app/secrets", gotPath, "POST targets the namespace's collection endpoint, not a specific object path")
+	assert.Equal(t, "application/json", gotCT)
 	assert.Equal(t, "Secret", gotBody["kind"])
 	// Value is base64-encoded in the Secret's data map.
 	data := gotBody["data"].(map[string]interface{})
@@ -76,6 +82,35 @@ func TestRESTSink_ApplyServerSideApply(t *testing.T) {
 	meta := gotBody["metadata"].(map[string]interface{})
 	labels := meta["labels"].(map[string]interface{})
 	assert.Equal(t, "keyorix-sync", labels["app.kubernetes.io/managed-by"])
+	// A fresh create must never carry a resourceVersion precondition — there is
+	// nothing to pin yet.
+	_, hasRV := meta["resourceVersion"]
+	assert.False(t, hasRV, "a create must not set resourceVersion")
+}
+
+// TestRESTSink_ApplyCreateRace_Bug4 proves the fix for Bug4: a namespace-scoped
+// attacker races a Secret into existence at the exact target name between Apply's
+// ownership read (GET, 404 — nothing there yet) and its write. The create POST must
+// fail (simulating the K8s API server's atomic 409 AlreadyExists) rather than the old
+// behavior of an unconditional force=true PATCH silently claiming and overwriting the
+// attacker's pre-created object with the real secret value.
+func TestRESTSink_ApplyCreateRace_Bug4(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			// Ownership check observes nothing at this name yet.
+			w.WriteHeader(http.StatusNotFound)
+		case http.MethodPost:
+			// The attacker's Secret raced into existence in between — the API server's
+			// atomic create check rejects it.
+			w.WriteHeader(http.StatusConflict)
+		}
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("real-secret")})
+	require.Error(t, err, "a create-time race must surface as an error, never a silent overwrite")
+	assert.Contains(t, err.Error(), "HTTP 409")
 }
 
 func TestRESTSink_ListOwnedScopesByLabel(t *testing.T) {
@@ -174,12 +209,23 @@ func TestRESTSink_ApplyRefusesUnownedPreExistingSecret(t *testing.T) {
 	assert.False(t, sawPatch, "an unowned pre-existing Secret must never be written to, not even attempted")
 }
 
-// A Secret this agent already owns (from a prior apply) can still be updated.
+// A Secret this agent already owns (from a prior apply) can still be updated. #Bug4:
+// the PATCH must carry the exact resourceVersion just observed as an
+// optimistic-concurrency precondition, so a change to the object between the
+// ownership read and this write (e.g. deleted and recreated by an attacker under the
+// same name) is rejected by the API server rather than silently overwritten.
 func TestRESTSink_ApplyUpdatesAlreadyOwnedSecret(t *testing.T) {
 	var sawPatch bool
+	var gotCT, gotFM, gotForce string
+	var gotBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {
 			sawPatch = true
+			gotCT = r.Header.Get("Content-Type")
+			gotFM = r.URL.Query().Get("fieldManager")
+			gotForce = r.URL.Query().Get("force")
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &gotBody)
 			_, _ = w.Write([]byte(`{"kind":"Secret"}`))
 			return
 		}
@@ -190,6 +236,31 @@ func TestRESTSink_ApplyUpdatesAlreadyOwnedSecret(t *testing.T) {
 	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("v2")})
 	require.NoError(t, err)
 	assert.True(t, sawPatch, "an already-owned Secret must still be updatable")
+	assert.Equal(t, "application/apply-patch+yaml", gotCT)
+	assert.Equal(t, "keyorix-sync", gotFM)
+	assert.Equal(t, "true", gotForce)
+	meta := gotBody["metadata"].(map[string]interface{})
+	assert.Equal(t, "rv-1", meta["resourceVersion"], "the PATCH must pin the exact resourceVersion observed by the ownership check")
+}
+
+// TestRESTSink_ApplyPatchRejectsResourceVersionConflict_Bug4 proves the precondition
+// is load-bearing, not decorative: when the server reports the resourceVersion no
+// longer matches (a 409, simulating the object having changed between the ownership
+// read and this PATCH), Apply must surface that as an error rather than treating the
+// write as having succeeded.
+func TestRESTSink_ApplyPatchRejectsResourceVersionConflict_Bug4(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		_, _ = w.Write([]byte(`{"metadata":{"uid":"u-1","resourceVersion":"rv-1","labels":{"app.kubernetes.io/managed-by":"keyorix-sync"}}}`))
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("v2")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 409")
 }
 
 func TestRESTSink_ApplyError(t *testing.T) {
@@ -223,5 +294,7 @@ func TestRESTSink_WithEngine(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.Created)
-	assert.True(t, applied["/api/v1/namespaces/app/secrets/creds"])
+	// Nothing existed yet, so Apply creates via POST to the namespace collection
+	// endpoint (#Bug4), not a PATCH to the specific object path.
+	assert.True(t, applied["/api/v1/namespaces/app/secrets"])
 }

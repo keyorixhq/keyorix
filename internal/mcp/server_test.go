@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -197,6 +198,55 @@ func TestServe_MaxReadsUnsetIsUnlimited(t *testing.T) {
 	for _, r := range resps {
 		assert.NotEqual(t, true, resultMap(t, r)["isError"])
 	}
+}
+
+// A single oversized JSON-RPC message must not be fully buffered in memory: the
+// per-message size cap rejects it and Serve stops (parse-error semantics), rather than
+// letting json.Decoder grow an unbounded buffer for a multi-gigabyte params value.
+func TestServe_OversizedMessageRejected(t *testing.T) {
+	s := NewServer(&fakeReader{}, "")
+	s.maxMessageBytes = 200
+
+	pad := strings.Repeat("a", 1000)
+	msg := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"pad":%q}}`, pad)
+
+	var out bytes.Buffer
+	err := s.Serve(context.Background(), strings.NewReader(msg), &out)
+	require.Error(t, err, "an oversized single message must be rejected, not buffered")
+	assert.NotErrorIs(t, err, io.EOF)
+}
+
+// The per-message cap is a PER-MESSAGE budget, not a cumulative one across the whole
+// session: a message that consumes nearly the whole budget must not starve the next
+// message's decode — each dec.Decode() call gets a freshly reset allowance. This proves
+// the maxMessageReader reset-per-iteration approach (as opposed to a single
+// io.LimitReader wrapping the whole stream once, which would exhaust after the first
+// message and silently break every later one).
+func TestServe_MaxMessageBudgetResetsPerMessage(t *testing.T) {
+	s := NewServer(&fakeReader{}, "")
+	s.maxMessageBytes = 200
+
+	pad := strings.Repeat("a", 130) // total message size sits just under the 200 cap
+	msg1 := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"pad":%q}}`, pad)
+	msg2 := `{"jsonrpc":"2.0","id":2,"method":"ping"}`
+	msg3 := `{"jsonrpc":"2.0","id":3,"method":"ping"}`
+	require.Less(t, len(msg1), 200, "test setup: msg1 must fit under the cap on its own")
+
+	resps := run(t, s, msg1, msg2, msg3)
+	require.Len(t, resps, 3, "every message must be served — one near-cap message must not exhaust a shared budget")
+	for i, r := range resps {
+		assert.Nil(t, r.Error, "message %d must decode successfully", i+1)
+	}
+}
+
+// With no override, Serve falls back to defaultMaxMessageBytes (10MB) — well above any
+// normal JSON-RPC message — so ordinary traffic is unaffected by the new cap.
+func TestServe_DefaultMaxMessageBytesAllowsNormalMessages(t *testing.T) {
+	fr := &fakeReader{value: "p4ss"}
+	resps := run(t, NewServer(fr, ""),
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"app/prod/db"}}}`)
+	require.Len(t, resps, 1)
+	assert.Nil(t, resps[0].Error)
 }
 
 func TestServe_GetSecretRequiresRef(t *testing.T) {

@@ -83,6 +83,90 @@ func mkConfig(t *testing.T, c *KeyorixCore, ctx context.Context) *models.Dynamic
 	return cfg
 }
 
+// TestSetDynamicSecretConfigEnabled_HappyPathAndNoop proves the ordinary
+// enable/disable/no-op branches of SetDynamicSecretConfigEnabled still work
+// after routing the write through the new conditional
+// TransitionDynamicSecretConfigDisabled call.
+func TestSetDynamicSecretConfigEnabled_HappyPathAndNoop(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+	require.False(t, cfg.Disabled)
+
+	// Disabling a currently-enabled config succeeds.
+	updated, err := c.SetDynamicSecretConfigEnabled(ctx, testAdminActorID, cfg.ID, false)
+	require.NoError(t, err)
+	assert.True(t, updated.Disabled)
+	reload, err := c.GetDynamicSecretConfig(ctx, cfg.ID)
+	require.NoError(t, err)
+	assert.True(t, reload.Disabled)
+
+	// Re-disabling (already disabled → target disabled) is a harmless no-op,
+	// not an error — distinct from the lost-race case below.
+	noop, err := c.SetDynamicSecretConfigEnabled(ctx, testAdminActorID, cfg.ID, false)
+	require.NoError(t, err)
+	assert.True(t, noop.Disabled)
+
+	// Re-enabling succeeds.
+	reenabled, err := c.SetDynamicSecretConfigEnabled(ctx, testAdminActorID, cfg.ID, true)
+	require.NoError(t, err)
+	assert.False(t, reenabled.Disabled)
+}
+
+// TestSetDynamicSecretConfigEnabled_LostRaceReportedCleanly is the
+// StateTransitionMissingCAS regression, proven deterministically at the
+// core-layer boundary — mirroring machine_identities_test.go's "lost race on
+// the conditional write is reported like an illegal transition" case exactly,
+// just for DynamicSecretConfig.Disabled instead of MachineIdentity.State.
+// SetDynamicSecretConfigEnabled used to read the config, then persist the
+// FULL mutated row via a plain unconditional UpdateDynamicSecretConfig — a
+// TOCTOU window in which a racing caller (or an unrelated concurrent edit)
+// landing between the read and the write could be silently clobbered. This
+// drives MockStorage to hand back a stale pre-race read (Disabled=false) and
+// has TransitionDynamicSecretConfigDisabled report matched=false — exactly
+// what the real conditional UPDATE returns when a concurrent racer already
+// moved the row's disabled value away from what this call observed — and
+// asserts SetDynamicSecretConfigEnabled surfaces that as a clean "changed
+// concurrently" error rather than treating a false match as success.
+//
+// (The storage-layer half of this fix — that the conditional UPDATE itself
+// actually rejects a second write gated on a now-stale fromDisabled value —
+// is proven directly, back-to-back and under real goroutine concurrency,
+// against real SQLite in internal/storage/store's
+// TestTransitionDynamicSecretConfigDisabled_ClosesRace and
+// TestRaceReproStorageLayer-style coverage; this test's job is only to prove
+// the CORE-LAYER caller's false→error translation, which is why it drives
+// MockStorage directly instead of racing real goroutines against real SQLite
+// — the latter is inherently timing-sensitive and would be flaky under
+// `go test -race`, which this repo's CI runs.)
+func TestSetDynamicSecretConfigEnabled_LostRaceReportedCleanly(t *testing.T) {
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	ctx := context.Background()
+
+	staleCfg := &models.DynamicSecretConfig{ID: 7, ProjectID: 1, Name: "race-cfg", Disabled: false}
+	ms.GetDynamicSecretConfigFunc = func(_ context.Context, id uint) (*models.DynamicSecretConfig, error) {
+		require.Equal(t, uint(7), id)
+		// Return a COPY each call so SetDynamicSecretConfigEnabled's in-memory
+		// mutation of the returned cfg can't leak back into staleCfg.
+		cp := *staleCfg
+		return &cp, nil
+	}
+	ms.TransitionDynamicSecretConfigDisabledFunc = func(_ context.Context, cfg *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
+		assert.False(t, fromDisabled, "must gate on the value observed via GetDynamicSecretConfig, not some other value")
+		assert.True(t, cfg.Disabled, "must persist the caller's intended target (disabled=true)")
+		// Simulate the concurrent racer having already flipped the row's
+		// persisted disabled value away from fromDisabled: the conditional
+		// UPDATE's WHERE clause no longer matches any row.
+		return false, nil
+	}
+
+	_, err := c.SetDynamicSecretConfigEnabled(ctx, testAdminActorID, 7, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "changed concurrently")
+	assert.Contains(t, err.Error(), "7")
+}
+
 // #162: binding a dynamic-secret backend hands out standing access to mint live
 // credentials against it (a DB admin DSN or a cloud-IAM role) — the route only
 // requires secrets.write at the project/environment scope, which on its own would let

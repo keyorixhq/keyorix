@@ -14,19 +14,25 @@
 // internal/core.KeyorixCore (internal/core/risk_exceptions.go), exactly as it
 // does against a local backend.
 //
-// Atomicity (investigated, not assumed): local_risk_exceptions.go's
-// UpdateRiskException is an unconditional full-row `Save`, not a
-// conditional/optimistic-concurrency write — there is no
-// LockXForUpdate/SELECT ... FOR UPDATE anywhere in this subsystem, unlike, say,
-// UpdateProjectInvitation's `WHERE id = ? AND state = 'pending'` or #511's
-// duplicate-active-membership unique-index translation. internal/core's
-// RevokeRiskException/ApproveRiskException already re-fetch the exception and
-// check its revoked/approved/expiry state before mutating it — a check-then-act
-// sequence with exactly the same (small, pre-existing, accepted) race window
-// against a local backend as against this proxy. This fix preserves that
-// behavior exactly rather than introducing a stricter guarantee the local
-// backend itself doesn't have — no new atomic storage-interface primitive is
-// needed here.
+// Atomicity: local_risk_exceptions.go's UpdateRiskException is (and remains) an
+// unconditional full-row `Save` — internal/core.RevokeRiskException/
+// ApproveRiskException never call it directly for their own transitions.
+// A prior version of this file's doc argued the small check-then-act race
+// between those functions' GetRiskException read and their (then-only)
+// UpdateRiskException write was "pre-existing and accepted" against a local
+// backend too, so no conditional write was needed here. A new CodeQL query
+// (StateTransitionMissingCAS.ql) flagged that race as a real, confirmed TOCTOU:
+// two callers racing RevokeRiskException/ApproveRiskException for the same
+// exception (e.g. one admin revoking while another is mid-approve) could
+// silently clobber each other's write, with no error to either caller, exactly
+// like #388/#412 before their fixes. RevokeRiskExceptionIfNotRevoked and
+// ApproveRiskExceptionIfPending (below) close it the same way those did:
+// UpdateRiskException/its proxy route stay as an unconditional full-row write
+// for any OTHER caller that genuinely wants one, but RevokeRiskException/
+// ApproveRiskException in internal/core/risk_exceptions.go now call these
+// conditional methods instead, mirroring UpdateProjectInvitation's
+// `WHERE id = ? AND state = 'pending'` pattern (#412) and
+// TransitionMachineIdentityState's `WHERE id = ? AND state = ?` pattern (#388).
 //
 // For the local (GORM) equivalent of every primitive here see
 // local_risk_exceptions.go.
@@ -184,4 +190,26 @@ func (rs *RemoteStorage) UpdateRiskException(ctx context.Context, e *models.Risk
 		return fmt.Errorf("update risk exception failed: %s", resp.Error.Error())
 	}
 	return nil
+}
+
+// RevokeRiskExceptionIfNotRevoked persists e's full row via a single conditional
+// PUT to /api/v1/system/risk-exceptions/{id}/revoke — a dedicated route (NOT
+// UpdateRiskExceptionProxy) so the upstream applies the exact same conditional
+// "WHERE id = ? AND revoked = false" write its own LocalStorage would, in ONE
+// round trip. See the package doc for why this exists alongside (not instead
+// of) the plain UpdateRiskException above, mirroring
+// TransitionMachineIdentityState's single-round-trip conditional write (#388).
+func (rs *RemoteStorage) RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *models.RiskException) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/risk-exceptions/%d/revoke", e.ID)
+	return rs.putConditionalTransition(ctx, path, newRiskExceptionWire(e), "revoke risk exception")
+}
+
+// ApproveRiskExceptionIfPending persists e's full row via a single conditional
+// PUT to /api/v1/system/risk-exceptions/{id}/approve — mirrors
+// RevokeRiskExceptionIfNotRevoked exactly, gated instead on the row's CURRENT
+// revoked flag still being false AND its CURRENT approved flag still being
+// false.
+func (rs *RemoteStorage) ApproveRiskExceptionIfPending(ctx context.Context, e *models.RiskException) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/risk-exceptions/%d/approve", e.ID)
+	return rs.putConditionalTransition(ctx, path, newRiskExceptionWire(e), "approve risk exception")
 }

@@ -1,9 +1,9 @@
 // dynamic_secrets_proxy.go — server-side endpoints backing RemoteStorage's
 // dynamic-secrets storage primitives (ADR-035/ADR-049): CreateDynamicSecretConfig/
 // GetDynamicSecretConfig/ListDynamicSecretConfigs/UpdateDynamicSecretConfig/
-// CountDynamicSecretConfigsByClassification/CreateDynamicSecretLease/
-// GetDynamicSecretLease/ListDynamicSecretLeases/CountActiveLeases/
-// UpdateDynamicSecretLease/ListExpiredActiveLeases.
+// TransitionDynamicSecretConfigDisabled/CountDynamicSecretConfigsByClassification/
+// CreateDynamicSecretLease/GetDynamicSecretLease/ListDynamicSecretLeases/
+// CountActiveLeases/UpdateDynamicSecretLease/ListExpiredActiveLeases.
 //
 // A downstream Keyorix server booted with storage.type: remote (ADR-049) proxies
 // its dynamic-secrets storage calls to whichever upstream server it's configured
@@ -233,7 +233,7 @@ func (h *DynamicSecretHandler) CreateDynamicSecretConfigProxy(w http.ResponseWri
 func (h *DynamicSecretHandler) GetDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid config id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
 		return
 	}
 	cfg, err := h.coreService.Storage().GetDynamicSecretConfig(r.Context(), uint(id))
@@ -277,7 +277,7 @@ func (h *DynamicSecretHandler) ListDynamicSecretConfigsProxy(w http.ResponseWrit
 func (h *DynamicSecretHandler) UpdateDynamicSecretConfigProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid config id")
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
 		return
 	}
 	var body dynamicSecretConfigProxyWire
@@ -292,6 +292,45 @@ func (h *DynamicSecretHandler) UpdateDynamicSecretConfigProxy(w http.ResponseWri
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
+}
+
+// transitionDynamicSecretConfigDisabledBody is the request body
+// TransitionDynamicSecretConfigDisabledProxy expects: the full config row the
+// caller already mutated in memory (Disabled/UpdatedAt already set to the
+// target values), plus the fromDisabled value the caller observed via its own
+// GetDynamicSecretConfig read.
+type transitionDynamicSecretConfigDisabledBody struct {
+	Config       dynamicSecretConfigProxyWire `json:"config"`
+	FromDisabled bool                         `json:"from_disabled"`
+}
+
+// TransitionDynamicSecretConfigDisabledProxy handles PUT
+// /api/v1/system/dynamic-secrets/configs/{id}/transition. Runs the SAME
+// conditional "WHERE id = ? AND disabled = ?" write
+// core.KeyorixCore.SetDynamicSecretConfigEnabled relies on against a local
+// backend (StateTransitionMissingCAS) — see the package doc's atomicity note
+// for why this is a dedicated route rather than a generic
+// UpdateDynamicSecretConfigProxy call.
+func (h *DynamicSecretHandler) TransitionDynamicSecretConfigDisabledProxy(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidConfigID)
+		return
+	}
+	var body transitionDynamicSecretConfigDisabledBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
+		return
+	}
+	body.Config.ID = uint(id)
+	cfg := body.Config.toModel()
+	matched, err := h.coreService.Storage().TransitionDynamicSecretConfigDisabled(r.Context(), cfg, body.FromDisabled)
+	if err != nil {
+		log.Printf("dynamic-secrets proxy: transition config failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
 }
 
 // CountDynamicSecretConfigsByClassificationProxy handles GET

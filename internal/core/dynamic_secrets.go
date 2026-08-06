@@ -68,6 +68,17 @@ func isPrivateIP(ip net.IP) bool {
 //
 // Returns "" when the format is unrecognised or the host cannot be extracted.
 func parseDSNHost(dsn string) string {
+	// The kubernetes backend's admin_dsn is a JSON blob ({"api_server": "https://
+	// host:port", ...}, see internal/dynamic/kubernetes.go), not a URL/wrapper/
+	// key-value DSN string -- none of the checks below can extract a host from it
+	// (a JSON blob embedding "https://" mid-string doesn't parse as a URL: url.Parse
+	// requires the scheme at the start), so it fell through to the "unrecognised
+	// format, skip validation" case, silently bypassing validateAdminDSNHost's
+	// private-IP/IMDS guard for this one backend type. Try this first since it's
+	// the most precise match for its exact shape.
+	if h, ok := parseDSNHostFromKubernetesConfig(dsn); ok {
+		return h
+	}
 	// URL-form DSNs (any scheme that carries ://host).
 	if strings.Contains(dsn, "://") {
 		if h, ok := parseDSNHostFromURL(dsn); ok {
@@ -84,6 +95,21 @@ func parseDSNHost(dsn string) string {
 	}
 	// PostgreSQL key-value: scan for host=<value>
 	return parseDSNHostFromKeyValue(dsn)
+}
+
+// parseDSNHostFromKubernetesConfig extracts the host from a kubernetes backend's
+// JSON-shaped admin_dsn ({"api_server": "https://host:port", "token": "...",
+// "ca_cert": "..."}, matching internal/dynamic.kubernetesConfig). A missing or
+// empty api_server means in-cluster mode (KUBERNETES_SERVICE_HOST/PORT), which
+// isn't attacker-influenceable, so there's nothing to validate.
+func parseDSNHostFromKubernetesConfig(dsn string) (string, bool) {
+	var cfg struct {
+		APIServer string `json:"api_server"`
+	}
+	if err := json.Unmarshal([]byte(dsn), &cfg); err != nil || strings.TrimSpace(cfg.APIServer) == "" {
+		return "", false
+	}
+	return parseDSNHostFromURL(cfg.APIServer)
 }
 
 func parseDSNHostFromURL(dsn string) (string, bool) {
@@ -363,8 +389,17 @@ func (c *KeyorixCore) SetDynamicSecretConfigEnabled(ctx context.Context, actorID
 	old := cfg.Disabled
 	cfg.Disabled = disabled
 	cfg.UpdatedAt = c.now()
-	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+	matched, err := c.storage.TransitionDynamicSecretConfigDisabled(ctx, cfg, old)
+	if err != nil {
 		return nil, err
+	}
+	if !matched {
+		// Lost the race: the row's persisted disabled value moved away from old
+		// between the GetDynamicSecretConfig read and this write (a concurrent
+		// enable/disable, or an unrelated concurrent edit) — treat as a rejected
+		// write, not silently applied, exactly like TransitionMachineIdentityState's
+		// #388/#518 lost-race handling.
+		return nil, fmt.Errorf("dynamic-secret config %d's enabled state changed concurrently; retry", configID)
 	}
 	aid := actorID
 	pid := cfg.ProjectID

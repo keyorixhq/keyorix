@@ -12,7 +12,7 @@ import (
 // ListExpiringUserRoles returns every UserRole whose ExpiresAt is non-nil and
 // before the given cutoff. Grants that have already expired (ExpiresAt in the
 // past) are included so the critical-window check can catch them too.
-func (ls *LocalStorage) ListExpiringUserRoles(ctx context.Context, before time.Time) ([]models.UserRole, error) {
+func (ls *LocalStorage) ListExpiringUserRoles(ctx context.Context, before time.Time) ([]models.UserRole, error) { // nosemgrep: keyorix-role-grant-query-missing-expiry-filter -- this IS the expiry-notification query; it intentionally includes already-expired grants (see doc comment above)
 	var grants []models.UserRole
 	return grants, ls.db.WithContext(ctx).
 		Where("expires_at IS NOT NULL AND expires_at < ?", before).

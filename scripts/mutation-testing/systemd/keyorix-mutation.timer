@@ -1,0 +1,13 @@
+[Unit]
+Description=Weekly keyorix mutation-testing run
+
+[Timer]
+# Staggered against the fuzzing box's own schedule and this repo's CI cron
+# jobs (see cron times across .github/workflows/*.yml) purely so any shared
+# dashboards/logs aren't all firing at once -- these run on separate boxes,
+# so there's no actual resource contention to avoid.
+OnCalendar=Tue *-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
