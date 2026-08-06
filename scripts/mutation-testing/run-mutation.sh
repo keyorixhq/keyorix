@@ -24,6 +24,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MUTATION_WORKERS:=4}"
 : "${MUTATION_EFFICACY_DROP_THRESHOLD:=5}" # percentage points
 
+# Go's default GOMAXPROCS reads the host's visible thread count, not this
+# service's CPUQuota (systemd/keyorix-mutation.service) or the container's
+# actual core budget -- so each of MUTATION_WORKERS concurrent `go build`/
+# `go test` subprocesses independently spins up threads for ALL visible
+# threads, not its fair share. With workers=4 on an 8-thread host that's up
+# to 32 runnable threads fighting over a 4-core CPUQuota, which doesn't
+# break the quota but does starve individual `go test` runs long enough to
+# blow gremlins' per-mutant timeout -- every mutant comes back TIMED OUT
+# instead of KILLED/LIVED. Cap each worker to its fair share so total
+# demand matches the real budget instead of oversubscribing it 8x.
+export GOMAXPROCS="${MUTATION_GOMAXPROCS:-1}"
+
 # summarize.py (invoked below as a child process) reads MUTATION_STATE_DIR
 # itself to locate its input file -- a plain `:` default-assignment doesn't
 # export to child processes, so make sure it's actually visible there even
