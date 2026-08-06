@@ -324,6 +324,38 @@ func TestAuthInterceptor_PATNetworkAllowlistOverGRPC(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// A machine token's IP allowlist (validateGRPCMachineToken) is enforced over gRPC
+// via the peer address, the same as a PAT's allowlist above — in-range peer is
+// allowed; off-network is PermissionDenied. TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC
+// never sets AllowedCIDRs, so that check's boundary/negation was previously
+// exercised by no test at all (found by mutation testing: both mutants LIVED).
+func TestAuthInterceptor_MachineTokenNetworkAllowlistOverGRPC(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}))
+
+	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot-cidr", "service", "", "", 1)
+	require.NoError(t, err)
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, 1, core.IssueMachineTokenParams{
+		Name:         "tok-cidr",
+		AllowedCIDRs: []string{"10.0.0.0/8"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1))
+
+	interceptor := AuthInterceptor(h.CoreService, false)
+
+	_, err = interceptor(bearerCtxFromIP(tok.PlainToken, "10.1.2.3"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
+	require.NoError(t, err, "in-range source IP is allowed over gRPC")
+
+	_, err = interceptor(bearerCtxFromIP(tok.PlainToken, "203.0.113.9"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
+	require.Error(t, err, "off-network source IP must be denied over gRPC")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
 // setUserFields fetches a user by id, applies mutate, and persists — used to put a
 // test user into a restricted account state or flip its MFA flag.
 func setUserFields(t *testing.T, h *testhelper.RBACTestHelper, userID uint, mutate func(*models.User)) {

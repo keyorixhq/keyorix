@@ -316,8 +316,11 @@ func validateGRPCMachineToken(ctx context.Context, coreService *core.KeyorixCore
 		ActorType:         core.ActorTypeMachine,
 		MachineIdentityID: machine.ID,
 	}
-	// Enforce machine token IP allowlist via gRPC peer IP.
-	if restriction != nil && len(restriction.AllowedCIDRs) > 0 {
+	// Enforce machine token IP allowlist via gRPC peer IP. restriction is nil
+	// unless machineRestrictionFrom found at least one CIDR (it never returns
+	// a non-nil restriction with an empty AllowedCIDRs), so a non-nil check
+	// alone is sufficient here — no separate length guard needed.
+	if restriction != nil {
 		if !core.IPInCIDRs(PeerIP(ctx), restriction.AllowedCIDRs) {
 			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
 		}
