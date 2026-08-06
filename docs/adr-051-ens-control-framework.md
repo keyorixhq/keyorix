@@ -65,8 +65,15 @@ confirmable mapping, consistent with how the other four regimes are treated.
 
 ## Deferred follow-ups
 
-- Surface the ENS column in the web/ compliance UI — the matrix
-  page renders ISO/SOC2/NIS2/DORA today; ENS is carried in the API already.
-- Optional per-regime filtering of the matrix (show only the ENS view).
+- ~~Surface the ENS column in the web/ compliance UI~~ — **done.** The ENS tab, per-
+  control ENS reference line, and ENS section card were built in the (then-separate)
+  keyorix-web repo and folded in unchanged by the ADR-070 monorepo merge; this note
+  wasn't updated at the time. Verified 2026-08-06: `web/src/pages/compliance/CompliancePage.tsx`
+  `FRAMEWORKS` includes an `ens` entry, `ControlMatrixPanel`'s `refLine` includes ENS
+  refs, `web/src/services/compliance.ts` carries `frameworks.ens` end to end, and
+  `CompliancePage.test.tsx` covers the ENS tab (29/29 tests green).
+- Optional per-regime filtering of the matrix (show only the ENS view) — the tab bar
+  already does this (`activeFramework` filters `visibleControls`); nothing further
+  needed unless a dedicated `?framework=ens`-style deep link is wanted.
 - Map any future controls (e.g. backup/continuity `op.cont`, comms `mp.com`) as those
   postures become first-class matrix entries.
