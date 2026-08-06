@@ -132,7 +132,8 @@ release: populate-webui-dist
 # govulncheck/grype to answer "are we affected by CVE-X?" — the core CRA
 # Article 14 question. Requires cyclonedx-gomod on PATH
 # (go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0)
-# and cdxgen on PATH (npm install -g @cyclonedx/cdxgen@12.8.2).
+# and cdxgen on PATH (npm ci --ignore-scripts, then add
+# node_modules/.bin to PATH — see package.json).
 sbom:
 	@mkdir -p dist
 	$(MAKE) _sbom-generate
