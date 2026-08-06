@@ -82,6 +82,23 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system \
   --set 'imagePullSecrets[0].name=my-registry-cred'
 ```
 
+## Private registries
+
+For an air-gapped deployment that mirrors `keyorix-operator`'s image to a private,
+authenticated registry, create a `docker-registry` Secret in the release namespace and
+reference it via `imagePullSecrets`:
+
+```sh
+kubectl create secret docker-registry my-registry-cred \
+  -n keyorix-system \
+  --docker-server=my-mirror.example.com \
+  --docker-username=... --docker-password=...
+
+helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system \
+  --set image.repository=my-mirror.example.com/keyorix-operator \
+  --set 'imagePullSecrets[0].name=my-registry-cred'
+```
+
 ## Uninstalling
 
 `helm uninstall` removes the controller and RBAC. Helm does **not** remove CRDs it
