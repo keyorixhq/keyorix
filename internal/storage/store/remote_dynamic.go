@@ -296,20 +296,7 @@ func (rs *RemoteStorage) TransitionDynamicSecretConfigDisabled(ctx context.Conte
 		Config       dynamicSecretConfigWire `json:"config"`
 		FromDisabled bool                    `json:"from_disabled"`
 	}{Config: newDynamicSecretConfigWire(c), FromDisabled: fromDisabled}
-	resp, err := rs.client.Put(ctx, path, body)
-	if err != nil {
-		return false, fmt.Errorf("failed to transition dynamic-secret config: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("transition dynamic-secret config failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Matched bool `json:"matched"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Matched, nil
+	return rs.putConditionalTransition(ctx, path, body, "transition dynamic-secret config")
 }
 
 // CountDynamicSecretConfigsByClassification returns install-wide config counts

@@ -201,20 +201,7 @@ func (rs *RemoteStorage) UpdateRiskException(ctx context.Context, e *models.Risk
 // TransitionMachineIdentityState's single-round-trip conditional write (#388).
 func (rs *RemoteStorage) RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *models.RiskException) (bool, error) {
 	path := fmt.Sprintf("/api/v1/system/risk-exceptions/%d/revoke", e.ID)
-	resp, err := rs.client.Put(ctx, path, newRiskExceptionWire(e))
-	if err != nil {
-		return false, fmt.Errorf("failed to revoke risk exception: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("revoke risk exception failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Matched bool `json:"matched"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Matched, nil
+	return rs.putConditionalTransition(ctx, path, newRiskExceptionWire(e), "revoke risk exception")
 }
 
 // ApproveRiskExceptionIfPending persists e's full row via a single conditional
@@ -224,18 +211,5 @@ func (rs *RemoteStorage) RevokeRiskExceptionIfNotRevoked(ctx context.Context, e 
 // false.
 func (rs *RemoteStorage) ApproveRiskExceptionIfPending(ctx context.Context, e *models.RiskException) (bool, error) {
 	path := fmt.Sprintf("/api/v1/system/risk-exceptions/%d/approve", e.ID)
-	resp, err := rs.client.Put(ctx, path, newRiskExceptionWire(e))
-	if err != nil {
-		return false, fmt.Errorf("failed to approve risk exception: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("approve risk exception failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Matched bool `json:"matched"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Matched, nil
+	return rs.putConditionalTransition(ctx, path, newRiskExceptionWire(e), "approve risk exception")
 }

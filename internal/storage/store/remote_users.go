@@ -419,20 +419,7 @@ func (rs *RemoteStorage) UpdateUserIfActiveStateMatches(ctx context.Context, use
 		UpdatedAt:   user.UpdatedAt,
 		FromActive:  fromActive,
 	}
-	resp, err := rs.client.Put(ctx, path, body)
-	if err != nil {
-		return false, fmt.Errorf("failed to update user active state: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("update user active state failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Matched bool `json:"matched"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Matched, nil
+	return rs.putConditionalTransition(ctx, path, body, "update user active state")
 }
 
 // UpdateLastLogin is not available in remote mode — last_login_at is stamped

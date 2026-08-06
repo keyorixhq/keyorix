@@ -256,20 +256,7 @@ type transitionSecretStatusWireRequest struct {
 func (rs *RemoteStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
 	path := fmt.Sprintf("/api/v1/system/secrets/%d/transition-status", secret.ID)
 	body := transitionSecretStatusWireRequest{Secret: secret, FromStatus: fromStatus}
-	resp, err := rs.client.Put(ctx, path, body)
-	if err != nil {
-		return false, fmt.Errorf("failed to transition secret status: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("transition secret status failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		Matched bool `json:"matched"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.Matched, nil
+	return rs.putConditionalTransition(ctx, path, body, "transition secret status")
 }
 
 // DeleteSecret deletes a secret by ID via remote API.
