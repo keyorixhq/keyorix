@@ -20,7 +20,13 @@ ExecStart=/opt/keyorix-mutation/keyorix/scripts/mutation-testing/run-mutation.sh
 # quota only makes the run take longer, not shallower.
 Nice=10
 CPUQuota=400%
-MemoryMax=4G
+# 7G, not 4G: with MUTATION_WORKERS=4 concurrent `go build`/`go test`
+# invocations, 4G was tight enough to hit this cap on its own (independent
+# of the LXC container's own memory allocation) and MemorySwapMax defaults to
+# infinity, so hitting it meant swapping instead of an OOM kill -- silent
+# thrashing, not a clean failure. Provision the container with at least 8G
+# to leave this real headroom above it (see README.md's sizing guidance).
+MemoryMax=7G
 
 # Process-isolation hardening (mirrors keyorix-fuzz.service's rationale).
 # This service holds a GH_TOKEN with Issues read/write, loaded via
