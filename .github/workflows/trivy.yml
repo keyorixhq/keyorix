@@ -43,6 +43,20 @@ jobs:
       # silently non-blocking. This second run makes MEDIUM+ misconfigs an actual gate,
       # respecting .trivyignore for the handful of documented false positives (see that
       # file's comments) rather than raising the bar and leaving them unaddressed.
+      #
+      # Deliberately kept as a SEPARATE run, not merged with format:sarif above by
+      # adding exit-code here too, despite `format` and `exit-code` being independent
+      # trivy-action inputs on paper: tried exactly that (PR #1366) and it broke CI --
+      # this repo's charts fail to render without --set overrides (deploy/helm/keyorix
+      # needs auth.masterPassword, deploy/helm/keyorix-k8s-sync needs keyorix.url,
+      # neither supplied here since this scan targets the whole repo, not a specific
+      # rendered chart), which trivy logs as an ERROR either way -- but with format:sarif
+      # specifically, that error propagates into a non-zero exit with NO findings printed
+      # at all, whereas with the default table format it's a logged warning that doesn't
+      # fail the run. Root cause not fully isolated (trivy's SARIF writer path apparently
+      # treats an upstream scan error differently from its table writer), but confirmed
+      # empirically reproducible, so don't re-attempt this merge without first verifying
+      # against a real CI run, not just reading trivy-action's source.
       - name: Run Trivy (Dockerfile / Helm / k8s misconfigs) -- blocking
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
