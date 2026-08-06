@@ -22,6 +22,16 @@
 # most invocations of this timer should be a no-op.
 set -euo pipefail
 
+# `find` below tries to restore its starting cwd when it's done traversing;
+# if that cwd isn't readable by this script's caller (e.g. invoked via
+# `sudo -u mutation` from a root shell sitting in /root), find exits
+# non-zero purely over that, which -- combined with `set -e` -- aborts the
+# whole script before it ever reaches the deletion loop. systemd's own
+# invocation already defaults WorkingDirectory to `/` (always accessible),
+# but cd there explicitly so this script is robust to any caller, not just
+# the one it's currently wired to.
+cd /
+
 : "${GOCACHE:?set GOCACHE to the mutation-testing build cache dir}"
 : "${TRIM_DISK_THRESHOLD_PCT:=85}" # trigger trimming at this usage%
 : "${TRIM_DISK_TARGET_PCT:=65}"    # trim until usage drops back to this%
