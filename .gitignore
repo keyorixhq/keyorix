@@ -27,6 +27,13 @@ coverage.out
 *.coverprofile
 *.testresult
 
+# --- Python Build/Test Artifacts (scripts/mutation-testing) ---
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+coverage-python.xml
+
 # --- Database Files ---
 *.db
 *.db-shm
