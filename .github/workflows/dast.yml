@@ -111,8 +111,14 @@ jobs:
           done
           curl -sf http://localhost:8080/health || { echo "Server did not become healthy"; exit 1; }
 
+      - name: Cache Nuclei binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/nuclei
+          key: nuclei-v3.3.9-${{ runner.os }}
+
       - name: Install Nuclei
-        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.9 # NOSONAR githubactions:S6437 -- pinned to v3.3.9; go.sum not applicable for standalone DAST tool binaries outside the module graph
+        run: '[ -x ~/go/bin/nuclei ] || go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.9' # NOSONAR githubactions:S6437 -- pinned to v3.3.9; go.sum not applicable for standalone DAST tool binaries outside the module graph
 
       - name: Update Nuclei templates
         run: nuclei -update-templates -silent

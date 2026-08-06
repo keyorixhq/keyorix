@@ -125,8 +125,19 @@ jobs:
         run: sed -i 's|^SF:|SF:web/|' web/coverage/lcov.info
         if: hashFiles('web/coverage/lcov.info') != ''
 
+      # Was SonarSource/sonarcloud-github-action, which is itself deprecated (its
+      # own action.yml prints a warning on every run: "This action is deprecated
+      # ... Please use the sonarqube-scan-action action instead") and was already
+      # just a thin wrapper delegating straight to this same action -- confirmed
+      # by reading both actions' source at their pinned refs before migrating,
+      # not assumed. Also resolves the original "cache the scanner CLI" ask a
+      # different way than proposed: sonarqube-scan-action already caches the
+      # scanner CLI internally via its own actions/cache step (path keyed on
+      # scannerVersion+os+arch), so no additional caching needs adding here --
+      # wrapping another cache around this would just duplicate what's already
+      # inside the action.
       - name: Analyze with SonarCloud
-        uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8
+        uses: SonarSource/sonarqube-scan-action@0303d6b62e310685c0e34d0b9cde218036885c4d # v5.0.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
