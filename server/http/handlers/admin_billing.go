@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/license"
 )
 
 // AdminBillingHandler serves GET /api/v1/admin/billing/report.
@@ -75,6 +76,15 @@ func (h *AdminBillingHandler) GetBillingReport(w http.ResponseWriter, r *http.Re
 			}
 			projectIDs = append(projectIDs, uint(n))
 		}
+	}
+
+	// Checked here (not just inside core.GenerateBillingReport) so the client gets a
+	// distinguishable 403 "license required" response instead of the generic 500
+	// clientSafe() masks every other error behind — a caller building a billing UI
+	// needs to tell "not licensed" apart from "server broke" to render correctly.
+	if !h.coreService.HasLicensedFeature(license.FeatureBilling) {
+		sendError(w, "Forbidden", "FinOps billing reports require a commercial license (feature: billing)", http.StatusForbidden, nil)
+		return
 	}
 
 	report, err := h.coreService.GenerateBillingReport(r.Context(), from, to, projectIDs)

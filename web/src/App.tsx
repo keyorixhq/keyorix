@@ -56,6 +56,7 @@ const SharingManagementPage = React.lazy(() =>
 const ProfilePage = React.lazy(() => import('./pages/profile').then((m) => ({ default: m.ProfilePage })));
 
 const AdminPage = React.lazy(() => import('./pages/admin/AdminPage').then((m) => ({ default: m.AdminPage })));
+const BillingPage = React.lazy(() => import('./pages/billing/BillingPage').then((m) => ({ default: m.BillingPage })));
 const UserDetailPage = React.lazy(() =>
     import('./pages/admin/UserDetailPage').then((m) => ({ default: m.UserDetailPage }))
 );
@@ -166,6 +167,14 @@ function App() {
                                                     element={
                                                         <AdminRoute>
                                                             <AdminPage />
+                                                        </AdminRoute>
+                                                    }
+                                                />
+                                                <Route
+                                                    path={ROUTES.ADMIN_BILLING}
+                                                    element={
+                                                        <AdminRoute>
+                                                            <BillingPage />
                                                         </AdminRoute>
                                                     }
                                                 />

@@ -16,6 +16,7 @@ import {
     ScaleIcon,
     RocketLaunchIcon,
     ShareIcon,
+    BanknotesIcon,
 } from '@heroicons/react/24/outline';
 import { useUIStore } from '../../store/uiStore';
 import { useAuth } from '../../features/auth';
@@ -117,6 +118,13 @@ const NAV: NavItem[] = [
         name: 'Compliance',
         href: '/compliance',
         icon: ScaleIcon,
+    },
+    {
+        kind: 'leaf',
+        name: 'Billing',
+        href: '/admin/billing',
+        icon: BanknotesIcon,
+        adminOnly: true,
     },
     {
         kind: 'leaf',
