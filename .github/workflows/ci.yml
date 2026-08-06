@@ -82,15 +82,45 @@ jobs:
       # NOT wired into docs_only itself, since jobs like build/test/lint stay
       # gated on docs_only alone and should keep running on web/-only PRs.
       web_only: ${{ steps.filter.outputs.web_only }}
+      # True when every changed file is in a category verified to contain no
+      # Go source and nothing any Go build/test/lint/vuln-scan step reads:
+      # scripts/ (shell/Python tooling, not part of any go.mod -- verified no
+      # .go files), .semgrep/ (rule YAML), demo/ and integrations/ (shell/
+      # YAML/JS samples, verified no .go files), root repo-metadata files, and
+      # any workflow file EXCEPT ci.yml itself (this file defines the gating
+      # logic below, so a change to it must always run the full suite to
+      # validate the change). A separate, non-overlapping check from
+      # docs_only above (no need to also match \.md$/^docs/ here -- jobs
+      # check both outputs). Deliberately does NOT include: examples/
+      # (contains real root-module .go files with no separate go.mod),
+      # configs/ (plausibly read by config-loading code via a search path,
+      # not verified safe), migrations/ (contains a .go file, plausibly
+      # exercised by tests), or go.mod/go.sum/go.work (dependency changes
+      # must always run the full suite). An allowlist, not a denylist,
+      # deliberately -- a new top-level directory added later and never
+      # added here just means this stays false (full suite runs, safe);
+      # a denylist would instead default to skipping an unrecognized
+      # directory, silently under-testing it.
+      go_unaffected: ${{ steps.filter.outputs.go_unaffected }}
+      # True when every changed file is under operator/ -- a separate Go
+      # module (own go.mod, excluded from go.work), so a diff confined to it
+      # cannot change the ROOT module's test/build/lint/vuln-scan/license
+      # outcomes. Deliberately does NOT gate the `operator` job itself below,
+      # which is exactly what must still run for this case.
+      operator_only: ${{ steps.filter.outputs.operator_only }}
     steps:
-      - name: Detect docs-only / web-only changes
+      - name: Detect docs-only / web-only / go-unaffected / operator-only changes
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
-            echo "web_only=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "docs_only=false"
+              echo "web_only=false"
+              echo "go_unaffected=false"
+              echo "operator_only=false"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
@@ -105,6 +135,21 @@ jobs:
             echo "web_only=false" >> "$GITHUB_OUTPUT"
           else
             echo "web_only=true" >> "$GITHUB_OUTPUT"
+          fi
+          # ci.yml itself defines this gating logic -- a change to it must
+          # always run the full suite regardless of what else it matches
+          # below, so it's checked first and short-circuits to false.
+          if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$changed" ] || echo "$changed" | grep -vE '^(scripts/|\.semgrep/|demo/|integrations/|\.github/workflows/|\.gitignore$|\.gitattributes$|LICENSE$|COPYRIGHT$)' > /dev/null; then
+            echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go_unaffected=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$changed" ] || echo "$changed" | grep -vE '^operator/' > /dev/null; then
+            echo "operator_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "operator_only=true" >> "$GITHUB_OUTPUT"
           fi
 
   # web/ (ADR-070) has its own pnpm-workspace.yaml. pnpm resolves its
@@ -172,7 +217,7 @@ jobs:
   # instead of via the shared gate, but nothing waits an extra ~30s to start.
   preflight:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -220,7 +265,7 @@ jobs:
     # default, so preflight's success must be checked explicitly here too --
     # otherwise a docs_only-unrelated broken build would no longer be
     # fast-failed by preflight before this (expensive) job starts.
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -422,7 +467,7 @@ jobs:
   # (as it did when both lived inside one sequential build-and-test job).
   static-analysis:
     needs: [preflight, changes]
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true'
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -467,7 +512,7 @@ jobs:
     # skipped -- combined with the docs_only check so the whole aggregator
     # itself is skipped (not run at all) on a docs-only PR, matching
     # test-suite/static-analysis being skipped too.
-    if: always() && needs.changes.outputs.docs_only != 'true'
+    if: always() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     # download-artifact needs actions: read beyond the workflow-level
     # contents: read default, even for same-run artifacts.
@@ -516,7 +561,7 @@ jobs:
 
   lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -554,7 +599,10 @@ jobs:
   # It is therefore not covered by the root `go ./...` jobs above; gate it here.
   operator:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    # Deliberately NOT gated on operator_only -- that flag means the diff is
+    # CONFINED to operator/, which is exactly the case this job must still
+    # run for.
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -625,7 +673,10 @@ jobs:
   # web/-only PR is guaranteed to produce the exact same true-targets.txt.
   fuzz-targets:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true'
+    # Deliberately NOT gated on operator_only -- this job checks FuzzXxx
+    # functions in BOTH the root and operator modules, and an operator-only
+    # diff could add/remove/rename one there.
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -726,7 +777,10 @@ jobs:
   # were found in either module's real dependency tree.
   licenses:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    # Deliberately NOT gated on operator_only -- this job checks BOTH the
+    # root and operator modules' dependency licenses, and an operator-only
+    # diff could add a new operator/go.mod dependency.
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -818,7 +872,7 @@ jobs:
 
   helm-chart:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1001,7 +1055,7 @@ jobs:
   # against the same rendered chart output.
   helm-chart-security:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1097,7 +1151,7 @@ jobs:
   # without blocking, and the .spectral.yaml at the repo root controls overrides.
   openapi-lint:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
