@@ -138,6 +138,8 @@ const FederatedReadPanel: React.FC = () => {
         setTimeout(() => setCopied(false), 1500);
     };
 
+    const maskLength = value != null ? Math.min(value.length, 40) : 24;
+
     return (
         <form onSubmit={submit} className="space-y-4">
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -221,9 +223,7 @@ const FederatedReadPanel: React.FC = () => {
                         </div>
                     </div>
                     <code className="block break-all font-mono text-sm" style={{ color: 'var(--text-primary)' }}>
-                        {revealed && value != null
-                            ? value
-                            : '•'.repeat(value != null ? Math.min(value.length, 40) : 24)}
+                        {revealed && value != null ? value : '•'.repeat(maskLength)}
                     </code>
                 </div>
             )}

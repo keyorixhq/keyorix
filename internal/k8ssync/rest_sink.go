@@ -33,6 +33,8 @@ type RESTSink struct {
 const (
 	saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101 -- well-known k8s path, not a credential
 	saCAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+	contentTypeJSON = "application/json"
 )
 
 // maxResponseBodyBytes (keyorix_fetcher.go) caps how much of a single Kubernetes
@@ -196,7 +198,7 @@ func (s *RESTSink) createSecret(ctx context.Context, namespace, name string, pay
 		return fmt.Errorf("marshal secret %s/%s: %w", namespace, name, err)
 	}
 	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets", url.PathEscape(namespace))
-	req, err := s.newRequest(ctx, http.MethodPost, path, "application/json", bytes.NewReader(raw))
+	req, err := s.newRequest(ctx, http.MethodPost, path, contentTypeJSON, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
@@ -301,7 +303,7 @@ func (s *RESTSink) Delete(ctx context.Context, namespace, name string) error {
 	if err != nil {
 		return fmt.Errorf("marshal delete options %s/%s: %w", namespace, name, err)
 	}
-	req, err := s.newRequest(ctx, http.MethodDelete, s.secretPath(namespace, name), "application/json", bytes.NewReader(raw))
+	req, err := s.newRequest(ctx, http.MethodDelete, s.secretPath(namespace, name), contentTypeJSON, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
@@ -372,7 +374,7 @@ func (s *RESTSink) newRequest(ctx context.Context, method, path, contentType str
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	r.Header.Set("Authorization", "Bearer "+s.token)
-	r.Header.Set("Accept", "application/json")
+	r.Header.Set("Accept", contentTypeJSON)
 	if contentType != "" {
 		r.Header.Set("Content-Type", contentType)
 	}

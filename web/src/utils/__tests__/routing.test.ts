@@ -45,24 +45,18 @@ describe('storeIntendedRoute', () => {
         expect(getAndClearIntendedRoute()).toBeNull();
     });
 
-    it('does not store any /auth-prefixed route', () => {
-        storeIntendedRoute('/auth/callback');
+    it.each([
+        ['an /auth-prefixed route', '/auth/callback'],
+        ['a protocol-relative path (open-redirect defense-in-depth)', '//evil.example/x'],
+        ['a backslash-leading path (some browsers treat "/\\" as protocol-relative too)', '/\\evil.example/x'],
+    ])('does not store %s', (_description, path) => {
+        storeIntendedRoute(path);
         expect(getAndClearIntendedRoute()).toBeNull();
     });
 
     it('stores an ordinary path', () => {
         storeIntendedRoute('/projects/42/secrets');
         expect(getAndClearIntendedRoute()).toBe('/projects/42/secrets');
-    });
-
-    it('does not store a protocol-relative path (open-redirect defense-in-depth)', () => {
-        storeIntendedRoute('//evil.example/x');
-        expect(getAndClearIntendedRoute()).toBeNull();
-    });
-
-    it('does not store a backslash-leading path (some browsers treat "/\\" as protocol-relative too)', () => {
-        storeIntendedRoute('/\\evil.example/x');
-        expect(getAndClearIntendedRoute()).toBeNull();
     });
 });
 

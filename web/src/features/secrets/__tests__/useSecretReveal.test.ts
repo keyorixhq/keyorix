@@ -158,7 +158,12 @@ describe('useSecretReveal', () => {
 
         const { result } = renderHook(() => useSecretReveal());
 
+        // Sonar flags this as a redundant act() call, but it isn't: handleCopySecretValue
+        // sets copyingSecretId synchronously before its first await, and without this
+        // wrapper React 18's act-environment defers that flush past the assertion below
+        // (verified: removing the wrapper makes the next expect() read null, not 11).
         act(() => {
+            // NOSONAR: not redundant, see comment above
             void result.current.handleCopySecretValue(secret);
         });
 
