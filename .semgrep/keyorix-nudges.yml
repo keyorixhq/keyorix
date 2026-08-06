@@ -1,0 +1,56 @@
+# Structural "inventory" rules that are EXPECTED to match every occurrence of
+# a pattern, old and new -- unlike .semgrep/keyorix-rules.yml, a match here is
+# NOT a claim that the matched code is wrong. These exist to nudge a PR author
+# to go satisfy a real, separately-enforced gate (named in each rule's
+# message) on any NEWLY INTRODUCED match, not to re-flag the entire existing
+# inventory every time.
+#
+# MUST NEVER be run as a full-repo scan or uploaded to SARIF/code-scanning --
+# doing so surfaces every pre-existing match as a permanent "new" alert on the
+# Security tab the moment a rule is added or edited (this file exists because
+# that happened: keyorix-new-remotestorage-unsupported-stub's first deploy
+# produced 72 such alerts for stubs already covered by
+# TestRemoteUnsupportedStubsAreAllowlisted). Run these ONLY with
+# --baseline-commit scoped to the PR's base, writing to $GITHUB_STEP_SUMMARY,
+# per the pull_request-only step in .github/workflows/semgrep.yml.
+
+rules:
+  - id: keyorix-new-remotestorage-unsupported-stub
+    languages: [go]
+    severity: INFO
+    message: >-
+      This RemoteStorage method's entire body is a remoteUnsupported(...)
+      stub -- the exact shape that rounds 112-119 (#505/#509-class bugs) kept
+      rediscovering merged and undocumented: LocalStorage fully implements
+      the operation, RemoteStorage silently no-ops it instead of proxying it.
+      This rule is purely structural and matches every stub, old and new --
+      it does NOT mean the stub is wrong, plenty of existing stubs are
+      legitimate, verified-permanent gaps. It's just a nudge (this PR review
+      only shows it as a new annotation if the matched lines are new in the
+      diff): go add (or confirm) this method's entry in
+      remoteUnsupportedAllowlist, internal/storage/store/
+      remote_unsupported_completeness_test.go, classified as
+      statusIntentional (verified no reachable caller under storage.type:
+      remote) or statusKnownGap (a real, tracked gap). That test --
+      TestRemoteUnsupportedStubsAreAllowlisted -- is the actual hard gate;
+      this rule only tells you to go satisfy it.
+    metadata:
+      category: correctness
+      references:
+        - internal/storage/store/remote_unsupported_completeness_test.go (TestRemoteUnsupportedStubsAreAllowlisted, PR #856)
+    paths:
+      include:
+        - internal/storage/store/remote_*.go
+      exclude:
+        - "**/*_test.go"
+        - internal/storage/store/remote_unsupported.go
+    patterns:
+      - pattern-either:
+          - pattern: |
+              func ($RS *RemoteStorage) $METHOD(...) $RET {
+                return remoteUnsupported("$OP")
+              }
+          - pattern: |
+              func ($RS *RemoteStorage) $METHOD(...) $RET {
+                return ..., remoteUnsupported("$OP")
+              }
