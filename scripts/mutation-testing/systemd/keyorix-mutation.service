@@ -1,0 +1,53 @@
+[Unit]
+Description=Keyorix mutation-testing run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=mutation
+Group=mutation
+EnvironmentFile=/etc/keyorix-mutation/config.env
+ExecStart=/opt/keyorix-mutation/keyorix/scripts/mutation-testing/run-mutation.sh
+
+# Same reasoning as keyorix-fuzz.service's Nice/CPUQuota: this must never
+# starve anything else on a shared homelab box. Mutation testing is
+# CPU-bound (parallel `go test` invocations, one per surviving mutant) but
+# runs for minutes, not hours, so a tighter quota than fuzzing's 400% is
+# fine here -- there's no equivalent of fuzzing's -fuzztime/CPUQuota
+# tradeoff (see scripts/fuzzing/README.md) because a mutation run's total
+# WORK is fixed (every covered mutant gets tested exactly once), so a lower
+# quota only makes the run take longer, not shallower.
+Nice=10
+CPUQuota=400%
+MemoryMax=4G
+
+# Process-isolation hardening (mirrors keyorix-fuzz.service's rationale).
+# This service holds a GH_TOKEN with Issues read/write, loaded via
+# EnvironmentFile, and spends its time compiling and running this repo's
+# own Go test suite under gremlins' mutated source trees.
+NoNewPrivileges=true
+ProtectSystem=strict
+# NOT "true": run-mutation.sh's git invocations read ~/.gitconfig for
+# credential.helper / safe.directory (see README.md setup) -- same reasoning
+# as keyorix-fuzz.service's ProtectHome=read-only.
+ProtectHome=read-only
+PrivateTmp=true
+RestrictSUIDSGID=true
+# `go test`/gremlins need a writable build/module cache; ProtectHome=read-only
+# above makes the default under $HOME unwritable, so redirect explicitly.
+Environment=GOCACHE=/opt/keyorix-mutation/go-cache
+Environment=GOMODCACHE=/opt/keyorix-mutation/go-mod
+Environment=GOPATH=/opt/keyorix-mutation/gopath
+# ProtectSystem=strict makes the filesystem read-only except what's listed
+# here. Every directory run-mutation.sh/notify-summary.sh actually write to,
+# matching config.env.example's defaults:
+#   - KEYORIX_REPO: run-mutation.sh does `git fetch`/`checkout`/`reset --hard`
+#     here, and gremlins compiles mutated copies of the source tree under it.
+#   - MUTATION_STATE_DIR: per-package gremlins JSON results, summaries, logs,
+#     and issue-notification dedup markers.
+#   - the GOCACHE/GOMODCACHE/GOPATH dirs set above.
+ReadWritePaths=/opt/keyorix-mutation/keyorix /opt/keyorix-mutation/state /opt/keyorix-mutation/go-cache /opt/keyorix-mutation/go-mod /opt/keyorix-mutation/gopath
+
+[Install]
+WantedBy=multi-user.target

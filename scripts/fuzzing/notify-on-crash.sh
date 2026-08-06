@@ -22,7 +22,17 @@ LOGFILE="${3:?path to the log file for this run}"
 # life of the curl call.
 ntfy_curl_cfg=""
 cleanup_ntfy_curl_cfg() {
-  [[ -n "$ntfy_curl_cfg" ]] && rm -f "$ntfy_curl_cfg"
+  # `if`, not `[[ ]] && rm`: this runs as an EXIT trap, and both early-exit
+  # paths below (already-notified, no-reproducer) return before
+  # ntfy_curl_cfg is ever set -- a short-circuited `&&` returning false
+  # would make the trap itself return nonzero, which bash then reports as
+  # THIS SCRIPT's exit status, silently turning an intended `exit 0` into an
+  # observed exit 1. Under run-rotation.sh's `set -euo pipefail`, that
+  # aborts the entire fuzzing rotation loop on exactly the two cases this
+  # script exists to handle as a quiet no-op.
+  if [[ -n "$ntfy_curl_cfg" ]]; then
+    rm -f "$ntfy_curl_cfg"
+  fi
 }
 trap cleanup_ntfy_curl_cfg EXIT
 
