@@ -1121,6 +1121,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
 			// proxy CreateDynamicSecretConfig/GetDynamicSecretConfig/
 			// ListDynamicSecretConfigs/UpdateDynamicSecretConfig/
+			// TransitionDynamicSecretConfigDisabled/
 			// CountDynamicSecretConfigsByClassification/CreateDynamicSecretLease/
 			// GetDynamicSecretLease/ListDynamicSecretLeases/CountActiveLeases/
 			// UpdateDynamicSecretLease/ListExpiredActiveLeases to THIS server's real
@@ -1146,6 +1147,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/dynamic-secrets/configs", dynamicSecretHandler.ListDynamicSecretConfigsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/dynamic-secrets/configs/{id}", dynamicSecretHandler.UpdateDynamicSecretConfigProxy)
+			// TransitionDynamicSecretConfigDisabled is a dedicated conditional-write
+			// route (NOT a generic Update), closing the StateTransitionMissingCAS
+			// TOCTOU on DynamicSecretConfig.Disabled across this HTTP hop — see
+			// dynamic_secrets_proxy.go's TransitionDynamicSecretConfigDisabledProxy doc.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/dynamic-secrets/configs/{id}/transition", dynamicSecretHandler.TransitionDynamicSecretConfigDisabledProxy)
 			r.Get("/dynamic-secrets/leases/active-count", dynamicSecretHandler.CountActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/expired", dynamicSecretHandler.ListExpiredActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.GetDynamicSecretLeaseProxy)
@@ -1455,6 +1461,27 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// primitive is needed.
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
 
+			// User active-state CAS storage-primitive proxy. Lets a downstream
+			// Keyorix server booted with storage.type: remote (ADR-049) proxy
+			// UpdateUserIfActiveStateMatches to THIS server's real storage backend
+			// — the SAME conditional "WHERE id = ? AND is_active = ?" write
+			// core.UpdateUser (internal/core/users.go) already performs against a
+			// local backend whenever a request touches IsActive, closing the
+			// TOCTOU race a plain UpdateUser write left open (IsActive flipping
+			// concurrently with any other UpdateUser call touching the same user —
+			// a profile edit racing an admin deactivation, or two deactivation
+			// attempts racing each other). Exactly the same
+			// raw-storage-primitive-passthrough pattern as
+			// TransitionMachineIdentityStateProxy above (#388/#518) and
+			// UpdateProjectInvitation (#412) — no update-request validation is
+			// made here; that stays entirely in the CALLING server's own
+			// internal/core.KeyorixCore. Reuses the group's existing
+			// system.write baseline, same as every other proxy in this group —
+			// no new privilege class. See users_active_transition_proxy.go's
+			// package doc for why this is a dedicated route rather than a proxy
+			// onto the human-facing PUT /api/v1/users/{id} route.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/users/{id}/active-transition", userHandler.UpdateUserIfActiveStateMatchesProxy)
+
 			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
 			// CreateLegalHold/GetActiveLegalHold/UpdateLegalHold to THIS server's real
@@ -1580,6 +1607,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get(pathRiskExceptions, dashboardHandler.ListRiskExceptionsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskExceptionProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID, dashboardHandler.UpdateRiskExceptionProxy)
+			// RevokeRiskExceptionIfNotRevoked/ApproveRiskExceptionIfPending are
+			// dedicated conditional-write routes (NOT the generic
+			// UpdateRiskExceptionProxy above), preserving the TOCTOU fix
+			// (StateTransitionMissingCAS.ql finding) core.RevokeRiskException/
+			// ApproveRiskException rely on across this HTTP hop — see
+			// risk_exceptions_proxy.go's package doc for the full atomicity note.
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID+"/revoke", dashboardHandler.RevokeRiskExceptionProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID+"/approve", dashboardHandler.ApproveRiskExceptionProxy)
 
 			// Separation-of-duties (SoD) policy storage-primitive proxy (finding
 			// #519). Lets a downstream Keyorix server booted with storage.type:
@@ -1683,6 +1718,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// system.write like every other route in this group (there is no
 			// separate system.read tier here).
 			r.Get("/secrets/{id}/including-deleted", secretHandler.GetSecretIncludingDeletedProxy)
+
+			// TransitionSecretStatus (StateTransitionMissingCAS): lets a downstream
+			// server proxy the suspend/resume conditional "WHERE id = ? AND
+			// status = ?" write to THIS server's real storage backend in ONE round
+			// trip, mirroring TransitionMachineIdentityStateProxy (#388) and
+			// UpdateProjectInvitation (#412) for the same recurring TOCTOU class.
+			// Before this fix, SuspendSecret/ResumeSecret's read-then-unconditional-
+			// UpdateSecret sequence had no atomicity at all over the HTTP hop
+			// (RemoteStorage.WithTransaction is a no-op passthrough), so a suspend
+			// racing a resume on the same secret could silently clobber each other.
+			// Gated system.write like every other route in this group (there is no
+			// separate system.read tier here).
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/secrets/{id}/transition-status", secretHandler.TransitionSecretStatusProxy)
 
 			// ListSharesByOwner: lets a downstream server proxy the "shares I
 			// created" query to THIS server's real storage backend. Before this

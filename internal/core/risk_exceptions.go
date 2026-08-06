@@ -162,8 +162,17 @@ func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint)
 	e.Revoked = true
 	e.RevokedBy = actorID
 	e.RevokedAt = &now
-	if err := c.storage.UpdateRiskException(ctx, e); err != nil {
+	matched, err := c.storage.RevokeRiskExceptionIfNotRevoked(ctx, e)
+	if err != nil {
 		return err
+	}
+	if !matched {
+		// Lost the race: the row's persisted revoked flag moved to true between
+		// the GetRiskException read above and this write (a concurrent
+		// RevokeRiskException or ApproveRiskException call) — treat exactly like
+		// the already-revoked precondition failure above rather than silently
+		// overwriting the winner (StateTransitionMissingCAS.ql).
+		return fmt.Errorf("risk exception %d was concurrently revoked by another request", id)
 	}
 	c.writeAuditEvent(ctx, EventRiskExceptionRevoked, actorPtr(actorID), nil,
 		fmt.Sprintf("risk exception %d revoked: %q", id, e.Title))
@@ -198,8 +207,17 @@ func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID, id uint
 	e.Approved = true
 	e.ApprovedBy = actorID
 	e.ApprovedAt = &now
-	if err := c.storage.UpdateRiskException(ctx, e); err != nil {
+	matched, err := c.storage.ApproveRiskExceptionIfPending(ctx, e)
+	if err != nil {
 		return err
+	}
+	if !matched {
+		// Lost the race: the row's persisted revoked/approved flags moved between
+		// the GetRiskException read above and this write (a concurrent
+		// RevokeRiskException or ApproveRiskException call) — treat exactly like
+		// the already-revoked/already-approved precondition failures above rather
+		// than silently overwriting the winner (StateTransitionMissingCAS.ql).
+		return fmt.Errorf("risk exception %d was concurrently revoked or approved by another request", id)
 	}
 	c.writeAuditEvent(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil,
 		fmt.Sprintf("risk exception %d approved by %d (created by %d): %q", id, actorID, e.CreatedBy, e.Title))

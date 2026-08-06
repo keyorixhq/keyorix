@@ -15,9 +15,11 @@ const (
 	errInvalidBody               = "invalid request body"
 	errInvalidCampaignID         = "Invalid campaign ID"
 	errInvalidCampaignIDLower    = "invalid campaign id"
+	errInvalidConfigID           = "invalid config id"
 	errInvalidCredentialID       = "invalid credential id" // #nosec G101 -- error message string, not a hardcoded credential
 	errInvalidEnvIDField         = "Invalid environment_id"
 	errInvalidEnvironmentID      = "invalid environment ID"
+	errInvalidExceptionID        = "invalid exception id"
 	errInvalidGroupID            = "Invalid group ID"
 	errInvalidGroupIDLower       = "invalid group ID"
 	errInvalidJSON               = "Invalid JSON in request body"

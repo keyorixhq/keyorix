@@ -24,4 +24,16 @@ var (
 	// ErrInvalidAuditRetentionDays is returned by PurgeAuditLogs when the caller
 	// supplies a retention window that is below the minimum 7-day floor.
 	ErrInvalidAuditRetentionDays = errors.New("invalid retention_days")
+
+	// ErrUserActiveStateConflict is returned by UpdateUser when a request that
+	// explicitly asserts IsActive (an actual flip or a redundant same-value set)
+	// loses a race against another concurrent UpdateUser call touching the same
+	// user's active state — the row's persisted is_active moved away from the
+	// value this call observed (wasActive) between its GetUser read and its
+	// conditional write (storage.Storage.UpdateUserIfActiveStateMatches).
+	// Mirrors TransitionMachineIdentity's #388 lost-race handling and
+	// UpdateProjectInvitation's #412 "no longer pending" refusal: the caller
+	// must retry against the current state, not have its change silently
+	// dropped or silently clobber the winner.
+	ErrUserActiveStateConflict = errors.New("user's active state changed concurrently")
 )

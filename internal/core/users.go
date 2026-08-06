@@ -318,22 +318,51 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 
 	var patHashes []string
 	var updated *models.User
-	if deactivating {
+	switch {
+	case deactivating:
+		// req.IsActive != nil is implied here (deactivating can only be true if
+		// the request actually mutated user.IsActive from wasActive), so the
+		// final persist must go through the conditional write — a plain
+		// c.storage.UpdateUser here would silently clobber (or be clobbered by)
+		// a concurrent IsActive flip on the same user with no error to either
+		// caller (see UpdateUserIfActiveStateMatches's doc, storage/interface.go).
 		err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-			var terr error
-			updated, terr = tx.UpdateUser(ctx, user)
+			matched, terr := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
 			if terr != nil {
 				return terr
 			}
+			if !matched {
+				return fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
+			}
+			updated = user
 			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, req.ID); herr == nil {
 				patHashes = hashes
 			}
 			return tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
 		})
-	} else {
+	case req.IsActive != nil:
+		// Not deactivating (either re-activating, or a redundant "set to the same
+		// value" call) but the request still explicitly asserts IsActive — same
+		// TOCTOU exposure as the deactivating branch above, just without the
+		// session/PAT revocation side effects.
+		var matched bool
+		matched, err = c.storage.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
+		if err == nil {
+			if !matched {
+				err = fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
+			} else {
+				updated = user
+			}
+		}
+	default:
+		// No active-state assertion in this request — nothing to protect, plain
+		// full-row persist exactly as before.
 		updated, err = c.storage.UpdateUser(ctx, user)
 	}
 	if err != nil {
+		if errors.Is(err, ErrUserActiveStateConflict) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if deactivating {

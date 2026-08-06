@@ -229,6 +229,75 @@ func TestUpdateUser_Success(t *testing.T) {
 	assert.Equal(t, "Bobby", updated.DisplayName)
 }
 
+// TestUpdateUserIfActiveStateMatches_Success verifies the happy path: a
+// conditional write against a row whose CURRENT is_active still equals
+// fromActive matches and persists the full row.
+func TestUpdateUserIfActiveStateMatches_Success(t *testing.T) {
+	ctx := context.Background()
+	ls := newUserS4Store(t)
+
+	u, err := ls.CreateUser(ctx, &models.User{Username: "dave", Email: "dave@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	u.IsActive = false
+	u.DisplayName = "Dave Deactivated"
+	matched, err := ls.UpdateUserIfActiveStateMatches(ctx, u, true)
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	reloaded, err := ls.GetUser(ctx, u.ID)
+	require.NoError(t, err)
+	assert.False(t, reloaded.IsActive)
+	assert.Equal(t, "Dave Deactivated", reloaded.DisplayName)
+}
+
+// TestUpdateUserIfActiveStateMatches_LostRaceReturnsFalse proves the TOCTOU
+// race is closed: calling the method twice back-to-back with the SAME
+// fromActive (as two racing UpdateUser callers who both observed the row
+// active before either commits would) lets only the first call win — the
+// second observes the row's is_active has already moved and reports no match,
+// rather than silently clobbering the first call's write. Mirrors
+// TestTransitionMachineIdentityState_S25_NoMatchReturnsFalse's shape for this
+// codebase's other conditional-write primitive.
+func TestUpdateUserIfActiveStateMatches_LostRaceReturnsFalse(t *testing.T) {
+	ctx := context.Background()
+	ls := newUserS4Store(t)
+
+	u, err := ls.CreateUser(ctx, &models.User{Username: "eve", Email: "eve@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	// First racing caller: observed IsActive=true, flips to false, wins.
+	first := &models.User{ID: u.ID, Username: u.Username, Email: u.Email, IsActive: false}
+	matched, err := ls.UpdateUserIfActiveStateMatches(ctx, first, true)
+	require.NoError(t, err)
+	assert.True(t, matched, "first racing call must win")
+
+	// Second racing caller: ALSO observed IsActive=true (stale — the first call
+	// already committed false) and tries to persist its own unrelated field
+	// change plus a redundant IsActive=false assertion. Must lose the race, not
+	// silently re-apply its stale view over the winner's write.
+	second := &models.User{ID: u.ID, Username: u.Username, Email: u.Email, DisplayName: "Should Not Persist", IsActive: false}
+	matched, err = ls.UpdateUserIfActiveStateMatches(ctx, second, true)
+	require.NoError(t, err)
+	assert.False(t, matched, "second racing call must lose the race")
+
+	// The loser's DisplayName must not have landed.
+	reloaded, err := ls.GetUser(ctx, u.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, "Should Not Persist", reloaded.DisplayName)
+}
+
+// TestUpdateUserIfActiveStateMatches_NoMatchReturnsFalse verifies the
+// RowsAffected == 0 path for a nonexistent user (no row can match).
+func TestUpdateUserIfActiveStateMatches_NoMatchReturnsFalse(t *testing.T) {
+	ctx := context.Background()
+	ls := newUserS4Store(t)
+
+	matched, err := ls.UpdateUserIfActiveStateMatches(ctx, &models.User{ID: 999999, IsActive: false}, true)
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
+
 func TestRestoreUser_NotFound(t *testing.T) {
 	ctx := context.Background()
 	ls := newUserS4Store(t)

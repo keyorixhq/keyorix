@@ -49,6 +49,8 @@
 package store
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -124,6 +126,37 @@ func NewRemoteStorage(config *remote.Config) (*RemoteStorage, error) {
 		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
 	}
 	return &RemoteStorage{client: client}, nil
+}
+
+// putConditionalTransition PUTs body to path and decodes the standard
+// {"matched": bool} response shared by every conditional-transition storage
+// primitive in this package (TransitionMachineIdentityState,
+// TransitionSecretStatus, TransitionDynamicSecretConfigDisabled,
+// UpdateUserIfActiveStateMatches, ...): each one carries a full row plus the
+// "from" value the caller observed before mutating it, so the upstream can
+// apply the exact same conditional "WHERE id = ? AND <field> = ?" write its
+// own LocalStorage would in a single round trip (see the atomicity note in
+// internal/core/storage/interface.go for why a generic read-then-write proxy
+// pair isn't safe here: RemoteStorage.WithTransaction is a no-op passthrough).
+//
+// opName is used only to build each call site's own wrapped error text
+// ("failed to %s: %w" / "%s failed: %s"), so callers keep their existing
+// exact error messages.
+func (rs *RemoteStorage) putConditionalTransition(ctx context.Context, path string, body interface{}, opName string) (bool, error) {
+	resp, err := rs.client.Put(ctx, path, body)
+	if err != nil {
+		return false, fmt.Errorf("failed to %s: %w", opName, err)
+	}
+	if !resp.Success {
+		return false, fmt.Errorf("%s failed: %s", opName, resp.Error.Error())
+	}
+	var result struct {
+		Matched bool `json:"matched"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return false, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.Matched, nil
 }
 
 // LocalStorage implements storage.Storage via direct GORM database access.

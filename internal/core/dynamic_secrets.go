@@ -389,8 +389,17 @@ func (c *KeyorixCore) SetDynamicSecretConfigEnabled(ctx context.Context, actorID
 	old := cfg.Disabled
 	cfg.Disabled = disabled
 	cfg.UpdatedAt = c.now()
-	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+	matched, err := c.storage.TransitionDynamicSecretConfigDisabled(ctx, cfg, old)
+	if err != nil {
 		return nil, err
+	}
+	if !matched {
+		// Lost the race: the row's persisted disabled value moved away from old
+		// between the GetDynamicSecretConfig read and this write (a concurrent
+		// enable/disable, or an unrelated concurrent edit) — treat as a rejected
+		// write, not silently applied, exactly like TransitionMachineIdentityState's
+		// #388/#518 lost-race handling.
+		return nil, fmt.Errorf("dynamic-secret config %d's enabled state changed concurrently; retry", configID)
 	}
 	aid := actorID
 	pid := cfg.ProjectID

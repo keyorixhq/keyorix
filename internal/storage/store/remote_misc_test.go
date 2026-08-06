@@ -697,6 +697,90 @@ func TestRemoteStorage_UpdateRiskException(t *testing.T) {
 		ExpiresAt:     exp,
 		Revoked:       true,
 	})
+	require.NoError(t, err)
+}
+
+// TestRemoteStorage_RevokeRiskExceptionIfNotRevoked proves the conditional
+// revoke round-trips through the dedicated PUT
+// /api/v1/system/risk-exceptions/{id}/revoke route (StateTransitionMissingCAS.ql
+// fix), distinct from the plain UpdateRiskException route tested above.
+func TestRemoteStorage_RevokeRiskExceptionIfNotRevoked(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/api/v1/system/risk-exceptions/7/revoke", r.URL.Path)
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": true}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	revokedAt := time.Now()
+	matched, err := rs.RevokeRiskExceptionIfNotRevoked(context.Background(), &models.RiskException{
+		ID: 7, Revoked: true, RevokedBy: 3, RevokedAt: &revokedAt,
+	})
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
+// TestRemoteStorage_RevokeRiskExceptionIfNotRevoked_NotMatched proves a lost
+// race is surfaced as matched=false, not swallowed or turned into an error.
+func TestRemoteStorage_RevokeRiskExceptionIfNotRevoked_NotMatched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": false}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	revokedAt := time.Now()
+	matched, err := rs.RevokeRiskExceptionIfNotRevoked(context.Background(), &models.RiskException{
+		ID: 7, Revoked: true, RevokedBy: 3, RevokedAt: &revokedAt,
+	})
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
+
+// TestRemoteStorage_ApproveRiskExceptionIfPending proves the conditional
+// approve round-trips through the dedicated PUT
+// /api/v1/system/risk-exceptions/{id}/approve route.
+func TestRemoteStorage_ApproveRiskExceptionIfPending(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/api/v1/system/risk-exceptions/8/approve", r.URL.Path)
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": true}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	approvedAt := time.Now()
+	matched, err := rs.ApproveRiskExceptionIfPending(context.Background(), &models.RiskException{
+		ID: 8, Approved: true, ApprovedBy: 2, ApprovedAt: &approvedAt,
+	})
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
+// TestRemoteStorage_ApproveRiskExceptionIfPending_NotMatched proves a lost race
+// (e.g. a concurrent revoke) is surfaced as matched=false.
+func TestRemoteStorage_ApproveRiskExceptionIfPending_NotMatched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": false}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	approvedAt := time.Now()
+	matched, err := rs.ApproveRiskExceptionIfPending(context.Background(), &models.RiskException{
+		ID: 8, Approved: true, ApprovedBy: 2, ApprovedAt: &approvedAt,
+	})
+	require.NoError(t, err)
+	assert.False(t, matched)
 	assert.NoError(t, err)
 }
 

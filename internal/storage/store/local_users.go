@@ -193,6 +193,31 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 	return user, nil
 }
 
+// UpdateUserIfActiveStateMatches persists user's full row via a conditional
+// UPDATE gated on the row's CURRENT is_active still being fromActive (closing
+// the IsActive TOCTOU race described in the storage.Storage interface doc —
+// see internal/core/storage/interface.go). Mirrors
+// TransitionMachineIdentityState's `WHERE id = ? AND state = ?` + `Select("*")`
+// shape exactly, so every field UpdateUser mutated on user in memory (Username,
+// Email, DisplayName, IsActive, UpdatedAt, ...) is persisted in the same
+// statement, not just a hardcoded column subset.
+func (ls *LocalStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user *models.User, fromActive bool) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ? AND is_active = ?", user.ID, fromActive).
+		Select("*").
+		Updates(user)
+	if res.Error != nil {
+		if isDuplicateEmailViolation(res.Error) {
+			// Same translation UpdateUser applies (#117/#120/#218): a concurrent
+			// update already committed the identical (case-insensitive) email to a
+			// different user before this write landed.
+			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, res.Error)
+		}
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // UpdateLastLogin stamps last_login_at for a single user. Uses UpdateColumn so
 // only that column is written — no updated_at bump, no clobbering of other fields.
 func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
