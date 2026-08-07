@@ -151,7 +151,7 @@ jobs:
       # preceding `helm push` calls succeed. docker-publish.yml already does this
       # correctly for the image cosign-signing steps; mirrors that here.
       - name: Log in to GHCR (for cosign)
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
