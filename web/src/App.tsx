@@ -89,6 +89,7 @@ const AuthenticationPage = React.lazy(() =>
 const EncryptionPage = React.lazy(() =>
     import('./pages/settings/EncryptionPage').then((m) => ({ default: m.EncryptionPage }))
 );
+const LicensePage = React.lazy(() => import('./pages/settings/LicensePage').then((m) => ({ default: m.LicensePage })));
 const CompliancePage = React.lazy(() =>
     import('./pages/compliance/CompliancePage').then((m) => ({ default: m.CompliancePage }))
 );
@@ -248,6 +249,14 @@ function App() {
                                                     element={
                                                         <AdminRoute>
                                                             <EncryptionPage />
+                                                        </AdminRoute>
+                                                    }
+                                                />
+                                                <Route
+                                                    path={ROUTES.SETTINGS_LICENSE}
+                                                    element={
+                                                        <AdminRoute>
+                                                            <LicensePage />
                                                         </AdminRoute>
                                                     }
                                                 />
