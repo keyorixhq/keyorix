@@ -40,12 +40,22 @@ func LoggingInterceptor() grpc.UnaryServerInterceptor {
 		)
 
 		// Log slow requests
-		if duration > 1*time.Second {
+		if isSlowRequest(duration) {
 			log.Printf("SLOW gRPC REQUEST: %s took %v", info.FullMethod, duration)
 		}
 
 		return resp, err
 	}
+}
+
+// slowRequestThreshold is the handler duration past which a request is logged
+// as slow. A named constant (rather than the literal inline) so
+// isSlowRequest's boundary is exercisable by a unit test with a synthetic
+// duration, not only by a real sleep timed against wall-clock precision.
+const slowRequestThreshold = 1 * time.Second
+
+func isSlowRequest(duration time.Duration) bool {
+	return duration > slowRequestThreshold
 }
 
 // StreamLoggingInterceptor returns a stream server interceptor for logging
