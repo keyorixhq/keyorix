@@ -1,0 +1,15 @@
+[Unit]
+Description=Periodic check for keyorix-mutation-cache-trim.service
+
+[Timer]
+# Frequent enough to catch runaway growth well before disk fills (a run has
+# hit 100% within a matter of hours before this existed), infrequent enough
+# that the vast majority of firings are a cheap no-op `df` check that finds
+# usage under threshold and exits immediately -- see trim-gocache.sh's own
+# comment for why this is a periodic threshold check, not a blind interval
+# wipe.
+OnCalendar=*:0/10
+Persistent=true
+
+[Install]
+WantedBy=timers.target

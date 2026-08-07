@@ -60,6 +60,29 @@ not an OOM kill: silent thrashing that's easy to mistake for the CPUQuota
 problem above if you haven't also checked
 `systemctl show keyorix-mutation.service -p MemoryCurrent -p MemoryMax`.
 
+### Disk: `GOCACHE` grows without bound
+
+Mutation testing is inherently cache-hostile -- gremlins recompiles a new,
+distinct source variant per mutant, and Go's build cache is content-
+addressed, so nearly every mutant produces a brand-new cache entry with
+little reuse. Go's own automatic cache GC is age-based (days), not
+size-based, so it doesn't kick in fast enough for a workload that can
+generate double-digit GiB within hours -- this has filled a container's
+disk to 100% (and stalled the in-progress run) before this existed.
+
+`trim-gocache.sh`, run periodically via `keyorix-mutation-cache-trim.timer`
+(every 10 minutes, independent of `keyorix-mutation.timer`'s own weekly
+schedule), checks disk usage and, only once it's over
+`TRIM_DISK_THRESHOLD_PCT` (default 85%), deletes the *oldest* files under
+`GOCACHE` until usage drops back to `TRIM_DISK_TARGET_PCT` (default 65%).
+Most firings are a no-op `df` check. Deliberately not a periodic
+`go clean -cache` (a full wipe): that needs an exclusive lock on the whole
+cache, so running it unconditionally on a fixed interval would frequently
+collide with gremlins' own in-flight compiles over a run lasting hours.
+Deleting the oldest files individually is much less likely to touch
+anything actively in use -- a live compile's own cache writes are, by
+definition, the newest files on disk.
+
 ## One-time setup (on the LXC/VM)
 
 Same base requirements as `scripts/fuzzing/README.md` (Go matching `go.mod`,
@@ -121,6 +144,7 @@ Same base requirements as `scripts/fuzzing/README.md` (Go matching `go.mod`,
    cp scripts/mutation-testing/systemd/*.service scripts/mutation-testing/systemd/*.timer /etc/systemd/system/
    systemctl daemon-reload
    systemctl enable --now keyorix-mutation.timer
+   systemctl enable --now keyorix-mutation-cache-trim.timer
    ```
    **If this is an unprivileged Proxmox LXC**, see
    `scripts/fuzzing/README.md` step 7's journald note — the same
