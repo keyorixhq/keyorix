@@ -183,6 +183,93 @@ Same base requirements as `scripts/fuzzing/README.md` (Go matching `go.mod`,
   "current vs. immediately-previous" by design (that's all the regression
   check needs). Copy a result out first if you want to keep it longer.
 
+## Running additional packages in parallel (manual, ad hoc)
+
+`run-mutation.sh` itself processes `PACKAGES` strictly sequentially, one
+`gremlins` invocation at a time (`MUTATION_WORKERS` controls parallelism
+*within* one package's mutants, not across packages) — by design, see that
+script's own comment. On a box with real spare CPU/RAM, you can still run
+an *additional* package's mutation testing concurrently with whatever
+`keyorix-mutation.service` is already doing, without touching it.
+
+### Why this might be worth doing
+
+Each package's mutant count and per-mutant cost is measurable before you
+commit to running it — use a `--dry-run` pass (finds/counts mutants,
+executes no tests, takes seconds) to get a real number instead of guessing:
+
+```
+gremlins unleash --dry-run --workers 1 -o /tmp/dryrun.json ./internal/some/package
+# prints e.g. "Runnable: 4139, Not covered: 248"
+```
+
+Combine that with an observed current pace (two `grep -c` counts of
+`last-<label>.log` a few minutes apart) to get a rough completion estimate
+before deciding whether waiting for the sequential run to reach that
+package is actually going to take longer than you want. Measured on this
+box (single worker, `GOMAXPROCS=8`, Intel i7-6700, see "Resource limits"
+above): roughly 1 mutant per ~60s, meaning a large package (`internal/core`:
+4,139 runnable mutants, ~99k lines) is a multi-day job on its own, and the
+full non-test Go codebase (~163k lines across `internal/`, `server/`,
+`cmd/`, extrapolated from two packages' measured mutant-per-line density)
+would be roughly 1-2 weeks sequentially at this pace.
+
+### How to do it safely
+
+`gremlins` mutates source files in place during testing. Two instances
+**must never share a checkout** — running a second stream against the same
+`KEYORIX_REPO` path as the primary service is a real risk of one run's
+mutation colliding with the other's compile/test cycle. Give the new
+stream its own clone instead:
+
+```
+sudo -u mutation git clone --quiet /opt/keyorix-mutation/keyorix \
+  /opt/keyorix-mutation/keyorix-<label>-stream
+```
+
+`GOCACHE`/`GOMODCACHE` *are* safe to share across concurrent `go build`/
+`go test` invocations (standard Go toolchain behavior — this is exactly
+how a CI fleet shares one cache across many runners) — point the new
+stream at the same `/opt/keyorix-mutation/go-cache` and
+`/opt/keyorix-mutation/go-mod` rather than cloning those too. The
+[cache-trim timer](#disk-gocache-grows-without-bound) already keeps that
+shared cache's disk usage bounded regardless of how many streams are
+writing to it.
+
+Size `GOMAXPROCS` for the new stream so the total across all concurrent
+streams stays near the box's real thread count — the primary service was
+already running with `GOMAXPROCS=8` (the box's full thread count) when a
+second stream was added at `GOMAXPROCS=4` alongside it here, accepting
+mild, likely-tolerable oversubscription rather than restarting the primary
+run (which would only have cost its single in-flight mutant, not any
+completed results, but wasn't judged worth the disruption -- see the
+`keyorix-mutation.service`'s `MemoryMax`/`CPUQuota` for what genuine
+oversubscription looks like when it *isn't* tolerable). Launch as a
+transient unit rather than writing a new permanent `.service` file for
+what's a one-off, exploratory run:
+
+```
+systemd-run --uid=mutation --gid=mutation \
+  --unit=keyorix-mutation-<label>-adhoc \
+  --setenv=GOCACHE=/opt/keyorix-mutation/go-cache \
+  --setenv=GOMODCACHE=/opt/keyorix-mutation/go-mod \
+  --setenv=GOPATH=/opt/keyorix-mutation/gopath \
+  --setenv=PATH=/opt/keyorix-mutation/gopath/bin:/usr/local/go/bin:/usr/bin:/bin \
+  --setenv=GOMAXPROCS=4 \
+  --setenv=HOME=/home/mutation \
+  --working-directory=/opt/keyorix-mutation/keyorix-<label>-stream \
+  --property=Nice=10 \
+  /bin/bash -c "gremlins unleash --workers 1 -o /opt/keyorix-mutation/state/adhoc-<label>.json ./internal/some/package > /opt/keyorix-mutation/state/adhoc-<label>.log 2>&1"
+```
+
+Check progress the same way as the primary run (`grep -c KILLED
+/opt/keyorix-mutation/state/adhoc-<label>.log`, etc.) and
+`systemctl status keyorix-mutation-<label>-adhoc.service` for whether it's
+still running. It does not survive a reboot and is not enabled/persistent
+by design — this is for "run this one package now, in parallel," not a
+replacement for widening `PACKAGES` in `run-mutation.sh` if the intent is
+to cover it on an ongoing weekly basis.
+
 ## Design notes
 
 - Read-only against the repo: unlike the fuzzing box (which pushes corpus
