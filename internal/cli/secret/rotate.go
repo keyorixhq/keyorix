@@ -22,6 +22,16 @@ import (
 // client memory via an unbounded json.Decode of resp.Body.
 const maxSecretListResponseBytes = 10 << 20 // 10MB
 
+// rotateHTTPClient is used instead of http.DefaultClient so a 3xx response from
+// the configured server can't bounce the bearer-token-bearing request to an
+// internal host (e.g. cloud IMDS) — CWE-918. Matches the CheckRedirect idiom
+// used by this codebase's other Keyorix API clients.
+var rotateHTTPClient = &http.Client{CheckRedirect: refuseRotateRedirect}
+
+func refuseRotateRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
+}
+
 var rotateCmd = &cobra.Command{
 	Use:   "rotate <name>",
 	Short: "Rotate a secret by providing a new value",
@@ -75,7 +85,7 @@ func runRotate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.Client.Auth.GetAPIKey())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := rotateHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
@@ -113,7 +123,7 @@ func runRotate(cmd *cobra.Command, args []string) error {
 	}
 	req2.Header.Set("Authorization", "Bearer "+cfg.Client.Auth.GetAPIKey())
 	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := http.DefaultClient.Do(req2)
+	resp2, err := rotateHTTPClient.Do(req2)
 	if err != nil {
 		return fmt.Errorf("rotate request failed: %w", err)
 	}

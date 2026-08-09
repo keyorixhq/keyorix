@@ -138,7 +138,13 @@ func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]
 
 // getJSON performs an authenticated GET and decodes the {"data": …} envelope into out.
 func (c *KeyorixClient) getJSON(ctx context.Context, path string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	// c.hc (built in NewKeyorixClient above) already sets CheckRedirect to
+	// refuseRedirect, and baseURL is scheme-validated by requireHTTPSURL before
+	// this client is ever constructed. The query can't see either: CheckRedirect
+	// is set on the same composite literal in a different function, and
+	// requireHTTPSURL's argument is the constructor's baseURL parameter, not a
+	// read of the baseURL field it's later stored into.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil) // codeql[go/keyorix-ssrf-unvalidated-outbound-request]
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}

@@ -190,9 +190,8 @@ func TestUpdateOwnProfile_ZeroUserID(t *testing.T) {
 func TestUpdateOwnProfile_NoEmailChange(t *testing.T) {
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice"}
-	updated := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice S."}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
-	ms.On("UpdateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(updated, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	// email is empty → no email change branch → no password check → just UpdateUser
 	u, err := c.UpdateOwnProfile(context.Background(), 1, "Alice S.", "", "")

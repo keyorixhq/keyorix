@@ -265,9 +265,8 @@ func TestListSharesByUser_OwnedError(t *testing.T) {
 func TestUpdateOwnProfile_EmailSameAsCurrentNoPasswordCheck(t *testing.T) {
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice"}
-	updated := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
-	ms.On("UpdateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(updated, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	// Passing same email as current → no password check needed.
 	u, err := c.UpdateOwnProfile(context.Background(), 1, "", "alice@x.com", "")
@@ -384,9 +383,8 @@ func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {
 func TestUpdateUser_EmailSameAsCurrentSkipsCheck(t *testing.T) {
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
-	updated := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "New Name"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
-	ms.On("UpdateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(updated, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	// Same email as current → skip email uniqueness check.
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{

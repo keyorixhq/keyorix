@@ -34,7 +34,15 @@ func NewRFC3161(url string, timeout time.Duration) *RFC3161 {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	return &RFC3161{url: url, client: &http.Client{Timeout: timeout}}
+	return &RFC3161{url: url, client: &http.Client{Timeout: timeout, CheckRedirect: refuseRedirect}}
+}
+
+// refuseRedirect stops the TSA client from following any redirect: without this,
+// a 3xx response from a compromised/misconfigured TSA endpoint could bounce the
+// request to an internal host (e.g. cloud IMDS) even though the configured URL
+// itself was fine at setup time (CWE-918).
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("rfc3161: refusing to follow redirect to %q", req.URL)
 }
 
 func (r *RFC3161) Provider() string { return "rfc3161:" + r.url }

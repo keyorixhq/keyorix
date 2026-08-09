@@ -260,6 +260,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// connectHTTPClient is used instead of http.DefaultClient so a 3xx response from
+// the target server can't bounce the credential/token-bearing request to an
+// internal host (e.g. cloud IMDS) — CWE-918. Matches the CheckRedirect idiom
+// used by this codebase's other Keyorix API clients.
+var connectHTTPClient = &http.Client{CheckRedirect: refuseConnectRedirect}
+
+func refuseConnectRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
+}
+
 // loginWithCredentials calls the login endpoint and returns a session token.
 func loginWithCredentials(endpoint, username, password string, timeout time.Duration) (string, error) {
 	body, _ := json.Marshal(map[string]string{
@@ -276,7 +286,7 @@ func loginWithCredentials(endpoint, username, password string, timeout time.Dura
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := connectHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
@@ -315,7 +325,7 @@ func testServerConnection(endpoint, apiKey string, timeout time.Duration) error 
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := connectHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("server unreachable: %w", err)
 	}
