@@ -173,6 +173,14 @@ func runTestConnection(cmd *cobra.Command, args []string) error {
 	}
 }
 
+// refuseConfigRedirect stops the connectivity-test client from following any
+// redirect: without this, a 3xx response from the configured server could
+// bounce the request to an internal host (e.g. cloud IMDS) at request time,
+// even though BaseURL itself looked fine when it was set (CWE-918).
+func refuseConfigRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
+}
+
 func testRemoteConnection(cfg *config.Config) error {
 	if cfg.Storage.Remote == nil {
 		return fmt.Errorf("remote configuration not found")
@@ -192,6 +200,7 @@ func testRemoteConnection(cfg *config.Config) error {
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.Storage.Remote.VerifyTLS()}, // #nosec G402 — honors tls_verify (secure by default)
 		},
+		CheckRedirect: refuseConfigRedirect,
 	}
 
 	// Any HTTP response (even 401) proves the server is reachable; only a

@@ -155,9 +155,8 @@ func TestUpdateUser_EmailAlreadyExists(t *testing.T) {
 func TestUpdateUser_Success(t *testing.T) {
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
-	updated := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice Smith"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
-	ms.On("UpdateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(updated, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, DisplayName: "Alice Smith"})
 	require.NoError(t, err)
@@ -168,7 +167,7 @@ func TestUpdateUser_StorageError(t *testing.T) {
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com"}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
-	ms.On("UpdateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil, errors.New("db error"))
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), false).Return(false, errors.New("db error"))
 	c := NewKeyorixCore(ms)
 	_, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, DisplayName: "X"})
 	require.Error(t, err)
@@ -176,17 +175,18 @@ func TestUpdateUser_StorageError(t *testing.T) {
 
 // ── users.go — UpdateUser IsActive TOCTOU (the StateTransitionMissingCAS fix) ──
 //
-// UpdateUser is a general-purpose multi-field update, so only requests that
-// explicitly touch IsActive (req.IsActive != nil) need CAS protection — these
-// tests prove (a) such requests route through
-// storage.Storage.UpdateUserIfActiveStateMatches instead of the plain
-// UpdateUser, in BOTH the deactivating and non-deactivating branches, (b) a
-// lost race (matched=false) surfaces as ErrUserActiveStateConflict rather
-// than being silently retried or ignored, and — mirroring #388's "second
-// racing transition" test — that losing the race skips the deactivating
-// branch's session/PAT revocation side effects, and (c) a plain field-only
-// update (no IsActive in the request) is completely unaffected: it still
-// goes through the unconditional plain UpdateUser path, exactly as before.
+// Every UpdateUser call is a check-then-act (GetUser, mutate in memory, write
+// back) racing any concurrent write to the same row, so every branch routes
+// the final persist through storage.Storage.UpdateUserIfActiveStateMatches
+// (asserting the wasActive value observed at the top of the call) instead of
+// a plain unconditional UpdateUser/Save — including a plain field-only edit
+// that never touches IsActive in the request. These tests prove (a) all three
+// branches (deactivating, non-deactivating IsActive assertion, and the
+// default no-IsActive-in-request case) route through the conditional write,
+// (b) a lost race (matched=false) surfaces as ErrUserActiveStateConflict
+// rather than being silently retried or ignored, and — mirroring #388's
+// "second racing transition" test — (c) losing the race skips the
+// deactivating branch's session/PAT revocation side effects.
 
 // TestUpdateUser_Reactivate_UsesConditionalPath verifies a non-deactivating
 // IsActive assertion (re-activating an inactive user) is routed through
@@ -270,17 +270,38 @@ func TestUpdateUser_Deactivate_LostRace_ReturnsConflictError(t *testing.T) {
 // UpdateUser, exactly as before, and never touches
 // UpdateUserIfActiveStateMatches — so it cannot be spuriously rejected by an
 // unrelated concurrent is_active change on the same row.
-func TestUpdateUser_PlainFieldUpdate_DoesNotUseActiveStateConditionalPath(t *testing.T) {
+// TestUpdateUser_PlainFieldUpdate_UsesActiveStateConditionalPath verifies a
+// request that never touches IsActive still routes its persist through
+// UpdateUserIfActiveStateMatches (asserting the unchanged wasActive value) —
+// a plain unconditional UpdateUser/Save here would be exactly the check-then-act
+// race this fix closes, since GetUser's read and this write are not atomic.
+func TestUpdateUser_PlainFieldUpdate_UsesActiveStateConditionalPath(t *testing.T) {
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
-	updated := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", DisplayName: "Alice Renamed", IsActive: true}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
-	ms.On("UpdateUser", mock.Anything, mock.AnythingOfType("*models.User")).Return(updated, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+		return u.ID == 1 && u.DisplayName == "Alice Renamed"
+	}), true).Return(true, nil)
 	c := NewKeyorixCore(ms)
 	u, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, DisplayName: "Alice Renamed"})
 	require.NoError(t, err)
 	assert.Equal(t, "Alice Renamed", u.DisplayName)
-	ms.AssertNotCalled(t, "UpdateUserIfActiveStateMatches", mock.Anything, mock.Anything, mock.Anything)
+	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+}
+
+// TestUpdateUser_PlainFieldUpdate_LostRace_ReturnsConflictError verifies that
+// when the conditional write's precondition (is_active unchanged since
+// GetUser) no longer holds at write time, a plain field-only update also
+// surfaces ErrUserActiveStateConflict rather than silently overwriting a
+// concurrent IsActive flip.
+func TestUpdateUser_PlainFieldUpdate_LostRace_ReturnsConflictError(t *testing.T) {
+	ms := new(MockStorage)
+	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
+	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
+	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.AnythingOfType("*models.User"), true).Return(false, nil)
+	c := NewKeyorixCore(ms)
+	_, err := c.UpdateUser(context.Background(), &UpdateUserRequest{ID: 1, DisplayName: "Alice Renamed"})
+	require.ErrorIs(t, err, ErrUserActiveStateConflict)
 }
 
 // ── users.go — RestoreUser ───────────────────────────────────────────────────

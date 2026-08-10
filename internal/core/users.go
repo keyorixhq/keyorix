@@ -355,9 +355,20 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 			}
 		}
 	default:
-		// No active-state assertion in this request — nothing to protect, plain
-		// full-row persist exactly as before.
-		updated, err = c.storage.UpdateUser(ctx, user)
+		// No active-state assertion in this request, but a plain c.storage.UpdateUser
+		// (unconditional Save) is still a check-then-act race against any concurrent
+		// IsActive flip observed between the GetUser above and this write — same
+		// TOCTOU shape as the two branches above, just asserting the unchanged
+		// wasActive value as the precondition instead of a new one.
+		var matched bool
+		matched, err = c.storage.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
+		if err == nil {
+			if !matched {
+				err = fmt.Errorf("user %d: %w", req.ID, ErrUserActiveStateConflict)
+			} else {
+				updated = user
+			}
+		}
 	}
 	if err != nil {
 		if errors.Is(err, ErrUserActiveStateConflict) {

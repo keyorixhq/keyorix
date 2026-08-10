@@ -316,8 +316,18 @@ func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 			},
+			CheckRedirect: refuseRedirect,
 		},
 	}, nil
+}
+
+// refuseRedirect stops the TokenRequest/Secret-create/Secret-delete client from
+// following any redirect: without this, a 3xx response from the configured API
+// server (validated at config-write time, but not re-checked per request) could
+// bounce the bearer-token-bearing request to an internal host (e.g. cloud IMDS)
+// at request time (CWE-918).
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("kubernetes: refusing to follow redirect to %q", req.URL)
 }
 
 func (m *realK8sMinter) mintToken(ctx context.Context, namespace, serviceAccount string, audiences []string, expiration time.Duration, bound *boundObjectRef) (string, time.Time, error) {

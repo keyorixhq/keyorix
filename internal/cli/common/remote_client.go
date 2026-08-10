@@ -133,8 +133,18 @@ func NewRemoteClient() (*RemoteClient, bool) {
 		// machine/rotation/project/dynamic etc. use undecorated contexts — a hung
 		// or misconfigured KEYORIX_SERVER would otherwise hang the CLI forever
 		// with no way out. Mirrors the storage-layer remote client's default.
-		hc: &http.Client{Timeout: defaultRemoteClientTimeout},
+		//
+		// CheckRedirect: without it, a 3xx response from the configured server
+		// (including a CWD-planted ./keyorix.yaml — see ResolveRemote's warning
+		// above) could bounce the bearer-token-bearing request to an internal
+		// host (e.g. cloud IMDS) at request time (CWE-918). This client backs
+		// essentially all CLI remote-mode traffic, so this one guard covers it.
+		hc: &http.Client{Timeout: defaultRemoteClientTimeout, CheckRedirect: refuseRemoteClientRedirect},
 	}, true
+}
+
+func refuseRemoteClientRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
 }
 
 // defaultRemoteClientTimeout matches internal/storage/remote's default

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
@@ -194,6 +195,13 @@ type apiClient struct {
 	http     *http.Client
 }
 
+// refuseRedirect stops apiClient from following any redirect: without this, a
+// 3xx response from the configured server could bounce the bearer-token-bearing
+// request to an internal host (e.g. cloud IMDS) at request time (CWE-918).
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
+}
+
 // get performs a GET, strips the {"data":…} wrapper, and unmarshals into out.
 func (c *apiClient) get(ctx context.Context, path string, out interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+path, nil)
@@ -230,7 +238,7 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 	api := &apiClient{
 		endpoint: endpoint,
 		token:    token,
-		http:     &http.Client{},
+		http:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
 	}
 
 	// ── 1. Resolve project name → ID ─────────────────────────────────────────

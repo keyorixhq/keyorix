@@ -67,8 +67,16 @@ func NewKeyorixFetcher(baseURL, token string, projectID uint) *KeyorixFetcher {
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		token:     token,
 		projectID: projectID,
-		hc:        &http.Client{Timeout: 30 * time.Second},
+		hc:        &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
 	}
+}
+
+// refuseRedirect stops this fetcher from following any redirect: without this, a
+// 3xx response from a compromised/misconfigured Keyorix server could bounce the
+// bearer-token-bearing request to an internal host (e.g. cloud IMDS) at request
+// time, even though baseURL itself was validated at config-load time (CWE-918).
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("k8ssync: refusing to follow redirect to %q", req.URL)
 }
 
 // Fetch resolves ref ("<environment>/<name>") to the secret's id and returns its

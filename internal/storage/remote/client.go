@@ -221,7 +221,14 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 		reqBody = bytes.NewBuffer(jsonBody)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	// c.client (built in NewHTTPClient above) already sets CheckRedirect to reject
+	// a cross-host redirect, and config.BaseURL is scheme/host validated by
+	// Config.Validate (rejecting non-https except for a loopback host) before
+	// this client is ever constructed. The query can't see either: CheckRedirect
+	// is set on the same composite literal in a different function, and
+	// Validate's argument is u.Hostname() (a method-call result), not a direct
+	// read of the BaseURL field.
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody) // codeql[go/keyorix-ssrf-unvalidated-outbound-request]
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

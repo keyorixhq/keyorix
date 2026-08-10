@@ -35,7 +35,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # independent of the non-root change below (reproduced against the original
 # root-running image too).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -q --spider http://127.0.0.1/health || exit 1
+  CMD ["sh", "-c", "wget -q --spider http://127.0.0.1/health || exit 1"]
 
 # Run as nginx:alpine's own built-in non-root user (uid 101) rather than root.
 # The Helm deployment (deploy/helm/keyorix/templates/web-deployment.yaml)
@@ -54,7 +54,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # symlink-to-stdout/stderr setup, so both need to be writable by uid 101
 # before dropping to it.
 RUN chown -R nginx:nginx /var/cache/nginx /var/log/nginx /run
-USER nginx
+USER 101
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

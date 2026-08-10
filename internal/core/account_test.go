@@ -25,7 +25,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
 		ms.On("GetUserByEmail", ctx, "alice@new.com").Return(nil, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(existing, nil)
+		ms.On("UpdateUserIfActiveStateMatches", ctx, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 
 		_, err := c.UpdateOwnProfile(ctx, 1, "Alice New", "alice@new.com", "Current#Passw0rd!")
 		require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", DisplayName: "Alice", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(existing, nil)
+		ms.On("UpdateUserIfActiveStateMatches", ctx, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 
 		_, err := c.UpdateOwnProfile(ctx, 1, "Alice New", "", "")
 		require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestUpdateOwnProfile(t *testing.T) {
 		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(existing, nil)
+		ms.On("UpdateUserIfActiveStateMatches", ctx, mock.AnythingOfType("*models.User"), false).Return(true, nil)
 
 		_, err := c.UpdateOwnProfile(ctx, 1, "", "alice@old.com", "")
 		require.NoError(t, err)

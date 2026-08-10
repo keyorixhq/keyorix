@@ -88,7 +88,16 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
 	q := url.Values{}
 	q.Set("ref", ref)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/secrets/value?"+q.Encode(), nil)
+	// c.hc (built in New above) already sets CheckRedirect to refuseRedirect, and
+	// the caller (KeyorixSecretReconciler.buildDesired) validates ks.Spec.Server
+	// against an operator-configured --allowed-servers allowlist via
+	// validateServer BEFORE ever constructing this Client — see
+	// keyorixsecret_controller.go. The query can't see either: CheckRedirect is
+	// set on the same composite literal in a different function, and the
+	// validated field (KeyorixSecretSpec.Server) is three frames upstream of
+	// Client.baseURL with no name overlap the query's field-identity check can
+	// follow.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/secrets/value?"+q.Encode(), nil) // codeql[go/keyorix-ssrf-unvalidated-outbound-request]
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
