@@ -237,6 +237,61 @@ func TestGetDashboardStats_DegradedOnRecentActivityQueryError(t *testing.T) {
 	assert.True(t, containsSubstring(stats.DegradedReasons, "recent_activity"), "expected a recent_activity entry, got %v", stats.DegradedReasons)
 }
 
+// TotalSecrets must mirror ActiveUsers/AuditEvents30d: a caller with audit.read
+// sees the deployment-wide secret count, not just secrets they personally
+// created. Before this fix, GetDashboardStats always filtered ListSecrets by
+// CreatedBy regardless of the caller's RBAC role, so even a system_admin's
+// dashboard undercounted every secret another user had created.
+func TestGetDashboardStats_TotalSecretsIsDeploymentWideForAuditReadCaller(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	auditorID := seedUserWithRole(t, st, "auditor5", "system_auditor", storage.Scope{})
+
+	project, err := c.CreateProject(ctx, "other-project", "")
+	require.NoError(t, err)
+	envs, err := st.ListEnvironmentsByProject(ctx, project.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, envs)
+
+	// Created by a DIFFERENT user than the caller.
+	_, err = st.CreateSecret(ctx, &models.SecretNode{
+		ProjectID: project.ID, EnvironmentID: envs[0].ID,
+		Name: "OTHER_USERS_SECRET", CreatedBy: "someone-else",
+	})
+	require.NoError(t, err)
+
+	stats, err := c.GetDashboardStats(ctx, auditorID, "auditor5")
+	require.NoError(t, err)
+
+	assert.EqualValues(t, 1, stats.TotalSecrets, "auditor5 personally created 0 secrets, but with audit.read the count must be deployment-wide")
+}
+
+// A baseline caller (no audit.read) must keep the pre-existing, privacy-preserving
+// behavior: their own home dashboard reflects only secrets they personally
+// created, not the whole deployment.
+func TestGetDashboardStats_TotalSecretsIsPersonalForBaselineCaller(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	viewerID := seedUserWithRole(t, st, "viewer6", "system_viewer", storage.Scope{})
+
+	project, err := c.CreateProject(ctx, "other-project2", "")
+	require.NoError(t, err)
+	envs, err := st.ListEnvironmentsByProject(ctx, project.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, envs)
+
+	_, err = st.CreateSecret(ctx, &models.SecretNode{
+		ProjectID: project.ID, EnvironmentID: envs[0].ID,
+		Name: "OTHER_USERS_SECRET", CreatedBy: "someone-else",
+	})
+	require.NoError(t, err)
+
+	stats, err := c.GetDashboardStats(ctx, viewerID, "viewer6")
+	require.NoError(t, err)
+
+	assert.Zero(t, stats.TotalSecrets, "a baseline caller without audit.read must still see only secrets they personally created, not the deployment-wide count")
+}
+
 // A fully-healthy storage must never report Degraded.
 func TestGetDashboardStats_NotDegradedOnSuccess(t *testing.T) {
 	c, st := newBootstrappedCore(t)
