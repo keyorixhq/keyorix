@@ -165,9 +165,12 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		stats.degrade("expiring_secrets", err)
 	}
 
-	var activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers int64
+	var activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers, deploymentTotalSecrets int64
 	if hasAuditRead {
-		activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers = c.fetchAdminDashboardStats(ctx, stats)
+		activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers, deploymentTotalSecrets = c.fetchAdminDashboardStats(ctx, stats)
+		// Mirror ActiveUsers/AuditEvents: a caller with audit.read sees the
+		// deployment-wide secret count, not just secrets they personally created.
+		total = deploymentTotalSecrets
 	}
 
 	stats.TotalSecrets = total
@@ -249,9 +252,10 @@ func (c *KeyorixCore) saveUserSnapshot(ctx context.Context, userID uint, stats *
 // callers holding audit.read (active-user count, audit-event counts, failed-auth
 // count, inactive-user count). Errors degrade the stats struct; all counts default
 // to 0. Extracted from GetDashboardStats to reduce its cognitive complexity.
-func (c *KeyorixCore) fetchAdminDashboardStats(ctx context.Context, stats *DashboardStats) (activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers int64) {
+func (c *KeyorixCore) fetchAdminDashboardStats(ctx context.Context, stats *DashboardStats) (activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers, totalSecrets int64) {
 	if storageStats, err := c.storage.GetStats(ctx); err == nil {
 		activeUsers = storageStats.TotalUsers
+		totalSecrets = storageStats.TotalSecrets
 	} else {
 		stats.degrade("active_users", err)
 	}
