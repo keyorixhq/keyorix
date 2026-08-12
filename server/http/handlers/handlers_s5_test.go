@@ -1432,8 +1432,10 @@ func TestUpdateAccessRequestProxy_ValidStateApproved(t *testing.T) {
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"state":"approved"}`)), "id", "9999")
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, req)
-	// row 9999 not found → updated=false but still 200
-	assert.Equal(t, http.StatusOK, w.Code)
+	// AR-001: UpdateAccessRequestProxy re-fetches the row before applying the
+	// transition, so row 9999 not existing is now a proper 404, not a silent
+	// updated=false 200.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // ── setup_tokens_proxy.go ──────────────────────────────────────────────────────

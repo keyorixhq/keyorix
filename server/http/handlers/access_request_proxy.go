@@ -203,6 +203,19 @@ func (h *CatalogHandler) GetAccessRequestProxy(w http.ResponseWriter, r *http.Re
 // /projects/{id}/access-requests* paths use), returning whether it actually
 // matched a still-pending row — the single round trip a concurrent
 // approve/reject/withdraw race resolves in (#277).
+// AR-001: every legitimate caller of storage.UpdateAccessRequest
+// (ApproveAccessRequestWithExpiry/RejectAccessRequest/WithdrawAccessRequest/
+// ApproveSecretAccessRequest/the lazy-expiry paths in internal/core/
+// invitations.go and classification_gate.go) only ever mutates State,
+// GrantedRole, Reason, ResolvedBy, and ResolvedAt on the row it already
+// fetched — never ProjectID/UserID/SuggestedRole/SecretID/ExpiresAt/
+// CreatedAt, which are set once at creation and otherwise immutable. Because
+// the underlying storage call is a `Select("*")` full-row update (same
+// pattern as UpdateAccessReviewCampaign, see access_review_campaigns_proxy.go's
+// package doc), a client-supplied wire body could otherwise rewrite a
+// request's project/user/role identity under cover of a resolution-state
+// transition. Re-fetch the authoritative row and apply only the five
+// legitimate transition fields from the wire.
 func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -218,8 +231,22 @@ func (h *CatalogHandler) UpdateAccessRequestProxy(w http.ResponseWriter, r *http
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "state must be one of approved, rejected, withdrawn, expired")
 		return
 	}
-	body.ID = uint(id)
-	updated, err := h.coreService.Storage().UpdateAccessRequest(r.Context(), body.toModel())
+	existing, err := h.coreService.Storage().GetAccessRequest(r.Context(), uint(id))
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "access request not found")
+			return
+		}
+		log.Printf("access-requests proxy: update lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	existing.State = body.State
+	existing.GrantedRole = body.GrantedRole
+	existing.Reason = body.Reason
+	existing.ResolvedBy = body.ResolvedBy
+	existing.ResolvedAt = body.ResolvedAt
+	updated, err := h.coreService.Storage().UpdateAccessRequest(r.Context(), existing)
 	if err != nil {
 		log.Printf("access-requests proxy: update failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

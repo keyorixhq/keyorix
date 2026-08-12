@@ -100,7 +100,10 @@ func TestUpdateAccessReviewCampaignProxy_DBError_S31(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-review-campaigns/1", body), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewCampaignProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// UpdateAccessReviewCampaignProxy now re-fetches the row first (ARC-006);
+	// local storage wraps First() errors as "ErrorNotFound", so isNotFoundErr
+	// triggers 404 here — same pre-existing wart TestGetAccessReviewCampaignProxy_DBError_S31 documents.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCreateAccessReviewItemsProxy_DBError_S31(t *testing.T) {
@@ -180,7 +183,11 @@ func TestUpdateAccessRequestProxy_DBError_S31(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-requests/1", body), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// UpdateAccessRequestProxy now re-fetches the row first (AR-001); local
+	// storage wraps GetAccessRequest's underlying error as "not found"
+	// regardless of cause, so isNotFoundErr-style matching surfaces this as
+	// 404 — same pre-existing wart as access-review-campaigns' equivalent test.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestListAccessRequestsProxy_DBError_S31(t *testing.T) {
