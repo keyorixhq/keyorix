@@ -12024,21 +12024,56 @@ func TestDashboardHandler_UpdateLegalHoldProxy_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestDashboardHandler_UpdateLegalHoldProxy_HappyPath: UpdateLegalHoldProxy
+// now routes through core.KeyorixCore.LiftLegalHold (#G79), which requires
+// the caller to be either the original placer or admin-tier. This request
+// carries no user context (actorID 0), so LiftLegalHold correctly refuses —
+// asserting non-400 (not the specific refusal code) keeps this test focused
+// on "malformed request handling still works," matching its sibling
+// BadID/BadJSON tests; TestDashboardHandler_UpdateLegalHoldProxy_RefusesNonPlacerNonAdmin
+// below is the dedicated regression for the refusal itself. The Cleanup is a
+// no-op here (LiftLegalHold's own refusal means nothing was mutated) but kept
+// for safety against future changes to this test's fixture.
 func TestDashboardHandler_UpdateLegalHoldProxy_HappyPath(t *testing.T) {
 	h := NewDashboardHandler(newHandlerCoreS4(t))
 	t.Cleanup(func() { releaseActiveLegalHoldS4(t, h) })
-	// NOTE: UpdateLegalHoldProxy is a raw full-row Save (see legal_hold_proxy.go) —
-	// this body omits "released"/"placed_by", so it zeroes those fields out on the
-	// row with id=1 (created by TestDashboardHandler_CreateLegalHoldProxy_HappyPath
-	// just above). Without the Cleanup above, that leaves a permanently "active"
-	// hold with no valid placer in the shared sharedS4Core DB, which breaks
-	// TestLiftLegalHold_NoActiveHold on any later run against the same process
-	// (e.g. `go test -count=2`).
 	body := `{"reason":"Updated hold reason"}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateLegalHoldProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+}
+
+// TestDashboardHandler_UpdateLegalHoldProxy_RefusesNonPlacerNonAdmin is the
+// #G79 regression: UpdateLegalHoldProxy previously called
+// storage.UpdateLegalHold directly (an unconditional full-row Save), letting
+// ANY system.write-only caller silently release an active legal hold. Now
+// that it routes through core.KeyorixCore.LiftLegalHold, a caller who is
+// neither the original placer nor admin-tier must be refused, and the hold
+// must remain active.
+func TestDashboardHandler_UpdateLegalHoldProxy_RefusesNonPlacerNonAdmin(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.LegalHold{}))
+	require.NoError(t, i18n.InitializeForTesting())
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h := NewDashboardHandler(cs)
+
+	// withUserCtx injects UserID=1 as the caller — seed that user with NO admin
+	// role, and the hold's actual placer as a DIFFERENT user (2), so the caller
+	// is neither the placer nor admin-tier.
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "mallory", Email: "mallory@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "placer", Email: "placer@x.io"}).Error)
+	require.NoError(t, db.Create(&models.LegalHold{ID: 1, Reason: "orig", PlacedBy: 2, PlacedAt: time.Now(), Released: false}).Error)
+
+	body := `{"release_reason":"attacker-forced release"}`
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1"))
+	w := httptest.NewRecorder()
+	h.UpdateLegalHoldProxy(w, req)
+	assert.NotEqual(t, http.StatusOK, w.Code, "a caller who is neither the placer nor admin-tier must not be able to lift the hold")
+
+	var hold models.LegalHold
+	require.NoError(t, db.First(&hold, 1).Error)
+	assert.False(t, hold.Released, "the hold must remain active when the lift is refused")
 }
 
 // releaseActiveLegalHoldS4 marks any currently-active legal hold in the shared

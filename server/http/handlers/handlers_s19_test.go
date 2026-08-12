@@ -751,21 +751,39 @@ func TestCreateLegalHoldProxy_MissingReason_S19(t *testing.T) {
 }
 
 // TestCreateLegalHoldProxy_Success_S19 — valid body → 200 with created hold.
+// TestCreateLegalHoldProxy_Success_S19: CreateLegalHoldProxy now routes
+// through core.KeyorixCore.PlaceLegalHold (#G79), which requires an
+// admin-tier actor — an admin-tier caller (seeded here) can still place a
+// hold via the proxy.
 func TestCreateLegalHoldProxy_Success_S19(t *testing.T) {
-	cs := freshCoreS19(t)
+	cs, _ := freshCoreS19WithAdmin(t)
 	h := NewDashboardHandler(cs)
 	body, _ := json.Marshal(map[string]interface{}{
 		"reason":      "compliance investigation",
 		"placed_by":   uint(1),
 		"resource_id": uint(0),
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateLegalHoldProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	resp := decodeRemoteResp(t, w)
 	assert.True(t, resp.Success)
+}
+
+// TestCreateLegalHoldProxy_RefusesNonAdminActor_S19 is the #G79 regression: a
+// system.write-only caller with no admin-tier role must be refused — the
+// bug this fix closes let ANY caller holding system.write place a legal hold.
+func TestCreateLegalHoldProxy_RefusesNonAdminActor_S19(t *testing.T) {
+	cs := freshCoreS19(t)
+	h := NewDashboardHandler(cs)
+	body, _ := json.Marshal(map[string]interface{}{"reason": "compliance investigation"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateLegalHoldProxy(w, req)
+	assert.NotEqual(t, http.StatusOK, w.Code, "a caller with no admin-tier role must not be able to place a legal hold via the proxy")
 }
 
 // ── break_glass_proxy.go: CreateBreakGlassActivationProxy ────────────────────
