@@ -27,7 +27,7 @@ func (ls *LocalStorage) GetSoDPolicy(ctx context.Context, id uint) (*models.SoDP
 
 func (ls *LocalStorage) ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy, error) {
 	var rows []*models.SoDPolicy
-	if err := ls.db.WithContext(ctx).Order("id ASC").Find(&rows).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Order("id ASC").Limit(maxUnboundedListRows).Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil

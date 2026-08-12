@@ -188,7 +188,7 @@ func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) (
 	if err := ls.db.Where(
 		"secret_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		secretID, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -219,7 +219,7 @@ func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*m
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		userID, false, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -234,7 +234,7 @@ func (ls *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]
 	if err := ls.db.Where(
 		"owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		ownerID, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -247,7 +247,7 @@ func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		groupID, true, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -259,19 +259,20 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 	// Expired (time-bound) shares no longer authorize, so they must not surface in
 	// the "shared with me" listing either — filter them the same way the auth queries do.
 	now := time.Now()
-	directQuery := `
+	directQuery := fmt.Sprintf(`
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
 		WHERE sr.recipient_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
-	`
+		LIMIT %d
+	`, maxUnboundedListRows)
 	if err := ls.db.Raw(directQuery, userID, false, now).Scan(&secrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 
 	// JOIN groups … deleted_at IS NULL: a soft-deleted group's shares grant nothing,
 	// even though the share/membership rows are kept for restore.
-	groupQuery := `
+	groupQuery := fmt.Sprintf(`
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
 		JOIN user_groups ug ON sr.recipient_id = ug.group_id
@@ -279,7 +280,8 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 		JOIN users u ON u.id = ug.user_id AND u.deleted_at IS NULL
 		WHERE ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
-	`
+		LIMIT %d
+	`, maxUnboundedListRows)
 	var groupSecrets []*models.SecretNode
 	if err := ls.db.Raw(groupQuery, userID, true, now).Scan(&groupSecrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)

@@ -33,6 +33,7 @@ func (ls *LocalStorage) ListCompliancePostureSnapshots(ctx context.Context, limi
 	if limit <= 0 {
 		limit = defaultSnapshotLimit
 	}
+	limit = clampPageSize(limit)
 	var snaps []*models.CompliancePostureSnapshot
 	if err := ls.db.WithContext(ctx).
 		Order("snapshot_date DESC").

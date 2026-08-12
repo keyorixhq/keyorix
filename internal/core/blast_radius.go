@@ -37,6 +37,10 @@ type BlastRadiusReport struct {
 	Dependents       []BlastRadiusNode `json:"dependents"`
 	TotalImpact      int               `json:"total_impact"` // == len(Dependents)
 	MaxDepth         int               `json:"max_depth"`
+	// Truncated is true when the true dependent count exceeds maxBlastRadiusNodes
+	// and Dependents/TotalImpact reflect only the first maxBlastRadiusNodes nodes
+	// found — never silently reported as a complete picture (#G44).
+	Truncated bool `json:"truncated"`
 }
 
 // blastBFSNode is an internal BFS traversal node.
@@ -45,15 +49,24 @@ type blastBFSNode struct {
 	depth int
 }
 
+// maxBlastRadiusNodes bounds the total number of dependent nodes blastBFS will
+// return (#G44) — depth alone (maxDepth below) doesn't bound BREADTH: a secret
+// with a very wide fan-out at a single depth can still produce an unbounded node
+// count, and GetBlastRadius does one storage.GetSecret call PER node afterward
+// (an N+1 query pattern), so an unbounded node count is a per-request
+// resource-exhaustion vector.
+const maxBlastRadiusNodes = 2000
+
 // blastBFS performs a bounded BFS over the dependents adjacency map starting
-// from rootID, returning nodes ordered by (depth, id). Max depth is 10.
+// from rootID, returning nodes ordered by (depth, id). Max depth is 10; max
+// total nodes is maxBlastRadiusNodes.
 func blastBFS(rootID uint, adj map[uint][]uint) []blastBFSNode {
 	const maxDepth = 10
 	visited := map[uint]bool{rootID: true}
 	queue := []blastBFSNode{{id: rootID, depth: 0}}
 	var ordered []blastBFSNode
 
-	for len(queue) > 0 {
+	for len(queue) > 0 && len(ordered) < maxBlastRadiusNodes {
 		cur := queue[0]
 		queue = queue[1:]
 		for _, dep := range adj[cur.id] {
@@ -65,6 +78,9 @@ func blastBFS(rootID uint, adj map[uint][]uint) []blastBFSNode {
 			ordered = append(ordered, next)
 			if next.depth < maxDepth {
 				queue = append(queue, next)
+			}
+			if len(ordered) >= maxBlastRadiusNodes {
+				break
 			}
 		}
 	}
@@ -129,6 +145,7 @@ func (k *KeyorixCore) GetBlastRadius(ctx context.Context, secretID uint) (*Blast
 		Dependents:       nodes,
 		TotalImpact:      len(nodes),
 		MaxDepth:         maxDepthSeen,
+		Truncated:        len(ordered) >= maxBlastRadiusNodes,
 	}, nil
 }
 

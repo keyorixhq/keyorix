@@ -122,6 +122,25 @@ func TestBulkDeleteSecrets_EmptyRequest(t *testing.T) {
 	assert.Contains(t, err.Error(), "required")
 }
 
+// TestBulkDeleteSecrets_ExceedsMaxBatchSize is the #G44 regression: before the
+// fix, req.SecretIDs had no upper bound, and each ID drives a per-item
+// GetSecret+DeleteSecret storage round trip — an unbounded list is a per-request
+// resource-exhaustion vector, the same class of bug maxBulkAccessRequestBatchSize
+// already guards against elsewhere in this package.
+func TestBulkDeleteSecrets_ExceedsMaxBatchSize(t *testing.T) {
+	c, _ := setupBulkDeleteDB(t)
+	ctx := context.Background()
+
+	ids := make([]uint, maxBulkDeleteBatchSize+1)
+	for i := range ids {
+		ids[i] = uint(i + 1)
+	}
+	req := BulkDeleteRequest{SecretIDs: ids}
+	_, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds the maximum batch size")
+}
+
 func TestBulkDeleteSecrets_AlreadyDeleted(t *testing.T) {
 	c, mk := setupBulkDeleteDB(t)
 	ctx := context.Background()

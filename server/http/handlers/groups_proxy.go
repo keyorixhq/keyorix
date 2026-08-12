@@ -38,6 +38,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -47,6 +48,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// maxGroupsPageLimit bounds ListGroupsPageProxy's caller-supplied limit (#G44).
+const maxGroupsPageLimit = 1000
+
+// maxGroupMembersByIDsCount bounds ListGroupMembersByIDsProxy's comma-separated
+// ids query parameter (#G44) — each ID drives further per-group work downstream.
+const maxGroupMembersByIDsCount = 1000
 
 // groupProxyWire mirrors models.Group's fields exactly (snake_case) — the wire
 // shape internal/storage/store/remote_users.go's groupWire sends/expects. See
@@ -224,13 +232,15 @@ func (h *GroupHandler) ListGroupsProxy(w http.ResponseWriter, r *http.Request) {
 // ListGroupsPageProxy handles GET /api/v1/system/groups/page?offset=&limit=.
 func (h *GroupHandler) ListGroupsPageProxy(w http.ResponseWriter, r *http.Request) {
 	offset, err := strconv.Atoi(r.URL.Query().Get("offset"))
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "offset must be a valid integer")
+	if err != nil || offset < 0 {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "offset must be a non-negative integer")
 		return
 	}
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "limit must be a valid integer")
+	// #G44: a negative limit reaches GORM's Limit() unclamped, which removes the
+	// LIMIT clause entirely (Limit(-1) semantics) rather than restricting the page.
+	if err != nil || limit <= 0 || limit > maxGroupsPageLimit {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", fmt.Sprintf("limit must be a positive integer up to %d", maxGroupsPageLimit))
 		return
 	}
 	groups, total, err := h.coreService.Storage().ListGroupsPage(r.Context(), offset, limit)
@@ -346,6 +356,10 @@ func (h *GroupHandler) ListGroupMembersByIDsProxy(w http.ResponseWriter, r *http
 		return
 	}
 	parts := strings.Split(idsParam, ",")
+	if len(parts) > maxGroupMembersByIDsCount {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", fmt.Sprintf("ids exceeds the maximum of %d", maxGroupMembersByIDsCount))
+		return
+	}
 	groupIDs := make([]uint, 0, len(parts))
 	for _, p := range parts {
 		id, err := strconv.ParseUint(strings.TrimSpace(p), 10, 32)

@@ -56,6 +56,13 @@ type BulkRotateError struct {
 	Error    string `json:"error"`
 }
 
+// maxBulkRotateBatchSize bounds an explicit req.SecretIDs list — each ID does a
+// per-item rotation round trip, so an unbounded list is a per-request resource-
+// exhaustion vector (#G44), the same class of bug as maxBulkAccessRequestBatchSize
+// (bulk_access_requests.go). The project-wide path (SecretIDs empty) is already
+// bounded by bulkRotatePageSize below.
+const maxBulkRotateBatchSize = 500
+
 // BulkRotateSecrets schedules rotation for all matching secrets.
 //
 // When req.SecretIDs is non-empty, only those secrets are processed. Each is
@@ -78,6 +85,9 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, req BulkRotateReque
 	}
 	if req.RotatedBy == "" {
 		req.RotatedBy = "system:bulk-rotate"
+	}
+	if len(req.SecretIDs) > maxBulkRotateBatchSize {
+		return nil, fmt.Errorf("secret_ids exceeds the maximum batch size of %d", maxBulkRotateBatchSize)
 	}
 
 	result := &BulkRotateResult{

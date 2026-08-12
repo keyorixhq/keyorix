@@ -12,10 +12,18 @@ import (
 	"time"
 )
 
+// MaxInactiveDays bounds cfg.InactiveDays (#G44). Without a ceiling, a large
+// enough value overflows the int64 nanosecond Duration computed below
+// (time.Duration(cfg.InactiveDays) * 24 * time.Hour), wrapping around to a
+// NEGATIVE duration — c.now().Add(-negativeDuration) then lands in the
+// FUTURE, making every user in the deployment appear "inactive" and
+// suspending them all in one call.
+const MaxInactiveDays = 36500 // 100 years
+
 // InactivitySuspendConfig controls the suspension threshold.
 type InactivitySuspendConfig struct {
 	// InactiveDays is the minimum number of days without a login before a
-	// user is considered inactive.  Must be > 0.
+	// user is considered inactive.  Must be > 0 and <= MaxInactiveDays.
 	InactiveDays int
 
 	// DryRun, when true, causes SuspendInactiveUsers to evaluate every user
@@ -41,6 +49,9 @@ type InactivitySuspendResult struct {
 func (c *KeyorixCore) SuspendInactiveUsers(ctx context.Context, cfg InactivitySuspendConfig) (*InactivitySuspendResult, error) {
 	if cfg.InactiveDays <= 0 {
 		return nil, fmt.Errorf("inactive_days must be greater than 0")
+	}
+	if cfg.InactiveDays > MaxInactiveDays {
+		return nil, fmt.Errorf("inactive_days exceeds the maximum of %d", MaxInactiveDays)
 	}
 
 	threshold := c.now().Add(-time.Duration(cfg.InactiveDays) * 24 * time.Hour)

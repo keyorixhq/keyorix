@@ -58,8 +58,14 @@ func (c *KeyorixCore) CreateSecretTemplate(ctx context.Context, req *CreateSecre
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("template name is required")
 	}
+	if err := validateNameLength("template name", req.Name); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
 	if err := validateTemplateClassification(req.DefaultClassification); err != nil {
 		return nil, err
+	}
+	if err := validateDescription(req.Description); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 	if len(req.DescriptionPattern) > maxSecretDescriptionLen {
 		return nil, fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
@@ -124,8 +130,14 @@ func (c *KeyorixCore) UpdateSecretTemplate(ctx context.Context, id uint, req *Up
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("template name is required")
 	}
+	if err := validateNameLength("template name", req.Name); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
 	if err := validateTemplateClassification(req.DefaultClassification); err != nil {
 		return nil, err
+	}
+	if err := validateDescription(req.Description); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 	if len(req.DescriptionPattern) > maxSecretDescriptionLen {
 		return nil, fmt.Errorf("%s: DescriptionPattern exceeds maximum length of %d", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
