@@ -17,27 +17,27 @@ import (
 // stops authorizing once expiresAt passes) and records the assignment. actorID is
 // the granting principal (0 = unauthenticated/system).
 //
-// KNOWN GAP (tracked, not fixed here): unlike AssignUserRole, this does NOT run
-// requireGranterHoldsRolePermissions (#93/#107/#141) — it writes directly via
-// storage, bypassing the grant-ceiling check entirely. The HTTP JIT-assign-with-
-// expiry path (POST /user-roles with expires_at) and the access-request TTL-grant
-// path (invitations.go) both reach this unguarded, so a roles.assign holder can
-// currently bundle-grant a time-bound role with a permission they don't hold. Left
-// unfixed in this change deliberately: break_glass.go's self-service emergency
-// grant also calls this, and legitimately MUST elevate a user beyond their current
-// permissions (that's break-glass's entire purpose) — closing this gap needs a
-// break-glass-aware carve-out, which is its own follow-up, not a mechanical mirror
-// of AssignUserRole's fix.
-//
-// #419: the separation-of-duties preventive gate (requireNoSoDViolation) DOES
-// apply here by default, unlike the ceiling check above — this is precisely the
-// JIT-timing-evasion vector the finding describes ("a toxic-permission overlap
-// that both starts and fully expires between two SoD digest runs ... concretely
-// constructible by arranging two overlapping short-lived grants"). Break-glass
-// is the one caller that legitimately cannot be blocked by it (same reasoning as
-// the ceiling-check gap above): see assignUserRoleWithExpirySkipSoD, which
-// break_glass.go calls instead.
+// #G15: mirrors AssignUserRole's two gates exactly —
+// requireGranterHoldsRolePermissions (#93/#107/#141, the escalation-by-proxy
+// grant-ceiling: a roles.assign holder cannot bundle-grant a time-bound role
+// carrying a permission they don't hold themselves) and requireNoSoDViolation
+// (#419, the separation-of-duties preventive gate — this is precisely the
+// JIT-timing-evasion vector the finding describes: "a toxic-permission overlap
+// that both starts and fully expires between two SoD digest runs ...
+// concretely constructible by arranging two overlapping short-lived grants").
+// The HTTP JIT-assign-with-expiry path (POST /user-roles with expires_at) and
+// the access-request TTL-grant path (invitations.go) both go through this
+// function, so both gates now apply there. Break-glass is the one caller that
+// legitimately cannot be blocked by either — its self-service emergency grant
+// MUST elevate a user beyond their current permissions (that's break-glass's
+// entire purpose), and a false-positive SoD block during a genuine incident is
+// an unacceptable failure mode for the control that exists to remediate
+// incidents — so break_glass.go calls assignUserRoleWithExpirySkipSoD
+// directly instead, never this function.
 func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope); err != nil {
+		return err
+	}
 	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 		return err
 	}
@@ -45,17 +45,18 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 }
 
 // assignUserRoleWithExpirySkipSoD performs the identical time-bound grant as
-// AssignUserRoleWithExpiry but deliberately SKIPS the #419 separation-of-duties
-// preventive check. Use it ONLY where the action is break-glass's self-service
-// emergency access (break_glass.go's ActivateBreakGlass): break-glass is
-// documented as "Deliberately un-gated by RBAC — the whole point is access the
-// user does NOT already have", so a false-positive SoD block during a genuine
-// incident is an unacceptable failure mode for the control that exists to
-// remediate incidents — mirroring the exact reasoning already established above
-// for the escalation-by-proxy ceiling check this function also (deliberately)
-// skips. Never call this from any other path — the HTTP JIT-assign endpoint and
-// the access-request TTL-approval path must go through AssignUserRoleWithExpiry
-// so the SoD gate applies.
+// AssignUserRoleWithExpiry but deliberately SKIPS both the #93/#107/#141
+// grant-ceiling check and the #419 separation-of-duties preventive check. Use
+// it ONLY where the action is break-glass's self-service emergency access
+// (break_glass.go's ActivateBreakGlass): break-glass is documented as
+// "Deliberately un-gated by RBAC — the whole point is access the user does
+// NOT already have", so both the ceiling check (which would refuse the very
+// elevation break-glass exists to grant) and the SoD block (a false positive
+// during a genuine incident is an unacceptable failure mode for the control
+// that exists to remediate incidents) would defeat break-glass's purpose.
+// Never call this from any other path — the HTTP JIT-assign endpoint and the
+// access-request TTL-approval path must go through AssignUserRoleWithExpiry
+// so both gates apply.
 func (c *KeyorixCore) assignUserRoleWithExpirySkipSoD(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
 	if err := c.storage.AssignRoleWithExpiry(ctx, userID, roleID, scope, expiresAt); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
