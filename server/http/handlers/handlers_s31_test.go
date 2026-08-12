@@ -294,11 +294,16 @@ func TestDeleteSoDPolicyProxy_DBError_S31(t *testing.T) {
 func TestCreateSetupTokenProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	body := bytes.NewBufferString(`{"token_hash":"abc123","purpose":"invite","subject_email":"x@example.com","state":"active","expires_at":"2030-01-01T00:00:00Z","created_by":1,"created_at":"2024-01-01T00:00:00Z"}`)
+	body := bytes.NewBufferString(fmt.Sprintf(`{"token_hash":"abc123","purpose":"account_setup","subject_email":"x@example.com","subject_user_id":1,"state":"active","expires_at":%q,"created_by":1,"created_at":"2024-01-01T00:00:00Z"}`, time.Now().Add(24*time.Hour).Format(time.RFC3339)))
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/setup-tokens", body)
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// #G79: CreateSetupTokenProxy now looks up subject_user_id (GetUser) before
+	// ever reaching CreateSetupToken, and fails closed on ANY error from that
+	// lookup (including a broken-DB storage error, indistinguishable here from
+	// a genuine "no such user") — so this never reaches the 500 path this test
+	// originally exercised.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestGetSetupTokenByHashProxy_DBError_S31(t *testing.T) {

@@ -12,6 +12,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1307,16 +1309,23 @@ func TestCreateSetupTokenProxy_MissingEmail_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestCreateSetupTokenProxy_HappyPath_S13 — valid body → 200.
+// TestCreateSetupTokenProxy_HappyPath_S13 — valid body referencing a real,
+// matching-email user (account_setup requires subject_user_id, per #G79) → 200.
 func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
-	h := freshAuthHandlerS13(t)
+	cs := freshCoreS12(t)
+	h := NewAuthHandler(cs, false)
+	user, err := cs.Storage().CreateUser(context.Background(), &models.User{
+		Username: "newuser_s13", Email: "newuser@example.com", PasswordHash: "x",
+	})
+	require.NoError(t, err)
 	body := proxyJSON(map[string]interface{}{
-		"token_hash":    "deadbeef1234567890abcdef",
-		"purpose":       "invite",
-		"subject_email": "newuser@example.com",
-		"state":         "active",
-		"expires_at":    time.Now().Add(24 * time.Hour),
-		"created_by":    1,
+		"token_hash":      "deadbeef1234567890abcdef",
+		"purpose":         "account_setup",
+		"subject_email":   "newuser@example.com",
+		"subject_user_id": user.ID,
+		"state":           "active",
+		"expires_at":      time.Now().Add(24 * time.Hour),
+		"created_by":      1,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/system/setup-tokens", body)
 	w := httptest.NewRecorder()

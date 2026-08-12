@@ -1420,6 +1420,28 @@ func TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
 	require.NoError(t, db.First(&stillExists, 5).Error, "the group must not have been deleted when the guard refuses")
 }
 
+// TestCreateSetupTokenProxy_RefusesUnmatchedSubject is the #G79 regression:
+// CreateSetupTokenProxy previously persisted whatever token_hash/subject_email
+// the caller supplied with no check that either referenced anything real,
+// letting a system.write caller mint an active token binding a plaintext it
+// already knows to an arbitrary identity — then redeem it via the public
+// /auth/setup/consume endpoint. A subject_user_id that doesn't reference an
+// existing user must now be refused, and no token must be persisted.
+func TestCreateSetupTokenProxy_RefusesUnmatchedSubject(t *testing.T) {
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+
+	body := `{"token_hash":"deadbeef","purpose":"account_setup","subject_email":"nobody@example.com","subject_user_id":999999,"expires_at":"` +
+		time.Now().Add(24*time.Hour).Format(time.RFC3339) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSetupTokenProxy(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, "a subject_user_id with no matching user must be refused")
+	_, err := cs.Storage().GetSetupTokenByHash(context.Background(), "deadbeef")
+	assert.Error(t, err, "no setup token must be persisted when the subject is unverified")
+}
+
 // TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant is the #G79
 // regression: CreateUserWithRoleGrantsProxy previously called
 // storage.CreateUserWithRoleGrants directly, persisting whatever grants the
@@ -12466,8 +12488,13 @@ func TestAuthHandler_CreateSetupTokenProxy_MissingFields(t *testing.T) {
 }
 
 func TestAuthHandler_CreateSetupTokenProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"token_hash":"abc123","purpose":"invite","subject_email":"test@example.com","expires_at":"2026-12-31T00:00:00Z"}`
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+	user, err := cs.Storage().CreateUser(context.Background(), &models.User{
+		Username: "setup_s4", Email: "test@example.com", PasswordHash: "x",
+	})
+	require.NoError(t, err)
+	body := fmt.Sprintf(`{"token_hash":"abc123","purpose":"account_setup","subject_email":"test@example.com","subject_user_id":%d,"expires_at":%q}`, user.ID, time.Now().Add(24*time.Hour).Format(time.RFC3339))
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, req)
