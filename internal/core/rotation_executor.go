@@ -399,7 +399,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			storeVal = upstreamVal
 		}
 	}
-	if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), "system:auto-rotation"); rerr != nil {
+	if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), 0, "system:auto-rotation"); rerr != nil {
 		log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
 		failed[secret.ID] = fmt.Sprintf("%q: store new version: %v", secret.Name, rerr)
 		sid := secret.ID
@@ -489,13 +489,19 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 // returns key material only once) but an error is still returned, so the HTTP response is
 // never a clean "success" while a leftover credential needs manual operator removal; the
 // audit trail records the partial state distinctly either way.
-func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
+// actorID (added for #G09) threads through to RotateSecret's read-guard
+// check on the no-op-detection comparison — 0 for callers with no single
+// identifiable user (e.g. a bulk operation not yet threading a per-secret
+// actor), which only means that comparison is skipped for a
+// classification-restricted secret with a gate enabled, never that the
+// rotation itself is blocked.
+func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string) (*models.SecretNode, error) {
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
 	if secret.RotationBackend == "" {
-		return c.RotateSecret(ctx, id, newValue, rotatedBy)
+		return c.RotateSecret(ctx, id, newValue, actorID, rotatedBy)
 	}
 
 	// ROTATION-001: emit before calling upstream so a crash between upstream success
@@ -511,7 +517,7 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 		// The upstream minted the new credential but a prior, possibly compromised one
 		// could not be removed. Store the new value (discarding it would orphan a live,
 		// untracked credential) but still fail the call — the leftover needs an operator.
-		updated, serr := c.RotateSecret(ctx, id, []byte(partial.Value), rotatedBy)
+		updated, serr := c.RotateSecret(ctx, id, []byte(partial.Value), actorID, rotatedBy)
 		if serr != nil {
 			return nil, serr
 		}
@@ -527,7 +533,7 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 			fmt.Sprintf("on-demand rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, berr))
 		return nil, fmt.Errorf("backend %q rotation failed for secret %q (upstream credential NOT rotated): %w", secret.RotationBackend, secret.Name, berr)
 	default:
-		return c.RotateSecret(ctx, id, []byte(upstreamVal), rotatedBy)
+		return c.RotateSecret(ctx, id, []byte(upstreamVal), actorID, rotatedBy)
 	}
 }
 

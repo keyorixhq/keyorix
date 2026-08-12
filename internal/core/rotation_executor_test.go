@@ -813,7 +813,7 @@ func TestRotateSecretOnDemand_NoBackendStoresCallerValue(t *testing.T) {
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "plain", false, fixed.Add(-24*time.Hour))
 
-	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("caller-value"), "alice")
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("caller-value"), 0, "alice")
 	require.NoError(t, err)
 	assert.NotNil(t, updated.LastRotatedAt)
 	v := latestVersion(t, db, 1)
@@ -829,7 +829,7 @@ func TestRotateSecretOnDemand_AppliesBackend(t *testing.T) {
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
 
-	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), "alice")
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), 0, "alice")
 	require.NoError(t, err)
 
 	require.True(t, fake.called, "the manual rotate must actually invoke the backend executor")
@@ -850,7 +850,7 @@ func TestRotateSecretOnDemand_GenerateUpstreamIgnoresCandidate(t *testing.T) {
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
 	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-24*time.Hour))
 
-	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored-candidate"), "alice")
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored-candidate"), 0, "alice")
 	require.NoError(t, err)
 	assert.Equal(t, "svc-app", fake.gotRef)
 	v := latestVersion(t, db, 1)
@@ -865,7 +865,7 @@ func TestRotateSecretOnDemand_BackendFailureRefused(t *testing.T) {
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
 
-	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), "alice")
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), 0, "alice")
 	require.Error(t, err, "an upstream rotation failure must never look like success")
 	assert.Contains(t, err.Error(), "backend")
 	assert.Contains(t, err.Error(), "NOT rotated")
@@ -890,7 +890,7 @@ func TestRotateSecretOnDemand_PartialFailureStoresButErrors(t *testing.T) {
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
 	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-24*time.Hour))
 
-	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored"), "alice")
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored"), 0, "alice")
 	require.Error(t, err, "a partial upstream cleanup failure must not report success")
 	assert.NotNil(t, updated, "the new value is still returned/stored — never orphan a freshly minted credential")
 
@@ -910,7 +910,7 @@ func TestRotateSecretOnDemand_UnknownBackendRefused(t *testing.T) {
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "other"}}))
 	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
 
-	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("x"), "alice")
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("x"), 0, "alice")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown rotation backend")
 	v := latestVersion(t, db, 1)

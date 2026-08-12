@@ -24,7 +24,7 @@ func newMaxReadsCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1) // sqlite: serialize connections (statements stay atomic)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessSchedule{}))
 	return &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}, db
 }
 
@@ -126,7 +126,7 @@ func TestMaxReads_SurvivesRotateAndRollback(t *testing.T) {
 
 	// Rotating creates a brand-new version (read_count reset to 0 on THAT row) —
 	// the secret-level counter must still refuse the next read.
-	_, err = c.RotateSecret(ctx, id, []byte("v2"), "actor")
+	_, err = c.RotateSecret(ctx, id, []byte("v2"), 0, "actor")
 	require.NoError(t, err)
 	_, err = c.GetSecretValue(ctx, id)
 	require.Error(t, err, "rotating must not grant a fresh read budget")

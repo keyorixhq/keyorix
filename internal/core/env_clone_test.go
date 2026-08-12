@@ -37,6 +37,7 @@ func newCloneTestCore(t *testing.T) *KeyorixCore {
 		&models.AuditEvent{},
 		&models.SecretAccessLog{},
 		&models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
+		&models.SecretAccessSchedule{},
 	))
 	// CopySecret calls GetSecretValueWithPermissionCheck which gates the owner path on
 	// IsProjectMember (RBAC-001). The first project created in each test gets ID=1;
