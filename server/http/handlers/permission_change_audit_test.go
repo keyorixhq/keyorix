@@ -186,7 +186,7 @@ func TestGetPermissionChangeAudit_LimitParam(t *testing.T) {
 		Data struct {
 			Total     int                      `json:"total"`
 			Changes   []map[string]interface{} `json:"changes"`
-			Truncated bool                      `json:"truncated"`
+			Truncated bool                     `json:"truncated"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
