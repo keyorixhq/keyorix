@@ -251,6 +251,10 @@ func TestUpdateUser_Deactivate_LostRace_ReturnsConflictError(t *testing.T) {
 	ms := new(MockStorage)
 	original := &models.User{ID: 1, Username: "alice", Email: "alice@x.com", IsActive: true}
 	ms.On("GetUser", mock.Anything, uint(1)).Return(original, nil)
+	// guardLastAdminDeactivation (#G02) runs first — fixture user holds no
+	// roles, so IsGlobalAdmin resolves false and the guard is a no-op.
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), Scope{}).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), Scope{}).Return([]uint{}, nil)
 	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(1)).Return([]string{}, nil)
 	ms.On("UpdateUserIfActiveStateMatches", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.ID == 1 && !u.IsActive

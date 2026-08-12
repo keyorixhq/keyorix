@@ -24,6 +24,10 @@ func newMigrateHandler(t *testing.T) (*CatalogHandler, *gorm.DB) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.MachineIdentity{}, &models.Project{}, &models.Session{}, &models.AuditEvent{},
+		// Role/UserRole/Group/UserGroup/GroupRole/Environment are needed by
+		// guardLastAdminDeactivation (#G02), which MigrateUserToMachine's
+		// SuspendUser call now runs.
+		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 3, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 7, Username: "ci-bot", Email: "ci-bot@x.io", AccountState: core.AccountActive}).Error)

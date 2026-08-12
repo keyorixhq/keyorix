@@ -59,6 +59,20 @@ type loginLockoutUpdateProxyBody struct {
 	LoginLockoutCount   int        `json:"login_lockout_count"`
 }
 
+// maxLoginLockoutProxyDuration bounds how far in the future a proxied
+// login_locked_until may be. #G79: this proxy has no visibility into the
+// calling server's own configured exponential-cooldown policy (that decision
+// stays entirely on the calling side, per the package doc above), so this is
+// a generous ceiling against a clearly-nonsensical value, not the real
+// policy — it exists only to cap the blast radius of a caller minting a
+// nominally "long lockout" that would otherwise never expire.
+const maxLoginLockoutProxyDuration = 30 * 24 * time.Hour
+
+// maxLoginLockoutProxyCount bounds failed_login_attempts/login_lockout_count
+// against an absurd/overflow value — same rationale as the duration bound
+// above: a sanity ceiling, not the calling server's real threshold policy.
+const maxLoginLockoutProxyCount = 100_000
+
 // UpdateLoginLockoutStateProxy handles PUT
 // /api/v1/system/users/{id}/login-lockout.
 func (h *AuthHandler) UpdateLoginLockoutStateProxy(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +84,15 @@ func (h *AuthHandler) UpdateLoginLockoutStateProxy(w http.ResponseWriter, r *htt
 	var body loginLockoutUpdateProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if body.FailedLoginAttempts < 0 || body.FailedLoginAttempts > maxLoginLockoutProxyCount ||
+		body.LoginLockoutCount < 0 || body.LoginLockoutCount > maxLoginLockoutProxyCount {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "failed_login_attempts/login_lockout_count out of range")
+		return
+	}
+	if body.LoginLockedUntil != nil && body.LoginLockedUntil.After(time.Now().Add(maxLoginLockoutProxyDuration)) {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "login_locked_until is too far in the future")
 		return
 	}
 	err = h.coreService.Storage().UpdateLoginLockoutState(

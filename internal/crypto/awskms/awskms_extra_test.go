@@ -3,6 +3,7 @@ package awskms
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -25,6 +26,52 @@ func TestAWSKMS_EncryptError(t *testing.T) {
 	_, err := c.Encrypt(context.Background(), []byte("data"))
 	if err == nil {
 		t.Fatal("expected an error from a failing KMS Encrypt")
+	}
+}
+
+// fakeKMSInternalError models an AWS SDK error carrying upstream-internal
+// detail (account ID, an internal AWS hostname) that must always be wrapped
+// with the package's "aws-kms: <op>:" prefix — matching the convention every
+// other error path in this file already follows (see New's "aws-kms: load AWS
+// config: %w") — rather than propagated bare and unprefixed as it was before
+// this fix.
+type fakeKMSInternalError struct{}
+
+const fakeKMSMarker = "acct-013918471234 kms-internal-us-east-1.aws.internal safe-marker-9f3c1"
+
+func (fakeKMSInternalError) Encrypt(_ context.Context, _ *kms.EncryptInput, _ ...func(*kms.Options)) (*kms.EncryptOutput, error) {
+	return nil, errors.New("AccessDeniedException: user arn:aws:iam::" + fakeKMSMarker + " is not authorized")
+}
+
+func (fakeKMSInternalError) Decrypt(_ context.Context, _ *kms.DecryptInput, _ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+	return nil, errors.New("AccessDeniedException: user arn:aws:iam::" + fakeKMSMarker + " is not authorized")
+}
+
+// TestAWSKMS_Encrypt_ErrorIsPrefixed verifies Encrypt wraps the raw AWS SDK
+// error with the file's own "aws-kms: encrypt:" prefix convention, matching
+// how every other error path in this file (New's config-load error) is
+// already prefixed — rather than returning the bare, unprefixed SDK error.
+func TestAWSKMS_Encrypt_ErrorIsPrefixed(t *testing.T) {
+	c := &client{kms: fakeKMSInternalError{}, keyID: "test-key"}
+	_, err := c.Encrypt(context.Background(), []byte("data"))
+	if err == nil {
+		t.Fatal("expected an error from a failing KMS Encrypt")
+	}
+	if !strings.HasPrefix(err.Error(), "aws-kms: encrypt:") {
+		t.Fatalf("expected error prefixed with %q (matching this file's error convention), got %q", "aws-kms: encrypt:", err.Error())
+	}
+}
+
+// TestAWSKMS_Decrypt_ErrorIsPrefixed is the Decrypt counterpart of
+// TestAWSKMS_Encrypt_ErrorIsPrefixed.
+func TestAWSKMS_Decrypt_ErrorIsPrefixed(t *testing.T) {
+	c := &client{kms: fakeKMSInternalError{}, keyID: "test-key"}
+	_, err := c.Decrypt(context.Background(), []byte("blob"))
+	if err == nil {
+		t.Fatal("expected an error from a failing KMS Decrypt")
+	}
+	if !strings.HasPrefix(err.Error(), "aws-kms: decrypt:") {
+		t.Fatalf("expected error prefixed with %q (matching this file's error convention), got %q", "aws-kms: decrypt:", err.Error())
 	}
 }
 

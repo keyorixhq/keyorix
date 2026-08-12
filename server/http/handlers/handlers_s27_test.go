@@ -305,9 +305,14 @@ func TestCreateAccessRequestProxy_S27_HappyPath(t *testing.T) {
 
 // ── access_request_proxy.go: UpdateAccessRequestProxy happy path ──────────────
 
-// TestUpdateAccessRequestProxy_S27_ValidStateNoRow — valid target state but no
-// matching pending row → updated=false (no match is a legitimate no-op, not an error).
-func TestUpdateAccessRequestProxy_S27_ValidStateNoRow(t *testing.T) {
+// TestUpdateAccessRequestProxy_S27_NoRow — valid target state but no matching
+// row at all → 404 (AR-001: UpdateAccessRequestProxy re-fetches the row before
+// applying the transition, so a nonexistent id is now a proper not-found
+// rather than a silent updated:false no-op; the genuine race-loss case — an
+// EXISTING row whose state already moved away from pending — still finds the
+// row via Get and still reports updated:false from the conditional UPDATE,
+// unaffected by this change).
+func TestUpdateAccessRequestProxy_S27_NoRow(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreS27(t))
 	req := withChiParam(
@@ -316,8 +321,7 @@ func TestUpdateAccessRequestProxy_S27_ValidStateNoRow(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "updated")
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // ── access_review_campaigns.go: ListAccessReviewCampaigns ────────────────────

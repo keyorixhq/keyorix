@@ -109,6 +109,13 @@ func TestAdminAccountTransitions(t *testing.T) {
 				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)
 				store.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(2)).Return([]string{}, nil)
 			}
+			// SuspendUser now runs guardLastAdminDeactivation first (#G02) — the
+			// fixture user holds no roles, so IsGlobalAdmin resolves false and the
+			// guard is a no-op; only the "suspend" case reaches this check.
+			if tc.name == "suspend" {
+				store.On("GetUserRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
+				store.On("GetUserGroupRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
+			}
 
 			require.NoError(t, tc.call(c, ctx))
 			store.AssertExpectations(t)

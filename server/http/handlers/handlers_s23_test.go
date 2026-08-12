@@ -26,6 +26,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -681,15 +683,32 @@ func TestIsSafeDynamicSecretError_ExtraStrings_S23(t *testing.T) {
 
 // ── isSafeConnectError extra branches ─────────────────────────────────────────
 
-// TestIsSafeConnectError_ExtraStrings_S23 covers the safe-string branches for
-// isSafeConnectError to hit each case arm explicitly.
+// TestIsSafeConnectError_ExtraStrings_S23 covers isSafeConnectError's branches.
+//
+// G50: isSafeConnectError used to substring-match err.Error() against a handful
+// of marker phrases, which meant ANY error whose text happened to contain one of
+// those phrases — including a raw upstream/connector error that merely echoes a
+// caller-controlled ref alongside similar wording — was misclassified as "safe"
+// and returned to the client verbatim. It now checks the error's identity via
+// errors.Is against the core package's typed sentinels, so only the actual
+// core.ErrConnect* sentinels (optionally wrapped with %w) count as safe; a
+// look-alike error with the same substring but a different underlying type does
+// not.
 func TestIsSafeConnectError_ExtraStrings_S23(t *testing.T) {
-	assert.True(t, isSafeConnectError("keyorix connect is not enabled on this server"))
-	assert.True(t, isSafeConnectError("unknown connector: production-vault"))
-	assert.True(t, isSafeConnectError("a role is required for a connect ref-grant"))
-	assert.True(t, isSafeConnectError("/prod/secret is not permitted for your roles on connector vault"))
-	assert.False(t, isSafeConnectError("x509: certificate signed by unknown authority"))
-	assert.False(t, isSafeConnectError(""))
+	assert.True(t, isSafeConnectError(core.ErrConnectDisabled))
+	assert.True(t, isSafeConnectError(fmt.Errorf("%w %q", core.ErrConnectUnknownConnector, "production-vault")))
+	assert.True(t, isSafeConnectError(core.ErrConnectRoleRequired))
+	assert.True(t, isSafeConnectError(fmt.Errorf("ref %q %w %q", "/prod/secret", core.ErrConnectRefNotPermitted, "vault")))
+
+	// A look-alike error carrying the exact same marker text but NOT wrapping the
+	// sentinel (e.g. an upstream connector error that happens to echo it back,
+	// possibly seeded by an attacker-controlled ref) must NOT be classified as safe.
+	assert.False(t, isSafeConnectError(errors.New("keyorix connect is not enabled on this server")))
+	assert.False(t, isSafeConnectError(errors.New("unknown connector: production-vault")))
+	assert.False(t, isSafeConnectError(errors.New("a role is required for a connect ref-grant")))
+	assert.False(t, isSafeConnectError(errors.New("/prod/secret is not permitted for your roles on connector vault")))
+	assert.False(t, isSafeConnectError(errors.New("x509: certificate signed by unknown authority")))
+	assert.False(t, isSafeConnectError(nil))
 }
 
 // ── groups_proxy.go: AddGroupMemberProxy storage-NotFound branch ─────────────

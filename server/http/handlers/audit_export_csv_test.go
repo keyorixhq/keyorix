@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,4 +60,39 @@ func TestExportAuditLogsCSV(t *testing.T) {
 		h.ExportAuditLogsCSV(w, req)
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
+}
+
+// TestExportAuditLogsCSV_FormulaInjection — an event whose actor_type begins with a
+// formula-injection character (=, +, -, @) must be escaped with a leading single quote
+// in the CSV export (G49: csvSafe() formula-injection escaping on the actor_type column).
+func TestExportAuditLogsCSV_FormulaInjection(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@t.com"}).Error)
+
+	uid := uint(1)
+	tru := true
+	require.NoError(t, db.Create(&models.AuditEvent{
+		EventType: "secret.created", UserID: &uid, Success: &tru,
+		Description: "created db", IPAddress: "10.0.0.1", EventTime: time.Now(),
+		ActorType: "=cmd|' /C calc'!A1",
+	}).Error)
+
+	h := NewAuditHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export.csv", nil))
+	w := httptest.NewRecorder()
+	h.ExportAuditLogsCSV(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	records, err := csv.NewReader(w.Body).ReadAll()
+	require.NoError(t, err)
+	require.Len(t, records, 2, "CSV must have header + 1 data row")
+
+	// header: id, event_time, event_type, actor, actor_type, user_id, project_id,
+	// secret_id, ip_address, success, description
+	actorTypeCell := records[1][4]
+	assert.True(t, strings.HasPrefix(actorTypeCell, "'"), "formula-injection prefix must be neutralized with a leading quote, got %q", actorTypeCell)
+	assert.Equal(t, "'=cmd|' /C calc'!A1", actorTypeCell)
 }

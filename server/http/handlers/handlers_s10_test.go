@@ -65,6 +65,7 @@ func newIsolatedCoreS10(t *testing.T) *core.KeyorixCore {
 		&models.SecretAccessLog{},
 		// s10 addition — required for CreateSecret / GetSecret / value reads
 		&models.SecretVersion{},
+		&models.SecretAccessSchedule{},
 	)
 	require.NoError(t, err, "AutoMigrate isolated s10 DB")
 	return core.NewKeyorixCore(store.NewLocalStorage(db))

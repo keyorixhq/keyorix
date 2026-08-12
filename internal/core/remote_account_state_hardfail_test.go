@@ -33,6 +33,10 @@ func TestSuspendUser_HardFailsWhenBackendCannotPersistAccountState(t *testing.T)
 	ctx := context.Background()
 
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, AccountState: AccountActive}, nil)
+	// guardLastAdminDeactivation (#G02) runs first — fixture user holds no
+	// roles, so IsGlobalAdmin resolves false and the guard is a no-op.
+	store.On("GetUserRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
 	store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
 	// H-2: ListPersonalAccessTokensByUser is called before SetAccountState.
 	store.On("ListPersonalAccessTokensByUser", ctx, uint(2)).Return([]*models.PersonalAccessToken{}, nil)

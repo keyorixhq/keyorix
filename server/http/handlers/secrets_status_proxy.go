@@ -62,6 +62,15 @@ type transitionSecretStatusProxyBody struct {
 // ResumeSecret already rely on against a local backend — see the package
 // doc's reasoning for why this is a dedicated route rather than a generic
 // UpdateSecret proxy call.
+//
+// #G79: the underlying storage.TransitionSecretStatus call is a
+// `Select("*")` full-row update (see local_secrets.go), and every legitimate
+// caller (SuspendSecret/ResumeSecret) only ever mutates Status and UpdatedAt
+// on the row it just fetched — never OwnerID/ParentID/Classification/
+// ExpiresAt/read-quota counters/anything else. Without that constraint
+// enforced here, a client-supplied wire body could rewrite any of those
+// under cover of a status transition. Re-fetch the authoritative row and
+// apply only Status/UpdatedAt from the wire onto it.
 func (h *SecretHandler) TransitionSecretStatusProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -81,8 +90,19 @@ func (h *SecretHandler) TransitionSecretStatusProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "from_status is required")
 		return
 	}
-	body.Secret.ID = uint(id)
-	matched, err := h.coreService.Storage().TransitionSecretStatus(r.Context(), body.Secret, body.FromStatus)
+	existing, err := h.coreService.Storage().GetSecret(r.Context(), uint(id))
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "secret not found")
+			return
+		}
+		log.Printf("secrets proxy: transition status lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	existing.Status = body.Secret.Status
+	existing.UpdatedAt = body.Secret.UpdatedAt
+	matched, err := h.coreService.Storage().TransitionSecretStatus(r.Context(), existing, body.FromStatus)
 	if err != nil {
 		log.Printf("secrets proxy: transition status failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

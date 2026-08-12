@@ -162,7 +162,9 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 	if _, rejected := c.filterSCIMManaged(ctx, toAdd); len(rejected) > 0 {
 		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
 	}
-	c.applyGroupMembershipChanges(ctx, groupID, want, current, toAdd)
+	if err := c.applyGroupMembershipChanges(ctx, groupID, want, current, toAdd); err != nil {
+		return nil, err
+	}
 	c.writeAuditEvent(ctx, EventSCIMGroupUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM replaced group %d (members=%d)", groupID, len(want)))
 	return c.storage.GetGroup(ctx, groupID)
@@ -193,10 +195,20 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	if len(rejected) > 0 {
 		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
 	}
+	// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
+	// applying any of them, so a PATCH that would strip the install's last route
+	// to global-admin authority is refused atomically — see
+	// applyGroupMembershipChanges's identical precheck-then-apply shape.
+	toRemove := filterNonZero(removeIDs)
+	for _, id := range toRemove {
+		if err := c.guardLastGlobalAdminMembership(ctx, id, groupID); err != nil {
+			return nil, err
+		}
+	}
 	for _, id := range allowedAdds {
 		_ = c.storage.AddUserToGroup(ctx, id, groupID, 0) // SCIM memberships are always global
 	}
-	for _, id := range filterNonZero(removeIDs) {
+	for _, id := range toRemove {
 		_ = c.storage.RemoveUserFromGroup(ctx, id, groupID, 0) // SCIM memberships are always global
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupUpdated, actorPtr(actorID), nil,
@@ -263,7 +275,19 @@ func filterNonZero(ids []uint) []uint {
 	return out
 }
 
-func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint) {
+// applyGroupMembershipChanges applies the add/remove sets computed by the
+// caller. Every removal is checked against guardLastGlobalAdminMembership
+// (#G02) BEFORE any storage write happens, so a SCIM PUT that would strip the
+// install's last route to global-admin authority is refused atomically — not
+// applied member-by-member with some removals already committed.
+func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint) error {
+	for _, u := range current {
+		if !want[u.ID] {
+			if err := c.guardLastGlobalAdminMembership(ctx, u.ID, groupID); err != nil {
+				return err
+			}
+		}
+	}
 	for _, u := range current {
 		if !want[u.ID] {
 			_ = c.storage.RemoveUserFromGroup(ctx, u.ID, groupID, 0) // SCIM memberships are always global
@@ -272,11 +296,17 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 	for _, id := range toAdd {
 		_ = c.storage.AddUserToGroup(ctx, id, groupID, 0) // SCIM memberships are always global
 	}
+	return nil
 }
 
 // DeprovisionSCIMGroup handles a SCIM DELETE — removes the group (membership links
-// go with it).
+// go with it). Refuses to delete a group holding the install's last
+// global-admin-conferring role grant (guardLastGlobalAdminGroupDelete, #G02) —
+// the same guard the native DeleteGroup already applies.
 func (c *KeyorixCore) DeprovisionSCIMGroup(ctx context.Context, actorID, groupID uint) error {
+	if err := c.guardLastGlobalAdminGroupDelete(ctx, groupID); err != nil {
+		return err
+	}
 	// Storage-direct: the SCIM path emits scim.group_deprovisioned below, not the
 	// generic group.deleted. storage.DeleteGroup still errors on a missing group.
 	if err := c.storage.DeleteGroup(ctx, groupID); err != nil {

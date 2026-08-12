@@ -115,6 +115,10 @@ func TestApproveAccessRequestWithExpiry_TimeBound(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10) // requester
 	h.CreateTestUser(t, "admin", 1)  // approver
+	// #G15/#93/#107/#141: the approver must themselves hold every permission of
+	// the role being granted — grant "admin" globally so the ceiling check's
+	// admin bypass applies, mirroring TestApproveAccessRequest_PermanentByDefault.
+	h.AssignUserRole(t, 1, 2, nil)
 
 	created, err := h.Storage.CreateAccessRequest(ctx, &models.AccessRequest{
 		ProjectID: proj, UserID: 10, SuggestedRole: "editor", State: core.AccessRequestPending,

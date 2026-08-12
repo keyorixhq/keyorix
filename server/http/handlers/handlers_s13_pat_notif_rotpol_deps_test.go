@@ -13,6 +13,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -538,17 +539,29 @@ func TestListSecretDependencies_HappyPath_S13(t *testing.T) {
 
 // ── secret_dependencies_proxy.go ─────────────────────────────────────────────
 
-// TestCreateSecretDependencyProxy_HappyPath_S13 — valid body → 200.
+// TestCreateSecretDependencyProxy_HappyPath_S13 — valid body referencing two
+// real secrets in the same project/environment (#G79's cross-reference check
+// requires this) → 200.
 func TestCreateSecretDependencyProxy_HappyPath_S13(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS12(t)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 
+	ctx := context.Background()
+	proj, err := cs.Storage().CreateProject(ctx, &models.Project{Name: "proj-dep-create-s13"})
+	require.NoError(t, err)
+	env, err := cs.Storage().CreateEnvironment(ctx, &models.Environment{Name: "env-dep-create-s13", ProjectID: proj.ID})
+	require.NoError(t, err)
+	s1, err := cs.Storage().CreateSecret(ctx, &models.SecretNode{Name: "s1", ProjectID: proj.ID, EnvironmentID: env.ID, Type: "password", OwnerID: 1})
+	require.NoError(t, err)
+	s2, err := cs.Storage().CreateSecret(ctx, &models.SecretNode{Name: "s2", ProjectID: proj.ID, EnvironmentID: env.ID, Type: "password", OwnerID: 1})
+	require.NoError(t, err)
+
 	body, _ := json.Marshal(map[string]any{
-		"project_id":           1,
-		"dependent_secret_id":  1,
-		"depends_on_secret_id": 2,
+		"project_id":           proj.ID,
+		"dependent_secret_id":  s1.ID,
+		"depends_on_secret_id": s2.ID,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -570,17 +583,29 @@ func TestCreateSecretDependencyExclusiveProxy_MissingFields_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestCreateSecretDependencyExclusiveProxy_HappyPath_S13 — valid body → 200.
+// TestCreateSecretDependencyExclusiveProxy_HappyPath_S13 — valid body
+// referencing two real secrets in the same project/environment (#G79's
+// cross-reference check requires this) → 200.
 func TestCreateSecretDependencyExclusiveProxy_HappyPath_S13(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS12(t)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 
+	ctx := context.Background()
+	proj, err := cs.Storage().CreateProject(ctx, &models.Project{Name: "proj-dep-excl-s13"})
+	require.NoError(t, err)
+	env, err := cs.Storage().CreateEnvironment(ctx, &models.Environment{Name: "env-dep-excl-s13", ProjectID: proj.ID})
+	require.NoError(t, err)
+	s1, err := cs.Storage().CreateSecret(ctx, &models.SecretNode{Name: "s1", ProjectID: proj.ID, EnvironmentID: env.ID, Type: "password", OwnerID: 1})
+	require.NoError(t, err)
+	s2, err := cs.Storage().CreateSecret(ctx, &models.SecretNode{Name: "s2", ProjectID: proj.ID, EnvironmentID: env.ID, Type: "password", OwnerID: 1})
+	require.NoError(t, err)
+
 	body, _ := json.Marshal(map[string]any{
-		"project_id":           1,
-		"dependent_secret_id":  10,
-		"depends_on_secret_id": 20,
+		"project_id":           proj.ID,
+		"dependent_secret_id":  s1.ID,
+		"depends_on_secret_id": s2.ID,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
 	w := httptest.NewRecorder()

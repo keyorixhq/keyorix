@@ -215,3 +215,96 @@ func TestSCIM_ServiceProviderConfig(t *testing.T) {
 	cfg := decodeSCIM(t, w)
 	assert.NotNil(t, cfg["patch"])
 }
+
+// assertSCIMNoRawDBLeak is the SCIM-response counterpart of assertNoRawDBLeak
+// (mfa_test.go): SCIM errors carry their message in the RFC 7644 "detail"
+// field, not {message}, so this checks that key instead. Both halves of the
+// G50 fix still apply: no raw driver text in the response, but the original
+// error still reaches the server-side log for operators.
+func assertSCIMNoRawDBLeak(t *testing.T, w *httptest.ResponseRecorder, logBuf *bytes.Buffer, droppedTable string) {
+	t.Helper()
+	body := w.Body.String()
+	assert.NotContains(t, body, "no such table")
+	assert.NotContains(t, body, droppedTable)
+
+	resp := decodeSCIM(t, w)
+	detail, _ := resp["detail"].(string)
+	assert.NotEmpty(t, detail)
+	assert.NotContains(t, detail, "no such table")
+	assert.NotContains(t, detail, droppedTable)
+
+	assert.Contains(t, logBuf.String(), "no such table",
+		"the raw driver error must still be logged server-side for operators to debug")
+}
+
+// TestSCIM_CreateUser_DBErrorSanitized drops the users table so
+// ProvisionSCIMUser's dedup check (FindSCIMUser → GetUserByEmail) fails with
+// a raw SQLite driver error, wrapped as "failed to check for an existing
+// user: %w" — proving CreateUser's default/fallback branch sanitizes it
+// instead of echoing err.Error() straight into the SCIM "detail" field.
+func TestSCIM_CreateUser_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Migrator().DropTable(&models.User{}))
+
+	logBuf := captureLogBuf(t)
+	body := `{"userName":"alice@corp.com"}`
+	w := httptest.NewRecorder()
+	h.CreateUser(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", bytes.NewReader([]byte(body))))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
+}
+
+// TestSCIM_ReplaceUser_DBErrorSanitized provisions a real SCIM-managed user,
+// then drops the users table so UpdateSCIMUser's locked read
+// (scimUpdateUserTx → LockUserForUpdate) fails with a raw SQLite driver
+// error that UpdateSCIMUser wraps as "storage failed: %w" — proving
+// ReplaceUser sanitizes it instead of forwarding err.Error() raw.
+func TestSCIM_ReplaceUser_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	id := provisionUser(t, h, "carol@corp.com")
+	require.NoError(t, db.Migrator().DropTable(&models.User{}))
+
+	logBuf := captureLogBuf(t)
+	body := `{"displayName":"Carol Updated"}`
+	w := httptest.NewRecorder()
+	h.ReplaceUser(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Users/"+id, bytes.NewReader([]byte(body))), id))
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
+}
+
+// TestSCIM_PatchUser_DBErrorSanitized is PatchUser's counterpart to
+// TestSCIM_ReplaceUser_DBErrorSanitized — same underlying UpdateSCIMUser call,
+// reached via PATCH instead of PUT.
+func TestSCIM_PatchUser_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	id := provisionUser(t, h, "dave@corp.com")
+	require.NoError(t, db.Migrator().DropTable(&models.User{}))
+
+	logBuf := captureLogBuf(t)
+	patch := `{"Operations":[{"op":"replace","path":"displayName","value":"Dave Updated"}]}`
+	w := httptest.NewRecorder()
+	h.PatchUser(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Users/"+id, bytes.NewReader([]byte(patch))), id))
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
+}
+
+// TestSCIM_DeleteUser_DBErrorSanitized provisions a real SCIM-managed user,
+// then drops the users table so DeprovisionSCIMUser's initial GetUser read
+// fails with a raw SQLite driver error (wrapped as "user not found: %w",
+// which despite its name embeds the RAW underlying error text) — proving
+// DeleteUser sanitizes it instead of forwarding err.Error() raw.
+func TestSCIM_DeleteUser_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	id := provisionUser(t, h, "erin@corp.com")
+	require.NoError(t, db.Migrator().DropTable(&models.User{}))
+
+	logBuf := captureLogBuf(t)
+	w := httptest.NewRecorder()
+	h.DeleteUser(w, withID(httptest.NewRequest(http.MethodDelete, "/scim/v2/Users/"+id, nil), id))
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
+}

@@ -55,7 +55,7 @@ func TestSecretValuePolicy_EnforcedOnAllWritePaths(t *testing.T) {
 
 	t.Run("RotateSecret rejects a weak value", func(t *testing.T) {
 		c, _, secretID := newPolicyEnforceFixture(t)
-		_, err := c.RotateSecret(ctx, secretID, []byte("password"), "u")
+		_, err := c.RotateSecret(ctx, secretID, []byte("password"), 0, "u")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "weak or placeholder")
 	})

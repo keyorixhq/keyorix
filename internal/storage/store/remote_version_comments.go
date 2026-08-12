@@ -17,10 +17,10 @@ func (rs *RemoteStorage) CreateSecretVersionComment(_ context.Context, _ *models
 	return remoteUnsupported("CreateSecretVersionComment")
 }
 
-func (rs *RemoteStorage) ListSecretVersionComments(_ context.Context, _ uint) ([]models.SecretVersionComment, error) {
+func (rs *RemoteStorage) ListSecretVersionComments(_ context.Context, _, _ uint) ([]models.SecretVersionComment, error) {
 	return nil, remoteUnsupported("ListSecretVersionComments")
 }
 
-func (rs *RemoteStorage) DeleteSecretVersionComment(_ context.Context, _ uint) error {
+func (rs *RemoteStorage) DeleteSecretVersionComment(_ context.Context, _, _, _ uint) error {
 	return remoteUnsupported("DeleteSecretVersionComment")
 }

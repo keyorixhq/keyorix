@@ -2,9 +2,9 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -233,9 +233,12 @@ func (s *AuditGRPCService) WriteAuditCheckpoint(ctx context.Context, _ *emptypb.
 		// The chain did not verify (broken, or a prior signed checkpoint proves a
 		// truncation) — refuse to notarise it. A precondition failure, not an error.
 		// core.WriteAuditCheckpoint also propagates raw storage-layer errors on this
-		// path, which must not reach the client verbatim.
+		// path, which must not reach the client verbatim. Classify via errors.Is
+		// against the typed sentinel (core.ErrAuditCheckpointRefused) rather than a
+		// substring match against err.Error() — the dynamic detail appended to that
+		// error must not be able to spoof the classification.
 		msg := err.Error()
-		if !strings.Contains(msg, "refusing to checkpoint") {
+		if !errors.Is(err, core.ErrAuditCheckpointRefused) {
 			log.Printf("Error writing audit checkpoint: %v", err)
 			msg = clientSafe(err)
 		}

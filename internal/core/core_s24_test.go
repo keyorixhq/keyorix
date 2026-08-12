@@ -964,6 +964,12 @@ func TestGetUserByExternalID_Success(t *testing.T) {
 
 func TestDeprovisionSCIMGroup_StorageError(t *testing.T) {
 	ms := new(MockStorage)
+	// guardLastGlobalAdminGroupDelete (#G02) resolves the install-admin role IDs
+	// first; none exist in this fixture, so the guard is a no-op and the delete
+	// proceeds to the simulated storage failure under test.
+	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
 	ms.On("DeleteGroup", mock.Anything, uint(10)).Return(errors.New("not found"))
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
@@ -973,6 +979,9 @@ func TestDeprovisionSCIMGroup_StorageError(t *testing.T) {
 
 func TestDeprovisionSCIMGroup_Success(t *testing.T) {
 	ms := new(MockStorage)
+	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
 	ms.On("DeleteGroup", mock.Anything, uint(10)).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)

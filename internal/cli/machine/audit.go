@@ -80,8 +80,8 @@ func printMachineAuditCSV(report *core.MachineAuditReport) error {
 		}
 		if err := cw.Write([]string{
 			fmt.Sprintf("%d", m.MachineID),
-			m.Name,
-			m.Description,
+			common.CSVSafe(m.Name),
+			common.CSVSafe(m.Description),
 			fmt.Sprintf("%d", m.CredentialCount),
 			lastUsed,
 			fmt.Sprintf("%v", m.IsStale),

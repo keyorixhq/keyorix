@@ -6,10 +6,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,26 +17,24 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// isSafeConnectError reports whether msg is one of the small set of
-// deliberately-crafted, safe messages core.ReadFederatedSecret /
+// isSafeConnectError reports whether err is one of the small set of
+// deliberately-crafted, safe sentinel errors core.ReadFederatedSecret /
 // CreateConnectRefGrant / DeleteConnectRefGrant themselves produce (an
 // unknown/disabled connector, a missing role, or a per-reference policy
-// denial). Anything else is assumed to originate from a lower layer —
-// the storage layer or an upstream connector (e.g. Vault) — whose raw
-// error text can leak internal detail and must be sanitized before it
-// reaches the client (backlog #116).
-func isSafeConnectError(msg string) bool {
-	for _, marker := range []string{
-		"keyorix connect is not enabled",
-		"unknown connector",
-		"a role is required for a connect ref-grant",
-		"is not permitted for your roles on connector",
-	} {
-		if strings.Contains(msg, marker) {
-			return true
-		}
-	}
-	return false
+// denial). This checks err's type via errors.Is against the core package's
+// sentinels rather than substring-matching err.Error(): connectorName and ref
+// are caller-controlled and, if an upstream connector (e.g. Vault) happened to
+// echo either back in its own raw error text, a substring match against the
+// message could be spoofed into passing as "safe" and leaking that raw text
+// to the client (backlog #116). Anything that doesn't match one of these
+// sentinels is assumed to originate from a lower layer — the storage layer or
+// an upstream connector — whose raw error text must be sanitized before it
+// reaches the client.
+func isSafeConnectError(err error) bool {
+	return errors.Is(err, core.ErrConnectDisabled) ||
+		errors.Is(err, core.ErrConnectUnknownConnector) ||
+		errors.Is(err, core.ErrConnectRoleRequired) ||
+		errors.Is(err, core.ErrConnectRefNotPermitted)
 }
 
 // ConnectHandler serves the /connect federation endpoints.
@@ -80,7 +78,7 @@ func (h *ConnectHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		// unless it's one of the deliberately-crafted, safe messages core.ReadFederatedSecret
 		// itself produces (backlog #116).
 		msg := err.Error()
-		if !isSafeConnectError(msg) {
+		if !isSafeConnectError(err) {
 			log.Printf("Error reading federated secret via connector %q: %v", name, err)
 			msg = clientSafe(err)
 		}
@@ -144,7 +142,7 @@ func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest
-		if !isSafeConnectError(msg) {
+		if !isSafeConnectError(err) {
 			log.Printf("Error creating connect ref-grant: %v", err)
 			msg = clientSafe(err)
 			status = http.StatusInternalServerError

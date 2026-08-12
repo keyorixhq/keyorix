@@ -720,6 +720,34 @@ func TestRemoveGlobalAdminRoleGuardedProxy_LastAdmin_S13(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "WOULD_STRAND_LAST_ADMIN")
 }
 
+// TestRemoveGlobalAdminRoleGuardedProxy_IgnoresWireSuppliedAdminRoleIDs is the
+// #G79 regression: RemoveGlobalAdminRoleGuardedProxy previously trusted the
+// caller's own admin_role_ids list to decide how many admin-conferring grants
+// count toward the last-admin invariant. A caller submitting an EMPTY list
+// (omitting the real admin role, attempting to make the guard undercount and
+// let the sole admin's role be removed) must still be refused — the server
+// now resolves the admin-role set itself and ignores the wire value entirely.
+func TestRemoveGlobalAdminRoleGuardedProxy_IgnoresWireSuppliedAdminRoleIDs(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewRBACHandler(cs)
+	var adminRole models.Role
+	require.NoError(t, db.Where("name = ?", "system_admin").First(&adminRole).Error)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"user_id":        1,
+		"role_id":        adminRole.ID,
+		"admin_role_ids": []uint{}, // attacker-supplied, deliberately empty
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/system/rbac/global-admin-role/remove-guarded",
+		bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.RemoveGlobalAdminRoleGuardedProxy(w, req)
+	assert.Equal(t, http.StatusConflict, w.Code, "an empty wire-supplied admin_role_ids must not bypass the last-admin guard")
+	assert.Contains(t, w.Body.String(), "WOULD_STRAND_LAST_ADMIN")
+}
+
 // ── users_roles.go: GetUserRolesForUser ──────────────────────────────────────
 
 func newUsersRolesHandlerS13(t *testing.T) *UsersRolesHandler {
