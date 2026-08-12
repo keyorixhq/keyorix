@@ -191,6 +191,14 @@ func TestGetSecretCertificate_InternalError_S13(t *testing.T) {
 	// so the handler returns 500 (or possibly 404 if "not found" appears).
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+
+	// G50: the raw driver error ("sql: database is closed") must never reach
+	// the client — GetSecretCertificate's default branch must route through
+	// clientSafe() instead of forwarding err.Error() verbatim.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "sql:")
+	assert.NotContains(t, w.Body.String(), "database is closed")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
 }
 
 // ── SecretNameConformance: bad project ID → 400 ──────────────────────────────

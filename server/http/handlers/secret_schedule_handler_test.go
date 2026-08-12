@@ -203,6 +203,13 @@ func TestSetSecretSchedule_StorageError(t *testing.T) {
 	// A plain DB error is not ErrAccessOutsideSchedule, so isScheduleValidationError
 	// returns true and the handler responds with 400.
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// G50: the raw driver error ("no such table: secret_access_schedules")
+	// is not one of validateScheduleParams' deliberately-safe messages, so it
+	// must be routed through clientSafe() instead of forwarded verbatim.
+	assert.NotContains(t, w.Body.String(), "secret_access_schedules")
+	assert.NotContains(t, w.Body.String(), "no such table")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
 }
 
 func TestSetSecretSchedule_DefaultTimezone(t *testing.T) {

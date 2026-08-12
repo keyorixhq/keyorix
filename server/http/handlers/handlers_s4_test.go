@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -653,13 +654,18 @@ func TestRestoreEnvironment_BadEnvID(t *testing.T) {
 
 // ── connect.go ────────────────────────────────────────────────────────────────
 
+// TestIsSafeConnectError checks isSafeConnectError's classification of the
+// core package's typed connect sentinels (see also
+// TestIsSafeConnectError_ExtraStrings_S23 for the G50 anti-spoofing coverage:
+// a look-alike error carrying the same text but not wrapping a sentinel must
+// NOT be classified as safe).
 func TestIsSafeConnectError(t *testing.T) {
-	assert.True(t, isSafeConnectError("keyorix connect is not enabled"))
-	assert.True(t, isSafeConnectError("unknown connector: foo"))
-	assert.True(t, isSafeConnectError("a role is required for a connect ref-grant"))
-	assert.True(t, isSafeConnectError("is not permitted for your roles on connector"))
-	assert.False(t, isSafeConnectError("some storage layer error"))
-	assert.False(t, isSafeConnectError(""))
+	assert.True(t, isSafeConnectError(core.ErrConnectDisabled))
+	assert.True(t, isSafeConnectError(fmt.Errorf("%w %q", core.ErrConnectUnknownConnector, "foo")))
+	assert.True(t, isSafeConnectError(core.ErrConnectRoleRequired))
+	assert.True(t, isSafeConnectError(fmt.Errorf("ref %q %w %q", "r", core.ErrConnectRefNotPermitted, "c")))
+	assert.False(t, isSafeConnectError(errors.New("some storage layer error")))
+	assert.False(t, isSafeConnectError(nil))
 }
 
 func TestNewConnectHandler(t *testing.T) {

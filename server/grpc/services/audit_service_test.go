@@ -111,6 +111,50 @@ func TestAuditService_WriteAuditCheckpoint_RequiresEncryption(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+// TestAuditService_WriteAuditCheckpoint_UnsafeErrorIsSanitized_G50 is the G50
+// regression test (detection_idea): a raw storage/internal error unrelated to
+// the "refusing to checkpoint" precondition must never reach the gRPC client
+// verbatim. Before the fix, WriteAuditCheckpoint classified the error as
+// safe-to-surface via strings.Contains(err.Error(), "refusing to checkpoint");
+// any unrelated internal error whose text happened to contain that phrase would
+// have been misclassified as safe. This drops the audit_events table so
+// VerifyAuditChain hits a genuine SQL error (nowhere near the sentinel path),
+// and asserts the gRPC status message is the generic clientSafe() text, not the
+// raw SQL/table detail.
+func TestAuditService_WriteAuditCheckpoint_UnsafeErrorIsSanitized_G50(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}))
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
+
+	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+
+	// Drop the table VerifyAuditChain reads from, so it fails with a raw SQL
+	// error instead of the "refusing to checkpoint" sentinel path.
+	require.NoError(t, db.Exec("DROP TABLE audit_events").Error)
+
+	svc := NewAuditService(c)
+	_, err = svc.WriteAuditCheckpoint(auditCtx(), &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	msg := status.Convert(err).Message()
+	assert.NotContains(t, msg, "audit_events", "raw SQL/table detail must not reach the gRPC client")
+	assert.NotContains(t, msg, "no such table", "raw SQL error text must not reach the gRPC client")
+	assert.Contains(t, msg, "an internal error occurred", "must fall back to the generic clientSafe() message")
+}
+
 func TestAuditService_GetAuditLogs_PermissionDenied(t *testing.T) {
 	svc := newAuditService(t)
 	ctx := authCtx(7, "nobody") // ungranted user → denied

@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"path"
 	"strings"
 	"time"
@@ -54,11 +55,11 @@ func (c *KeyorixCore) ConnectConnectorNames() []string {
 // returned to the caller and never persisted.
 func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (string, error) {
 	if c.connectManager == nil {
-		return "", fmt.Errorf("keyorix connect is not enabled")
+		return "", ErrConnectDisabled
 	}
 	conn, ok := c.connectManager.Get(connectorName)
 	if !ok {
-		return "", fmt.Errorf("unknown connector %q", connectorName)
+		return "", fmt.Errorf("%w %q", ErrConnectUnknownConnector, connectorName)
 	}
 	ctx = WithActorType(ctx, actorType)
 	uid := principalID
@@ -73,13 +74,20 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 	if !allowed {
 		c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
 			fmt.Sprintf("federated read DENIED by per-reference policy: connector %q (%s) ref %q", connectorName, conn.Type(), ref))
-		return "", fmt.Errorf("ref %q is not permitted for your roles on connector %q", ref, connectorName)
+		return "", fmt.Errorf("ref %q %w %q", ref, ErrConnectRefNotPermitted, connectorName)
 	}
 
 	value, err := conn.GetSecret(ctx, ref)
 	if err != nil {
+		// The upstream connector's raw error (e.g. a Vault/AWS SDK error) can carry
+		// internal detail — hostname, credential hints, driver messages — that must
+		// not be persisted into the audit trail unredacted (backlog #116). Log the
+		// original err server-side and persist a generic description instead; the
+		// HTTP layer separately applies clientSafe()/isSafeConnectError to what it
+		// returns to the caller.
+		log.Printf("federated read failed via connector %q (%s) ref %q: %v", connectorName, conn.Type(), ref, err)
 		c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
-			fmt.Sprintf("federated read FAILED via connector %q (%s) ref %q: %v", connectorName, conn.Type(), ref, err))
+			fmt.Sprintf("federated read FAILED via connector %q (%s) ref %q: an internal error occurred; see server logs", connectorName, conn.Type(), ref))
 		return "", err
 	}
 	c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
@@ -101,13 +109,13 @@ func (c *KeyorixCore) ListConnectRefGrants(ctx context.Context) ([]*models.Conne
 // Audited.
 func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID uint, connectorName, refPrefix string, expiresAt *time.Time) (*models.ConnectRefGrant, error) {
 	if c.connectManager == nil {
-		return nil, fmt.Errorf("keyorix connect is not enabled")
+		return nil, ErrConnectDisabled
 	}
 	if _, ok := c.connectManager.Get(connectorName); !ok {
-		return nil, fmt.Errorf("unknown connector %q", connectorName)
+		return nil, fmt.Errorf("%w %q", ErrConnectUnknownConnector, connectorName)
 	}
 	if roleID == 0 {
-		return nil, fmt.Errorf("a role is required for a connect ref-grant")
+		return nil, ErrConnectRoleRequired
 	}
 	g, err := c.storage.CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
 		RoleID:    roleID,

@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -64,6 +65,42 @@ func TestGetBlastRadius_NotFound(t *testing.T) {
 	h.GetBlastRadius(w, req)
 	// Secret does not exist → core returns "not found" → HTTP 404.
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestGetBlastRadius_StorageError_G50 proves that a raw storage/DB error from
+// ListSecretDependenciesForProject (e.g. a broken secret_dependencies table)
+// never reaches the client — only clientSafe()'s generic message, matching
+// the file's/package's sanitization convention.
+func TestGetBlastRadius_StorageError_G50(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Project{}, &models.Environment{},
+		&models.SecretNode{}, &models.SecretDependency{},
+		&models.AuditEvent{}, &models.ShareRecord{},
+	))
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
+	s := &models.SecretNode{ProjectID: 1, EnvironmentID: 1, Name: "my-secret-2", IsSecret: true, Status: "active"}
+	require.NoError(t, db.Create(s).Error)
+
+	h, err := NewSecretHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+	require.NoError(t, err)
+
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS secret_dependencies").Error)
+
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodGet, "/", nil), "id",
+		fmt.Sprintf("%d", s.ID),
+	))
+	w := httptest.NewRecorder()
+	h.GetBlastRadius(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "secret_dependencies")
+	assert.NotContains(t, w.Body.String(), "no such table")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
 }
 
 // TestGetBlastRadius_HappyPath verifies that a real secret with zero dependents
