@@ -133,11 +133,11 @@ func decodeMachineIdentityResponse(data []byte) (*models.MachineIdentity, error)
 }
 
 type machineIdentityCredentialWire struct {
-	ID                uint       `json:"id"`
-	MachineIdentityID uint       `json:"machine_identity_id"`
-	Name              string     `json:"name"`
-	TokenHash         string     `json:"token_hash"`
-	TokenPrefix       string     `json:"token_prefix"`
+	ID                uint   `json:"id"`
+	MachineIdentityID uint   `json:"machine_identity_id"`
+	Name              string `json:"name"`
+	TokenHash         string `json:"token_hash"`
+	TokenPrefix       string `json:"token_prefix"`
 	// AllowedCIDRs (#G80) must round-trip: omitting it here silently strips the
 	// machine-token IP allowlist on every RemoteStorage read/write, and
 	// ClassifyMachineToken's read-mutate-Save cycle would actively WIPE a

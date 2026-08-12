@@ -180,11 +180,11 @@ func (w machineIdentityProxyWire) toModel() *models.MachineIdentity {
 // for why sending this SHA-256 hash (never the raw token) across this internal
 // boundary is safe.
 type machineIdentityCredentialProxyWire struct {
-	ID                uint       `json:"id"`
-	MachineIdentityID uint       `json:"machine_identity_id"`
-	Name              string     `json:"name"`
-	TokenHash         string     `json:"token_hash"`
-	TokenPrefix       string     `json:"token_prefix"`
+	ID                uint   `json:"id"`
+	MachineIdentityID uint   `json:"machine_identity_id"`
+	Name              string `json:"name"`
+	TokenHash         string `json:"token_hash"`
+	TokenPrefix       string `json:"token_prefix"`
 	// AllowedCIDRs (#G80) — see remote_machine_identities.go's identical wire
 	// struct on the client leg; this is the server-side half of the same omission.
 	AllowedCIDRs   string     `json:"allowed_cidrs"`
