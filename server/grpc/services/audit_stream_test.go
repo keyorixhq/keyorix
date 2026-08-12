@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -203,6 +204,7 @@ func TestAuditService_StreamAuditLogs_MaxConcurrentPerPrincipal(t *testing.T) {
 		}
 	})
 
+	streamKey := fmt.Sprintf("%s:%d", core.ActorTypeUser, 1)
 	for i := 0; i < auditStreamMaxPerPrincipal; i++ {
 		ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
 		cancels = append(cancels, cancel)
@@ -210,9 +212,17 @@ func TestAuditService_StreamAuditLogs_MaxConcurrentPerPrincipal(t *testing.T) {
 		done := make(chan error, 1)
 		dones = append(dones, done)
 		go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
-		// Give StreamAuditLogs time to reach acquireStreamSlot and register before the
-		// next iteration opens another one.
-		time.Sleep(10 * time.Millisecond)
+		// Wait for this iteration's stream to actually register its slot in
+		// acquireStreamSlot before opening the next one — a fixed sleep here is
+		// racy under CI load (if the goroutine hasn't reached acquireStreamSlot
+		// yet, the cap check below can undercount and let an over-cap stream
+		// through, which then blocks forever with nothing left to cancel it).
+		wantCount := i + 1
+		require.Eventually(t, func() bool {
+			svc.streamCountsMu.Lock()
+			defer svc.streamCountsMu.Unlock()
+			return svc.streamCounts[streamKey] >= wantCount
+		}, time.Second, time.Millisecond, "stream %d did not register its slot in time", i)
 	}
 
 	// One more, over the cap, must be refused immediately.
