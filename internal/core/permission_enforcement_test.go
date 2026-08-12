@@ -6,12 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 func TestCheckSecretPermission(t *testing.T) {
@@ -105,7 +109,7 @@ func TestCheckSecretPermission(t *testing.T) {
 
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
-				ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+				ms.On("GetUserGroupsAt", mock.Anything, uint(2), mock.Anything).Return([]*models.Group{}, nil)
 				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
 				ms.On("GetSecretACL", mock.Anything, uint(1), uint(2)).Return(nil, errors.New("record not found"))
 				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
@@ -127,7 +131,7 @@ func TestCheckSecretPermission(t *testing.T) {
 
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{groupShare}, nil)
-				ms.On("GetUserGroups", mock.Anything, uint(3)).Return([]*models.Group{group}, nil)
+				ms.On("GetUserGroupsAt", mock.Anything, uint(3), mock.Anything).Return([]*models.Group{group}, nil)
 			},
 			expectedPermission: PermissionWrite,
 			expectedSource:     "group_share",
@@ -143,7 +147,7 @@ func TestCheckSecretPermission(t *testing.T) {
 
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
-				ms.On("GetUserGroups", mock.Anything, uint(4)).Return([]*models.Group{}, nil)
+				ms.On("GetUserGroupsAt", mock.Anything, uint(4), mock.Anything).Return([]*models.Group{}, nil)
 				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
 				ms.On("GetSecretACL", mock.Anything, uint(1), uint(4)).Return(nil, errors.New("record not found"))
 				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
@@ -267,7 +271,7 @@ func TestEnforceSecretWritePermission(t *testing.T) {
 			CreatedAt:   time.Now(),
 		},
 	}, nil)
-	mockStorage.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+	mockStorage.On("GetUserGroupsAt", mock.Anything, uint(1), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
 	mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(1)).Return(nil, errors.New("record not found"))
 	mockStorage.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
@@ -351,7 +355,7 @@ func TestCanUserModifySecret(t *testing.T) {
 
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
-				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				ms.On("GetUserGroupsAt", mock.Anything, uint(1), mock.Anything).Return([]*models.Group{}, nil)
 				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
 				ms.On("GetSecretACL", mock.Anything, uint(1), uint(1)).Return(nil, errors.New("record not found"))
 				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
@@ -436,7 +440,7 @@ func TestCanUserShareSecret(t *testing.T) {
 
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
-				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				ms.On("GetUserGroupsAt", mock.Anything, uint(1), mock.Anything).Return([]*models.Group{}, nil)
 				// RBAC fallback: no roles — deny.
 				ms.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
 				ms.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, mock.Anything).Return([]uint{}, nil)
@@ -527,7 +531,7 @@ func TestGetEffectivePermission(t *testing.T) {
 
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
-				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
+				ms.On("GetUserGroupsAt", mock.Anything, uint(1), mock.Anything).Return([]*models.Group{}, nil)
 				// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
 				ms.On("GetSecretACL", mock.Anything, uint(1), uint(1)).Return(nil, errors.New("record not found"))
 				ms.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
@@ -572,7 +576,7 @@ func TestCheckGroupPermissions(t *testing.T) {
 	core := NewKeyorixCore(mockStorage)
 
 	// Setup user groups
-	mockStorage.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{
+	mockStorage.On("GetUserGroupsAt", mock.Anything, uint(1), Scope{ProjectID: 7}).Return([]*models.Group{
 		{ID: 10, Name: "group1"},
 		{ID: 20, Name: "group2"},
 	}, nil)
@@ -602,7 +606,7 @@ func TestCheckGroupPermissions(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	permission, shareID, err := core.CheckGroupPermissions(ctx, 1, 1, shares)
+	permission, shareID, err := core.CheckGroupPermissions(ctx, 1, 1, shares, 7)
 
 	assert.NoError(t, err)
 	assert.Equal(t, PermissionWrite, permission) // Should get highest permission (write)
@@ -610,6 +614,77 @@ func TestCheckGroupPermissions(t *testing.T) {
 	assert.Equal(t, uint(2), *shareID) // Should be the write permission share
 
 	mockStorage.AssertExpectations(t)
+}
+
+// TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects is the
+// #G01 regression: a group share used to grant access to ANY member of the
+// group returned by the unscoped GetUserGroups, even when that member's OWN
+// membership in the group was scoped to a DIFFERENT project than the shared
+// secret. CheckGroupPermissions now resolves membership via GetUserGroupsAt
+// against the secret's own project, so a cross-project-scoped membership must
+// not grant access. Uses a real SQLite-backed LocalStorage (not MockStorage)
+// so the storage-layer scoping SQL itself is exercised, not just the mock's
+// assumed behavior.
+func TestCheckGroupPermissions_ProjectScopedMembershipDoesNotCrossProjects(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
+		&models.User{}, &models.Group{}, &models.UserGroup{}, &models.ShareRecord{},
+	))
+	ls := store.NewLocalStorage(db)
+	c := NewKeyorixCore(ls)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "member", Email: "m@x.io"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "team"}).Error)
+	// user 2's membership in group 5 is scoped ONLY to project 7.
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 5, ProjectID: 7}).Error)
+
+	projA, err := ls.CreateProject(ctx, &models.Project{Name: "project-a"})
+	require.NoError(t, err)
+	envA, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: projA.ID})
+	require.NoError(t, err)
+	// The secret is in a DIFFERENT project than the membership's scope (project 7).
+	secret, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "cross-project-secret", ProjectID: projA.ID, EnvironmentID: envA.ID,
+		Type: "password", IsSecret: true, Status: "active", OwnerID: 1,
+	})
+	require.NoError(t, err)
+	_, err = ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: secret.ID, RecipientID: 5, IsGroup: true, OwnerID: 1, Permission: "write",
+	})
+	require.NoError(t, err)
+
+	shares, err := ls.ListSharesBySecret(ctx, secret.ID)
+	require.NoError(t, err)
+	perm, shareID, err := c.CheckGroupPermissions(ctx, secret.ID, 2, shares, projA.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PermissionNone, perm, "a membership scoped to a different project must not grant access")
+	assert.Nil(t, shareID)
+
+	// The same membership DOES grant access to a secret actually in project 7.
+	projB, err := ls.CreateProject(ctx, &models.Project{ID: 7, Name: "project-b"})
+	require.NoError(t, err)
+	envB, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: projB.ID})
+	require.NoError(t, err)
+	secretB, err := ls.CreateSecret(ctx, &models.SecretNode{
+		Name: "same-project-secret", ProjectID: projB.ID, EnvironmentID: envB.ID,
+		Type: "password", IsSecret: true, Status: "active", OwnerID: 1,
+	})
+	require.NoError(t, err)
+	_, err = ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: secretB.ID, RecipientID: 5, IsGroup: true, OwnerID: 1, Permission: "write",
+	})
+	require.NoError(t, err)
+	sharesB, err := ls.ListSharesBySecret(ctx, secretB.ID)
+	require.NoError(t, err)
+	permB, shareIDB, err := c.CheckGroupPermissions(ctx, secretB.ID, 2, sharesB, projB.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PermissionWrite, permB, "a membership scoped to the SAME project must still grant access")
+	assert.NotNil(t, shareIDB)
 }
 
 // TestGetSecretWithPermissionCheck exercises the actual guarded read path
@@ -673,7 +748,7 @@ func TestGetSecretWithPermissionCheck(t *testing.T) {
 		secret := &models.SecretNode{ID: 1, OwnerID: 99, Name: "test-secret"}
 		mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 		mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
-		mockStorage.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
+		mockStorage.On("GetUserGroupsAt", mock.Anything, uint(2), mock.Anything).Return([]*models.Group{}, nil)
 		// ACL fallback (r140): no direct grant, and no ancestor folder grant either — deny.
 		mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(2)).Return(nil, errors.New("record not found"))
 		mockStorage.On("GetSecretAncestors", mock.Anything, uint(1)).Return([]uint{}, nil)
@@ -723,7 +798,7 @@ func TestCheckSecretPermission_ACLFallback_GrantsAccess(t *testing.T) {
 	}
 	mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 	mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
-	mockStorage.On("GetUserGroups", mock.Anything, uint(8)).Return([]*models.Group{}, nil)
+	mockStorage.On("GetUserGroupsAt", mock.Anything, uint(8), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): a direct grant on this exact secret covers read.
 	mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(8)).Return(&models.SecretACL{
 		SecretID: 1, UserID: 8, Permissions: `["secrets.read"]`,
@@ -758,7 +833,7 @@ func TestCheckSecretPermission_RBACFallback_GrantsAccess(t *testing.T) {
 	}
 	mockStorage.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 	mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
-	mockStorage.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
+	mockStorage.On("GetUserGroupsAt", mock.Anything, uint(7), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): no direct grant, and no ancestor folder grant either — falls
 	// through to the RBAC fallback below, proving ACL and RBAC compose correctly.
 	mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(7)).Return(nil, errors.New("record not found"))

@@ -994,6 +994,14 @@ type Storage interface {
 	// rotation planner's risk-scoring batch (#409) instead of one ListGroupMembers
 	// call per group share, per candidate secret.
 	ListGroupMembersByGroupIDs(ctx context.Context, groupIDs []uint) (map[uint][]*models.User, error)
+	// ListGroupMembersAt is ListGroupMembers scoped: only members whose UserGroup
+	// row is global (project_id=0) OR matches scope.ProjectID (#G01). Unlike
+	// ListGroupMembers (which returns every member regardless of their
+	// membership's own scope), this is for callers that need to know whether a
+	// member's membership actually confers authority AT this scope — e.g. "does
+	// this group's GLOBAL role grant give member X global admin authority" must
+	// exclude a member whose membership in the group is itself project-scoped.
+	ListGroupMembersAt(ctx context.Context, groupID uint, scope Scope) ([]*models.User, error)
 
 	// Permission Management
 	CreatePermission(ctx context.Context, permission *models.Permission) (*models.Permission, error)
@@ -1076,6 +1084,14 @@ type Storage interface {
 	// own global exclusion.
 	IsGroupProjectScoped(ctx context.Context, groupID, projectID uint) (bool, error)
 	GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	// GetUserGroupsAt is GetUserGroups scoped: only groups where userID's own
+	// UserGroup row is global (project_id=0) OR matches scope.ProjectID (#G01).
+	// GetUserGroups returns every group the user has ANY membership row in,
+	// regardless of that membership's own project scope — callers resolving
+	// "does this group membership grant authority within THIS project/secret"
+	// must use this instead, or a membership scoped to project X is silently
+	// treated as if it applied everywhere.
+	GetUserGroupsAt(ctx context.Context, userID uint, scope Scope) ([]*models.Group, error)
 	// GetUserRoleScopes returns the distinct (project, environment) scopes at which
 	// userID holds ANY role, directly or via a live (non-deleted) group. It is the
 	// scope-DISCOVERY step behind a scope-aware admin-rank-ceiling comparison
