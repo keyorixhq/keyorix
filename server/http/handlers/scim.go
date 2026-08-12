@@ -240,13 +240,19 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	user, err := h.coreService.ProvisionSCIMUser(r.Context(), 0, p.UserName, p.displayName(), p.primaryEmail(), p.ExternalID, active)
 	if err != nil {
 		status := http.StatusBadRequest
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "already exists"):
+		case strings.Contains(msg, "already exists"):
 			status = http.StatusConflict
-		case strings.Contains(err.Error(), errDomainNotAllowed):
+		case strings.Contains(msg, errDomainNotAllowed):
 			status = http.StatusForbidden
+		case strings.Contains(msg, "is required"):
+			// Deliberately safe validation message from ProvisionSCIMUser — pass through.
+		default:
+			log.Printf("Error provisioning SCIM user %q: %v", p.UserName, err)
+			msg = clientSafe(err)
 		}
-		scimError(w, status, err.Error())
+		scimError(w, status, msg)
 		return
 	}
 	writeSCIM(w, http.StatusCreated, toSCIMUser(user))
@@ -267,7 +273,8 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	email := p.primaryEmail()
 	user, err := h.coreService.UpdateSCIMUser(r.Context(), 0, id, &dn, &email, p.Active)
 	if err != nil {
-		scimError(w, http.StatusNotFound, err.Error())
+		log.Printf("Error replacing SCIM user %d: %v", id, err)
+		scimError(w, http.StatusNotFound, clientSafe(err))
 		return
 	}
 	writeSCIM(w, http.StatusOK, toSCIMUser(user))
@@ -336,7 +343,8 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.coreService.UpdateSCIMUser(r.Context(), 0, id, displayName, nil, active)
 	if err != nil {
-		scimError(w, http.StatusNotFound, err.Error())
+		log.Printf("Error patching SCIM user %d: %v", id, err)
+		scimError(w, http.StatusNotFound, clientSafe(err))
 		return
 	}
 	writeSCIM(w, http.StatusOK, toSCIMUser(user))
@@ -349,7 +357,8 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.DeprovisionSCIMUser(r.Context(), 0, id); err != nil {
-		scimError(w, http.StatusNotFound, err.Error())
+		log.Printf("Error deprovisioning SCIM user %d: %v", id, err)
+		scimError(w, http.StatusNotFound, clientSafe(err))
 		return
 	}
 	w.Header().Set("Content-Type", scimContentType)

@@ -180,7 +180,7 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}
 	if !raw.Valid {
-		return nil, fmt.Errorf("refusing to checkpoint a chain that does not verify: %s", raw.Reason)
+		return nil, fmt.Errorf("%w a chain that does not verify: %s", ErrAuditCheckpointRefused, raw.Reason)
 	}
 	// Refuse to re-baseline over a truncation that an AUTHENTICATED prior checkpoint
 	// proves — otherwise a scheduled write would silently bless a shortened chain and
@@ -197,7 +197,7 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 			if reason, tampered, err := c.checkpointTruncation(ctx, raw.ChainedEvents, cp); err != nil {
 				return nil, err
 			} else if tampered {
-				return nil, fmt.Errorf("refusing to checkpoint: %s", reason)
+				return nil, fmt.Errorf("%w: %s", ErrAuditCheckpointRefused, reason)
 			}
 		} else if cp.KeyVersion == c.auditCkptKeyVersion {
 			// The prior checkpoint claims the CURRENT signing-key version yet fails its
@@ -207,7 +207,7 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 			// flags this as Valid=false, but a silent re-baseline would write a fresh,
 			// authentic checkpoint over the shortened chain and erase that signal. Fail
 			// closed and leave the tamper signal standing for an operator to investigate.
-			return nil, fmt.Errorf("refusing to checkpoint: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", cp.ID, cp.KeyVersion)
+			return nil, fmt.Errorf("%w: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", ErrAuditCheckpointRefused, cp.ID, cp.KeyVersion)
 		}
 		// else: signature fails AND key_version is superseded → consistent with a
 		// signing-key rotation (a KEK-provider migration, since #502 — a routine DEK
@@ -222,10 +222,10 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 		return nil, err
 	}
 	if hwTampered {
-		return nil, fmt.Errorf("refusing to checkpoint: %s", hwReason)
+		return nil, fmt.Errorf("%w: %s", ErrAuditCheckpointRefused, hwReason)
 	}
 	if raw.ChainedEvents < floor {
-		return nil, fmt.Errorf("refusing to checkpoint: the audit trail (%d events) is below the certified high-water mark (%d) — a truncation must be investigated, not re-baselined", raw.ChainedEvents, floor)
+		return nil, fmt.Errorf("%w: the audit trail (%d events) is below the certified high-water mark (%d) — a truncation must be investigated, not re-baselined", ErrAuditCheckpointRefused, raw.ChainedEvents, floor)
 	}
 	newCP := &models.AuditCheckpoint{
 		ChainedEvents: raw.ChainedEvents,

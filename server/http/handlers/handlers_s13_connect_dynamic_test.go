@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -36,8 +37,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// fakeSpoofConnector is a connect.Connector whose GetSecret always fails with a
+// caller-influenced error (G50 regression coverage): it echoes the ref back
+// verbatim, plus an internal-looking upstream detail, alongside one of
+// isSafeConnectError's marker phrases. Before the G50 fix, isSafeConnectError
+// substring-matched raw err.Error() text, so this crafted error would have been
+// misclassified as "safe" and returned to the client verbatim (backlog #116).
+type fakeSpoofConnector struct{ name string }
+
+func (f fakeSpoofConnector) Name() string { return f.name }
+func (f fakeSpoofConnector) Type() string { return "fake-spoof" }
+func (f fakeSpoofConnector) GetSecret(_ context.Context, ref string) (string, error) {
+	return "", errors.New(
+		"internal-db-host-10.0.0.5:5432 lookup for ref " + ref +
+			" is not permitted for your roles on connector \"spoof\"",
+	)
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -297,6 +316,44 @@ func TestDynamic_SetConfigEnabled_ConfigNotFound_S13(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// SetConfigEnabled — raw storage error must be sanitized (G50).
+//
+// A SQLite BEFORE UPDATE trigger simulates a genuine driver-layer write
+// failure (e.g. a disk-quota/constraint error) on dynamic_secret_configs:
+// the reads loadAuthorizedConfig and SetDynamicSecretConfigEnabled both
+// perform still succeed, but the actual disable/enable UPDATE inside
+// TransitionDynamicSecretConfigDisabled fails with a raw, internal-looking
+// message. Before the G50 fix, SetConfigEnabled forwarded err.Error()
+// straight to the client, bypassing the isSafeDynamicSecretError/clientSafe
+// sanitization every sibling handler in this file already applies.
+func TestDynamic_SetConfigEnabled_StorageError_G50(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewDynamicSecretHandler(cs)
+	cfgID := seedDynamicSecretConfig(t, h)
+
+	require.NoError(t, db.Exec(`
+		CREATE TRIGGER block_dynamic_config_update
+		BEFORE UPDATE ON dynamic_secret_configs
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated write failure: disk quota exceeded on host db-07.internal');
+		END;
+	`).Error)
+
+	body, _ := json.Marshal(map[string]interface{}{"enabled": false})
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPatch, "/", bytes.NewReader(body)),
+		"id", uintToStrS13(cfgID),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SetConfigEnabled(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.NotContains(t, w.Body.String(), "disk quota")
+	assert.NotContains(t, w.Body.String(), "db-07.internal")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
+}
+
 // SetConfigEnabled — bad body
 func TestDynamic_SetConfigEnabled_BadBody_S13(t *testing.T) {
 	h := newDynamicSecretHandlerS13(t)
@@ -385,6 +442,29 @@ func TestConnect_GetSecret_UnknownConnector_S13(t *testing.T) {
 	h.GetSecret(w, req)
 	// "keyorix connect is not enabled" or "unknown connector" — either way ConnectError 502
 	assert.Equal(t, http.StatusBadGateway, w.Code)
+}
+
+// GetSecret — upstream connector error that embeds a caller-controlled ref plus a
+// safe-marker phrase must NOT be classified as safe and must NOT reach the client
+// verbatim (G50: isSafeConnectError must check the error's type, not substring-match
+// its text).
+func TestConnect_GetSecret_SpoofedUnsafeErrorIsSanitized_G50(t *testing.T) {
+	cs, _ := freshCoreS12WithAdmin(t)
+	cs.SetConnectManager(connect.NewManager([]connect.Connector{fakeSpoofConnector{name: "spoof"}}))
+	h := NewConnectHandler(cs)
+
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodGet, "/api/v1/connect/spoof/secret?ref=prod/db", nil),
+		"name", "spoof",
+	))
+	w := httptest.NewRecorder()
+	h.GetSecret(w, req)
+
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+	body := w.Body.String()
+	assert.NotContains(t, body, "10.0.0.5", "raw upstream host detail must not reach the client")
+	assert.NotContains(t, body, "prod/db", "the caller-controlled ref must not be reflected back inside raw upstream error text")
+	assert.Contains(t, body, "an internal error occurred", "must fall back to the generic clientSafe() message")
 }
 
 // CreateRefGrant — no user context

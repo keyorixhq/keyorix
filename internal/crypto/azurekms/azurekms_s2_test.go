@@ -3,6 +3,7 @@ package azurekms
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
@@ -81,6 +82,45 @@ func TestDecrypt_UnwrapKeyError(t *testing.T) {
 	_, err := c.Decrypt(context.Background(), []byte("raw-ciphertext"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unwrap failed")
+}
+
+// azureUpstreamMarker simulates internal-looking detail (a subscription/vault
+// hostname) that an upstream Key Vault SDK error can carry.
+const azureUpstreamMarker = "kv-internal-eastus2-047a1.vault.azure.net sub-9c21f0a3 safe-marker-7e21b"
+
+// TestEncrypt_WrapKeyError_IsPrefixed verifies that Encrypt wraps the raw Key
+// Vault SDK error with this file's own "azure-kms: wrap key:" prefix
+// convention (matching how New already prefixes its own SDK/credential
+// errors, e.g. "azure-kms: create client: %w") instead of returning it bare.
+func TestEncrypt_WrapKeyError_IsPrefixed(t *testing.T) {
+	c := &client{
+		keys:       &errKeys{wrapErr: fmt.Errorf("Forbidden: caller %s not permitted", azureUpstreamMarker)},
+		keyName:    "kek",
+		keyVersion: "",
+	}
+	_, err := c.Encrypt(context.Background(), []byte("material"))
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), "azure-kms: wrap key:"), "expected error prefixed with %q, got %q", "azure-kms: wrap key:", err.Error())
+	// The prefix must be additive, not a replacement — the underlying detail
+	// still traces through (as every other wrapped error in this file does)
+	// for server-side diagnosis via %w, it just can no longer reach a client
+	// unprefixed/unattributed to this package.
+	assert.Contains(t, err.Error(), azureUpstreamMarker)
+}
+
+// TestDecrypt_UnwrapKeyError_IsPrefixed is the Decrypt counterpart of
+// TestEncrypt_WrapKeyError_IsPrefixed, covering the legacy (non-envelope) blob
+// unwrap path.
+func TestDecrypt_UnwrapKeyError_IsPrefixed(t *testing.T) {
+	c := &client{
+		keys:       &errKeys{unwrapErr: fmt.Errorf("Forbidden: caller %s not permitted", azureUpstreamMarker)},
+		keyName:    "kek",
+		keyVersion: "v1",
+	}
+	_, err := c.Decrypt(context.Background(), []byte("raw-ciphertext"))
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), "azure-kms: unwrap key:"), "expected error prefixed with %q, got %q", "azure-kms: unwrap key:", err.Error())
+	assert.Contains(t, err.Error(), azureUpstreamMarker)
 }
 
 // TestDecrypt_UnwrapKeyError_PinnedEnvelope exercises the UnwrapKey error path

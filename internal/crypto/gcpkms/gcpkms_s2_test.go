@@ -3,6 +3,7 @@ package gcpkms
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
@@ -56,7 +57,8 @@ func TestEncrypt_KMSError(t *testing.T) {
 	}
 	_, err := c.Encrypt(context.Background(), []byte("plaintext"))
 	require.Error(t, err)
-	assert.Equal(t, kmsErr, err)
+	assert.ErrorIs(t, err, kmsErr)
+	assert.Contains(t, err.Error(), "gcp-kms: encrypt")
 }
 
 // TestEncrypt_WithAAD_KMSError verifies error propagation when the client has
@@ -70,7 +72,8 @@ func TestEncrypt_WithAAD_KMSError(t *testing.T) {
 	}
 	_, err := c.Encrypt(context.Background(), []byte("data"))
 	require.Error(t, err)
-	assert.Equal(t, kmsErr, err)
+	assert.ErrorIs(t, err, kmsErr)
+	assert.Contains(t, err.Error(), "gcp-kms: encrypt")
 }
 
 // TestDecrypt_KMSError_NoAAD verifies that a KMS decrypt error with no AAD
@@ -83,7 +86,8 @@ func TestDecrypt_KMSError_NoAAD(t *testing.T) {
 	}
 	_, err := c.Decrypt(context.Background(), []byte("cipher"))
 	require.Error(t, err)
-	assert.Equal(t, kmsErr, err)
+	assert.ErrorIs(t, err, kmsErr)
+	assert.Contains(t, err.Error(), "gcp-kms: decrypt")
 }
 
 // TestDecrypt_FallbackEnabled_FallbackAlsoFails verifies that when allowFallback
@@ -99,7 +103,42 @@ func TestDecrypt_FallbackEnabled_FallbackAlsoFails(t *testing.T) {
 	}
 	_, err := c.Decrypt(context.Background(), []byte("cipher"))
 	require.Error(t, err)
-	assert.Equal(t, kmsErr, err)
+	assert.ErrorIs(t, err, kmsErr)
+	assert.Contains(t, err.Error(), "gcp-kms: decrypt")
+}
+
+// gcpUpstreamMarker simulates internal-looking detail (a project/resource
+// hostname) that an upstream GCP KMS SDK error can carry.
+const gcpUpstreamMarker = "kms-internal.googleapis.com project-013918471234 safe-marker-4b7a9"
+
+// TestEncrypt_KMSError_IsPrefixed verifies that Encrypt wraps the raw GCP KMS
+// SDK error with this file's own "gcp-kms: encrypt:" prefix convention
+// (matching how New already prefixes its own SDK errors, e.g. "gcp-kms:
+// create client: %w") instead of returning it bare/unprefixed.
+func TestEncrypt_KMSError_IsPrefixed(t *testing.T) {
+	kmsErr := errors.New("PermissionDenied: caller " + gcpUpstreamMarker + " lacks cloudkms.cryptoKeyVersions.useToEncrypt")
+	c := &client{
+		kms:     &errKMS{encErr: kmsErr},
+		keyName: "projects/p/locations/l/keyRings/r/cryptoKeys/k",
+	}
+	_, err := c.Encrypt(context.Background(), []byte("plaintext"))
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), "gcp-kms: encrypt:"), "expected error prefixed with %q, got %q", "gcp-kms: encrypt:", err.Error())
+	assert.ErrorIs(t, err, kmsErr)
+}
+
+// TestDecrypt_KMSError_IsPrefixed is the Decrypt counterpart of
+// TestEncrypt_KMSError_IsPrefixed.
+func TestDecrypt_KMSError_IsPrefixed(t *testing.T) {
+	kmsErr := errors.New("PermissionDenied: caller " + gcpUpstreamMarker + " lacks cloudkms.cryptoKeyVersions.useToDecrypt")
+	c := &client{
+		kms:     &errKMS{decErr: kmsErr},
+		keyName: "projects/p/locations/l/keyRings/r/cryptoKeys/k",
+	}
+	_, err := c.Decrypt(context.Background(), []byte("cipher"))
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), "gcp-kms: decrypt:"), "expected error prefixed with %q, got %q", "gcp-kms: decrypt:", err.Error())
+	assert.ErrorIs(t, err, kmsErr)
 }
 
 // TestEncContextAAD_SingleEntry verifies the canonical form for a single-entry map.
@@ -137,5 +176,6 @@ func TestDecrypt_FallbackDisabled_AADError(t *testing.T) {
 	}
 	_, err := c.Decrypt(context.Background(), []byte("cipher"))
 	require.Error(t, err)
-	assert.Equal(t, kmsErr, err)
+	assert.ErrorIs(t, err, kmsErr)
+	assert.Contains(t, err.Error(), "gcp-kms: decrypt")
 }

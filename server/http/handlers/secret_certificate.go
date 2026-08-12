@@ -6,6 +6,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,6 +38,9 @@ func (h *SecretHandler) GetSecretCertificate(w http.ResponseWriter, r *http.Requ
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
 			status = http.StatusForbidden
+		default:
+			log.Printf("Error inspecting certificate for secret %d: %v", id, err)
+			msg = clientSafe(err)
 		}
 		h.sendError(w, "Error", msg, status, nil)
 		return

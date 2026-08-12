@@ -86,6 +86,36 @@ func TestRevokeProjectAccessReview_NoUserCtx_S13(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+// TestAttestProjectAccessReview_StorageError_S13 — G50: a raw storage/DB
+// error surfacing from verifyAccessReviewGrantExists (e.g. a broken
+// user_roles table) must not leak internal detail (table/column names) to
+// the client; AttestProjectAccessReview must sanitize it via clientSafe,
+// matching RevokeProjectAccessReview's sibling pattern in this file.
+func TestAttestProjectAccessReview_StorageError_S13(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
+	proj, err := cs.CreateProject(context.Background(), "s13attest-storageerr", "")
+	require.NoError(t, err)
+
+	// Break the table verifyAccessReviewGrantExists queries for a "role"
+	// source decision, forcing a raw driver error out of core.
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS user_roles").Error)
+
+	body := `{"source":"role","principal_type":"user","principal_id":1,"role_id":1}`
+	r := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)),
+		"id", fmt.Sprintf("%d", proj.ID),
+	))
+	w := httptest.NewRecorder()
+	h.AttestProjectAccessReview(w, r)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "user_roles")
+	assert.NotContains(t, w.Body.String(), "no such table")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
+}
+
 // TestUpdateProjectMember_NoUserCtx_S13 — no user context → 401.
 func TestUpdateProjectMember_NoUserCtx_S13(t *testing.T) {
 	t.Parallel()

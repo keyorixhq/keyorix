@@ -128,7 +128,18 @@ func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.coreService.AttestAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "required"):
+			status = http.StatusBadRequest
+		case strings.Contains(msg, "no longer exists") || strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		default:
+			log.Printf("Error attesting access-review grant for project %d: %v", projectID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Access attested")

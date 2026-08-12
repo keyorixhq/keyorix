@@ -141,7 +141,7 @@ func (c *client) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) 
 		Value:     plaintext,
 	}, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("azure-kms: wrap key: %w", err)
 	}
 	// res.KID is the fully-versioned key identifier Azure actually used, even
 	// when the request (c.keyVersion) was unversioned/"current". Pin it into the
@@ -175,7 +175,7 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 		Value:     wrapped,
 	}, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("azure-kms: unwrap key: %w", err)
 	}
 	return res.Result, nil
 }

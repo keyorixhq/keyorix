@@ -5,6 +5,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -21,7 +22,7 @@ func (h *AuthHandler) EnrollMFA(w http.ResponseWriter, r *http.Request) {
 	}
 	uri, secret, err := h.coreService.BeginMFAEnrollment(r.Context(), userCtx.UserID)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		h.writeMFAErr(w, err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -51,7 +52,7 @@ func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 	}
 	codes, err := h.coreService.ActivateMFA(r.Context(), userCtx.UserID, body.Code, body.Password)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		h.writeMFAErr(w, err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -79,7 +80,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 		proof = body.Password
 	}
 	if err := h.coreService.DisableMFA(r.Context(), userCtx.UserID, proof); err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		h.writeMFAErr(w, err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"mfa_enabled": false}, "MFA disabled")
@@ -108,7 +109,7 @@ func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Req
 	}
 	codes, err := h.coreService.RegenerateMFARecoveryCodes(r.Context(), userCtx.UserID, proof)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		h.writeMFAErr(w, err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -126,7 +127,7 @@ func (h *AuthHandler) RecoveryCodesStatus(w http.ResponseWriter, r *http.Request
 	}
 	remaining, total, err := h.coreService.MFARecoveryCodesRemaining(r.Context(), userCtx.UserID)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		h.writeMFAErr(w, err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -167,4 +168,35 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	}) // #nosec G118
 	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }) // #nosec G118
 	sendSuccess(w, resp, "Login successful")
+}
+
+// mfaSafeMessages are the fixed, deliberately client-safe error strings core's
+// MFA functions return for expected failure modes (missing user, already/not
+// enrolled, bad code, lockout, etc.) — never wrapped around a lower-layer
+// error, so passing them through as-is cannot leak driver/schema detail
+// (backlog #116). The reauth-related entries mirror webauthnSafeMessages:
+// both files' self-service flows call the same core.requireReauth function.
+var mfaSafeMessages = map[string]bool{
+	"user not found": true,
+	"MFA enrolment requires at-rest encryption to be enabled (the TOTP secret must not be stored in plaintext); ask an administrator to enable encryption": true,
+	"MFA is already enabled; disable it first to re-enrol": true,
+	"no pending MFA enrolment; begin enrolment first":      true,
+	"invalid code":             true,
+	"MFA is not enabled":       true,
+	"invalid code or password": true,
+	"account temporarily locked due to repeated failed logins; try again later": true,
+}
+
+// writeMFAErr maps a core MFA error to a 400 response: a recognized safe
+// message (mfaSafeMessages) is passed through as-is; anything else — including
+// every error wrapping a lower-layer failure (e.g. "failed to store TOTP
+// secret: %w") or a bare storage-layer error — is logged server-side and
+// replaced with clientSafe()'s generic message before it reaches the client.
+func (h *AuthHandler) writeMFAErr(w http.ResponseWriter, err error) {
+	msg := err.Error()
+	if !mfaSafeMessages[msg] {
+		log.Printf("MFA error: %v", err)
+		msg = clientSafe(err)
+	}
+	sendError(w, "Error", msg, http.StatusBadRequest, nil)
 }
