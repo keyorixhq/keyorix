@@ -676,7 +676,12 @@ func TestUpdateGroupProxy_BadBody_S19(t *testing.T) {
 
 // TestUpdateGroupProxy_Success_S19 — GORM Save upserts (creates if absent) so a
 // non-existent group ID succeeds rather than returning 404.
-func TestUpdateGroupProxy_Success_S19(t *testing.T) {
+// TestUpdateGroupProxy_NonexistentID_S19: UpdateGroupProxy now routes through
+// core.KeyorixCore.UpdateGroup (#G79), which requires the target group to
+// already exist (GetGroup first) rather than the previous bare
+// storage.UpdateGroup's GORM-Save upsert-on-missing-ID quirk — a PUT to a
+// nonexistent group ID must 404, not silently create a new row.
+func TestUpdateGroupProxy_NonexistentID_S19(t *testing.T) {
 	cs := freshCoreS19(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
@@ -687,10 +692,7 @@ func TestUpdateGroupProxy_Success_S19(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
-	// GORM Save upserts → 200 with the saved group
-	assert.Equal(t, http.StatusOK, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.True(t, resp.Success)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // ── invitations.go: ListAccessRequests ───────────────────────────────────────

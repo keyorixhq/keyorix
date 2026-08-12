@@ -1390,12 +1390,42 @@ func newGroupHandler(t *testing.T) *GroupHandler {
 	return h
 }
 
+// TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin is the #G79 regression:
+// DeleteGroupProxy previously called storage.DeleteGroup directly, bypassing
+// every core-layer escalation guard. Now that it routes through
+// core.KeyorixCore.DeleteGroup, guardLastGlobalAdminGroupDelete must refuse a
+// system.write-only caller from deleting a group holding the install's last
+// admin-conferring role grant via this proxy route, identical to the
+// human-facing path (see group_admin_guard_test.go's core-level coverage of
+// the same guard).
+func TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, i18n.InitializeForTesting())
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", Email: "root@x.io"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error) // group confers admin, globally
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)  // user 1 is the group's ONLY member
+
+	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/5", nil), "id", "5")
+	w := httptest.NewRecorder()
+	h.DeleteGroupProxy(w, req)
+
+	assert.NotEqual(t, http.StatusOK, w.Code, "must refuse to delete a group holding the install's last admin route, even via the system-proxy path")
+	var stillExists models.Group
+	require.NoError(t, db.First(&stillExists, 5).Error, "the group must not have been deleted when the guard refuses")
+}
+
 func TestGroupProxyWireRoundTrip(t *testing.T) {
-	w := groupProxyWire{ID: 1, Name: "devs", Description: "dev team"}
-	m := w.toModel()
-	require.Equal(t, uint(1), m.ID)
-	w2 := newGroupProxyWire(m)
-	assert.Equal(t, w.Name, w2.Name)
+	m := &models.Group{ID: 1, Name: "devs", Description: "dev team"}
+	w := newGroupProxyWire(m)
+	assert.Equal(t, uint(1), w.ID)
+	assert.Equal(t, "devs", w.Name)
+	assert.Equal(t, "dev team", w.Description)
 }
 
 func TestIsGroupNotFound(t *testing.T) {
