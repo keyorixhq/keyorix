@@ -368,8 +368,15 @@ func applySCIMActiveState(user *models.User, active *bool, deactivated *bool) {
 
 // guardLastAdminDeactivation refuses an operation that would deactivate/deprovision the
 // only remaining install administrator, so a routine or hostile SCIM push — or an admin
-// DeleteUser call (core.DeleteUser shares this guard) — can't lock everyone out. Mirrors
-// guardLastGlobalAdmin's assignment scan but keyed on the target.
+// DeleteUser call (core.DeleteUser shares this guard) — can't lock everyone out.
+//
+// Uses resolveGlobalAdminHolders (the same group-membership-aware resolver
+// guardLastGlobalAdminGroupDelete/guardLastGlobalAdminMembership use), excluding
+// targetID both as a direct grant holder and as a group member — NOT the previous
+// per-assignment scan, which treated ANY admin-conferring group assignment as
+// "another admin survives" without checking whether targetID was that group's only
+// member. A target whose sole route to admin authority is membership in a
+// single-member admin group was therefore never recognized as the last admin.
 func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
 	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
 	if err != nil {
@@ -391,18 +398,17 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	for _, a := range assignments {
-		if !adminIDs[a.RoleID] {
-			continue
-		}
-		// Any OTHER global-admin grant (a different user, or a group) means governance
-		// survives the target's removal.
-		if a.PrincipalType == "user" && a.PrincipalID == targetID {
-			continue
-		}
-		return nil
+	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments,
+		func(a storage.RoleAssignment) bool { return a.PrincipalType == "user" && a.PrincipalID == targetID },
+		func(_, userID uint) bool { return userID == targetID },
+	)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	return fmt.Errorf("refusing to deactivate the last install administrator")
+	if len(holders) == 0 {
+		return fmt.Errorf("refusing to deactivate the last install administrator")
+	}
+	return nil
 }
 
 // DeprovisionSCIMUser handles a SCIM DELETE: it deprovisions the user (blocks login,

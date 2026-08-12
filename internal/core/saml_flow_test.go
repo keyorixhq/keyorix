@@ -221,6 +221,50 @@ func TestCompleteSAML_PasswordExpiredGateError(t *testing.T) {
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 
+// TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch is the #89
+// regression at the CompleteSAML (not just provisionSSOUser) level, for the
+// AutoProvision=true path specifically: CompleteSAML previously passed a
+// hardcoded emailVerified=true into provisionSSOUser regardless of the
+// provider's own TrustAssertedEmail setting, so provisionSSOUser's internal
+// race-guard re-resolution (reusing an existing account rather than
+// duplicating) would treat the SAML-asserted email as verified and silently
+// take over any account matching that email — reopening the exact
+// account-takeover TestCompleteSAML_NativeAdminTakeoverRejectedByDefault
+// pins for the AutoProvision=false path. With TrustAssertedEmail off (the
+// default), GetUserByEmail must never even be consulted, and a login from an
+// attacker asserting a victim's email must provision a FRESH account bound to
+// the attacker's own subject, never touching (or returning) the victim's.
+func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "victim@corp.com", Name: "Mallory"}}
+	store := new(MockStorage)
+	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, DefaultRole: "system_viewer"}
+	require.False(t, p.TrustAssertedEmail, "precondition: opt-in is off by default")
+	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-8").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|evil").Return((*models.User)(nil), userNotFound())
+	store.On("GetUserByUsername", mock.Anything, "victim").Return((*models.User)(nil), userNotFound())
+	var created *models.User
+	store.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool { created = u; return true })).
+		Return(&models.User{ID: 99, IsActive: true}, nil)
+	store.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 3}, nil)
+	store.On("AssignRole", mock.Anything, uint(99), uint(3), mock.Anything).Return(nil)
+	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 99, SessionToken: "tok"}, nil)
+	store.On("UpdateLastLogin", mock.Anything, uint(99), mock.Anything).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	session, user, _, err := c.CompleteSAML(context.Background(), "corp",
+		httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil), "relay-8", "ua", "1.2.3.4")
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	assert.Equal(t, uint(99), user.ID, "must be the fresh account, never the victim's")
+	assert.Equal(t, "tok", session.SessionToken)
+	require.NotNil(t, created)
+	assert.Equal(t, "sso:corp:corp|evil", created.ExternalID, "fresh account bound to the asserting subject")
+	store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything, "an unverified email must never even be looked up")
+	store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything, "the victim account must never be claimed")
+}
+
 // TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount is the positive
 // control: an operator who has decided to trust a specific SAML provider's
 // asserted email can still opt in, and the existing (never-federated) account
