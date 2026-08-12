@@ -32,6 +32,7 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, *gorm.DB, uint, uint) {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
 		&models.Project{}, &models.Environment{}, &models.SecretAccessLog{}, &models.AuditEvent{},
 		&models.ShareRecord{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
+		&models.SecretAccessSchedule{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@test.com"}).Error)
 

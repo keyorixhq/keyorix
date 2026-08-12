@@ -27,7 +27,7 @@ func newRotateNoopFixture(t *testing.T) (*core.KeyorixCore, uint, *gorm.DB) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessSchedule{}))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "dev"}).Error)
 
@@ -51,7 +51,7 @@ func TestRotateSecret_SameValue_DoesNotBumpLastRotatedAt(t *testing.T) {
 	ctx := context.Background()
 
 	// First rotation: a genuinely new value, so LastRotatedAt must be set.
-	updated, err := c.RotateSecret(ctx, secretID, []byte("rotated-value-A"), "rotator")
+	updated, err := c.RotateSecret(ctx, secretID, []byte("rotated-value-A"), 0, "rotator")
 	require.NoError(t, err)
 	require.NotNil(t, updated.LastRotatedAt)
 	firstRotatedAt := *updated.LastRotatedAt
@@ -65,7 +65,7 @@ func TestRotateSecret_SameValue_DoesNotBumpLastRotatedAt(t *testing.T) {
 
 	// Second "rotation" resubmits the exact same value — must be a no-op for the
 	// timestamp, but must still store a new version row.
-	updated, err = c.RotateSecret(ctx, secretID, []byte("rotated-value-A"), "rotator")
+	updated, err = c.RotateSecret(ctx, secretID, []byte("rotated-value-A"), 0, "rotator")
 	require.NoError(t, err, "rotating to an unchanged value must not be refused")
 	require.NotNil(t, updated.LastRotatedAt)
 	assert.True(t, updated.LastRotatedAt.Equal(firstRotatedAt),
@@ -84,7 +84,7 @@ func TestRotateSecret_SameValue_DoesNotBumpLastRotatedAt(t *testing.T) {
 	// A subsequent rotation to a genuinely different value must resume bumping
 	// LastRotatedAt normally.
 	time.Sleep(5 * time.Millisecond)
-	updated, err = c.RotateSecret(ctx, secretID, []byte("rotated-value-B"), "rotator")
+	updated, err = c.RotateSecret(ctx, secretID, []byte("rotated-value-B"), 0, "rotator")
 	require.NoError(t, err)
 	require.NotNil(t, updated.LastRotatedAt)
 	assert.True(t, updated.LastRotatedAt.After(firstRotatedAt),
@@ -101,7 +101,7 @@ func TestRotateSecret_DifferentValue_AlwaysBumpsLastRotatedAt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, before.LastRotatedAt, "a freshly created secret has never been rotated")
 
-	updated, err := c.RotateSecret(ctx, secretID, []byte("a-genuinely-different-value"), "rotator")
+	updated, err := c.RotateSecret(ctx, secretID, []byte("a-genuinely-different-value"), 0, "rotator")
 	require.NoError(t, err)
 	require.NotNil(t, updated.LastRotatedAt)
 }

@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +96,7 @@ func newScheduleCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{},
 		&models.SecretAccessSchedule{},
+		&models.SecretVersion{},
 		&models.AuditEvent{},
 		&models.Project{},
 		&models.Environment{},
@@ -151,6 +154,92 @@ func TestCheckSecretAccessSchedule_Denied(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sched)
 	assert.ErrorIs(t, enforceSchedule(sched, frozenMonday), ErrAccessOutsideSchedule)
+}
+
+// ── #G09 regression: value-read paths must honor the access schedule too ────
+//
+// Before the fix, checkSecretAccessSchedule was wired only into the metadata
+// read path (GetSecretWithPermissionCheck), never into GetSecretValue /
+// GetSecretValueByVersion — so a secret whose metadata read was correctly
+// refused outside its configured window could still have its VALUE read
+// through GetSecretValue. These tests pin the value-read paths to the same
+// guard, using a schedule that excludes today's ISO weekday (deterministic
+// regardless of what hour/day the suite runs).
+
+// allowedDaysExcludingToday returns a comma-separated day list (ISO 1=Mon..7=Sun)
+// that excludes today, guaranteeing enforceSchedule denies on the day check
+// alone — independent of the current hour.
+func allowedDaysExcludingToday() string {
+	today := int(time.Now().Weekday())
+	if today == 0 {
+		today = 7
+	}
+	var days []string
+	for d := 1; d <= 7; d++ {
+		if d == today {
+			continue
+		}
+		days = append(days, strconv.Itoa(d))
+	}
+	return strings.Join(days, ",")
+}
+
+func TestGetSecretValue_DeniedOutsideAccessSchedule(t *testing.T) {
+	c, db := newScheduleCore(t)
+	ctx := context.Background()
+	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-value-gate", IsSecret: true, Status: "active", Type: "generic"}
+	require.NoError(t, db.Create(s).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("topsecret")}).Error)
+
+	require.NoError(t, db.Create(&models.SecretAccessSchedule{
+		SecretNodeID: s.ID,
+		AllowedDays:  allowedDaysExcludingToday(),
+		StartHour:    0,
+		EndHour:      24,
+		Timezone:     "UTC",
+	}).Error)
+
+	_, err := c.GetSecretValue(ctx, s.ID)
+	assert.ErrorIs(t, err, ErrAccessOutsideSchedule, "GetSecretValue must enforce the same schedule window as metadata reads")
+}
+
+func TestGetSecretValueByVersion_DeniedOutsideAccessSchedule(t *testing.T) {
+	c, db := newScheduleCore(t)
+	ctx := context.Background()
+	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-value-byver-gate", IsSecret: true, Status: "active", Type: "generic"}
+	require.NoError(t, db.Create(s).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("topsecret")}).Error)
+
+	require.NoError(t, db.Create(&models.SecretAccessSchedule{
+		SecretNodeID: s.ID,
+		AllowedDays:  allowedDaysExcludingToday(),
+		StartHour:    0,
+		EndHour:      24,
+		Timezone:     "UTC",
+	}).Error)
+
+	_, err := c.GetSecretValueByVersion(ctx, s.ID, 1)
+	assert.ErrorIs(t, err, ErrAccessOutsideSchedule, "GetSecretValueByVersion must enforce the same schedule window as metadata reads")
+}
+
+func TestGetSecretValue_AllowedWithinSchedule(t *testing.T) {
+	c, db := newScheduleCore(t)
+	ctx := context.Background()
+	s := &models.SecretNode{ProjectID: 10, EnvironmentID: 10, Name: "sched-value-allow", IsSecret: true, Status: "active", Type: "generic"}
+	require.NoError(t, db.Create(s).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("topsecret")}).Error)
+
+	require.NoError(t, db.Create(&models.SecretAccessSchedule{
+		SecretNodeID: s.ID,
+		AllowedDays:  "*",
+		StartHour:    0,
+		EndHour:      24,
+		Timezone:     "UTC",
+	}).Error)
+
+	val, err := c.GetSecretValue(ctx, s.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "topsecret", string(val))
 }
 
 // ── SetSecretSchedule / GetSecretSchedule / DeleteSecretSchedule ─────────────

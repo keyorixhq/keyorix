@@ -42,7 +42,7 @@ func TestWireSecretEncryption_LocalEncryptsAtRest(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open("secrets.db"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.SecretAccessSchedule{}))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "e"}).Error)
 
