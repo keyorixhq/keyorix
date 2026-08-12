@@ -138,11 +138,16 @@ type machineIdentityCredentialWire struct {
 	Name              string     `json:"name"`
 	TokenHash         string     `json:"token_hash"`
 	TokenPrefix       string     `json:"token_prefix"`
-	LastUsedAt        *time.Time `json:"last_used_at"`
-	ExpiresAt         *time.Time `json:"expires_at"`
-	Revoked           bool       `json:"revoked"`
-	CreatedAt         time.Time  `json:"created_at"`
-	Classification    string     `json:"classification"`
+	// AllowedCIDRs (#G80) must round-trip: omitting it here silently strips the
+	// machine-token IP allowlist on every RemoteStorage read/write, and
+	// ClassifyMachineToken's read-mutate-Save cycle would actively WIPE a
+	// previously-set allowlist on the next classification change.
+	AllowedCIDRs   string     `json:"allowed_cidrs"`
+	LastUsedAt     *time.Time `json:"last_used_at"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	Revoked        bool       `json:"revoked"`
+	CreatedAt      time.Time  `json:"created_at"`
+	Classification string     `json:"classification"`
 }
 
 func newMachineIdentityCredentialWire(c *models.MachineIdentityCredential) machineIdentityCredentialWire {
@@ -152,6 +157,7 @@ func newMachineIdentityCredentialWire(c *models.MachineIdentityCredential) machi
 		Name:              c.Name,
 		TokenHash:         c.TokenHash,
 		TokenPrefix:       c.TokenPrefix,
+		AllowedCIDRs:      c.AllowedCIDRs,
 		LastUsedAt:        c.LastUsedAt,
 		ExpiresAt:         c.ExpiresAt,
 		Revoked:           c.Revoked,
@@ -167,6 +173,7 @@ func (w machineIdentityCredentialWire) toModel() *models.MachineIdentityCredenti
 		Name:              w.Name,
 		TokenHash:         w.TokenHash,
 		TokenPrefix:       w.TokenPrefix,
+		AllowedCIDRs:      w.AllowedCIDRs,
 		LastUsedAt:        w.LastUsedAt,
 		ExpiresAt:         w.ExpiresAt,
 		Revoked:           w.Revoked,

@@ -55,12 +55,15 @@ import (
 //     SecretNode argument. Left as a documented residual gap; UpdateSecret was
 //     out of #499's scope (CreateUser/CreateSecret only).
 type secretCreateWireRequest struct {
-	Name           string      `json:"name"`
-	Value          string      `json:"value"`
-	ProjectID      uint        `json:"project_id"`
-	EnvironmentID  uint        `json:"environment_id"`
-	Type           string      `json:"type"`
-	MaxReads       *int        `json:"max_reads,omitempty"`
+	Name          string `json:"name"`
+	Value         string `json:"value"`
+	ProjectID     uint   `json:"project_id"`
+	EnvironmentID uint   `json:"environment_id"`
+	Type          string `json:"type"`
+	MaxReads      *int   `json:"max_reads,omitempty"`
+	// ParentID (#G80) — omitting it silently created every secret at project
+	// root regardless of the folder the caller placed it in.
+	ParentID       *uint       `json:"parent_id,omitempty"`
 	Metadata       models.JSON `json:"metadata,omitempty"`
 	Classification string      `json:"classification,omitempty"`
 }
@@ -73,6 +76,7 @@ func newSecretCreateWireRequest(secret *models.SecretNode, plaintextValue string
 		EnvironmentID:  secret.EnvironmentID,
 		Type:           secret.Type,
 		MaxReads:       secret.MaxReads,
+		ParentID:       secret.ParentID,
 		Metadata:       secret.Metadata,
 		Classification: secret.Classification,
 	}
