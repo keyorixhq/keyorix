@@ -49,6 +49,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runCreateRemote(rc, createSecretID, createRecipientID, createIsGroup, createPermission, expiresAt)
+	}
+
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
 	st, err := common.InitializeStorage()
 	if err != nil {

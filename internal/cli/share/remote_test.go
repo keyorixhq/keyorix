@@ -9,6 +9,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestRunCreateRemote is the #G66 regression: `share create` previously had
+// no remote/local dispatch at all (unlike every sibling command in this
+// package) and always wrote to embedded storage, silently no-opping even
+// when connected to a real server. Confirms runCreateRemote actually reaches
+// POST /api/v1/secrets/{id}/share.
+func TestRunCreateRemote(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/secrets/7/share", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "POST", r.Method)
+		_, _ = w.Write([]byte(`{"data":{
+			"ID":1,"SecretID":7,"OwnerID":1,"RecipientID":5,"IsGroup":false,"Permission":"read","CreatedAt":"2026-06-08T10:00:00Z"
+		}}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+
+	require.NoError(t, runCreateRemote(rc, 7, 5, false, "read", nil))
+}
+
 func TestShareReadRemote(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/secrets/7/shares", func(w http.ResponseWriter, r *http.Request) {
