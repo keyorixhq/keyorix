@@ -24,7 +24,12 @@ func TestValidatePATToken_SuspendRevokesTokenAccess(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PersonalAccessToken{}, &models.Session{}, &models.AuditEvent{}))
+	// Role/UserRole/Group/UserGroup/GroupRole are needed by guardLastAdminDeactivation
+	// (#G02), which SuspendUser now calls — without them IsGlobalAdmin's role lookup
+	// fails on a missing table and the guard fails closed, refusing every suspend.
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PersonalAccessToken{}, &models.Session{}, &models.AuditEvent{},
+		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}))
 
 	ls := store.NewLocalStorage(db)
 	c := NewKeyorixCore(ls)

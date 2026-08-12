@@ -22,8 +22,12 @@ func TestMigrateUserToMachine(t *testing.T) {
 		store.On("CreateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			return m.ProjectID == 3 && m.Name == "ci-bot" && m.IdentityType == MachineTypeService && m.State == MachineActive
 		})).Return(&models.MachineIdentity{ID: 20, ProjectID: 3, Name: "ci-bot", IdentityType: MachineTypeService, State: MachineActive}, nil)
-		// SuspendUser path: LockUserForUpdate → SetAccountState(account_state=suspended) →
-		// purge the migrated user's sessions (suspension revokes existing tokens).
+		// SuspendUser path: guardLastAdminDeactivation (#G02) → LockUserForUpdate →
+		// SetAccountState(account_state=suspended) → purge the migrated user's
+		// sessions (suspension revokes existing tokens). The migrated user holds
+		// no roles in this fixture, so the guard is a no-op.
+		store.On("GetUserRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
+		store.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{}).Return([]uint{}, nil)
 		store.On("GetUser", ctx, uint(7)).
 			Return(&models.User{ID: 7, Username: "ci-bot", AccountState: "active"}, nil)
 		store.On("SetAccountState", ctx, uint(7), AccountSuspended, mock.Anything).Return(nil)
