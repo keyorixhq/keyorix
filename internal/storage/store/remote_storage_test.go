@@ -70,6 +70,30 @@ func TestRemoteStorage_CreateSecret(t *testing.T) {
 	assert.Equal(t, "test-secret", result.Name)
 }
 
+// TestRemoteStorage_CreateSecret_SendsParentID is the #G80 regression:
+// ParentID was omitted from the wire request entirely, so every secret
+// created inside a folder under storage.type: remote was silently created at
+// project root instead.
+func TestRemoteStorage_CreateSecret_SendsParentID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ParentID *uint `json:"parent_id"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.NotNil(t, body.ParentID)
+		assert.Equal(t, uint(42), *body.ParentID)
+		_, _ = w.Write(apiOK(map[string]interface{}{"id": 1, "name": "test-secret", "type": "password"}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	parentID := uint(42)
+	_, err = rs.CreateSecret(context.Background(), &models.SecretNode{Name: "test-secret", Type: "password", ParentID: &parentID})
+	require.NoError(t, err)
+}
+
 func TestRemoteStorage_GetSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/secrets/1", r.URL.Path)

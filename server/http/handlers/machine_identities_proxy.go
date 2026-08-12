@@ -180,16 +180,19 @@ func (w machineIdentityProxyWire) toModel() *models.MachineIdentity {
 // for why sending this SHA-256 hash (never the raw token) across this internal
 // boundary is safe.
 type machineIdentityCredentialProxyWire struct {
-	ID                uint       `json:"id"`
-	MachineIdentityID uint       `json:"machine_identity_id"`
-	Name              string     `json:"name"`
-	TokenHash         string     `json:"token_hash"`
-	TokenPrefix       string     `json:"token_prefix"`
-	LastUsedAt        *time.Time `json:"last_used_at"`
-	ExpiresAt         *time.Time `json:"expires_at"`
-	Revoked           bool       `json:"revoked"`
-	CreatedAt         time.Time  `json:"created_at"`
-	Classification    string     `json:"classification"`
+	ID                uint   `json:"id"`
+	MachineIdentityID uint   `json:"machine_identity_id"`
+	Name              string `json:"name"`
+	TokenHash         string `json:"token_hash"`
+	TokenPrefix       string `json:"token_prefix"`
+	// AllowedCIDRs (#G80) — see remote_machine_identities.go's identical wire
+	// struct on the client leg; this is the server-side half of the same omission.
+	AllowedCIDRs   string     `json:"allowed_cidrs"`
+	LastUsedAt     *time.Time `json:"last_used_at"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	Revoked        bool       `json:"revoked"`
+	CreatedAt      time.Time  `json:"created_at"`
+	Classification string     `json:"classification"`
 }
 
 func newMachineIdentityCredentialProxyWire(c *models.MachineIdentityCredential) machineIdentityCredentialProxyWire {
@@ -199,6 +202,7 @@ func newMachineIdentityCredentialProxyWire(c *models.MachineIdentityCredential) 
 		Name:              c.Name,
 		TokenHash:         c.TokenHash,
 		TokenPrefix:       c.TokenPrefix,
+		AllowedCIDRs:      c.AllowedCIDRs,
 		LastUsedAt:        c.LastUsedAt,
 		ExpiresAt:         c.ExpiresAt,
 		Revoked:           c.Revoked,
@@ -214,6 +218,7 @@ func (w machineIdentityCredentialProxyWire) toModel() *models.MachineIdentityCre
 		Name:              w.Name,
 		TokenHash:         w.TokenHash,
 		TokenPrefix:       w.TokenPrefix,
+		AllowedCIDRs:      w.AllowedCIDRs,
 		LastUsedAt:        w.LastUsedAt,
 		ExpiresAt:         w.ExpiresAt,
 		Revoked:           w.Revoked,
