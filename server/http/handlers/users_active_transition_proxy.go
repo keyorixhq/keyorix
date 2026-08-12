@@ -64,12 +64,27 @@ type userActiveTransitionProxyBody struct {
 	FromActive  bool      `json:"from_active"`
 }
 
+// duplicateUsernameProxyCode is the machine-readable error code
+// UpdateUserIfActiveStateMatchesProxy returns when the username uniqueness
+// pre-check below finds a conflict — mirroring duplicateEmailProxyCode's
+// existing pattern for the same class of check.
+const duplicateUsernameProxyCode = "DUPLICATE_USERNAME"
+
 // UpdateUserIfActiveStateMatchesProxy handles PUT
 // /api/v1/system/users/{id}/active-transition. Runs the SAME conditional
 // "WHERE id = ? AND is_active = ?" write core.KeyorixCore.UpdateUser already
 // relies on against a local backend when a request touches IsActive — see the
 // package doc for why this is a dedicated route rather than a generic
 // UpdateUser proxy.
+//
+// #G79: UpdateUser's own uniqueness pre-check (GetUserByUsername/
+// GetUserByEmail against any OTHER row before persisting) was missing here —
+// a caller reachable directly via system.write (bypassing the calling
+// server's own UpdateUser) could otherwise attempt to set username/email to a
+// value already held by a different user. The DB's own partial unique
+// indexes still prevent a SILENT duplicate either way, but without this
+// check the conflict surfaces as an opaque 500 storage error instead of the
+// same 409 UpdateUser gives locally. Re-run the same two lookups here.
 func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -80,6 +95,18 @@ func (h *UserHandler) UpdateUserIfActiveStateMatchesProxy(w http.ResponseWriter,
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
+	}
+	if body.Username != "" {
+		if existing, err := h.coreService.Storage().GetUserByUsername(r.Context(), body.Username); err == nil && existing != nil && existing.ID != uint(id) {
+			writeRemoteAPIError(w, http.StatusConflict, duplicateUsernameProxyCode, "username already exists")
+			return
+		}
+	}
+	if body.Email != "" {
+		if existing, err := h.coreService.Storage().GetUserByEmail(r.Context(), body.Email); err == nil && existing != nil && existing.ID != uint(id) {
+			writeRemoteAPIError(w, http.StatusConflict, duplicateEmailProxyCode, storage.ErrDuplicateEmail.Error())
+			return
+		}
 	}
 	user := &models.User{
 		ID:          uint(id),

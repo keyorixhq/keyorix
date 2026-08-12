@@ -100,7 +100,10 @@ func TestUpdateAccessReviewCampaignProxy_DBError_S31(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-review-campaigns/1", body), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateAccessReviewCampaignProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// UpdateAccessReviewCampaignProxy now re-fetches the row first (ARC-006);
+	// local storage wraps First() errors as "ErrorNotFound", so isNotFoundErr
+	// triggers 404 here — same pre-existing wart TestGetAccessReviewCampaignProxy_DBError_S31 documents.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCreateAccessReviewItemsProxy_DBError_S31(t *testing.T) {
@@ -180,7 +183,11 @@ func TestUpdateAccessRequestProxy_DBError_S31(t *testing.T) {
 	r := withChiParamS7(httptest.NewRequest(http.MethodPut, "/api/v1/system/access-requests/1", body), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// UpdateAccessRequestProxy now re-fetches the row first (AR-001); local
+	// storage wraps GetAccessRequest's underlying error as "not found"
+	// regardless of cause, so isNotFoundErr-style matching surfaces this as
+	// 404 — same pre-existing wart as access-review-campaigns' equivalent test.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestListAccessRequestsProxy_DBError_S31(t *testing.T) {
@@ -287,11 +294,16 @@ func TestDeleteSoDPolicyProxy_DBError_S31(t *testing.T) {
 func TestCreateSetupTokenProxy_DBError_S31(t *testing.T) {
 	t.Parallel()
 	h := NewAuthHandler(freshCoreBrokenS31(t), false)
-	body := bytes.NewBufferString(`{"token_hash":"abc123","purpose":"invite","subject_email":"x@example.com","state":"active","expires_at":"2030-01-01T00:00:00Z","created_by":1,"created_at":"2024-01-01T00:00:00Z"}`)
+	body := bytes.NewBufferString(fmt.Sprintf(`{"token_hash":"abc123","purpose":"account_setup","subject_email":"x@example.com","subject_user_id":1,"state":"active","expires_at":%q,"created_by":1,"created_at":"2024-01-01T00:00:00Z"}`, time.Now().Add(24*time.Hour).Format(time.RFC3339)))
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/setup-tokens", body)
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// #G79: CreateSetupTokenProxy now looks up subject_user_id (GetUser) before
+	// ever reaching CreateSetupToken, and fails closed on ANY error from that
+	// lookup (including a broken-DB storage error, indistinguishable here from
+	// a genuine "no such user") — so this never reaches the 500 path this test
+	// originally exercised.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestGetSetupTokenByHashProxy_DBError_S31(t *testing.T) {

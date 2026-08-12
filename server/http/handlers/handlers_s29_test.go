@@ -475,16 +475,17 @@ func TestUpdateGroupProxy_BadBody_S29(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestUpdateGroupProxy_EmptyName_S29 — body with empty name still results in
-// a non-error (GORM Save upserts even on missing IDs); exercise the success path
-// with a zero-ID body to cover the happy branch with a known response shape.
-func TestUpdateGroupProxy_EmptyName_S29(t *testing.T) {
+// TestUpdateGroupProxy_NonexistentID_S29 — UpdateGroupProxy now routes through
+// core.KeyorixCore.UpdateGroup (#G79), which requires the target group to
+// already exist (GetGroup first) rather than the previous bare
+// storage.UpdateGroup's GORM-Save upsert-on-missing-ID quirk. A PUT to a
+// nonexistent group ID must 404, not silently create a new row.
+func TestUpdateGroupProxy_NonexistentID_S29(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS29(t)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 
-	// A zero-ID body with a name — GORM will INSERT a new row (upsert semantics).
 	req := withChiParam_S25(
 		httptest.NewRequest(http.MethodPut, "/api/v1/system/groups/1",
 			jsonBodyS29(t, map[string]string{"name": "auto-inserted"})),
@@ -493,8 +494,7 @@ func TestUpdateGroupProxy_EmptyName_S29(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.UpdateGroupProxy(w, req)
 
-	// GORM Save either inserts or updates; either way it should succeed with 200.
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestUpdateGroupProxy_HappyPath_S29 — existing group is updated → 200.

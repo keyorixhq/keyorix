@@ -106,11 +106,15 @@ func TestCreateUserWithRoleGrantsProxy_DBError_S32(t *testing.T) {
 	kc := freshCoreBrokenS32(t)
 	h, err := NewUserHandler(kc)
 	require.NoError(t, err)
-	body := bytes.NewBufferString(`{"username":"alice","email":"alice@example.com","password_hash":"$2a$10$abc","is_active":true,"account_state":"active","grants":[]}`)
+	body := bytes.NewBufferString(`{"username":"alice","email":"alice@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[]}`)
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/users/with-role-grants", body)
 	w := httptest.NewRecorder()
 	h.CreateUserWithRoleGrantsProxy(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// #G79: ValidateRoleGrantAuthority now runs first and fails closed (403) on
+	// any error, including a storage error while evaluating SoD policy — the
+	// broken DB never reaches the CreateUserWithRoleGrants call this test
+	// originally exercised.
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── CatalogHandler / project_catalog_proxy.go ─────────────────────────────────

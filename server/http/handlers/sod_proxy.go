@@ -50,12 +50,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// CreateSoDPolicyProxy handles POST /api/v1/system/sod-policies. Persists the
-// caller's already-fully-validated policy row as-is (a raw storage-layer
-// create) — matching CreateMembershipProxy's precedent, this is NOT the
-// human-facing POST /api/v1/sod/policies (CatalogHandler.CreateSoDPolicy),
-// which additionally requires an authenticated actor and runs this server's own
-// name/permission-pair validation and audit-event write.
+// CreateSoDPolicyProxy handles POST /api/v1/system/sod-policies. Routes
+// through core.KeyorixCore.CreateSoDPolicy (not a bare storage.CreateSoDPolicy)
+// so the permission-distinctness validation and the audit-event write (#G79 —
+// this proxy previously wrote no audit trail on the upstream side at all) also
+// cover a policy created via node-sync. CreateSoDPolicy's own re-validation of
+// what the downstream side already checked is harmless (same rules); the
+// pre-existing-violations scan it also runs is a read-only, idempotent check.
 func (h *CatalogHandler) CreateSoDPolicyProxy(w http.ResponseWriter, r *http.Request) {
 	var body models.SoDPolicy
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -66,7 +67,7 @@ func (h *CatalogHandler) CreateSoDPolicyProxy(w http.ResponseWriter, r *http.Req
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "name, permission_a, and permission_b are required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateSoDPolicy(r.Context(), &body)
+	created, err := h.coreService.CreateSoDPolicy(r.Context(), actorID(r), body.Name, body.Description, body.PermissionA, body.PermissionB)
 	if err != nil {
 		log.Printf("sod-policies proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -97,7 +98,7 @@ func (h *CatalogHandler) GetSoDPolicyProxy(w http.ResponseWriter, r *http.Reques
 
 // ListSoDPoliciesProxy handles GET /api/v1/system/sod-policies.
 func (h *CatalogHandler) ListSoDPoliciesProxy(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.coreService.Storage().ListSoDPolicies(r.Context())
+	rows, err := h.coreService.ListSoDPolicies(r.Context())
 	if err != nil {
 		log.Printf("sod-policies proxy: list failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -106,14 +107,16 @@ func (h *CatalogHandler) ListSoDPoliciesProxy(w http.ResponseWriter, r *http.Req
 	writeRemoteAPISuccess(w, map[string]interface{}{"policies": rows})
 }
 
-// DeleteSoDPolicyProxy handles DELETE /api/v1/system/sod-policies/{id}.
+// DeleteSoDPolicyProxy handles DELETE /api/v1/system/sod-policies/{id}. Routes
+// through core.KeyorixCore.DeleteSoDPolicy (not a bare storage.DeleteSoDPolicy)
+// so the audit-event write also covers a deletion via node-sync (#G79).
 func (h *CatalogHandler) DeleteSoDPolicyProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid policy id")
 		return
 	}
-	if err := h.coreService.Storage().DeleteSoDPolicy(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.DeleteSoDPolicy(r.Context(), actorID(r), uint(id)); err != nil {
 		if isNotFoundErr(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "SoD policy not found")
 			return

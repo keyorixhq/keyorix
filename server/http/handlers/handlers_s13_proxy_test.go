@@ -12,6 +12,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -519,7 +521,7 @@ func TestCreateUserWithRoleGrantsProxy_HappyPath_S13(t *testing.T) {
 	body := proxyJSON(map[string]interface{}{
 		"username":      "newproxy_user_s13",
 		"email":         "newproxy_s13@example.com",
-		"password_hash": "$2a$10$abcdefghijklmnopqrstuvuv",
+		"password_hash": "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0",
 		"is_active":     true,
 		"account_state": "active",
 		"grants":        []interface{}{},
@@ -854,7 +856,7 @@ func TestCreateRiskExceptionProxy_HappyPath_S13(t *testing.T) {
 	h := freshDashboardHandlerS13(t)
 	body := proxyJSON(map[string]interface{}{
 		"title":         "Test Exception S13",
-		"category":      "operational",
+		"category":      "other",
 		"justification": "Testing proxy handler",
 		"created_by":    1,
 		"expires_at":    time.Now().Add(30 * 24 * time.Hour),
@@ -917,33 +919,10 @@ func TestListRiskExceptionsProxy_ActiveOnly_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-// TestUpdateRiskExceptionProxy_BadID_S13 — non-numeric id → 400.
-func TestUpdateRiskExceptionProxy_BadID_S13(t *testing.T) {
-	h := freshDashboardHandlerS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/bad", strings.NewReader("{}")),
-		"id", "bad",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.Equal(t, "INVALID_PARAMETER", resp.Error.Code)
-}
-
-// TestUpdateRiskExceptionProxy_BadBody_S13 — valid id, malformed JSON body → 400.
-func TestUpdateRiskExceptionProxy_BadBody_S13(t *testing.T) {
-	h := freshDashboardHandlerS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/1", strings.NewReader("{bad")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
-}
+// UpdateRiskExceptionProxy was removed (#G79) — it accepted a client-supplied
+// full row with no auth/business-logic decision and had no legitimate caller.
+// See risk_exceptions_proxy.go's removal comment. The tests that used to live
+// here (TestUpdateRiskExceptionProxy_BadID_S13/BadBody_S13) are gone with it.
 
 // TestRevokeRiskExceptionProxy_BadID_S13 — non-numeric id → 400.
 func TestRevokeRiskExceptionProxy_BadID_S13(t *testing.T) {
@@ -959,30 +938,24 @@ func TestRevokeRiskExceptionProxy_BadID_S13(t *testing.T) {
 	assert.Equal(t, "INVALID_PARAMETER", resp.Error.Code)
 }
 
-// TestRevokeRiskExceptionProxy_BadBody_S13 — valid id, malformed JSON body → 400.
-func TestRevokeRiskExceptionProxy_BadBody_S13(t *testing.T) {
-	h := freshDashboardHandlerS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/1/revoke", strings.NewReader("{bad")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.RevokeRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
-}
+// RevokeRiskExceptionProxy no longer decodes a request body at all (#G79) —
+// core.KeyorixCore.RevokeRiskException takes only actorID/id and resolves the
+// rest itself — so "malformed JSON body" is no longer a meaningful input;
+// TestRevokeRiskExceptionProxy_BadBody_S13 is gone with that body decode.
 
-// TestRevokeRiskExceptionProxy_LostRace_S13 — a second revoke attempt asserting
-// the same (now-stale) revoked=false state as a call that already won must
-// report matched:false, not silently re-apply, proving the CAS race closes at
-// the HTTP-proxy boundary too (not just LocalStorage).
+// TestRevokeRiskExceptionProxy_LostRace_S13 — a second revoke attempt against
+// an already-revoked exception must be refused with an error (#G79:
+// RevokeRiskExceptionProxy now routes through
+// core.KeyorixCore.RevokeRiskException, which reports this precondition
+// failure as an error, not a matched:false success — see RevokeRiskException's
+// own doc comment), proving the CAS race still closes at the HTTP-proxy
+// boundary, just with a more specific error than the old raw matched bool.
 func TestRevokeRiskExceptionProxy_LostRace_S13(t *testing.T) {
 	h := freshDashboardHandlerS13(t)
 
 	createBody := proxyJSON(map[string]interface{}{
 		"title":         "Revoke Race S13",
-		"category":      "operational",
+		"category":      "other",
 		"justification": "Testing revoke CAS",
 		"created_by":    1,
 		"expires_at":    time.Now().Add(30 * 24 * time.Hour),
@@ -997,14 +970,7 @@ func TestRevokeRiskExceptionProxy_LostRace_S13(t *testing.T) {
 	id := uint(created["id"].(float64))
 	idStr := strconv.FormatUint(uint64(id), 10)
 
-	revokeBody := func() *bytes.Buffer {
-		return proxyJSON(map[string]interface{}{"revoked": true, "revoked_by": 2})
-	}
-
-	firstReq := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/revoke", revokeBody()),
-		"id", idStr,
-	)
+	firstReq := withChiParam(httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/revoke", nil), "id", idStr)
 	firstW := httptest.NewRecorder()
 	h.RevokeRiskExceptionProxy(firstW, firstReq)
 	assert.Equal(t, http.StatusOK, firstW.Code)
@@ -1013,17 +979,10 @@ func TestRevokeRiskExceptionProxy_LostRace_S13(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, true, firstData["matched"], "first revoke must win")
 
-	secondReq := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/revoke", revokeBody()),
-		"id", idStr,
-	)
+	secondReq := withChiParam(httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/revoke", nil), "id", idStr)
 	secondW := httptest.NewRecorder()
 	h.RevokeRiskExceptionProxy(secondW, secondReq)
-	assert.Equal(t, http.StatusOK, secondW.Code)
-	secondResp := decodeRemoteResp(t, secondW)
-	secondData, ok := secondResp.Data.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, false, secondData["matched"], "second (racing) revoke must lose — already revoked")
+	assert.NotEqual(t, http.StatusOK, secondW.Code, "second (racing) revoke must be refused — already revoked")
 }
 
 // TestApproveRiskExceptionProxy_BadID_S13 — non-numeric id → 400.
@@ -1040,28 +999,24 @@ func TestApproveRiskExceptionProxy_BadID_S13(t *testing.T) {
 	assert.Equal(t, "INVALID_PARAMETER", resp.Error.Code)
 }
 
-// TestApproveRiskExceptionProxy_BadBody_S13 — valid id, malformed JSON body → 400.
-func TestApproveRiskExceptionProxy_BadBody_S13(t *testing.T) {
-	h := freshDashboardHandlerS13(t)
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/1/approve", strings.NewReader("{bad")),
-		"id", "1",
-	)
-	w := httptest.NewRecorder()
-	h.ApproveRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	resp := decodeRemoteResp(t, w)
-	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
-}
+// ApproveRiskExceptionProxy no longer decodes a request body at all (#G79) —
+// core.KeyorixCore.ApproveRiskException takes only actorID/id and resolves
+// the rest itself — so "malformed JSON body" is no longer a meaningful
+// input; TestApproveRiskExceptionProxy_BadBody_S13 is gone with that body
+// decode.
 
 // TestApproveRiskExceptionProxy_HappyPath_S13 — a pending (not revoked, not
-// approved) exception approves cleanly and reports matched:true.
+// approved) exception approves cleanly and reports matched:true. The approving
+// caller must be a DIFFERENT actor than the creator (dual control,
+// core.ApproveRiskException) — the create call below runs with no user
+// context (actorID 0), so the approve call uses withUserCtx (actorID 1) to
+// satisfy that.
 func TestApproveRiskExceptionProxy_HappyPath_S13(t *testing.T) {
 	h := freshDashboardHandlerS13(t)
 
 	createBody := proxyJSON(map[string]interface{}{
 		"title":         "Approve Happy S13",
-		"category":      "operational",
+		"category":      "other",
 		"justification": "Testing approve happy path",
 		"created_by":    1,
 		"expires_at":    time.Now().Add(30 * 24 * time.Hour),
@@ -1076,11 +1031,10 @@ func TestApproveRiskExceptionProxy_HappyPath_S13(t *testing.T) {
 	id := uint(created["id"].(float64))
 	idStr := strconv.FormatUint(uint64(id), 10)
 
-	approveBody := proxyJSON(map[string]interface{}{"approved": true, "approved_by": 2})
-	req := withChiParam(
-		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/approve", approveBody),
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/risk-exceptions/"+idStr+"/approve", nil),
 		"id", idStr,
-	)
+	))
 	w := httptest.NewRecorder()
 	h.ApproveRiskExceptionProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1355,16 +1309,23 @@ func TestCreateSetupTokenProxy_MissingEmail_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestCreateSetupTokenProxy_HappyPath_S13 — valid body → 200.
+// TestCreateSetupTokenProxy_HappyPath_S13 — valid body referencing a real,
+// matching-email user (account_setup requires subject_user_id, per #G79) → 200.
 func TestCreateSetupTokenProxy_HappyPath_S13(t *testing.T) {
-	h := freshAuthHandlerS13(t)
+	cs := freshCoreS12(t)
+	h := NewAuthHandler(cs, false)
+	user, err := cs.Storage().CreateUser(context.Background(), &models.User{
+		Username: "newuser_s13", Email: "newuser@example.com", PasswordHash: "x",
+	})
+	require.NoError(t, err)
 	body := proxyJSON(map[string]interface{}{
-		"token_hash":    "deadbeef1234567890abcdef",
-		"purpose":       "invite",
-		"subject_email": "newuser@example.com",
-		"state":         "active",
-		"expires_at":    time.Now().Add(24 * time.Hour),
-		"created_by":    1,
+		"token_hash":      "deadbeef1234567890abcdef",
+		"purpose":         "account_setup",
+		"subject_email":   "newuser@example.com",
+		"subject_user_id": user.ID,
+		"state":           "active",
+		"expires_at":      time.Now().Add(24 * time.Hour),
+		"created_by":      1,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/system/setup-tokens", body)
 	w := httptest.NewRecorder()

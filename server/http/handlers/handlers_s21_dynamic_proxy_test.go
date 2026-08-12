@@ -157,8 +157,11 @@ func TestCreateLegalHoldProxy_MissingReason_S21(t *testing.T) {
 
 // TestCreateLegalHoldProxy_Valid_S21 verifies the happy path: a well-formed
 // hold with a reason is persisted and the created row is returned.
+// TestCreateLegalHoldProxy_Valid_S21: CreateLegalHoldProxy now routes through
+// core.KeyorixCore.PlaceLegalHold (#G79), which requires an admin-tier
+// actor — seeded here via freshCoreS12WithAdmin + withUserCtx.
 func TestCreateLegalHoldProxy_Valid_S21(t *testing.T) {
-	cs := freshCoreS12(t)
+	cs, _ := freshCoreS12WithAdmin(t)
 	h := NewDashboardHandler(cs)
 
 	hold := models.LegalHold{
@@ -170,8 +173,8 @@ func TestCreateLegalHoldProxy_Valid_S21(t *testing.T) {
 	body, err := json.Marshal(hold)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold",
-		bytes.NewReader(body))
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/system/legal-hold",
+		bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.CreateLegalHoldProxy(w, req)

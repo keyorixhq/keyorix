@@ -248,6 +248,14 @@ func (h *AuthHandler) UpdateWebAuthnCredentialProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
+	// #G79: matches CreateWebAuthnCredentialProxy's validation — this route is
+	// an unconditional full-row Save (see the doc above), so a body missing
+	// user_id/credential_id would zero those columns on the existing row, not
+	// merely leave them unset.
+	if body.UserID == 0 || len(body.CredentialID) == 0 {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and credential_id are required")
+		return
+	}
 	body.ID = uint(id)
 	if err := h.coreService.Storage().UpdateWebAuthnCredential(r.Context(), body.toModel()); err != nil {
 		log.Printf("webauthn proxy: update credential failed: %v", err)
