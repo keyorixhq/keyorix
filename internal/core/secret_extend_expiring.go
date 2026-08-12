@@ -19,10 +19,13 @@ const defaultExtendWindowDays = 90
 // number extended. A secret whose current expiration is already later than the new one
 // is left untouched (this only ever pushes expiry out, never pulls it in). Best-effort:
 // a per-secret update failure is skipped so one bad row doesn't abort the rest. Each
-// renewal is audited as secret.updated.
-func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint, withinDays, newWindowDays int, actor string, actorID uint) (int, error) {
+// renewal is audited as secret.updated. truncated is true when more secrets matched
+// the window than ListExpiringSecrets returned (#G24) — the sweep still renews the
+// soonest-expiring ones first (storage orders by expiration ascending), but a caller
+// with more matching secrets than the scan cap must know not every one was renewed.
+func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint, withinDays, newWindowDays int, actor string, actorID uint) (extended int, truncated bool, err error) {
 	if projectID == 0 || actorID == 0 {
-		return 0, fmt.Errorf("project ID and actor ID are required")
+		return 0, false, fmt.Errorf("project ID and actor ID are required")
 	}
 	if newWindowDays <= 0 {
 		newWindowDays = defaultExtendWindowDays
@@ -32,12 +35,11 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 	}
 	newExpiry := c.now().Add(time.Duration(newWindowDays) * 24 * time.Hour)
 
-	secrets, err := c.ListExpiringSecrets(ctx, projectID, withinDays)
+	secrets, truncated, err := c.ListExpiringSecrets(ctx, projectID, withinDays)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
-	extended := 0
 	for _, s := range secrets {
 		// Re-check per-secret write authorization (owner/share). The project-wide
 		// secrets.write route gate is not sufficient on its own — the single-secret PUT
@@ -57,5 +59,5 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 		c.LogSecretUpdatedWithProject(ctx, actorID, s.ID, projectID, actor, s.Name, "", "")
 		extended++
 	}
-	return extended, nil
+	return extended, truncated, nil
 }

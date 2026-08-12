@@ -54,9 +54,10 @@ func TestExtendExpiringSecrets(t *testing.T) {
 	neverID := mk("never", nil) // no expiry — untouched
 
 	t.Run("renews expiring/expired secrets to now+window, leaves others", func(t *testing.T) {
-		n, err := c.ExtendExpiringSecrets(ctx, p.ID, 30, 90, "admin", 1)
+		n, truncated, err := c.ExtendExpiringSecrets(ctx, p.ID, 30, 90, "admin", 1)
 		require.NoError(t, err)
 		assert.Equal(t, 2, n, "expired + soon renewed; far + never untouched")
+		assert.False(t, truncated)
 
 		want := now.Add(90 * 24 * time.Hour)
 		get := func(id uint) *models.SecretNode {
@@ -73,9 +74,9 @@ func TestExtendExpiringSecrets(t *testing.T) {
 	})
 
 	t.Run("a project ID or actor ID of zero is rejected", func(t *testing.T) {
-		_, err := c.ExtendExpiringSecrets(ctx, 0, 30, 90, "admin", 1)
+		_, _, err := c.ExtendExpiringSecrets(ctx, 0, 30, 90, "admin", 1)
 		require.Error(t, err)
-		_, err = c.ExtendExpiringSecrets(ctx, p.ID, 30, 90, "admin", 0)
+		_, _, err = c.ExtendExpiringSecrets(ctx, p.ID, 30, 90, "admin", 0)
 		require.Error(t, err)
 	})
 }

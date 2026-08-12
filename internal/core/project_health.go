@@ -20,6 +20,12 @@ type ProjectHealthSummary struct {
 	MediumRiskCount int                `json:"medium_risk_count"`
 	LowRiskCount    int                `json:"low_risk_count"`
 	TopRiskSecrets  []*SecretRiskScore `json:"secrets"`
+	// Truncated is true when the project has more secrets than the bounded
+	// PageSize below fetched — TotalSecrets and the risk-band counts then
+	// reflect only the fetched sample, not the project's true secret count
+	// (#G24: previously TotalSecrets silently reported the truncated sample
+	// size as if it were the real total).
+	Truncated bool `json:"truncated"`
 }
 
 const (
@@ -37,7 +43,7 @@ func (c *KeyorixCore) GetProjectHealthSummary(ctx context.Context, projectID uin
 
 	// Fetch ALL secrets for the project (no paging — admin function).
 	trueVal := true
-	secrets, _, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+	secrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
 		ProjectID: &projectID,
 		IsSecret:  &trueVal,
 		PageSize:  maxHealthLimit * 10, // generous upper bound; health is a bounded admin view
@@ -46,6 +52,7 @@ func (c *KeyorixCore) GetProjectHealthSummary(ctx context.Context, projectID uin
 	if err != nil {
 		return nil, fmt.Errorf("list secrets: %w", err)
 	}
+	truncated := int64(len(secrets)) < total
 
 	// Collect all IDs in one pass.
 	ids := make([]uint, 0, len(secrets))
@@ -90,10 +97,11 @@ func (c *KeyorixCore) GetProjectHealthSummary(ctx context.Context, projectID uin
 
 	return &ProjectHealthSummary{
 		ProjectID:       projectID,
-		TotalSecrets:    len(secrets),
+		TotalSecrets:    int(total),
 		HighRiskCount:   highN,
 		MediumRiskCount: medN,
 		LowRiskCount:    lowN,
 		TopRiskSecrets:  top,
+		Truncated:       truncated,
 	}, nil
 }

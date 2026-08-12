@@ -37,6 +37,12 @@ type BlastRadiusReport struct {
 	Dependents       []BlastRadiusNode `json:"dependents"`
 	TotalImpact      int               `json:"total_impact"` // == len(Dependents)
 	MaxDepth         int               `json:"max_depth"`
+	// Truncated is true when the BFS hit its depth ceiling (maxDepth in blastBFS)
+	// while dependents still existed beyond it — TotalImpact/Dependents then
+	// reflect only the reachable-within-depth subset, not the true full impact
+	// (#G24: previously dropped entirely, so a capped result was indistinguishable
+	// from a genuinely complete one).
+	Truncated bool `json:"truncated"`
 }
 
 // blastBFSNode is an internal BFS traversal node.
@@ -47,11 +53,16 @@ type blastBFSNode struct {
 
 // blastBFS performs a bounded BFS over the dependents adjacency map starting
 // from rootID, returning nodes ordered by (depth, id). Max depth is 10.
-func blastBFS(rootID uint, adj map[uint][]uint) []blastBFSNode {
+// truncated is true when any node reached maxDepth — the BFS stops expanding a
+// node once it hits the ceiling, so a node's own further dependents (if any)
+// are never discovered; reaching the ceiling at all means the true tree MAY
+// extend further than what's returned (#G24 — conservative: flagged even if
+// that specific node turns out to have no further children, since "possibly
+// truncated" must never be silently reported as complete).
+func blastBFS(rootID uint, adj map[uint][]uint) (ordered []blastBFSNode, truncated bool) {
 	const maxDepth = 10
 	visited := map[uint]bool{rootID: true}
 	queue := []blastBFSNode{{id: rootID, depth: 0}}
-	var ordered []blastBFSNode
 
 	for len(queue) > 0 {
 		cur := queue[0]
@@ -65,6 +76,8 @@ func blastBFS(rootID uint, adj map[uint][]uint) []blastBFSNode {
 			ordered = append(ordered, next)
 			if next.depth < maxDepth {
 				queue = append(queue, next)
+			} else {
+				truncated = true
 			}
 		}
 	}
@@ -75,7 +88,7 @@ func blastBFS(rootID uint, adj map[uint][]uint) []blastBFSNode {
 		}
 		return ordered[i].id < ordered[j].id
 	})
-	return ordered
+	return ordered, truncated
 }
 
 // GetBlastRadius returns the full dependency tree downstream of secretID,
@@ -98,7 +111,7 @@ func (k *KeyorixCore) GetBlastRadius(ctx context.Context, secretID uint) (*Blast
 	edges = edgesWithinEnvironment(edges, info, source.EnvironmentID)
 
 	adj := dependentsAdjacency(edges)
-	ordered := blastBFS(secretID, adj)
+	ordered, truncated := blastBFS(secretID, adj)
 
 	maxDepthSeen := 0
 	nodes := make([]BlastRadiusNode, 0, len(ordered))
@@ -129,6 +142,7 @@ func (k *KeyorixCore) GetBlastRadius(ctx context.Context, secretID uint) (*Blast
 		Dependents:       nodes,
 		TotalImpact:      len(nodes),
 		MaxDepth:         maxDepthSeen,
+		Truncated:        truncated,
 	}, nil
 }
 

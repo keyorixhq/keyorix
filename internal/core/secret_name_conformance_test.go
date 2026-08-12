@@ -7,9 +7,11 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -96,4 +98,31 @@ func TestSecretNameConformance(t *testing.T) {
 		_, err := c.SecretNameConformance(ctx, 0)
 		require.Error(t, err)
 	})
+}
+
+// TestSecretNameConformance_Truncated is the #G24 regression: before the fix,
+// the per-project report discarded ListSecrets' real total (its second return
+// value), unlike its deployment-wide sibling (secret_name_conformance_deployment.go)
+// which already surfaces a Truncated flag. Uses MockStorage to simulate a
+// project with more secrets (5000) than the scan cap returned (0).
+func TestSecretNameConformance_Truncated(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	const proj = uint(9)
+	ctx := context.Background()
+
+	ms := &MockStorage{}
+	ms.On("ListSecrets", ctx, mock.MatchedBy(func(f *storage.SecretFilter) bool {
+		return f.ProjectID != nil && *f.ProjectID == proj
+	})).Return([]*models.SecretNode{}, int64(5000), nil)
+
+	c := &KeyorixCore{storage: ms, now: time.Now}
+	require.NoError(t, c.SetSecretNamePolicy(SecretNamePolicy{
+		Enabled: true, Pattern: "^[A-Z][A-Z0-9_]*$", MaxLength: 64,
+	}))
+
+	rep, err := c.SecretNameConformance(ctx, proj)
+	require.NoError(t, err)
+	assert.True(t, rep.Truncated)
+
+	ms.AssertExpectations(t)
 }
