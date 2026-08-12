@@ -2617,6 +2617,21 @@ func TestUpdateWebAuthnCredentialProxy_HappyPath(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
+// TestUpdateWebAuthnCredentialProxy_RefusesMissingCredentialID is the #G79
+// regression: UpdateWebAuthnCredentialProxy previously accepted a body with no
+// credential_id/user_id at all — since this route is an unconditional
+// full-row Save (not a partial update), that would zero those columns on the
+// existing row rather than merely leave them unset. Must now be refused,
+// matching CreateWebAuthnCredentialProxy's own validation.
+func TestUpdateWebAuthnCredentialProxy_RefusesMissingCredentialID(t *testing.T) {
+	h := newAuthHandlerWithWebAuthn(t)
+	body := `{"name":"attacker-renamed"}`
+	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
+	w := httptest.NewRecorder()
+	h.UpdateWebAuthnCredentialProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "a body missing user_id/credential_id must be refused")
+}
+
 func TestCreateWebAuthnSessionProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"user_id":1,"token_hash":"abc123","challenge":"AQID"}`
