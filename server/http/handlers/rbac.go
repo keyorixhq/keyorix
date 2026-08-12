@@ -1011,15 +1011,15 @@ func (h *RBACHandler) GetPermissionMatrix(w http.ResponseWriter, r *http.Request
 				expiresAt = row.ExpiresAt.UTC().Format(time.RFC3339)
 			}
 			_ = cw.Write([]string{
-				row.Username,
-				row.Email,
-				row.RoleName,
-				row.PermissionName,
-				row.Resource,
-				row.Action,
-				row.Scope,
-				row.ProjectName,
-				row.EnvironmentName,
+				csvSafe(row.Username),
+				csvSafe(row.Email),
+				csvSafe(row.RoleName),
+				csvSafe(row.PermissionName),
+				csvSafe(row.Resource),
+				csvSafe(row.Action),
+				csvSafe(row.Scope),
+				csvSafe(row.ProjectName),
+				csvSafe(row.EnvironmentName),
 				expiresAt,
 			})
 		}

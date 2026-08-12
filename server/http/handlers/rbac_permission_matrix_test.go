@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,6 +140,35 @@ func TestGetPermissionMatrixHandler_CSVWithExpiry(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
 	assert.Contains(t, body, "2028-06-01T12:00:00Z", "CSV must contain formatted ExpiresAt")
+}
+
+// TestGetPermissionMatrixHandler_CSVFormulaInjection — a project name starting with a
+// formula-injection character (=, +, -, @) must be escaped with a leading single quote
+// in the CSV export (G49: csvSafe() formula-injection escaping).
+func TestGetPermissionMatrixHandler_CSVFormulaInjection(t *testing.T) {
+	h, db := newMatrixHandlerCore(t)
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 9, Name: "=cmd|' /C calc'!A1"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 9, EnvironmentID: 0}).Error)
+
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/system/rbac/permission-matrix?format=csv", nil))
+	w := httptest.NewRecorder()
+	h.GetPermissionMatrix(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	records, err := csv.NewReader(w.Body).ReadAll()
+	require.NoError(t, err)
+	require.Len(t, records, 2, "CSV must have header + 1 data row")
+
+	// project is column index 7 in the header:
+	// username, email, role, permission, resource, action, scope, project, environment, expires_at
+	projectCell := records[1][7]
+	assert.True(t, strings.HasPrefix(projectCell, "'"), "formula-injection prefix must be neutralized with a leading quote, got %q", projectCell)
+	assert.Equal(t, "'=cmd|' /C calc'!A1", projectCell)
 }
 
 // TestGetPermissionMatrixHandler_StorageError — a storage failure produces HTTP 500.
