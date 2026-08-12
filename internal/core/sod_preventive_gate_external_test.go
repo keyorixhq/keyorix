@@ -290,3 +290,32 @@ func TestAssignUserRole_AdminBypassNotBlockedBySoD(t *testing.T) {
 	err = h.CoreService.AssignUserRole(ctx, 0, 17, 3, core.Scope{}) // editor
 	require.NoError(t, err, "granting a role to an existing admin-bypass holder must not be refused by the SoD gate")
 }
+
+// TestAssignUserRole_ProjectScopedAdminNotExemptFromSoD is the #G01
+// regression: an admin role granted only at a specific project must NOT
+// exempt the holder from the SoD preventive gate the way a true global admin
+// is exempted — SoD policies are principal-level and scope-agnostic by
+// design ("a user must never hold both sides ANYWHERE"), so a project-scoped
+// admin's own bundled permissions can still combine with a new grant to
+// complete a policy, and that must be blocked like any non-admin grant.
+func TestAssignUserRole_ProjectScopedAdminNotExemptFromSoD(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
+	ctx := context.Background()
+
+	h.CreateTestUser(t, "kim", 18)
+	// "admin" (role 2) bundles secrets.write but NOT audit.admin — grant it to
+	// kim scoped ONLY to project 9, not globally.
+	projectID := uint(9)
+	h.AssignUserRole(t, 18, 2, &projectID)
+
+	// Policy pairs secrets.write (already in kim's project-scoped admin bundle)
+	// with audit.admin (only "auditor", role 5, bundles it).
+	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-audit-admin", "", "secrets.write", "audit.admin")
+	require.NoError(t, err)
+
+	err = h.CoreService.AssignUserRole(ctx, 0, 18, 5, core.Scope{}) // auditor
+	require.Error(t, err, "a project-scoped admin must still be blocked by the SoD gate, unlike a true global admin")
+	assert.Contains(t, err.Error(), "separation-of-duties")
+}
