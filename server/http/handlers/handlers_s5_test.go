@@ -3493,7 +3493,9 @@ func TestCreateSecretDependencyExclusiveProxy_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	// #G79: crossReferenceSecretDependencyProxy refuses (400) when the
+	// referenced secrets don't actually exist/belong to project_id.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestGetSecretDependencyProxy_NotFound(t *testing.T) {

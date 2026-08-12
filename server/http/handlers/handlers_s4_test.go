@@ -10283,8 +10283,11 @@ func TestSecretHandler_CreateSecretDependencyExclusiveProxy_HappyPath(t *testing
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
-	// secrets don't exist → error (but not 400 for missing fields)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	// #G79: crossReferenceSecretDependencyProxy now refuses (400) when the
+	// referenced secrets don't actually exist/belong to project_id, rather than
+	// falling through to whatever error the storage layer produced for a
+	// dangling foreign key.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── machine_identities.go: ListMachineTokens ─────────────────────────────────
