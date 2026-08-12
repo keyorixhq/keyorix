@@ -187,3 +187,41 @@ func TestUpdateUserIfActiveStateMatchesProxy_DuplicateEmail(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, "Should Not Persist", unchanged.DisplayName, "rejected write must not persist")
 }
+
+// TestUpdateUserIfActiveStateMatchesProxy_DuplicateUsername is the #G79
+// regression: this proxy previously ran no uniqueness pre-check at all
+// (unlike core.UpdateUser, which checks GetUserByUsername/GetUserByEmail
+// before persisting) — a username collision is now refused explicitly with
+// duplicateUsernameProxyCode rather than falling through to whatever the
+// storage layer's own constraint (if any) happens to surface.
+func TestUpdateUserIfActiveStateMatchesProxy_DuplicateUsername(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	require.NoError(t, db.Create(&models.User{
+		ID: 2, Username: "taken_username", Email: "user2@example.com", IsActive: true,
+	}).Error)
+
+	h, err := NewUserHandler(cs)
+	require.NoError(t, err)
+
+	body := proxyJSON(map[string]interface{}{
+		"username":     "taken_username", // collides with user 2
+		"email":        "testuser_s12@example.com",
+		"display_name": "Should Not Persist",
+		"active":       false,
+		"from_active":  true,
+	})
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/users/1/active-transition", body),
+		"id", "1",
+	)
+	w := httptest.NewRecorder()
+	h.UpdateUserIfActiveStateMatchesProxy(w, req)
+	resp := decodeRemoteResp(t, w)
+	assert.False(t, resp.Success, "duplicate username must not silently succeed")
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, duplicateUsernameProxyCode, resp.Error.Code)
+
+	unchanged, err := cs.Storage().GetUser(req.Context(), 1)
+	require.NoError(t, err)
+	assert.NotEqual(t, "Should Not Persist", unchanged.DisplayName, "rejected write must not persist")
+}
