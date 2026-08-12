@@ -30,6 +30,17 @@ func init() {
 }
 
 func runGroupShares(cmd *cobra.Command, args []string) error {
+	// KNOWN GAP (tracked, not fixed here): unlike every other command in this
+	// package, this has no `if rc, ok := common.NewRemoteClient(); ok { ... }`
+	// branch — it always reads local embedded storage, silently ignoring a
+	// connected server (#G66). Not fixed alongside the rest of #G66 because the
+	// only way to serve this from a real server today is to expose
+	// core.KeyorixCore.ListGroupShares over HTTP, and that function itself has
+	// no caller-scoping of its own (#G10 — "core-layer function performs zero
+	// authorization") — any principal could list any group's shares. Adding a
+	// remote endpoint for it now would ship a new unauthenticated-scope
+	// disclosure surface before #G10's fix lands. Sequence this with #G10.
+	//
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
 	st, err := common.InitializeStorage()
 	if err != nil {
