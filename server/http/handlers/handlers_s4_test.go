@@ -1420,6 +1420,22 @@ func TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
 	require.NoError(t, db.First(&stillExists, 5).Error, "the group must not have been deleted when the guard refuses")
 }
 
+// TestUpdateLoginLockoutStateProxy_RefusesAbsurdLockDuration is the #G79
+// regression: UpdateLoginLockoutStateProxy previously persisted whatever
+// login_locked_until the caller supplied with no bound at all, letting a
+// system.write caller lock an arbitrary user out indefinitely. An absurdly
+// far-future value must now be refused.
+func TestUpdateLoginLockoutStateProxy_RefusesAbsurdLockDuration(t *testing.T) {
+	h := newAuthHandlerWithWebAuthn(t)
+	farFuture := time.Now().Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	body := fmt.Sprintf(`{"failed_login_attempts":5,"login_locked_until":%q,"login_lockout_count":1}`, farFuture)
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
+	req = withChiParam(req, "id", "1")
+	w := httptest.NewRecorder()
+	h.UpdateLoginLockoutStateProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "an absurdly far-future login_locked_until must be refused")
+}
+
 // TestCreateSetupTokenProxy_RefusesUnmatchedSubject is the #G79 regression:
 // CreateSetupTokenProxy previously persisted whatever token_hash/subject_email
 // the caller supplied with no check that either referenced anything real,
