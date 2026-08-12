@@ -600,9 +600,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Usage analytics (static paths, before /{id}).
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/usage/most-accessed", secretHandler.UsageMostAccessed)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsRead, customMiddleware.ScopeFromQuery)).Get("/usage/unused", secretHandler.UsageUnused)
-			// Read-quota report — deployment-wide secrets approaching MaxReads cap.
-			// Gated on global secrets.read (same level as listing all projects).
-			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/quota-report", secretHandler.GetQuotaReport)
+			// Read-quota report — deployment-wide secrets approaching MaxReads cap. It
+			// discloses usage-percentage/status metadata, not secret values, so it is a
+			// report-viewing endpoint in the same disclosure family as the other
+			// deployment-wide compliance/audit reports — gate on audit.read (global),
+			// not the broader secrets.read (which is scoped for actual secret-value
+			// access and is the wrong tier/shape for a report that never discloses a
+			// value) (G16).
+			r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/quota-report", secretHandler.GetQuotaReport)
 			// Org-wide secret asset inventory (ISO 27001 A.5.9) — CSV manifest of every
 			// project's secrets, metadata only (no values), but it DOES disclose every
 			// secret's real NAME/classification/owner deployment-wide, so it is gated on
@@ -2004,10 +2009,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Compliance digest — on-demand human-readable summary (the scheduled-broadcast
 		// text); restates the same posture data, same gate.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/digest", dashboardHandler.GetComplianceDigest)
-		// Compliance digest send — triggers an immediate broadcast to notification channels
-		// (Slack/Teams/webhook/email). Gated by system.write: it's an active dispatch
-		// action, not a read disclosure, even though the content is the same as the GET.
-		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/compliance/digest/send", dashboardHandler.SendComplianceDigest)
+		// Compliance digest send — triggers an immediate broadcast to notification
+		// channels (Slack/Teams/webhook/email) restating the SAME posture data as GET
+		// /compliance/digest above — gate on audit.read to match that read sibling
+		// (G16). system.write was the wrong tier: the broadcast discloses nothing beyond
+		// what audit.read already permits reading, so it both let a caller lacking the
+		// read view still trigger identical content being dispatched to a channel, and
+		// blocked an audit.read holder (e.g. system_auditor) from an action no more
+		// sensitive than the read they're already trusted with.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Post("/compliance/digest/send", dashboardHandler.SendComplianceDigest)
 		// Compliance snapshots — on-demand posture capture + history list. POST requires
 		// system.write (triggers a full evaluation + persist); GET only reads stored rows.
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/compliance/snapshots", dashboardHandler.TakeComplianceSnapshot)

@@ -111,6 +111,69 @@ func TestAuditService_WriteAuditCheckpoint_RequiresEncryption(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+// TestAuditService_WriteAuditCheckpoint_RequiresAuditReadAndSystemWrite is the
+// G16 regression test: the HTTP route stacks TWO permissions on POST
+// /audit/checkpoint — the /audit group's base audit.read plus a route-specific
+// system.write — but the gRPC RPC only checked system.write, letting a
+// system.write-only caller (e.g. an "operations admin" deliberately not
+// granted audit.read) reach the identical core.WriteAuditCheckpoint over gRPC.
+// Verifies: system.write alone is refused, audit.read alone is refused, and
+// holding both clears authorization (surfacing the pre-existing
+// FailedPrecondition from the test DB's disabled encryption, not
+// PermissionDenied).
+func TestAuditService_WriteAuditCheckpoint_RequiresAuditReadAndSystemWrite(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}))
+	svc := NewAuditService(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	require.NoError(t, db.Create(&models.Permission{ID: 100, Name: "system.write", Resource: "system", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 101, Name: "audit.read", Resource: "audit", Action: "read"}).Error)
+
+	// User 2: system.write ONLY (the old, insufficient gate) — must be refused.
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "sysadmin", Email: "sysadmin@example.com"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "system_write_only"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 100}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 0}).Error)
+
+	_, err = svc.WriteAuditCheckpoint(authCtx(2, "sysadmin"), &emptypb.Empty{})
+	require.Error(t, err, "system.write alone must NOT be enough to write an audit checkpoint")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// User 3: audit.read ONLY — also must be refused (system.write is still required).
+	require.NoError(t, db.Create(&models.User{ID: 3, Username: "auditor-only", Email: "auditor-only@example.com"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 3, Name: "audit_read_only"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 3, PermissionID: 101}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 3, ProjectID: 0}).Error)
+
+	_, err = svc.WriteAuditCheckpoint(authCtx(3, "auditor-only"), &emptypb.Empty{})
+	require.Error(t, err, "audit.read alone must NOT be enough to write an audit checkpoint")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// User 4: BOTH audit.read and system.write — authorization must clear (the
+	// remaining error is the pre-existing disabled-encryption precondition, not
+	// a permission denial).
+	require.NoError(t, db.Create(&models.User{ID: 4, Username: "full-grant", Email: "full-grant@example.com"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 4, Name: "audit_and_system_write"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 4, PermissionID: 100}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 4, PermissionID: 101}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 4, RoleID: 4, ProjectID: 0}).Error)
+
+	_, err = svc.WriteAuditCheckpoint(authCtx(4, "full-grant"), &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err),
+		"holding both audit.read and system.write should clear authorization, leaving only the disabled-encryption precondition")
+}
+
 func TestAuditService_GetAuditLogs_PermissionDenied(t *testing.T) {
 	svc := newAuditService(t)
 	ctx := authCtx(7, "nobody") // ungranted user → denied

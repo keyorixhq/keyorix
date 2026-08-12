@@ -249,6 +249,41 @@ func TestRoleService_AssignAndGetUserRoles(t *testing.T) {
 	assert.GreaterOrEqual(t, len(got.GetRoles()), 1)
 }
 
+// TestRoleService_GetUserRoles_RequiresRolesAssign is the G16 regression test:
+// GetUserRoles calls the identical core.GetUserRoleAssignment the HTTP sibling
+// RBACHandler.GetUserRoles does (server/http/router.go: GET /roles/user/{userId}),
+// which is deliberately gated behind roles.assign, not the weaker roles.read
+// that gates the rest of the /roles group — disclosing an arbitrary user's full
+// role assignment is reconnaissance for a privilege-escalation attempt. A
+// roles.read-only holder (e.g. the seeded auditor role) must be refused; a
+// roles.assign holder must succeed.
+func TestRoleService_GetUserRoles_RequiresRolesAssign(t *testing.T) {
+	svc, h := newRoleService(t)
+	target := h.CreateTestUser(t, "target", 501)
+
+	// User 2 holds ONLY roles.read (the old, too-weak gate) — must be refused.
+	h.CreateTestUser(t, "reader-only", 2)
+	readerRole := h.CreateTestRole(t, "roles_read_only", "roles.read only", 200)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name = 'roles.read'`, readerRole.ID)
+	h.AssignUserRole(t, 2, readerRole.ID, nil)
+
+	_, err := svc.GetUserRoles(authCtx(2, "reader-only"), &pb.GetUserRolesRequest{UserId: intToU32(int(target.ID))})
+	require.Error(t, err, "roles.read holder without roles.assign must NOT call GetUserRoles")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// User 3 holds roles.assign (the new, correct gate) — must succeed.
+	h.CreateTestUser(t, "assigner-only", 3)
+	assignerRole := h.CreateTestRole(t, "roles_assign_only", "roles.assign only", 201)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name = 'roles.assign'`, assignerRole.ID)
+	h.AssignUserRole(t, 3, assignerRole.ID, nil)
+
+	got, err := svc.GetUserRoles(authCtx(3, "assigner-only"), &pb.GetUserRolesRequest{UserId: intToU32(int(target.ID))})
+	require.NoError(t, err, "roles.assign holder should be allowed to call GetUserRoles")
+	assert.Equal(t, "target", got.GetUsername())
+}
+
 // Regression for the flat-vs-scoped gRPC bug: a caller holding admin/roles.assign
 // ONLY at project 1 may assign within project 1 but NOT cross-project into project
 // 2. Before the fix, AssignRole checked the flat global permission union, so a
