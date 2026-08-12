@@ -257,6 +257,36 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 	return storage.RoleGrant{RoleID: r.ID, Scope: storage.Scope{ProjectID: a.ProjectID}}, nil
 }
 
+// ValidateRoleGrantAuthority checks that actorID has the authority to grant
+// every role in grants and that the resulting grant set as a whole would not
+// itself complete a separation-of-duties violation — the same two guards
+// (requireAuthorityForRole per grant, requireGrantSetNoSoDViolation over the
+// full set) CreateUserWithAssignments above applies to a human-supplied
+// []ProjectAssignment. Exposed for a caller that already has a resolved
+// []storage.RoleGrant instead of role names — namely
+// CreateUserWithRoleGrantsProxy (server/http/handlers/misc_remote_proxy.go),
+// which persists a RemoteStorage node's already-built grant set atomically
+// and, unlike the human-facing path, never has a plaintext password or role
+// names to work with, only role IDs. Kept in core rather than duplicated in
+// the handler so the ceiling+SoD logic is defined exactly once (#G79).
+func (c *KeyorixCore) ValidateRoleGrantAuthority(ctx context.Context, actorID uint, grants []storage.RoleGrant) error {
+	if len(grants) > maxUserCreateAssignments {
+		return fmt.Errorf("%s: grants exceeds the maximum batch size of %d", i18n.T("ErrorValidation", nil), maxUserCreateAssignments)
+	}
+	roleIDs := make([]uint, 0, len(grants))
+	for _, g := range grants {
+		role, err := c.storage.GetRole(ctx, g.RoleID)
+		if err != nil {
+			return fmt.Errorf("%s: unknown role id %d", i18n.T("ErrorValidation", nil), g.RoleID)
+		}
+		if err := c.requireAuthorityForRole(ctx, actorID, g.Scope.ProjectID, role.Name); err != nil {
+			return err
+		}
+		roleIDs = append(roleIDs, g.RoleID)
+	}
+	return c.requireGrantSetNoSoDViolation(ctx, roleIDs)
+}
+
 // GetUser retrieves a user by ID.
 func (c *KeyorixCore) GetUser(ctx context.Context, id uint) (*models.User, error) {
 	if id == 0 {

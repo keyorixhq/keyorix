@@ -1420,6 +1420,34 @@ func TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
 	require.NoError(t, db.First(&stillExists, 5).Error, "the group must not have been deleted when the guard refuses")
 }
 
+// TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant is the #G79
+// regression: CreateUserWithRoleGrantsProxy previously called
+// storage.CreateUserWithRoleGrants directly, persisting whatever grants the
+// caller supplied with none of core.CreateUserWithAssignments's
+// escalation-ceiling check (requireAuthorityForRole). A caller with no admin
+// authority of its own (actorID 0 — no user context, matching an unauthenticated
+// or under-privileged system.write holder) must be refused when the grant set
+// includes an admin-tier role, and no user must be persisted.
+func TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, i18n.InitializeForTesting())
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h, err := NewUserHandler(cs)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "super_admin"}).Error)
+
+	body := fmt.Sprintf(`{"username":"evil","email":"evil@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[{"role_id":%d,"project_id":0}]}`, 20)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateUserWithRoleGrantsProxy(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "an admin-tier role grant from an unauthorized caller must be refused")
+	var count int64
+	require.NoError(t, db.Model(&models.User{}).Where("username = ?", "evil").Count(&count).Error)
+	assert.Zero(t, count, "no user must be persisted when the grant is refused")
+}
+
 func TestGroupProxyWireRoundTrip(t *testing.T) {
 	m := &models.Group{ID: 1, Name: "devs", Description: "dev team"}
 	w := newGroupProxyWire(m)

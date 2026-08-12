@@ -483,7 +483,7 @@ func TestCreateUserWithRoleGrantsProxy_Success_S19(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"username":      "proxy-user-s19",
 		"email":         "proxy-user-s19@example.com",
-		"password_hash": "$2a$12$fakehashfakehashfakehashfakehashfakehashfakehashfake",
+		"password_hash": "$2a$12$fakehashfakehashfakehashfakehashfakehashfakehashfakex",
 		"is_active":     true,
 		"account_state": "active",
 	})

@@ -519,7 +519,7 @@ func TestCreateUserWithRoleGrantsProxy_HappyPath_S13(t *testing.T) {
 	body := proxyJSON(map[string]interface{}{
 		"username":      "newproxy_user_s13",
 		"email":         "newproxy_s13@example.com",
-		"password_hash": "$2a$10$abcdefghijklmnopqrstuvuv",
+		"password_hash": "$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0",
 		"is_active":     true,
 		"account_state": "active",
 		"grants":        []interface{}{},

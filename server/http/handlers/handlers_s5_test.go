@@ -3302,7 +3302,7 @@ func TestReleaseSchedulerLockProxy_BadJSON(t *testing.T) {
 
 func TestCreateUserWithRoleGrantsProxy_HappyPath(t *testing.T) {
 	h := newUserHandlerS5(t)
-	body := `{"username":"newuser","email":"newuser@example.com","password_hash":"$2a$10$fakehash","is_active":true,"account_state":"active","grants":[]}`
+	body := `{"username":"newuser","email":"newuser@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[]}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateUserWithRoleGrantsProxy(w, req)
