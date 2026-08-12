@@ -49,6 +49,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -256,11 +257,40 @@ func (h *RBACHandler) ListGlobalAdminAssignmentsForUpdateProxy(w http.ResponseWr
 }
 
 // removeGlobalAdminRoleGuardedProxyWire is the request body for
-// RemoveGlobalAdminRoleGuardedProxy.
+// RemoveGlobalAdminRoleGuardedProxy. AdminRoleIDs is accepted for wire
+// compatibility with older RemoteStorage clients but is IGNORED — see
+// resolveInstallAdminRoleIDsProxy's doc for why (#G79).
 type removeGlobalAdminRoleGuardedProxyWire struct {
 	UserID       uint   `json:"user_id"`
 	RoleID       uint   `json:"role_id"`
 	AdminRoleIDs []uint `json:"admin_role_ids"`
+}
+
+// resolveInstallAdminRoleIDsProxy resolves installAdminRoleNames
+// (internal/core/rbac_management.go's unexported admin-role-name list,
+// duplicated here — identical to breakGlassContainmentAdminRoleNames in
+// break_glass_proxy.go) to role IDs against THIS server's own role table.
+//
+// #G79: RemoveGlobalAdminRoleGuardedProxy previously took the admin-role-ID
+// set straight from the wire body (removeGlobalAdminRoleGuardedProxyWire.
+// AdminRoleIDs) and passed it directly to storage.RemoveGlobalAdminRoleGuarded,
+// which uses that set to count how many OTHER admin-conferring grants the
+// target user holds before allowing the removal. core.RemoveUserRole's local
+// equivalent (RemoveUserRole, rbac_management.go) never trusts a
+// caller-supplied set for this — it always resolves installAdminRoleIDSet
+// itself. A caller reachable directly via system.write (bypassing the calling
+// server's own RemoveUserRole) could otherwise submit an incomplete or empty
+// admin_role_ids list, making the last-admin count undercount and letting the
+// guard silently strand (or fail to detect stranding) the install's last
+// global admin. Resolve the set server-side instead of trusting the wire.
+func resolveInstallAdminRoleIDsProxy(ctx context.Context, st coreStorage.Storage) []uint {
+	ids := make([]uint, 0, len(breakGlassContainmentAdminRoleNames))
+	for _, name := range breakGlassContainmentAdminRoleNames {
+		if role, err := st.GetRoleByName(ctx, name); err == nil && role != nil {
+			ids = append(ids, role.ID)
+		}
+	}
+	return ids
 }
 
 // removeGlobalAdminRoleGuardedRefusedCode/notAssignedCode are the machine-readable
@@ -291,7 +321,8 @@ func (h *RBACHandler) RemoveGlobalAdminRoleGuardedProxy(w http.ResponseWriter, r
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id and role_id are required")
 		return
 	}
-	err := h.coreService.Storage().RemoveGlobalAdminRoleGuarded(r.Context(), body.UserID, body.RoleID, body.AdminRoleIDs)
+	adminRoleIDs := resolveInstallAdminRoleIDsProxy(r.Context(), h.coreService.Storage())
+	err := h.coreService.Storage().RemoveGlobalAdminRoleGuarded(r.Context(), body.UserID, body.RoleID, adminRoleIDs)
 	if err != nil {
 		switch {
 		case errors.Is(err, coreStorage.ErrWouldStrandLastAdmin):
