@@ -232,6 +232,22 @@ func scimManaged(user *models.User) bool {
 // LockUserForUpdate row lock (across replicas, Postgres only). See accountStateMu's doc
 // comment in service.go and setAccountState in account_state.go.
 func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, displayName, email *string, active *bool) (*models.User, error) {
+	// #G14: the SCIM-ownership check runs FIRST, before checkSCIMEmailCollision
+	// below — otherwise a SCIM token holder could supply an arbitrary id it has
+	// no rights to touch (e.g. a native admin's) together with a probe email,
+	// and learn from "email already in use" whether that email is registered to
+	// a DIFFERENT account, without ever needing a target id it can legitimately
+	// act on. This is a best-effort pre-check (matching DeprovisionSCIMUser's
+	// own GetUser+scimManaged pattern) — scimUpdateUserTx below still re-checks
+	// scimManaged against the fresh, lock-guarded read for the authoritative,
+	// race-free decision.
+	target, err := c.storage.GetUser(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	if !scimManaged(target) {
+		return nil, fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+	}
 	// Refuse an email that collides with a DIFFERENT user (#336). Checked up front
 	// (against id, not a pre-fetched struct) since it targets a DIFFERENT user's row
 	// and doesn't need the account-state lock below. The DB partial unique index

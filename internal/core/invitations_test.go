@@ -366,10 +366,11 @@ func TestWithdrawAccessRequest_OwnershipChecked(t *testing.T) {
 	ctx := context.Background()
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{ID: 3, UserID: 2, State: AccessRequestPending}, nil)
 
-	// A different user cannot withdraw it.
+	// A different user cannot withdraw it. #G14: the denial is the same generic
+	// "not found" a nonexistent request ID gets, not a distinct ownership message.
 	err := c.WithdrawAccessRequest(ctx, 3, 99)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not your")
+	assert.Contains(t, err.Error(), "not found")
 	store.AssertNotCalled(t, "UpdateAccessRequest", mock.Anything, mock.Anything)
 }
 

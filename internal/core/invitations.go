@@ -792,13 +792,18 @@ func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, reques
 }
 
 // WithdrawAccessRequest lets the requester cancel their own pending request.
+// #G14: a nonexistent requestID and one that exists but belongs to another
+// user both yield the SAME "access request not found" error — a distinct "not
+// your access request" message would let a caller enumerate which request IDs
+// exist (and are owned by someone else) purely from the response shape.
 func (c *KeyorixCore) WithdrawAccessRequest(ctx context.Context, requestID, userID uint) error {
+	notFound := fmt.Errorf("access request not found")
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return fmt.Errorf("access request not found")
+		return notFound
 	}
 	if req.UserID != userID {
-		return fmt.Errorf("not your access request")
+		return notFound
 	}
 	if req.State != AccessRequestPending {
 		return fmt.Errorf("only a pending request can be withdrawn (state is %s)", req.State)

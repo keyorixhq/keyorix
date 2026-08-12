@@ -220,13 +220,7 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	leaseID := chi.URLParam(r, "leaseID")
-	lease, err := h.coreService.GetDynamicSecretLease(r.Context(), leaseID)
-	if err != nil {
-		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
-		return
-	}
-	if ok, mfaBlocked := h.authorize(r, permSecretsWrite, core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
-		h.denyAuthz(w, mfaBlocked)
+	if _, ok := h.loadAuthorizedLease(w, r, leaseID, permSecretsWrite); !ok {
 		return
 	}
 	if err := h.coreService.RevokeLease(r.Context(), leaseID, userCtx.UserID, "manual"); err != nil {
@@ -249,13 +243,7 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 		return
 	}
 	leaseID := chi.URLParam(r, "leaseID")
-	lease, err := h.coreService.GetDynamicSecretLease(r.Context(), leaseID)
-	if err != nil {
-		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
-		return
-	}
-	if ok, mfaBlocked := h.authorize(r, permSecretsWrite, core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
-		h.denyAuthz(w, mfaBlocked)
+	if _, ok := h.loadAuthorizedLease(w, r, leaseID, permSecretsWrite); !ok {
 		return
 	}
 	var body struct {
@@ -358,7 +346,14 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 }
 
 // loadAuthorizedConfig loads the {id} config and authorizes the caller against
-// its scope. It writes the error response and returns ok=false on failure.
+// its scope. It writes the error response and returns ok=false on failure. A
+// missing config AND a found-but-unauthorized one both write the SAME NotFound
+// response (#G14) — a distinct Forbidden for the found-but-unauthorized branch
+// would let a caller distinguish "this ID doesn't exist" from "this ID exists
+// but you can't touch it". The MFA-blocked branch is deliberately NOT
+// collapsed: the caller is already known to be authorized at that point, just
+// missing a second factor, so hiding it behind a generic NotFound would mask
+// an actionable, legitimate error.
 func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *http.Request, perm string) (*models.DynamicSecretConfig, bool) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -372,10 +367,36 @@ func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *ht
 		return nil, false
 	}
 	if ok, mfaBlocked := h.authorize(r, perm, core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}); !ok {
-		h.denyAuthz(w, mfaBlocked)
+		if mfaBlocked {
+			h.denyAuthz(w, true)
+		} else {
+			sendError(w, "NotFound", "Config not found", http.StatusNotFound, nil)
+		}
 		return nil, false
 	}
 	return cfg, true
+}
+
+// loadAuthorizedLease loads the leaseID lease and authorizes the caller
+// against its scope, with the same #G14 uniform-NotFound treatment as
+// loadAuthorizedConfig above — see its doc comment for why the MFA branch is
+// deliberately excluded. Shared by RevokeLease/RenewLease so the pattern isn't
+// duplicated (and can't silently diverge) across call sites.
+func (h *DynamicSecretHandler) loadAuthorizedLease(w http.ResponseWriter, r *http.Request, leaseID string, perm string) (*models.DynamicSecretLease, bool) {
+	lease, err := h.coreService.GetDynamicSecretLease(r.Context(), leaseID)
+	if err != nil {
+		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
+		return nil, false
+	}
+	if ok, mfaBlocked := h.authorize(r, perm, core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
+		if mfaBlocked {
+			h.denyAuthz(w, true)
+		} else {
+			sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
+		}
+		return nil, false
+	}
+	return lease, true
 }
 
 // sanitizeConfig returns the safe public view of a config — never the encrypted

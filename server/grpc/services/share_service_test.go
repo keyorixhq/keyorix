@@ -106,13 +106,15 @@ func TestShareService_ShareSecret_ScopedToOtherProjectDenied(t *testing.T) {
 
 	ctx := authCtx(3, "scoped", "secrets.read", "secrets.write")
 
+	// #G14: authorizeSecretScoped returns the same NotFound a nonexistent secret
+	// ID would, not PermissionDenied.
 	_, err := r.svc.ShareSecret(ctx, &pb.ShareSecretRequest{SecretId: 90, RecipientId: 2, Permission: "read"})
 	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err), "ShareSecret cross-project")
+	assert.Equal(t, codes.NotFound, status.Code(err), "ShareSecret cross-project")
 
 	_, err = r.svc.ListSecretShares(ctx, &pb.ListSecretSharesRequest{SecretId: 90})
 	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err), "ListSecretShares cross-project")
+	assert.Equal(t, codes.NotFound, status.Code(err), "ListSecretShares cross-project")
 }
 
 func ownerCtx() context.Context {
