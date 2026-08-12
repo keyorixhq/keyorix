@@ -1432,8 +1432,10 @@ func TestUpdateAccessRequestProxy_ValidStateApproved(t *testing.T) {
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"state":"approved"}`)), "id", "9999")
 	w := httptest.NewRecorder()
 	h.UpdateAccessRequestProxy(w, req)
-	// row 9999 not found → updated=false but still 200
-	assert.Equal(t, http.StatusOK, w.Code)
+	// AR-001: UpdateAccessRequestProxy re-fetches the row before applying the
+	// transition, so row 9999 not existing is now a proper 404, not a silent
+	// updated=false 200.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // ── setup_tokens_proxy.go ──────────────────────────────────────────────────────
@@ -2615,6 +2617,21 @@ func TestUpdateWebAuthnCredentialProxy_HappyPath(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
+// TestUpdateWebAuthnCredentialProxy_RefusesMissingCredentialID is the #G79
+// regression: UpdateWebAuthnCredentialProxy previously accepted a body with no
+// credential_id/user_id at all — since this route is an unconditional
+// full-row Save (not a partial update), that would zero those columns on the
+// existing row rather than merely leave them unset. Must now be refused,
+// matching CreateWebAuthnCredentialProxy's own validation.
+func TestUpdateWebAuthnCredentialProxy_RefusesMissingCredentialID(t *testing.T) {
+	h := newAuthHandlerWithWebAuthn(t)
+	body := `{"name":"attacker-renamed"}`
+	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
+	w := httptest.NewRecorder()
+	h.UpdateWebAuthnCredentialProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "a body missing user_id/credential_id must be refused")
+}
+
 func TestCreateWebAuthnSessionProxy_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"user_id":1,"token_hash":"abc123","challenge":"AQID"}`
@@ -3300,7 +3317,7 @@ func TestReleaseSchedulerLockProxy_BadJSON(t *testing.T) {
 
 func TestCreateUserWithRoleGrantsProxy_HappyPath(t *testing.T) {
 	h := newUserHandlerS5(t)
-	body := `{"username":"newuser","email":"newuser@example.com","password_hash":"$2a$10$fakehash","is_active":true,"account_state":"active","grants":[]}`
+	body := `{"username":"newuser","email":"newuser@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[]}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateUserWithRoleGrantsProxy(w, req)
@@ -3426,25 +3443,10 @@ func TestDeleteEnvironmentProxy_NotFoundS5(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── risk_exceptions_proxy.go — additional paths ──────────────────────────────
-
-func TestUpdateRiskExceptionProxy_BadJSON(t *testing.T) {
-	h := newDashboardHandlerS5(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUpdateRiskExceptionProxy_HappyPath(t *testing.T) {
-	h := newDashboardHandlerS5(t)
-	body := `{"status":"approved","reason":"test"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	// 200 even when row absent (GORM Save).
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
+// UpdateRiskExceptionProxy was removed (#G79) — it accepted a client-supplied
+// full row with no auth/business-logic decision (the dual-control invariant
+// and every other field were entirely caller-controlled) and had no
+// legitimate caller. See risk_exceptions_proxy.go's removal comment.
 
 // ── groups_proxy.go — additional paths ───────────────────────────────────────
 
@@ -3491,7 +3493,9 @@ func TestCreateSecretDependencyExclusiveProxy_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	// #G79: crossReferenceSecretDependencyProxy refuses (400) when the
+	// referenced secrets don't actually exist/belong to project_id.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestGetSecretDependencyProxy_NotFound(t *testing.T) {

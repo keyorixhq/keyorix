@@ -346,7 +346,12 @@ func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.R
 	}
 	updated, err := h.coreService.SetDynamicSecretConfigEnabled(r.Context(), userCtx.UserID, cfg.ID, body.Enabled)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		msg := err.Error()
+		if !isSafeDynamicSecretError(msg) {
+			log.Printf("Error setting enabled state for dynamic-secret config %d: %v", cfg.ID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, http.StatusBadRequest, nil)
 		return
 	}
 	sendSuccess(w, sanitizeConfig(updated), "Config enabled state updated.")

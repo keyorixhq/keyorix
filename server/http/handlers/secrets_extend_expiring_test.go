@@ -13,11 +13,13 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 func TestExtendExpiringSecretsHandler(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
@@ -51,5 +53,23 @@ func TestExtendExpiringSecretsHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ExtendExpiringSecrets(w, req)
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	// G50: a raw storage/DB error from ListExpiringSecrets must not leak
+	// internal detail (table/driver text) to the client; the fallback branch
+	// must go through clientSafe, matching sibling handlers in the package.
+	// Runs last — it deliberately breaks the shared DB.
+	t.Run("sanitizes a raw storage error", func(t *testing.T) {
+		require.NoError(t, db.Exec("DROP TABLE IF EXISTS secret_nodes").Error)
+
+		body := strings.NewReader(`{"within_days":30,"new_window_days":90}`)
+		req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/extend-expiring", body)), "id", "1")
+		w := httptest.NewRecorder()
+		h.ExtendExpiringSecrets(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.NotContains(t, w.Body.String(), "secret_nodes")
+		assert.NotContains(t, w.Body.String(), "no such table")
+		assert.Contains(t, w.Body.String(), "an internal error occurred")
 	})
 }

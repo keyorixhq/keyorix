@@ -188,7 +188,11 @@ func (c *KeyorixCore) bulkRotateOne(ctx context.Context, secretID uint, rotation
 		})
 		return err
 	}
-	if _, err := c.RotateSecretOnDemand(ctx, secretID, []byte(val), rotatedBy); err != nil {
+	// actorID 0: BulkRotateRequest has no per-secret actor field, only the
+	// RotatedBy display string — matches auto-rotation's own "no identifiable
+	// user" sentinel (see RotateSecret's #G09 doc); only degrades the no-op
+	// comparison for a classification-restricted secret, never blocks rotation.
+	if _, err := c.RotateSecretOnDemand(ctx, secretID, []byte(val), 0, rotatedBy); err != nil {
 		result.Failed = append(result.Failed, BulkRotateError{
 			SecretID: secretID,
 			Error:    err.Error(),

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -139,7 +140,7 @@ func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Re
 		proof = body.Password
 	}
 	if err := h.coreService.DeleteWebAuthnCredential(r.Context(), userCtx.UserID, uint(id), proof); err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		h.writeWebAuthnErr(w, err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"id": id, "deleted": true}, "Passkey removed.")
@@ -264,13 +265,41 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 	sendSuccess(w, resp, "Login successful")
 }
 
+// webauthnSafeMessages are the fixed, deliberately client-safe error strings
+// core's WebAuthn/MFA functions return for expected failure modes (missing
+// user, expired/mismatched session or challenge, locked-out or bad re-auth,
+// etc.) — never wrapped around a lower-layer error, so passing them through
+// as-is cannot leak driver/schema details (backlog #116).
+var webauthnSafeMessages = map[string]bool{
+	"user not found": true,
+	"invalid or expired registration session": true,
+	"registration session mismatch":           true,
+	"invalid or expired challenge":            true,
+	"no passkeys registered":                  true,
+	"account is not active":                   true,
+	"account temporarily locked due to repeated failed logins; try again later": true,
+	"invalid or expired webauthn session":                                       true,
+	"webauthn session mismatch":                                                 true,
+	"unexpected user handle":                                                    true,
+	"invalid code or password":                                                  true,
+}
+
 // writeWebAuthnErr maps a core error to an HTTP status: disabled → 501, else 400.
+// A recognized safe message (webauthnSafeMessages) is passed through as-is;
+// anything else — including every error wrapping a lower-layer failure (e.g.
+// "failed to store credential: %w") — is logged server-side and replaced with
+// clientSafe()'s generic message before it reaches the client.
 func (h *AuthHandler) writeWebAuthnErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, core.ErrWebAuthnDisabled) {
 		sendError(w, "NotImplemented", err.Error(), http.StatusNotImplemented, nil) // nosemgrep: keyorix-raw-error-to-client -- ErrWebAuthnDisabled is a fixed sentinel with a known-safe message, not a raw backend/driver error
 		return
 	}
-	sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+	msg := err.Error()
+	if !webauthnSafeMessages[msg] {
+		log.Printf("WebAuthn error: %v", err)
+		msg = clientSafe(err)
+	}
+	sendError(w, "Error", msg, http.StatusBadRequest, nil)
 }
 
 // decodeJSON decodes a size-capped JSON request body.

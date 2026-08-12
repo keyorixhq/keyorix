@@ -437,6 +437,96 @@ func TestListSecretACLs_WithACLs(t *testing.T) {
 	assert.Contains(t, body, "123")
 }
 
+// ── G50: raw storage errors must be sanitized ───────────────────────────────
+
+// TestListSecretACLs_StorageError_G50 proves that when the underlying storage
+// call fails with a raw driver error (e.g. a broken/dropped table), the
+// response never contains that raw internal text — only clientSafe()'s
+// generic message.
+func TestListSecretACLs_StorageError_G50(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "list-storageerr")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS secret_acls").Error)
+
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), nil),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	w := httptest.NewRecorder()
+	h.ListSecretACLs(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "secret_acls")
+	assert.NotContains(t, w.Body.String(), "no such table")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
+}
+
+// TestGrantSecretACL_StorageError_G50 proves GrantSecretACL sanitizes a raw
+// storage error the same way.
+func TestGrantSecretACL_StorageError_G50(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "grant-storageerr")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS secret_acls").Error)
+
+	body, _ := json.Marshal(map[string]interface{}{"user_id": 77, "permissions": []string{"secrets.read"}})
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.GrantSecretACL(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "secret_acls")
+	assert.NotContains(t, w.Body.String(), "no such table")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
+}
+
+// TestRevokeSecretACL_StorageError_G50 proves RevokeSecretACL sanitizes a raw
+// storage error the same way.
+func TestRevokeSecretACL_StorageError_G50(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "revoke-storageerr")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+
+	// Grant first (before breaking the table) so RevokeSecretACL's own lookup
+	// has something to fail on.
+	grantBody, _ := json.Marshal(map[string]interface{}{"user_id": 99, "permissions": []string{"secrets.read"}})
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), bytes.NewReader(grantBody)),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.GrantSecretACL(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS secret_acls").Error)
+
+	req2 := withUserCtxACL(withChiParam2ACL(
+		httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/secrets/%d/acl/1", sid), nil),
+		"id", fmt.Sprintf("%d", sid), "aclId", "1",
+	))
+	w2 := httptest.NewRecorder()
+	h.RevokeSecretACL(w2, req2)
+
+	assert.Equal(t, http.StatusInternalServerError, w2.Code)
+	assert.NotContains(t, w2.Body.String(), "secret_acls")
+	assert.NotContains(t, w2.Body.String(), "no such table")
+	assert.Contains(t, w2.Body.String(), "an internal error occurred")
+}
+
 // TestAclErrorStatus_Forbidden verifies the 403 branch of aclErrorStatus.
 func TestAclErrorStatus_Forbidden(t *testing.T) {
 	code := aclErrorStatus("not authorized to perform this action")

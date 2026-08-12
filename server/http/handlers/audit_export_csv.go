@@ -52,7 +52,7 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 			e.EventTime.UTC().Format(time.RFC3339),
 			csvSafe(e.EventType),
 			csvSafe(auditCSVActorName(actorNames, e.UserID)),
-			actorTypeOrDefault(e.ActorType),
+			csvSafe(actorTypeOrDefault(e.ActorType)),
 			auditCSVUintStr(e.UserID),
 			auditCSVUintStr(e.ProjectID),
 			auditCSVUintStr(e.SecretNodeID),

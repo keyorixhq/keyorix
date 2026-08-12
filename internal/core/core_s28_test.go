@@ -342,6 +342,10 @@ func TestWriteAuditCheckpointLocked_VerifyFails(t *testing.T) {
 	_, _, err := c.WriteAuditCheckpoint(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to verify")
+	// G50: an unrelated storage error must NOT be classified as the
+	// "refusing to checkpoint" sentinel — callers (e.g. the gRPC layer) use
+	// errors.Is against this to decide whether the message is safe to surface.
+	assert.False(t, errors.Is(err, ErrAuditCheckpointRefused))
 }
 
 func TestWriteAuditCheckpointLocked_InvalidChain(t *testing.T) {
@@ -355,6 +359,27 @@ func TestWriteAuditCheckpointLocked_InvalidChain(t *testing.T) {
 	_, _, err := c.WriteAuditCheckpoint(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing to checkpoint")
+	// G50: this genuine refusal DOES wrap the sentinel, so it's classified safe.
+	assert.True(t, errors.Is(err, ErrAuditCheckpointRefused))
+}
+
+// TestWriteAuditCheckpointLocked_LookAlikeErrorNotSpoofed is the G50
+// anti-spoofing regression: a raw storage error whose TEXT happens to contain
+// the literal phrase "refusing to checkpoint" (e.g. a crafted/attacker-adjacent
+// value that ended up embedded in a lower-layer error message) must NOT satisfy
+// errors.Is against the typed sentinel, because it never actually wraps it. This
+// is exactly the property a strings.Contains(err.Error(), "refusing to
+// checkpoint") check (the pre-fix implementation) could not guarantee.
+func TestWriteAuditCheckpointLocked_LookAlikeErrorNotSpoofed(t *testing.T) {
+	lookAlike := errors.New("driver: refusing to checkpoint transaction on connection 0x7f — connection reset by peer")
+	ms := new(MockStorage)
+	ms.On("VerifyAuditChain", mock.Anything).Return(nil, lookAlike)
+	c := NewKeyorixCore(ms)
+	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	_, _, err := c.WriteAuditCheckpoint(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to checkpoint", "the look-alike text is present in the raw error")
+	assert.False(t, errors.Is(err, ErrAuditCheckpointRefused), "a same-text-but-different-identity error must not be classified as the safe sentinel")
 }
 
 func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {

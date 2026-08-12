@@ -64,7 +64,7 @@ func TestConcurrency_RotateSecret_NoDuplicateVersionNumbers(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, rerr := c.RotateSecret(ctx, sec.ID, []byte(fmt.Sprintf("rotated-value-%d", i)), "rotator")
+			_, rerr := c.RotateSecret(ctx, sec.ID, []byte(fmt.Sprintf("rotated-value-%d", i)), 0, "rotator")
 			errs[i] = rerr
 		}(i)
 	}

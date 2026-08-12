@@ -83,7 +83,7 @@ func (h *SecretVersionCommentHandler) ListComments(w http.ResponseWriter, r *htt
 		return
 	}
 
-	_, ok = mustParseUintParam(w, r, "id", "InvalidParameter", errInvalidSecretID)
+	secretID, ok := mustParseUintParam(w, r, "id", "InvalidParameter", errInvalidSecretID)
 	if !ok {
 		return
 	}
@@ -92,7 +92,7 @@ func (h *SecretVersionCommentHandler) ListComments(w http.ResponseWriter, r *htt
 		return
 	}
 
-	comments, err := h.coreService.ListSecretVersionComments(r.Context(), versionID)
+	comments, err := h.coreService.ListSecretVersionComments(r.Context(), secretID, versionID)
 	if err != nil {
 		log.Printf("Error listing version comments: %v", err)
 		sendError(w, "InternalError", "Failed to list comments", http.StatusInternalServerError, nil)
@@ -109,11 +109,11 @@ func (h *SecretVersionCommentHandler) DeleteComment(w http.ResponseWriter, r *ht
 		return
 	}
 
-	_, ok = mustParseUintParam(w, r, "id", "InvalidParameter", errInvalidSecretID)
+	secretID, ok := mustParseUintParam(w, r, "id", "InvalidParameter", errInvalidSecretID)
 	if !ok {
 		return
 	}
-	_, ok = mustParseUintParam(w, r, "versionId", "InvalidParameter", errInvalidVersionID)
+	versionID, ok := mustParseUintParam(w, r, "versionId", "InvalidParameter", errInvalidVersionID)
 	if !ok {
 		return
 	}
@@ -122,7 +122,7 @@ func (h *SecretVersionCommentHandler) DeleteComment(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if err := h.coreService.DeleteSecretVersionComment(r.Context(), commentID); err != nil {
+	if err := h.coreService.DeleteSecretVersionComment(r.Context(), secretID, versionID, commentID); err != nil {
 		log.Printf("Error deleting version comment: %v", err)
 		sendError(w, "InternalError", "Failed to delete comment", http.StatusInternalServerError, nil)
 		return

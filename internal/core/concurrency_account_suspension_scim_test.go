@@ -45,6 +45,9 @@ func TestConcurrency_SuspendUser_SurvivesConcurrentSCIMResync(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Session{}, &models.AuditEvent{}, &models.PersonalAccessToken{},
 		&models.Role{}, &models.UserRole{}, &models.Project{}, &models.Environment{},
+		// Group/UserGroup/GroupRole are needed by guardLastAdminDeactivation
+		// (#G02), which SuspendUser now calls.
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
@@ -108,6 +111,9 @@ func TestConcurrency_SuspendUser_SurvivesConcurrentSCIMDeactivateReactivate(t *t
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Session{}, &models.AuditEvent{}, &models.PersonalAccessToken{},
 		&models.Role{}, &models.UserRole{}, &models.Project{}, &models.Environment{},
+		// Group/UserGroup/GroupRole are needed by guardLastAdminDeactivation
+		// (#G02), which SuspendUser now calls.
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))

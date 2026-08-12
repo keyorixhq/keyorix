@@ -85,6 +85,11 @@ func TestRemovePermissionFromRole_RoleNotFound(t *testing.T) {
 
 func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
 	ms := new(MockStorage)
+	// guardLastGlobalAdminMembership (#G02) precheck for user 1's removal — no
+	// admin roles seeded in this fixture, so it's a no-op.
+	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
 	// user 1 is in current but NOT in want → RemoveUserFromGroup (global: projectID=0).
 	ms.On("RemoveUserFromGroup", mock.Anything, uint(1), uint(10), uint(0)).Return(nil)
 	// user 2 is in current AND in want → no-op.
@@ -94,7 +99,7 @@ func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
 	want := map[uint]bool{2: true}
 	current := []*models.User{{ID: 1}, {ID: 2}}
 	toAdd := []uint{3}
-	c.applyGroupMembershipChanges(context.Background(), 10, want, current, toAdd)
+	require.NoError(t, c.applyGroupMembershipChanges(context.Background(), 10, want, current, toAdd))
 	ms.AssertExpectations(t)
 }
 

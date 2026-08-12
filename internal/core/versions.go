@@ -104,6 +104,35 @@ func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte
 	return c.getSecretValueForUser(ctx, secretID, 0)
 }
 
+// enforceSecretReadGuards runs every read-time guard a secret-value
+// disclosure must pass EXCEPT max-reads (which is inherently tied to the
+// specific counting read call via readVersionValue, not a reusable "may I
+// read" predicate): expiration, suspended status, the classification-
+// restricted gate bundle (step-up/approval/permission), and the temporal
+// access-schedule window.
+//
+// #G09: several secret-value-disclosing functions (InspectCertificate,
+// RotateSecret's confirmation check) were written as independent
+// implementations that only replicated SOME of this bundle — most
+// consequentially, checkSecretAccessSchedule (the temporal window) was
+// wired into the METADATA read path (GetSecretWithPermissionCheck) but never
+// into the actual VALUE read path below, so a caller could read a secret's
+// value outside its configured access window even though a metadata read of
+// the same secret correctly refused. Route every value-disclosing function
+// through this one guard bundle instead of re-implementing a subset of it.
+func (c *KeyorixCore) enforceSecretReadGuards(ctx context.Context, secret *models.SecretNode, userID uint) error {
+	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
+		return fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
+	}
+	if secret.Status == SecretStatusSuspended {
+		return fmt.Errorf("secret is suspended")
+	}
+	if err := c.checkRestrictedSecretReadApproval(ctx, secret, userID); err != nil {
+		return err
+	}
+	return c.checkSecretAccessSchedule(ctx, secret.ID)
+}
+
 // getSecretValueForUser is GetSecretValue's real body, plus the classification
 // gate keyed on userID (0 = no identifiable user). Kept unexported and separate
 // from GetSecretValue's public, userID-less signature so *WithPermissionCheck
@@ -117,13 +146,7 @@ func (c *KeyorixCore) getSecretValueForUser(ctx context.Context, secretID, userI
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
-	}
-	if secret.Status == SecretStatusSuspended {
-		return nil, fmt.Errorf("secret is suspended")
-	}
-	if err := c.checkRestrictedSecretReadApproval(ctx, secret, userID); err != nil {
+	if err := c.enforceSecretReadGuards(ctx, secret, userID); err != nil {
 		return nil, err
 	}
 	version, err := c.storage.GetLatestSecretVersion(ctx, secretID)
@@ -167,13 +190,7 @@ func (c *KeyorixCore) getSecretValueByVersionForUser(ctx context.Context, secret
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
-	}
-	if secret.Status == SecretStatusSuspended {
-		return nil, fmt.Errorf("secret is suspended")
-	}
-	if err := c.checkRestrictedSecretReadApproval(ctx, secret, userID); err != nil {
+	if err := c.enforceSecretReadGuards(ctx, secret, userID); err != nil {
 		return nil, err
 	}
 	version, err := c.GetSecretVersion(ctx, secretID, versionNumber)
@@ -213,7 +230,7 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 	if err != nil {
 		return nil, fmt.Errorf("failed to read version %d: %w", targetVersion, err)
 	}
-	secret, err := c.RotateSecret(ctx, secretID, val, actorName)
+	secret, err := c.RotateSecret(ctx, secretID, val, actorID, actorName)
 	if err != nil {
 		return nil, err
 	}

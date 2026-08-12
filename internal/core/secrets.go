@@ -361,7 +361,12 @@ const EventSecretRotateNoop = "secret.rotate_noop"
 // backend, or a rollback landing on a value the current version already holds) into an
 // automation-breaking failure. The event is still recorded via EventSecretRotateNoop
 // so the no-op is auditable rather than fully silent.
-func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
+// actorID is the acting principal for the read-guard check the no-op
+// comparison below requires (#G09) — 0 for system-triggered callers
+// (auto-rotation), which is the same "no identifiable user" sentinel
+// enforceSecretReadGuards' classification gate already denies restricted
+// reads for.
+func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string) (*models.SecretNode, error) {
 	if err := c.secretValuePolicy.Validate(newValue); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
@@ -378,11 +383,25 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	// secret's budget on every rotation attempt). subtle.ConstantTimeCompare matches
 	// this codebase's convention for comparing genuine secret material (see mfa.go,
 	// auth_bootstrap.go, encryption/auth_encryption.go).
+	//
+	// #G09: this decrypt-and-compare is itself a value disclosure — its RESULT
+	// (whether EventSecretRotateNoop fires, and whether LastRotatedAt moves) is
+	// an oracle for "does the caller's guess equal the current secret value."
+	// Gate it on the SAME read guards (classification-restricted step-up/
+	// approval, access-schedule) a real value read of this secret would
+	// require; if the actor couldn't pass them, skip the comparison entirely
+	// rather than decrypt-to-compare without authorization — this only
+	// degrades the no-op-detection optimization (the rotation itself still
+	// proceeds and always records a real rotation), it never blocks the
+	// rotation outright, so auto-rotation (actorID 0, only relevant for
+	// "restricted"-classified secrets with a gate enabled) keeps working.
 	valueUnchanged := false
-	if latestVersion, verr := c.storage.GetLatestSecretVersion(ctx, id); verr == nil && latestVersion != nil {
-		currentValue, rerr := c.decryptVersionValue(secret, latestVersion)
-		if rerr == nil && subtle.ConstantTimeCompare(currentValue, newValue) == 1 {
-			valueUnchanged = true
+	if c.enforceSecretReadGuards(ctx, secret, actorID) == nil {
+		if latestVersion, verr := c.storage.GetLatestSecretVersion(ctx, id); verr == nil && latestVersion != nil {
+			currentValue, rerr := c.decryptVersionValue(secret, latestVersion)
+			if rerr == nil && subtle.ConstantTimeCompare(currentValue, newValue) == 1 {
+				valueUnchanged = true
+			}
 		}
 	}
 

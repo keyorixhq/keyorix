@@ -272,6 +272,13 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 
 	// JOIN groups … deleted_at IS NULL: a soft-deleted group's shares grant nothing,
 	// even though the share/membership rows are kept for restore.
+	//
+	// #G01: ug.project_id = 0 OR ug.project_id = s.project_id — a membership
+	// scoped to a DIFFERENT project than the secret being listed must not
+	// confer access to it. Without this, a user who is only a project-scoped
+	// member of a group in project X could see secrets shared with that group
+	// in every other project too (mirrors GetUserRoleIDsAt/
+	// GetUserGroupRoleIDsAt's own project_id=0-OR-exact-match convention).
 	groupQuery := fmt.Sprintf(`
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
@@ -280,6 +287,7 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 		JOIN users u ON u.id = ug.user_id AND u.deleted_at IS NULL
 		WHERE ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
+		  AND (ug.project_id = 0 OR ug.project_id = s.project_id)
 		LIMIT %d
 	`, maxUnboundedListRows)
 	var groupSecrets []*models.SecretNode
@@ -335,6 +343,10 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 
+	// #G01: ug.project_id = 0 OR ug.project_id = ? (secret.ProjectID) — a
+	// membership scoped to a DIFFERENT project than this secret must not
+	// confer the group's share permission on it. See ListSharedSecrets's
+	// identical fix above for the full reasoning.
 	var groupShare models.ShareRecord
 	groupQuery := `
 		SELECT sr.* FROM share_records sr
@@ -343,9 +355,10 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		JOIN users u ON u.id = ug.user_id AND u.deleted_at IS NULL
 		WHERE sr.secret_id = ? AND ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
+		  AND (ug.project_id = 0 OR ug.project_id = ?)
 		LIMIT 1
 	`
-	res := ls.db.Raw(groupQuery, secretID, userID, true, now).Scan(&groupShare)
+	res := ls.db.Raw(groupQuery, secretID, userID, true, now, secret.ProjectID).Scan(&groupShare)
 	haveGroup := res.Error == nil && groupShare.ID != 0
 	if res.Error != nil && !errors.Is(res.Error, gorm.ErrRecordNotFound) {
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), res.Error)

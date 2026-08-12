@@ -161,6 +161,30 @@ func TestMoveSecret_SecretNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+// TestMoveSecret_RefusesCrossProjectParent is the unmapped-critical
+// regression: MoveSecret previously loaded the destination parent with a bare,
+// unauthorized GetSecret and never checked it belonged to the same
+// project/environment as the secret being moved — an actor with secrets.write
+// on one project's secret could re-parent it into a folder that lives in an
+// entirely different project, and folder-inheriting ACL/sharing resolution
+// would then apply that other project's grants to it.
+func TestMoveSecret_RefusesCrossProjectParent(t *testing.T) {
+	c, secretID, _, _ := newMoveFixture(t)
+	ctx := context.Background()
+
+	// A folder in a DIFFERENT project (2) that the actor has no stake in.
+	foreignFolder, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: "other-project-folder", ProjectID: 2, EnvironmentID: 1,
+		Type: "folder", OwnerID: 1, IsSecret: false, Status: "active",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	_, err = c.MoveSecret(ctx, 1, secretID, &foreignFolder.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "same project/environment")
+}
+
 // TestMoveSecret_ParentNotFound returns a validation error when the parent does not exist.
 func TestMoveSecret_ParentNotFound(t *testing.T) {
 	c, secretID, _, _ := newMoveFixture(t)

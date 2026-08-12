@@ -269,13 +269,21 @@ func (s *RoleGRPCService) RemoveRole(ctx context.Context, req *pb.RemoveRoleRequ
 	return &emptypb.Empty{}, nil
 }
 
-// GetUserRoles returns all roles assigned to a user.
+// GetUserRoles returns all roles assigned to a user. Calls the identical
+// core.GetUserRoleAssignment the HTTP sibling RBACHandler.GetUserRoles does
+// (server/http/handlers/rbac.go), which is deliberately routed behind
+// permRolesAssign, not permRolesRead (server/http/router.go: GET
+// /roles/user/{userId}) — a stricter permission than the roles.read that gates
+// the rest of the /roles route group, because this discloses an arbitrary
+// user's full role assignment (including admin-tier roles), which is
+// reconnaissance for a targeted privilege-escalation attempt. Match that gate
+// here (G16).
 func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRolesRequest) (*pb.GetUserRolesResponse, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permRolesRead); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesAssign); err != nil {
 		return nil, err
 	}
 	assignment, err := s.core.GetUserRoleAssignment(ctx, uint(req.GetUserId()))

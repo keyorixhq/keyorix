@@ -80,12 +80,23 @@ func newProjectProxyWire(p *models.Project) projectProxyWire {
 }
 
 func (w projectProxyWire) toModel() *models.Project {
-	return &models.Project{
+	p := &models.Project{
 		ID:          w.ID,
 		Name:        w.Name,
 		Description: w.Description,
 		RequireMFA:  w.RequireMFA,
+		// CreatedAt/UpdatedAt/DeletedAt (#G80) — dropping these on the request
+		// leg silently zeroed CreatedAt (and lost DeletedAt) on every proxied
+		// update, even though the wire struct and newProjectProxyWire (the
+		// response leg) already carry them correctly.
+		CreatedAt: w.CreatedAt,
+		UpdatedAt: w.UpdatedAt,
 	}
+	if w.DeletedAt != nil {
+		p.DeletedAt.Time = *w.DeletedAt
+		p.DeletedAt.Valid = true
+	}
+	return p
 }
 
 // isProjectNotFound reports whether err is a errProjectNotFound error from

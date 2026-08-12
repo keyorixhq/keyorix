@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -66,7 +67,12 @@ func (h *SecretHandler) SetSecretSchedule(w http.ResponseWriter, r *http.Request
 		if !isScheduleValidationError(err) {
 			status = http.StatusInternalServerError
 		}
-		h.sendError(w, "Error", err.Error(), status, nil)
+		msg := err.Error()
+		if !isSafeScheduleError(msg) {
+			log.Printf("SetSecretSchedule error for secret %d: %v", uint(secretID), err)
+			msg = clientSafe(err)
+		}
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	h.sendSuccess(w, sched, "schedule set")
@@ -90,4 +96,23 @@ func (h *SecretHandler) DeleteSecretSchedule(w http.ResponseWriter, r *http.Requ
 // isScheduleValidationError returns true when err originates from validateScheduleParams.
 func isScheduleValidationError(err error) bool {
 	return err != nil && !errors.Is(err, core.ErrAccessOutsideSchedule)
+}
+
+// isSafeScheduleError reports whether msg is one of the deliberately-crafted
+// validation messages validateScheduleParams produces — safe to return
+// verbatim. Anything else (e.g. a wrapped storage/DB error) must go through
+// clientSafe before reaching the client.
+func isSafeScheduleError(msg string) bool {
+	for _, safe := range []string{
+		"start_hour must be",
+		"end_hour must be",
+		"end_hour (",
+		"invalid timezone",
+		"invalid day",
+	} {
+		if strings.Contains(msg, safe) {
+			return true
+		}
+	}
+	return false
 }

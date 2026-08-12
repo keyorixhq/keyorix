@@ -55,9 +55,18 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 	if err != nil {
 		return nil, fmt.Errorf("%s: secret %d not found", i18n.T("ErrorNotFound", nil), secretID)
 	}
-	// A suspended secret is frozen for incident response; don't decrypt it.
-	if secret.Status == SecretStatusSuspended {
-		return nil, fmt.Errorf("secret is suspended")
+	// #G09: previously only checked suspended status, independently
+	// reimplementing a subset of the guard bundle every other value
+	// disclosure enforces — a caller could inspect a certificate outside its
+	// configured access-schedule window, or without the classification-
+	// restricted step-up/approval a value read of the same secret would
+	// require. enforceSecretReadGuards covers expiration/suspended/
+	// classification-gate/schedule; it deliberately does NOT include
+	// max-reads, since decrypting to inspect PUBLIC certificate metadata is
+	// still not value consumption (see the package doc above) — that one
+	// exemption remains intentional, only the other guards were a gap.
+	if err := c.enforceSecretReadGuards(ctx, secret, actorID); err != nil {
+		return nil, err
 	}
 
 	version, err := c.storage.GetLatestSecretVersion(ctx, secretID)

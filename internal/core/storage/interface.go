@@ -1413,9 +1413,11 @@ type Storage interface {
 
 	// Secret version comments — free-text annotations on a specific secret version,
 	// providing a human-readable audit trail of why a version was created or changed.
+	// List/Delete are scoped by secretID/versionID (not just the comment's own primary
+	// key) so a caller authorized on one secret cannot reach another's comments (#G53).
 	CreateSecretVersionComment(ctx context.Context, c *models.SecretVersionComment) error
-	ListSecretVersionComments(ctx context.Context, versionID uint) ([]models.SecretVersionComment, error)
-	DeleteSecretVersionComment(ctx context.Context, id uint) error
+	ListSecretVersionComments(ctx context.Context, secretID, versionID uint) ([]models.SecretVersionComment, error)
+	DeleteSecretVersionComment(ctx context.Context, secretID, versionID, id uint) error
 
 	// Notification channel management — runtime-managed outbound destinations
 	// (webhook/slack/teams/email). The REST API is the remote surface; these

@@ -41,6 +41,10 @@ func newCacheTestCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.PersonalAccessToken{}, &models.Session{}, &models.AuditEvent{},
+		// Role/UserRole/Group/UserGroup/GroupRole/Project/Environment are needed
+		// by guardLastAdminDeactivation (#G02), which SuspendUser now calls.
+		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
 	))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	c.SetTokenCacheInvalidator(middleware.InvalidateTokenCacheByHash)

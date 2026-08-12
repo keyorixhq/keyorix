@@ -2,6 +2,7 @@ package machine
 
 import (
 	"context"
+	"encoding/csv"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -152,6 +153,36 @@ func TestPrintMachineAuditCSV_NoLastUsed(t *testing.T) {
 	assert.Equal(t, "7", fields[0])
 	assert.Equal(t, "", fields[4]) // last_used_at empty when nil
 	assert.Equal(t, "true", fields[5])
+}
+
+// TestPrintMachineAuditCSV_FormulaInjection — a machine name/description starting with a
+// formula-injection character (=, +, -, @) must be escaped with a leading single quote
+// in the CSV export (G49: CSVSafe() formula-injection escaping).
+func TestPrintMachineAuditCSV_FormulaInjection(t *testing.T) {
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	report := &core.MachineAuditReport{
+		Machines: []core.MachineAuditRow{
+			{
+				MachineID:       1,
+				Name:            "=cmd|' /C calc'!A1",
+				Description:     "@SUM(1+1)",
+				CredentialCount: 1,
+				CreatedAt:       ts,
+			},
+		},
+	}
+
+	out := captureAuditStdout(t, func() {
+		require.NoError(t, printMachineAuditCSV(report))
+	})
+
+	r := csv.NewReader(strings.NewReader(out))
+	records, err := r.ReadAll()
+	require.NoError(t, err)
+	require.Len(t, records, 2, "header + 1 data row")
+	// header: machine_id, name, description, credential_count, last_used_at, is_stale, is_revoked, created_at
+	assert.True(t, strings.HasPrefix(records[1][1], "'"), "name formula-injection prefix must be neutralized, got %q", records[1][1])
+	assert.True(t, strings.HasPrefix(records[1][2], "'"), "description formula-injection prefix must be neutralized, got %q", records[1][2])
 }
 
 func TestPrintMachineAuditCSV_Empty(t *testing.T) {

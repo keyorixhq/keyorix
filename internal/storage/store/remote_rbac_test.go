@@ -533,6 +533,28 @@ func TestRemoteStorage_RemoveRoleFromGroup(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestRemoteStorage_RemoveRoleFromGroup_SendsScope is the #G80 regression:
+// scope was previously discarded entirely (the parameter was named `_`), so a
+// scoped revocation (e.g. project 5's roles.assign grant) could never hit its
+// target — the server-side handler reads project_id/environment_id from the
+// query string, so the client must actually send them.
+func TestRemoteStorage_RemoveRoleFromGroup_SendsScope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "DELETE", r.Method)
+		assert.Equal(t, "/api/v1/groups/8/roles/2", r.URL.Path)
+		assert.Equal(t, "5", r.URL.Query().Get("project_id"))
+		assert.Equal(t, "3", r.URL.Query().Get("environment_id"))
+		_, _ = w.Write(apiOK(nil))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	err = rs.RemoveRoleFromGroup(context.Background(), 8, 2, corestorage.Scope{ProjectID: 5, EnvironmentID: 3})
+	require.NoError(t, err)
+}
+
 // --- Server-internal authorization primitives (unsupported in remote mode) ---
 
 func TestRemoteStorage_GetUserRoleIDsAt_Unsupported(t *testing.T) {

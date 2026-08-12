@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -231,6 +232,36 @@ func TestRemoteStorage_CreateMachineIdentityCredential(t *testing.T) {
 	assert.Equal(t, uint(11), cred.ID)
 	assert.Equal(t, "prod-token", cred.Name)
 	assert.Equal(t, "abc123", cred.TokenHash)
+}
+
+// TestRemoteStorage_CreateMachineIdentityCredential_RoundTripsAllowedCIDRs is
+// the #G80 regression: AllowedCIDRs (the machine-token IP allowlist) was
+// omitted from the wire struct entirely, so it was silently stripped on every
+// RemoteStorage credential read/write.
+func TestRemoteStorage_CreateMachineIdentityCredential_RoundTripsAllowedCIDRs(t *testing.T) {
+	const cidrs = `["10.0.0.0/8","192.0.2.4/32"]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			AllowedCIDRs string `json:"allowed_cidrs"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, cidrs, body.AllowedCIDRs, "AllowedCIDRs must be sent on the request leg")
+		_, _ = w.Write(apiOK(map[string]interface{}{
+			"id": 11, "machine_identity_id": 4, "name": "prod-token",
+			"token_hash": "abc123", "token_prefix": "kx_machine_ab",
+			"allowed_cidrs": cidrs, "created_at": time.Now(),
+		}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	cred, err := rs.CreateMachineIdentityCredential(context.Background(), &models.MachineIdentityCredential{
+		MachineIdentityID: 4, Name: "prod-token", TokenHash: "abc123", AllowedCIDRs: cidrs,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, cidrs, cred.AllowedCIDRs, "AllowedCIDRs must survive the response leg too")
 }
 
 func TestRemoteStorage_GetMachineIdentityCredentialByHash(t *testing.T) {

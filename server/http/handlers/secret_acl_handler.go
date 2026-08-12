@@ -9,6 +9,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -65,7 +66,13 @@ func (h *SecretHandler) ListSecretACLs(w http.ResponseWriter, r *http.Request) {
 	}
 	acls, err := h.coreService.ListSecretACLs(r.Context(), uint(secretID))
 	if err != nil {
-		h.sendError(w, "Error", err.Error(), aclErrorStatus(err.Error()), nil)
+		status := aclErrorStatus(err.Error())
+		msg := err.Error()
+		if status == http.StatusInternalServerError {
+			log.Printf("Error listing ACLs for secret %d: %v", secretID, err)
+			msg = clientSafe(err)
+		}
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	h.sendSuccess(w, toSecretACLResponse(acls), "")
@@ -100,7 +107,13 @@ func (h *SecretHandler) GrantSecretACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.GrantSecretACL(r.Context(), userCtx.UserID, uint(secretID), body.UserID, body.Permissions); err != nil {
-		h.sendError(w, "Error", err.Error(), aclErrorStatus(err.Error()), nil)
+		status := aclErrorStatus(err.Error())
+		msg := err.Error()
+		if status == http.StatusInternalServerError {
+			log.Printf("Error granting ACL for secret %d: %v", secretID, err)
+			msg = clientSafe(err)
+		}
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	h.sendSuccess(w, map[string]bool{"granted": true}, "ACL granted")
@@ -124,7 +137,13 @@ func (h *SecretHandler) RevokeSecretACL(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.RevokeSecretACL(r.Context(), userCtx.UserID, uint(secretID), uint(aclID)); err != nil {
-		h.sendError(w, "Error", err.Error(), aclErrorStatus(err.Error()), nil)
+		status := aclErrorStatus(err.Error())
+		msg := err.Error()
+		if status == http.StatusInternalServerError {
+			log.Printf("Error revoking ACL %d for secret %d: %v", aclID, secretID, err)
+			msg = clientSafe(err)
+		}
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	h.sendSuccess(w, map[string]bool{"revoked": true}, "ACL revoked")

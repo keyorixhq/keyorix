@@ -14,12 +14,6 @@ import (
 // commercial license that is expiring soon or has expired (ADR-065 Phase 2c).
 const NotificationLicenseExpiry = "license.expiry_reminder"
 
-// globalAdminRoleNames are the install-wide admin roles. A license is install-wide, so its
-// expiry is notified to these admins — NOT project_admin, which is project-scoped.
-var globalAdminRoleNames = map[string]struct{}{
-	"super_admin": {}, "admin": {}, "system_admin": {},
-}
-
 // ScanLicenseExpiry checks the installed offline license and, when it is within leadDays of
 // expiry or already expired, notifies every install-wide admin (deduped so it does not spam
 // on each tick). It also compares the newly computed severity (an actually-expired license is
@@ -92,6 +86,12 @@ func licenseExpirySeverity(st license.Status) models.NotificationSeverity {
 const globalAdminIDsPageSize = 500
 
 // globalAdminIDs returns the user IDs of every active install-wide admin.
+//
+// #G01: each active user's admin status is now resolved via
+// isGlobalAdminRoleName (scopedRoleIDs at the global scope), not a raw,
+// scope-blind GetUserRoles name match — a role named like an admin role but
+// granted only at a specific project no longer misclassifies that user as an
+// install-wide admin here.
 func (c *KeyorixCore) globalAdminIDs(ctx context.Context) ([]uint, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	active := true
 	var ids []uint
@@ -101,15 +101,8 @@ func (c *KeyorixCore) globalAdminIDs(ctx context.Context) ([]uint, error) { // N
 			return nil, err
 		}
 		for _, u := range users {
-			roles, rerr := c.storage.GetUserRoles(ctx, u.ID)
-			if rerr != nil {
-				continue
-			}
-			for _, r := range roles {
-				if _, ok := globalAdminRoleNames[r.Name]; ok {
-					ids = append(ids, u.ID)
-					break
-				}
+			if c.isGlobalAdminRoleName(ctx, u.ID) != "" {
+				ids = append(ids, u.ID)
 			}
 		}
 		if len(users) < globalAdminIDsPageSize || int64(page*globalAdminIDsPageSize) >= total {
