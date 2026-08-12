@@ -1606,13 +1606,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get(pathRiskExceptionsID, dashboardHandler.GetRiskExceptionProxy)
 			r.Get(pathRiskExceptions, dashboardHandler.ListRiskExceptionsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskExceptionProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID, dashboardHandler.UpdateRiskExceptionProxy)
-			// RevokeRiskExceptionIfNotRevoked/ApproveRiskExceptionIfPending are
-			// dedicated conditional-write routes (NOT the generic
-			// UpdateRiskExceptionProxy above), preserving the TOCTOU fix
-			// (StateTransitionMissingCAS.ql finding) core.RevokeRiskException/
-			// ApproveRiskException rely on across this HTTP hop — see
-			// risk_exceptions_proxy.go's package doc for the full atomicity note.
+			// PUT pathRiskExceptionsID (UpdateRiskExceptionProxy) is deliberately NOT
+			// registered (#G79): it accepted a client-supplied full row with no
+			// auth/business-logic decision — the dual-control invariant and every
+			// other field were entirely caller-controlled — and had no legitimate
+			// caller (core.RevokeRiskException/ApproveRiskException moved to the
+			// conditional routes below years ago; see risk_exceptions_proxy.go's
+			// UpdateRiskExceptionProxy removal comment for the full history).
+			// RevokeRiskExceptionProxy/ApproveRiskExceptionProxy now route through
+			// core.KeyorixCore.RevokeRiskException/ApproveRiskException, which
+			// re-fetch the row and resolve every mutated field themselves — the
+			// dual-control check (approver != creator) and the already-revoked/
+			// already-expired preconditions apply on every call, and the request
+			// body carries no fields that matter anymore.
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID+"/revoke", dashboardHandler.RevokeRiskExceptionProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID+"/approve", dashboardHandler.ApproveRiskExceptionProxy)
 

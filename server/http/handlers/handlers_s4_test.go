@@ -3345,8 +3345,6 @@ func TestRiskExceptionProxyWireRoundTrip(t *testing.T) {
 	w := newRiskExceptionProxyWire(e)
 	assert.Equal(t, "Risk001", w.Title)
 	assert.Equal(t, "accepted risk", w.Justification)
-	m := w.toModel()
-	assert.Equal(t, "Risk001", m.Title)
 }
 
 func TestCreateRiskExceptionProxy_BadJSON(t *testing.T) {
@@ -3390,13 +3388,8 @@ func TestListRiskExceptionsProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestUpdateRiskExceptionProxy_BadID(t *testing.T) {
-	h := NewDashboardHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{}")), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// UpdateRiskExceptionProxy was removed (#G79) — see risk_exceptions_proxy.go's
+// removal comment.
 
 // ── retention_proxy.go ───────────────────────────────────────────────────────
 
@@ -10918,23 +10911,8 @@ func TestAuthHandler_CountUnusedMFARecoveryCodesProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// ── risk_exceptions_proxy.go: UpdateRiskExceptionProxy ───────────────────────
-
-func TestDashboardHandler_UpdateRiskExceptionProxy_BadID(t *testing.T) {
-	h := NewDashboardHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDashboardHandler_UpdateRiskExceptionProxy_BadJSON(t *testing.T) {
-	h := NewDashboardHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// UpdateRiskExceptionProxy was removed (#G79) — see risk_exceptions_proxy.go's
+// removal comment.
 
 // ── rbac_role_grants_proxy.go: happy paths ────────────────────────────────────
 

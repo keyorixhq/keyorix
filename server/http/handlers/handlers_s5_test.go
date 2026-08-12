@@ -3426,25 +3426,10 @@ func TestDeleteEnvironmentProxy_NotFoundS5(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// ── risk_exceptions_proxy.go — additional paths ──────────────────────────────
-
-func TestUpdateRiskExceptionProxy_BadJSON(t *testing.T) {
-	h := newDashboardHandlerS5(t)
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUpdateRiskExceptionProxy_HappyPath(t *testing.T) {
-	h := newDashboardHandlerS5(t)
-	body := `{"status":"approved","reason":"test"}`
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	// 200 even when row absent (GORM Save).
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
+// UpdateRiskExceptionProxy was removed (#G79) — it accepted a client-supplied
+// full row with no auth/business-logic decision (the dual-control invariant
+// and every other field were entirely caller-controlled) and had no
+// legitimate caller. See risk_exceptions_proxy.go's removal comment.
 
 // ── groups_proxy.go — additional paths ───────────────────────────────────────
 
