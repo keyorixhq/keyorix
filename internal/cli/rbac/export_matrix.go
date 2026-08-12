@@ -180,8 +180,8 @@ func writeMatrixEmbedded(out io.Writer, rows []*core.PermissionMatrixRow, format
 				expiresAt = r.ExpiresAt.UTC().Format(time.RFC3339)
 			}
 			_ = w.Write([]string{
-				r.Username, r.Email, r.RoleName, r.PermissionName,
-				r.Resource, r.Action, r.Scope, r.ProjectName, r.EnvironmentName, expiresAt,
+				common.CSVSafe(r.Username), common.CSVSafe(r.Email), common.CSVSafe(r.RoleName), common.CSVSafe(r.PermissionName),
+				common.CSVSafe(r.Resource), common.CSVSafe(r.Action), common.CSVSafe(r.Scope), common.CSVSafe(r.ProjectName), common.CSVSafe(r.EnvironmentName), expiresAt,
 			})
 		}
 		w.Flush()
@@ -235,7 +235,7 @@ func remoteRowToCSV(r remoteMatrixRow) []string {
 		expiresAt = r.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	return []string{
-		r.Username, r.Email, r.RoleName, r.PermissionName,
-		r.Resource, r.Action, r.Scope, r.ProjectName, r.EnvironmentName, expiresAt,
+		common.CSVSafe(r.Username), common.CSVSafe(r.Email), common.CSVSafe(r.RoleName), common.CSVSafe(r.PermissionName),
+		common.CSVSafe(r.Resource), common.CSVSafe(r.Action), common.CSVSafe(r.Scope), common.CSVSafe(r.ProjectName), common.CSVSafe(r.EnvironmentName), expiresAt,
 	}
 }
