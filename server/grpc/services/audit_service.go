@@ -370,6 +370,9 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 				ProjectID: optUint(req.ProjectId),
 			})
 			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
 				return status.Error(codes.Internal, "failed to read audit logs")
 			}
 			if len(events) == 0 {
