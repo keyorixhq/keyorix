@@ -55,6 +55,48 @@ func TestUpdateSCIMUser_RefusesLastAdminDeactivation(t *testing.T) {
 	assert.Contains(t, err.Error(), "last install administrator")
 }
 
+// TestUpdateSCIMUser_RefusesLastAdminDeactivation_ViaGroupMembership is the
+// unmapped-critical regression: guardLastAdminDeactivation previously scanned
+// role assignments and treated ANY group-type admin-conferring assignment as
+// "another admin survives," without checking whether the target itself was
+// that group's only member. A target whose sole route to admin authority was
+// membership in a single-member admin group was never recognized as the last
+// admin, so SCIM could deactivate them and leave the install with zero admins.
+func TestUpdateSCIMUser_RefusesLastAdminDeactivation_ViaGroupMembership(t *testing.T) {
+	c, db := newSCIMGuardCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error) // group confers admin, globally
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)  // user 1 is the group's ONLY member
+
+	no := false
+	_, err := c.UpdateSCIMUser(ctx, 9, 1, nil, nil, &no)
+	require.Error(t, err, "must refuse to deactivate the install's last admin even when their authority is entirely group-derived")
+	assert.Contains(t, err.Error(), "last install administrator")
+}
+
+// TestUpdateSCIMUser_AllowsGroupAdminDeactivationWhenAnotherGroupMemberExists
+// is the positive control: a group with more than one member still has a
+// surviving admin route after one member is deactivated.
+func TestUpdateSCIMUser_AllowsGroupAdminDeactivationWhenAnotherGroupMemberExists(t *testing.T) {
+	c, db := newSCIMGuardCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "root2", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 5}).Error)
+
+	no := false
+	off, err := c.UpdateSCIMUser(ctx, 9, 1, nil, nil, &no)
+	require.NoError(t, err, "deactivating one of two admin-group members is allowed")
+	assert.False(t, off.IsActive)
+}
+
 func TestUpdateSCIMUser_AllowsAdminDeactivationWhenAnotherExists(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()

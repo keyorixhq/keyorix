@@ -51,6 +51,18 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		if parent.IsSecret {
 			return nil, fmt.Errorf("%s: target parent %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *newParentID)
 		}
+		// The destination parent was never authorized or scope-checked: actorID's
+		// secrets.write on secretID says nothing about the target folder, which
+		// this function loaded with a bare, unauthorized GetSecret. Mirroring
+		// CreateSecret's own parent-folder validation (secrets.go), require the
+		// destination to live in the SAME project/environment as the secret being
+		// moved — otherwise an actor who can write one project's secret could
+		// re-parent it into a folder in an entirely different project they have
+		// no access to, and folder-inheriting ACL/sharing resolution would then
+		// apply that other project's grants to it.
+		if parent.ProjectID != secret.ProjectID || parent.EnvironmentID != secret.EnvironmentID {
+			return nil, fmt.Errorf("%s: target parent %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *newParentID)
+		}
 		secret.ParentID = newParentID
 	} else {
 		// Move to root (no parent).
