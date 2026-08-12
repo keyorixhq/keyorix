@@ -234,7 +234,9 @@ func TestCheckTokenExpiry_MachineCredExpiringIn3Days_Warning(t *testing.T) {
 
 	admin := &models.User{ID: 5}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(5)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(5), storage.Scope{}).Return([]uint{51}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(5), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(51)).Return(&models.Role{ID: 51, Name: "admin"}, nil)
 	ms.On("ListNotifications", ctx, uint(5), true, 200).
 		Return([]*models.Notification{}, nil)
 	ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).
@@ -265,7 +267,9 @@ func TestCheckTokenExpiry_MachineCredExpiringIn12Hours_Critical(t *testing.T) {
 
 	admin := &models.User{ID: 6}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(6)).Return([]*models.Role{{Name: "super_admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(6), storage.Scope{}).Return([]uint{61}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(6), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(61)).Return(&models.Role{ID: 61, Name: "super_admin"}, nil)
 	ms.On("ListNotifications", ctx, uint(6), true, 200).
 		Return([]*models.Notification{}, nil)
 	ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).
@@ -337,7 +341,9 @@ func TestCheckTokenExpiry_MachineCredDeduplication(t *testing.T) {
 
 	admin := &models.User{ID: 7}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(7)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(7), storage.Scope{}).Return([]uint{71}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(7), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(71)).Return(&models.Role{ID: 71, Name: "admin"}, nil)
 
 	existingMsg := `Machine credential "runner-cred" expires on 2026-06-14 12:00 UTC.`
 	ms.On("ListNotifications", ctx, uint(7), true, 200).
@@ -373,7 +379,9 @@ func TestCheckTokenExpiry_MachineCredUpgradeWarningToCritical(t *testing.T) {
 
 	admin := &models.User{ID: 8}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(8)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(8), storage.Scope{}).Return([]uint{81}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(8), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(81)).Return(&models.Role{ID: 81, Name: "admin"}, nil)
 
 	existing := &models.Notification{
 		ID:       88,
@@ -422,7 +430,9 @@ func TestCheckTokenExpiry_BothPATAndMachineCred(t *testing.T) {
 	// Admin for machine cred
 	admin := &models.User{ID: 30}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(30)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(30), storage.Scope{}).Return([]uint{301}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(30), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(301)).Return(&models.Role{ID: 301, Name: "admin"}, nil)
 	ms.On("ListNotifications", ctx, uint(30), true, 200).
 		Return([]*models.Notification{}, nil)
 	ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).
@@ -592,7 +602,9 @@ func TestCheckTokenExpiry_MachineCredNilExpiresAt(t *testing.T) {
 
 	admin := &models.User{ID: 70}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(70)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(70), storage.Scope{}).Return([]uint{701}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(70), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(701)).Return(&models.Role{ID: 701, Name: "admin"}, nil)
 
 	result, err := c.CheckTokenExpiry(ctx)
 	require.NoError(t, err)
@@ -623,8 +635,12 @@ func TestCheckTokenExpiry_MachineCredMultipleAdmins_OnlyCountsOnce(t *testing.T)
 	admin1 := &models.User{ID: 80}
 	admin2 := &models.User{ID: 81}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin1, admin2}, int64(2), nil)
-	ms.On("GetUserRoles", ctx, uint(80)).Return([]*models.Role{{Name: "admin"}}, nil)
-	ms.On("GetUserRoles", ctx, uint(81)).Return([]*models.Role{{Name: "super_admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(80), storage.Scope{}).Return([]uint{801}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(80), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(801)).Return(&models.Role{ID: 801, Name: "admin"}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(81), storage.Scope{}).Return([]uint{811}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(81), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(811)).Return(&models.Role{ID: 811, Name: "super_admin"}, nil)
 	ms.On("ListNotifications", ctx, uint(80), true, 200).Return([]*models.Notification{}, nil)
 	ms.On("ListNotifications", ctx, uint(81), true, 200).Return([]*models.Notification{}, nil)
 	ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).
@@ -660,8 +676,12 @@ func TestCheckTokenExpiry_MachineCredUpgradeCountsOnceAcrossAdmins(t *testing.T)
 	admin1 := &models.User{ID: 90}
 	admin2 := &models.User{ID: 91}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin1, admin2}, int64(2), nil)
-	ms.On("GetUserRoles", ctx, uint(90)).Return([]*models.Role{{Name: "admin"}}, nil)
-	ms.On("GetUserRoles", ctx, uint(91)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(90), storage.Scope{}).Return([]uint{901}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(90), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(901)).Return(&models.Role{ID: 901, Name: "admin"}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(91), storage.Scope{}).Return([]uint{911}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(91), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(911)).Return(&models.Role{ID: 911, Name: "admin"}, nil)
 
 	existMsg := `Machine credential "escalating-cred" expires on 2026-06-11 08:00 UTC.`
 	existing90 := &models.Notification{ID: 90, Type: NotificationMachineCredExpiry, Message: existMsg, Severity: models.NotificationSeverityWarning}
@@ -697,7 +717,9 @@ func TestCheckTokenExpiry_MachineCredUpgradeFailNotCounted(t *testing.T) {
 
 	admin := &models.User{ID: 95}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(95)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(95), storage.Scope{}).Return([]uint{951}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(95), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(951)).Return(&models.Role{ID: 951, Name: "admin"}, nil)
 
 	existMsg := `Machine credential "fail-upgrade-cred" expires on 2026-06-11 08:00 UTC.`
 	existing := &models.Notification{ID: 95, Type: NotificationMachineCredExpiry, Message: existMsg, Severity: models.NotificationSeverityWarning}

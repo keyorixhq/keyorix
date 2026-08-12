@@ -58,7 +58,9 @@ func TestScanLicenseExpiry_Expiring_NotifiesGlobalAdmins(t *testing.T) {
 
 	admin := &models.User{ID: 2, Email: "admin@acme.test"}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(2)).Return([]*models.Role{{Name: "system_admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(2), storage.Scope{}).Return([]uint{10}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(2), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(10)).Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
 	ms.On("ListNotifications", ctx, uint(2), true, 100).Return([]*models.Notification{}, nil)
 	ms.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
 		return n.Type == NotificationLicenseExpiry && n.UserID == 2 && n.ProjectID == nil
@@ -78,7 +80,9 @@ func TestScanLicenseExpiry_Dedup_NoResend(t *testing.T) {
 
 	admin := &models.User{ID: 2, Email: "admin@acme.test"}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(2)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(2), storage.Scope{}).Return([]uint{10}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(2), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(10)).Return(&models.Role{ID: 10, Name: "admin"}, nil)
 	// Already an unread license-expiry reminder, already at the severity this
 	// (not-yet-expired) gate warrants → must not re-create or escalate.
 	ms.On("ListNotifications", ctx, uint(2), true, 100).
@@ -103,7 +107,9 @@ func TestScanLicenseExpiry_EscalatesOnExpiry(t *testing.T) {
 
 	admin := &models.User{ID: 2, Email: "admin@acme.test"}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(2)).Return([]*models.Role{{Name: "admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(2), storage.Scope{}).Return([]uint{10}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(2), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(10)).Return(&models.Role{ID: 10, Name: "admin"}, nil)
 	// Standing reminder was created back when the license was merely expiring soon.
 	existing := &models.Notification{ID: 9, UserID: 2, Type: NotificationLicenseExpiry, Severity: models.NotificationSeverityWarning}
 	ms.On("ListNotifications", ctx, uint(2), true, 100).Return([]*models.Notification{existing}, nil)
@@ -145,9 +151,13 @@ func TestGlobalAdminIDs_PaginatesActiveUsersBeyondOnePage(t *testing.T) {
 
 	// Every user on page 1 is a non-admin; only the page-2 user is a global admin.
 	for i := range firstPage {
-		ms.On("GetUserRoles", ctx, firstPage[i].ID).Return([]*models.Role{{Name: "member"}}, nil)
+		ms.On("GetUserRoleIDsAt", ctx, firstPage[i].ID, storage.Scope{}).Return([]uint{20}, nil)
+		ms.On("GetUserGroupRoleIDsAt", ctx, firstPage[i].ID, storage.Scope{}).Return([]uint{}, nil)
 	}
-	ms.On("GetUserRoles", ctx, lateAdminID).Return([]*models.Role{{Name: "super_admin"}}, nil)
+	ms.On("GetRole", ctx, uint(20)).Return(&models.Role{ID: 20, Name: "member"}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, lateAdminID, storage.Scope{}).Return([]uint{10}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, lateAdminID, storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(10)).Return(&models.Role{ID: 10, Name: "super_admin"}, nil)
 	ms.On("ListNotifications", ctx, lateAdminID, true, 100).Return([]*models.Notification{}, nil)
 	ms.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
 		return n.Type == NotificationLicenseExpiry && n.UserID == lateAdminID
@@ -159,16 +169,47 @@ func TestGlobalAdminIDs_PaginatesActiveUsersBeyondOnePage(t *testing.T) {
 	ms.AssertNumberOfCalls(t, "ListUsers", 2)
 }
 
+// TestScanLicenseExpiry_SkipsProjectScopedAdmin is the #G01 regression: a
+// project_admin role GRANTED ONLY AT A SPECIFIC PROJECT (not globally) must
+// not count as an install-wide admin — isGlobalAdminRoleName's global-scope
+// query (GetUserRoleIDsAt/GetUserGroupRoleIDsAt with Scope{}) returns nothing
+// for this user, exactly as the real storage layer would for a role held only
+// at project scope, since project_admin's grant never appears in the
+// project_id=0 rows those queries select.
 func TestScanLicenseExpiry_SkipsProjectScopedAdmin(t *testing.T) {
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetLicenseGate(gateWithExpiry(t, time.Now().Add(5*24*time.Hour)))
 
-	// project_admin is project-scoped, not an install-wide admin → not a license recipient.
+	// project_admin is granted only at project 7, not globally → not an
+	// install-wide admin → not a license recipient.
 	user := &models.User{ID: 3, Email: "padmin@acme.test"}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{user}, int64(1), nil)
-	ms.On("GetUserRoles", ctx, uint(3)).Return([]*models.Role{{Name: "project_admin"}}, nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(3), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(3), storage.Scope{}).Return([]uint{}, nil)
+
+	n, err := c.ScanLicenseExpiry(ctx, 30)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	ms.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+}
+
+// TestScanLicenseExpiry_SkipsGloballyGrantedNonAdminRole verifies the sibling
+// case: a non-admin role (e.g. "member") granted globally still correctly
+// does not count — isGlobalAdminRoleName's scope-awareness is orthogonal to
+// its role-name filtering, and both must hold.
+func TestScanLicenseExpiry_SkipsGloballyGrantedNonAdminRole(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	c.SetLicenseGate(gateWithExpiry(t, time.Now().Add(5*24*time.Hour)))
+
+	user := &models.User{ID: 4, Email: "member@acme.test"}
+	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{user}, int64(1), nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(4), storage.Scope{}).Return([]uint{20}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(4), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(20)).Return(&models.Role{ID: 20, Name: "member"}, nil)
 
 	n, err := c.ScanLicenseExpiry(ctx, 30)
 	require.NoError(t, err)

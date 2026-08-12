@@ -32,11 +32,11 @@ func TestDetectSoDViolations_DegradedOnUserPermissionsError(t *testing.T) {
 		{ID: 11, Username: "bob", IsActive: true},
 	}, int64(2), nil)
 
-	// Neither user holds an admin permission-bypass role (direct or via group — #1185 added group check).
-	store.On("GetUserRoles", ctx, uint(10)).Return([]*models.Role{}, nil)
-	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil)
-	store.On("GetUserRoles", ctx, uint(11)).Return([]*models.Role{}, nil)
-	store.On("GetUserGroups", ctx, uint(11)).Return([]*models.Group{}, nil)
+	// Neither user holds an admin permission-bypass role at global scope (direct or via group).
+	store.On("GetUserRoleIDsAt", ctx, uint(10), storage.Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(10), storage.Scope{}).Return([]uint{}, nil)
+	store.On("GetUserRoleIDsAt", ctx, uint(11), storage.Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(11), storage.Scope{}).Return([]uint{}, nil)
 
 	// alice: a real, detectable violation.
 	store.On("GetUserPermissions", ctx, uint(10)).Return([]*storage.Permission{
@@ -87,8 +87,8 @@ func TestDetectSoDViolations_DegradedOnMachineRolesError(t *testing.T) {
 	store.On("ListUsers", ctx, mock.Anything).Return([]*models.User{
 		{ID: 10, Username: "alice", IsActive: true},
 	}, int64(1), nil)
-	store.On("GetUserRoles", ctx, uint(10)).Return([]*models.Role{}, nil)
-	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil)
+	store.On("GetUserRoleIDsAt", ctx, uint(10), storage.Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(10), storage.Scope{}).Return([]uint{}, nil)
 	store.On("GetUserPermissions", ctx, uint(10)).Return([]*storage.Permission{
 		{Name: "secrets.write"}, {Name: "users.read"},
 	}, nil)
@@ -156,8 +156,8 @@ func TestDetectSoDViolations_NotDegradedOnCleanScan(t *testing.T) {
 	store.On("ListUsers", ctx, mock.Anything).Return([]*models.User{
 		{ID: 10, Username: "alice", IsActive: true},
 	}, int64(1), nil)
-	store.On("GetUserRoles", ctx, uint(10)).Return([]*models.Role{}, nil)
-	store.On("GetUserGroups", ctx, uint(10)).Return([]*models.Group{}, nil)
+	store.On("GetUserRoleIDsAt", ctx, uint(10), storage.Scope{}).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(10), storage.Scope{}).Return([]uint{}, nil)
 	store.On("GetUserPermissions", ctx, uint(10)).Return([]*storage.Permission{
 		{Name: "secrets.read"},
 	}, nil)
