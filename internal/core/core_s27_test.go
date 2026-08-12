@@ -568,6 +568,12 @@ func TestOpenAccessReviewCampaign_ZeroProjectID(t *testing.T) {
 
 func TestDeprovisionSCIMGroup_DeleteGroupError_s27(t *testing.T) {
 	ms := new(MockStorage)
+	// guardLastGlobalAdminGroupDelete (#G02) runs first; no admin roles seeded
+	// in this fixture, so it's a no-op and the simulated DeleteGroup failure
+	// under test is reached.
+	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
+	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
 	ms.On("DeleteGroup", mock.Anything, uint(5)).Return(errors.New("not found"))
 	c := NewKeyorixCore(ms)
 	err := c.DeprovisionSCIMGroup(context.Background(), 0, 5)

@@ -304,6 +304,14 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		user.IsActive = *req.IsActive
 	}
 	deactivating := wasActive && !user.IsActive
+	if deactivating {
+		// Refuse to deactivate the install's last global administrator (#G02) —
+		// the same lockout guard DeleteUser and SCIM deactivation already apply;
+		// this was the one active-state-flipping path that skipped it.
+		if err := c.guardLastAdminDeactivation(ctx, req.ID); err != nil {
+			return nil, err
+		}
+	}
 	user.UpdatedAt = c.now()
 
 	var sessionHashes []string

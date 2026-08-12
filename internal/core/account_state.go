@@ -136,9 +136,13 @@ func (c *KeyorixCore) StaleAccounts(ctx context.Context, state string, olderThan
 	return c.storage.ListUsersInStateBefore(ctx, state, before)
 }
 
-// SuspendUser blocks a user's login. Admin action; audited. The bootstrap/admin
-// caller is responsible for not suspending themselves into a lockout.
+// SuspendUser blocks a user's login. Admin action; audited. Refuses to suspend
+// the install's last global administrator (guardLastAdminDeactivation, #G02)
+// — the same lockout DeleteUser and SCIM deactivation already refuse.
 func (c *KeyorixCore) SuspendUser(ctx context.Context, adminID, userID uint) error {
+	if err := c.guardLastAdminDeactivation(ctx, userID); err != nil {
+		return err
+	}
 	return c.setAccountState(ctx, adminID, userID, AccountSuspended, "account.suspended")
 }
 
