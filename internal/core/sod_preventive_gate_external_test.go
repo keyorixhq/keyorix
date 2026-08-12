@@ -93,6 +93,11 @@ func TestAssignUserRoleWithExpiry_BlocksJITSoDViolation(t *testing.T) {
 
 	h.CreateTestUser(t, "carol", 12)
 	h.AssignUserRole(t, 12, 4, nil) // viewer → secrets.read
+	// #G15/#93/#107/#141: the granting actor must themselves hold every
+	// permission of the role being granted — grant "admin" globally so the
+	// ceiling check's admin bypass applies (this test targets the SoD gate
+	// specifically, not the ceiling check).
+	h.AssignUserRole(t, 1, 2, nil)
 
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)
@@ -117,6 +122,10 @@ func TestAssignUserRoleWithExpiry_AllowsNonViolatingGrant(t *testing.T) {
 
 	h.CreateTestUser(t, "dave", 13)
 	h.AssignUserRole(t, 13, 4, nil) // viewer
+	// #G15/#93/#107/#141: the granting actor must themselves hold every
+	// permission of the role being granted — grant "admin" globally so the
+	// ceiling check's admin bypass applies.
+	h.AssignUserRole(t, 1, 2, nil)
 
 	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
 	require.NoError(t, err)

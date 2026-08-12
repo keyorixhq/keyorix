@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,39 @@ func TestSetProjectMemberRole_EscalationByProxyBlocked(t *testing.T) {
 	err := c.SetProjectMemberRole(ctx, attacker, 1, victim, "project_admin")
 	require.Error(t, err, "a non-admin actor must not be able to promote a member to project_admin")
 	assert.Contains(t, err.Error(), "cannot grant this role")
+}
+
+// #G15/#93/#107/#141: AssignUserRoleWithExpiry (the JIT/time-bound grant path)
+// must be gated by the exact same escalation-by-proxy ceiling as its permanent
+// sibling AssignUserRole — previously it wrote directly via storage with no
+// ceiling check at all (see jit_access.go's history), so a roles.assign holder
+// could bundle-grant a time-bound role carrying a permission they don't hold
+// themselves.
+func TestAssignUserRoleWithExpiry_EscalationByProxyBlocked(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	attacker := seedUserWithRole(t, st, "jit-attacker", "project_viewer", storage.Scope{ProjectID: 1})
+	victim := seedUserWithRole(t, st, "jit-victim", "project_viewer", storage.Scope{ProjectID: 1})
+	role, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+
+	err = c.AssignUserRoleWithExpiry(ctx, attacker, victim, role.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour))
+	require.Error(t, err, "a non-admin actor must not be able to grant the admin role via a time-bound JIT grant")
+	assert.Contains(t, err.Error(), "cannot grant this role")
+}
+
+// #G15: the non-regression counterpart — a time-bound grant of a role the actor
+// already holds every bundled permission of must still succeed unimpeded.
+func TestAssignUserRoleWithExpiry_NonAdminRoleAllowed(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	actor := seedUserWithRole(t, st, "jit-actor", "project_developer", storage.Scope{ProjectID: 1})
+	victim := seedUserWithRole(t, st, "jit-victim2", "project_viewer", storage.Scope{ProjectID: 2})
+	role, err := st.GetRoleByName(ctx, "project_developer")
+	require.NoError(t, err)
+
+	err = c.AssignUserRoleWithExpiry(ctx, actor, victim, role.ID, storage.Scope{ProjectID: 1}, time.Now().Add(time.Hour))
+	require.NoError(t, err, "granting a role the actor already holds every permission of must not be blocked")
 }
 
 // #93: AssignMachineRole must refuse a non-admin actor granting an admin role to
