@@ -53,8 +53,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -116,6 +118,44 @@ func (w breakGlassActivationProxyWire) toModel() *models.BreakGlassActivation {
 	}
 }
 
+// breakGlassContainmentAdminRoleNames mirrors internal/core's unexported
+// installAdminRoleNames (rbac_management.go) — duplicated here because this
+// handler cannot call KeyorixCore's unexported containment logic directly and
+// there is no exported equivalent. Keep in sync if that list ever changes.
+var breakGlassContainmentAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
+
+// checkBreakGlassRoleContainment reimplements the two role-containment checks
+// core.ActivateBreakGlass applies before granting an emergency role (#G79):
+// the role must not be install-wide admin, and must not carry roles.assign
+// (which would let a time-bound emergency grant mint a PERMANENT one during
+// its window). This proxy cannot re-run ActivateBreakGlass itself — the
+// activating user's project-affiliation/policy state lives on the calling
+// (downstream) server, not here, and the role grant this activation records
+// was already issued via a separate RemoteStorage call — but it CAN, and
+// must, still refuse to persist an activation record naming a role that is
+// dangerous by the upstream's OWN role table, so a compromised or
+// misconfigured downstream cannot use this proxy to fabricate a record for
+// (and thereby legitimize/re-derive) an uncontained role.
+func (h *CatalogHandler) checkBreakGlassRoleContainment(ctx context.Context, roleID uint) error {
+	if roleID == 0 {
+		return nil
+	}
+	for _, name := range breakGlassContainmentAdminRoleNames {
+		role, err := h.coreService.Storage().GetRoleByName(ctx, name)
+		if err == nil && role != nil && role.ID == roleID {
+			return fmt.Errorf("the recorded role grants install-wide administration and cannot be used for break-glass")
+		}
+	}
+	hasAssign, err := h.coreService.Storage().RoleSetHasPermission(ctx, []uint{roleID}, "roles.assign")
+	if err != nil {
+		return fmt.Errorf("failed to verify role containment: %w", err)
+	}
+	if hasAssign {
+		return fmt.Errorf("the recorded role can assign roles or issue credentials and cannot be used for break-glass")
+	}
+	return nil
+}
+
 // breakGlassAlreadyActiveCode is the machine-readable error code
 // CreateBreakGlassActivationProxy returns when the upstream's own DB-level
 // partial-unique-index rejection (storage.ErrBreakGlassAlreadyActive,
@@ -146,6 +186,10 @@ func (h *CatalogHandler) CreateBreakGlassActivationProxy(w http.ResponseWriter, 
 	}
 	if body.ProjectID == 0 || body.UserID == 0 || body.State == "" {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, user_id, and state are required")
+		return
+	}
+	if err := h.checkBreakGlassRoleContainment(r.Context(), body.RoleID); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "ROLE_NOT_CONTAINED", err.Error())
 		return
 	}
 	created, err := h.coreService.Storage().CreateBreakGlassActivation(r.Context(), body.toModel())
@@ -225,6 +269,10 @@ func (h *CatalogHandler) UpdateBreakGlassActivationProxy(w http.ResponseWriter, 
 		return
 	}
 	body.ID = uint(id)
+	if err := h.checkBreakGlassRoleContainment(r.Context(), body.RoleID); err != nil {
+		writeRemoteAPIError(w, http.StatusForbidden, "ROLE_NOT_CONTAINED", err.Error())
+		return
+	}
 	if err := h.coreService.Storage().UpdateBreakGlassActivation(r.Context(), body.toModel()); err != nil {
 		log.Printf("break-glass proxy: update activation failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

@@ -11571,6 +11571,51 @@ func TestCatalogHandler_CreateBreakGlassActivationProxy_HappyPath(t *testing.T) 
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
+// TestCreateBreakGlassActivationProxy_RefusesAdminTierRole is the #G79
+// regression: CreateBreakGlassActivationProxy previously called
+// storage.CreateBreakGlassActivation directly, persisting whatever role_id
+// the caller supplied with none of core.ActivateBreakGlass's containment
+// checks. An admin-tier role must be refused.
+func TestCreateBreakGlassActivationProxy_RefusesAdminTierRole(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}))
+	require.NoError(t, i18n.InitializeForTesting())
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+
+	body := fmt.Sprintf(`{"project_id":1,"user_id":1,"role_id":%d,"state":"active","reason":"test","expires_at":"2026-12-31T00:00:00Z"}`, 10)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateBreakGlassActivationProxy(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, "an admin-tier role must be refused")
+
+	var count int64
+	require.NoError(t, db.Model(&models.BreakGlassActivation{}).Count(&count).Error)
+	assert.Zero(t, count, "no activation record must be persisted when the role is refused")
+}
+
+// TestCreateBreakGlassActivationProxy_RefusesRoleWithRolesAssign is the same
+// regression for the second containment check: a role that can itself assign
+// roles (and so could mint a permanent grant during the emergency window)
+// must also be refused.
+func TestCreateBreakGlassActivationProxy_RefusesRoleWithRolesAssign(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}))
+	require.NoError(t, i18n.InitializeForTesting())
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	require.NoError(t, db.Create(&models.Role{ID: 11, Name: "project_admin"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "roles.assign"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 11, PermissionID: 1}).Error)
+
+	body := fmt.Sprintf(`{"project_id":1,"user_id":1,"role_id":%d,"state":"active","reason":"test","expires_at":"2026-12-31T00:00:00Z"}`, 11)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateBreakGlassActivationProxy(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, "a role carrying roles.assign must be refused")
+}
+
 func TestCatalogHandler_UpdateBreakGlassActivationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"state":"revoked"}`
@@ -12133,6 +12178,27 @@ func TestCatalogHandler_CreateSoDPolicyProxy_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestCreateSoDPolicyProxy_WritesAuditEvent is the #G79 regression:
+// CreateSoDPolicyProxy previously called storage.CreateSoDPolicy directly,
+// writing no audit trail on the upstream side. Now that it routes through
+// core.KeyorixCore.CreateSoDPolicy, a policy created via node-sync is
+// audited exactly like one created through the human-facing route.
+func TestCreateSoDPolicyProxy_WritesAuditEvent(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, i18n.InitializeForTesting())
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	body := `{"name":"test-audit","permission_a":"read","permission_b":"write"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSoDPolicyProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var count int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", core.EventSoDPolicyCreated).Count(&count).Error)
+	assert.EqualValues(t, 1, count, "creating a SoD policy via the proxy must write an audit event")
 }
 
 // ── legal_hold.go: GetLegalHold, PlaceLegalHold ───────────────────────────────
