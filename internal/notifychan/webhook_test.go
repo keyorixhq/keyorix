@@ -1,11 +1,13 @@
 package notifychan
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -209,6 +211,37 @@ func TestNewWebhook_RejectsNonHTTPSEndpoint(t *testing.T) {
 	require.Error(t, err, "InsecureSkipVerify alone must not bypass the https requirement")
 	_, err = NewWebhook(WebhookConfig{Endpoint: "http://siem.example.com/hook", AllowPrivateNetworkTarget: true})
 	require.NoError(t, err, "AllowPrivateNetworkTarget is the dedicated opt-in for a non-https/internal target")
+}
+
+// TestNewWebhook_InsecureSkipVerifyWarningRedactsEndpoint is #G30: the endpoint
+// URL is the bearer credential for this channel (the token lives in the path,
+// not a header), so the InsecureSkipVerify startup warning must not log it
+// verbatim — matching this package's own redactURLHost policy used elsewhere
+// (delivery.go, TestChatSink_DeliveryFailureLogDoesNotLeakWebhookToken).
+func TestNewWebhook_InsecureSkipVerifyWarningRedactsEndpoint(t *testing.T) {
+	orig := lookupIPAddr
+	defer func() { lookupIPAddr = orig }()
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("203.0.113.5")}}, nil // public TEST-NET-3
+	}
+
+	const token = "xoxb-topsecret-1234567890"
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(origOut)
+
+	_, err := NewWebhook(WebhookConfig{
+		Endpoint:           "https://siem.example.com/services/T000/B000/" + token,
+		InsecureSkipVerify: true,
+	})
+	require.NoError(t, err)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "siem.example.com", "host should be kept for diagnostic value")
+	assert.NotContains(t, logged, token, "the webhook's embedded bearer token must never reach the log stream")
+	assert.NotContains(t, logged, "services/T000/B000", "the webhook's path (which carries the token) must never reach the log stream")
 }
 
 // TestNewWebhook_RejectsHostnameResolvingToPrivateIP pins #130: the SSRF guard
