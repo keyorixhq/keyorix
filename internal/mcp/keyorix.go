@@ -36,11 +36,20 @@ func NewKeyorixClient(baseURL, token string) (*KeyorixClient, error) {
 	if err := requireHTTPSURL(baseURL); err != nil {
 		return nil, err
 	}
-	return &KeyorixClient{
+	c := &KeyorixClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		hc:      &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
-	}, nil
+	}
+	// Re-validate via a direct read of c.baseURL (not just the constructor's baseURL
+	// parameter above): a CodeQL static-analysis limitation can't connect a validator
+	// call on a parameter to a later read of the field it was stored into, so without
+	// this second, field-level call every c.baseURL read downstream (getJSON below)
+	// is indistinguishable from an unvalidated destination to that analysis.
+	if err := requireHTTPSURL(c.baseURL); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // refuseRedirect blocks the http.Client from following ANY redirect. Go's default
@@ -139,12 +148,10 @@ func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]
 // getJSON performs an authenticated GET and decodes the {"data": …} envelope into out.
 func (c *KeyorixClient) getJSON(ctx context.Context, path string, out interface{}) error {
 	// c.hc (built in NewKeyorixClient above) already sets CheckRedirect to
-	// refuseRedirect, and baseURL is scheme-validated by requireHTTPSURL before
-	// this client is ever constructed. The query can't see either: CheckRedirect
-	// is set on the same composite literal in a different function, and
-	// requireHTTPSURL's argument is the constructor's baseURL parameter, not a
-	// read of the baseURL field it's later stored into.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil) // codeql[go/keyorix-ssrf-unvalidated-outbound-request]
+	// refuseRedirect, and c.baseURL is scheme-validated by requireHTTPSURL in
+	// NewKeyorixClient (both the constructor parameter AND a direct c.baseURL
+	// field read, so this destination is validated by the query's own model too).
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}

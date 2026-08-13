@@ -54,10 +54,10 @@ func TestGetInterval_S21(t *testing.T) {
 	}
 }
 
-// TestRequireHTTPSURL_S21 covers requireHTTPSURL directly for all branches:
+// TestValidateKeyorixURL_S21 covers validateKeyorixURL directly for all branches:
 // https (allowed), http+localhost (allowed), http+loopback IP (rejected — K8SSYNC-007),
 // http+non-loopback (rejected), invalid URL (rejected), non-http/https (rejected).
-func TestRequireHTTPSURL_S21(t *testing.T) {
+func TestValidateKeyorixURL_S21(t *testing.T) {
 	cases := []struct {
 		name    string
 		url     string
@@ -76,7 +76,7 @@ func TestRequireHTTPSURL_S21(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := requireHTTPSURL(c.url)
+			err := validateKeyorixURL(c.url)
 			if c.wantErr {
 				assert.Error(t, err)
 			} else {

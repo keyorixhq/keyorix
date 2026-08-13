@@ -116,6 +116,26 @@ func (c *VaultConnector) CheckTokenTTL(ctx context.Context) (ttlSeconds int, ren
 	return result.Data.TTL, result.Data.Renewable, nil
 }
 
+// validateConnectorURL checks that a connector destination is a well-formed absolute
+// http(s) URL. Deliberately does NOT reject private/loopback hosts: Vault connectors
+// are admin-configured and commonly point at on-prem/private-network instances by
+// design (#1390 already deferred adding an IP-blocking check here as a separate
+// product decision) -- this only rejects a malformed or non-HTTP(S) destination
+// (e.g. a "file://" or garbled address) reaching the outbound client.
+func validateConnectorURL(address string) error {
+	u, err := url.Parse(address)
+	if err != nil {
+		return fmt.Errorf("vault: invalid connector address %q: %w", address, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("vault: connector address %q must use http or https", address)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("vault: connector address %q is missing a host", address)
+	}
+	return nil
+}
+
 func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("vault: secret reference (path) is required, e.g. secret/data/myapp")
@@ -125,6 +145,9 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 	}
 	if c.address == "" {
 		return "", fmt.Errorf("vault: connector address is not configured")
+	}
+	if err := validateConnectorURL(c.address); err != nil {
+		return "", err
 	}
 	if c.token == "" {
 		return "", fmt.Errorf("vault: no token configured (set the connector's token_env)")

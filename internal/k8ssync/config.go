@@ -58,7 +58,7 @@ func (c *Config) validate() error {
 	// every request, so keyorix_url MUST be https (http only for loopback in dev) — an
 	// http endpoint would ship a secrets-read-capable token in cleartext over the cluster
 	// network. The operator (CRD) path already requires https; this matches it.
-	if err := requireHTTPSURL(c.KeyorixURL); err != nil {
+	if err := validateKeyorixURL(c.KeyorixURL); err != nil {
 		return err
 	}
 	if c.ProjectID == 0 {
@@ -80,9 +80,9 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// requireHTTPSURL rejects a keyorix_url that is not https (http is allowed only for a
+// validateKeyorixURL rejects a keyorix_url that is not https (http is allowed only for a
 // loopback host, for local development/testing).
-func requireHTTPSURL(raw string) error {
+func validateKeyorixURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("invalid keyorix_url %q", raw)

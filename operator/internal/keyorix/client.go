@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -83,21 +84,56 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
 }
 
+// validateClientBaseURL checks that the client's base URL is a well-formed https
+// destination — matching validateServer's own https requirement in the controller
+// package, which this client's baseURL is sourced from (see FetchValue). http is
+// additionally allowed for a loopback host (matching this repo's own convention
+// elsewhere, e.g. internal/storage/remote/config.go's isLoopbackHost), which is what
+// this package's own tests connect to via httptest.NewServer.
+func validateClientBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("keyorix: invalid base URL %q: %w", raw, err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("keyorix: base URL %q is missing a host", raw)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme != "http" || !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("keyorix: base URL %q must use https", raw)
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 // FetchValue returns the current value of the secret referenced by
 // "project/environment/name".
 func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
+	// c.hc (built in New above) already sets CheckRedirect to refuseRedirect, and the
+	// caller (KeyorixSecretReconciler.buildDesired) already validates ks.Spec.Server
+	// against an operator-configured --allowed-servers allowlist via validateServer
+	// before ever constructing this Client — see keyorixsecret_controller.go. That
+	// upstream check operates on a differently-named field (KeyorixSecretSpec.Server)
+	// three call frames away, so this direct read of c.baseURL itself is what lets a
+	// static analyzer connect a validation call to this exact destination.
+	if err := validateClientBaseURL(c.baseURL); err != nil {
+		return nil, err
+	}
 	q := url.Values{}
 	q.Set("ref", ref)
-	// c.hc (built in New above) already sets CheckRedirect to refuseRedirect, and
-	// the caller (KeyorixSecretReconciler.buildDesired) validates ks.Spec.Server
-	// against an operator-configured --allowed-servers allowlist via
-	// validateServer BEFORE ever constructing this Client — see
-	// keyorixsecret_controller.go. The query can't see either: CheckRedirect is
-	// set on the same composite literal in a different function, and the
-	// validated field (KeyorixSecretSpec.Server) is three frames upstream of
-	// Client.baseURL with no name overlap the query's field-identity check can
-	// follow.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/secrets/value?"+q.Encode(), nil) // codeql[go/keyorix-ssrf-unvalidated-outbound-request]
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/secrets/value?"+q.Encode(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
