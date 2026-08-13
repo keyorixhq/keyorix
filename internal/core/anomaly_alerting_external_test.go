@@ -211,6 +211,53 @@ func TestRunDetection_DetectsPrincipalBreadthAcrossSecrets(t *testing.T) {
 	}
 	require.NotNil(t, breadth, "a principal reading 6 never-before-touched secrets must raise principal_breadth")
 	assert.Equal(t, "medium", breadth.Severity, "6 new secrets is below the high-severity multiplier (2x threshold = 10)")
+	assert.NotZero(t, breadth.SecretNodeID, "#G43: a representative SecretNodeID is required to resolve the owning project for in-app admin notification")
+}
+
+// TestAlertNewAnomalies_PrincipalBreadthNotifiesProjectAdmins is #G43: principal_breadth
+// alerts left SecretNodeID unset, so AlertNewAnomalies could never resolve a project and
+// silently skipped the in-app admin notification for every one of them (the audit/SIEM
+// event still fired, masking the gap). This drives the real detect → alert flow end to
+// end and asserts a project admin actually receives an in-app notification.
+func TestAlertNewAnomalies_PrincipalBreadthNotifiesProjectAdmins(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{},
+		&models.AnomalyAlert{}, &models.AuditEvent{}, &models.Notification{}))
+
+	ctx := context.Background()
+	const adminID = uint(30)
+	projectID := uint(1)
+	require.NoError(t, h.DB.Create(&models.User{ID: adminID, Username: "admin30", Email: "admin30@x"}).Error)
+	h.AssignUserRole(t, adminID, 2, &projectID) // role 2 = "admin" (an approver role)
+
+	var secrets []models.SecretNode
+	for i := uint(910); i < 916; i++ {
+		s := models.SecretNode{ID: i, ProjectID: 1, Name: "s", Status: "active", IsSecret: true}
+		require.NoError(t, h.DB.Create(&s).Error)
+		secrets = append(secrets, s)
+		require.NoError(t, h.DB.Create(&models.SecretAccessLog{
+			SecretNodeID: s.ID, AccessedBy: "alice", Action: "read", IPAddress: "10.0.0.1",
+			AccessTime: time.Now().Add(-10 * 24 * time.Hour),
+		}).Error)
+	}
+	for _, s := range secrets {
+		require.NoError(t, h.DB.Create(&models.SecretAccessLog{
+			SecretNodeID: s.ID, AccessedBy: "mallory", Action: "read", IPAddress: "203.0.113.5",
+			AccessTime: time.Now(),
+		}).Error)
+	}
+
+	detector := core.NewAnomalyDetector(h.CoreService.Storage())
+	require.NoError(t, detector.RunDetection(ctx, secrets))
+
+	n, err := h.CoreService.AlertNewAnomalies(ctx)
+	require.NoError(t, err)
+	assert.Positive(t, n, "at least the principal_breadth alert must be announced")
+
+	var notif models.Notification
+	err = h.DB.Where("user_id = ? AND type = ?", adminID, core.EventAnomalyDetected).First(&notif).Error
+	require.NoError(t, err, "the project admin must have received an in-app notification for the principal_breadth alert")
 }
 
 // The compliance posture counts open (unacknowledged) anomalies, with a high-severity tally.

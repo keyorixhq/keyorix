@@ -361,10 +361,19 @@ func lowestBlockedDep(deps []uint, blocked map[uint]bool) (uint, bool) {
 // in failed and logged; it returns true only when the secret was rotated and stored
 // successfully. Best-effort: it never returns an error or aborts the run.
 func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.SecretNode, policy *models.RotationPolicy, failed map[uint]string) bool {
+	// #G43: SetRotationState/GetRotationState (rotation_state.go) were fully
+	// wired at the storage layer and exposed via GET /secrets/{id}/rotation-state,
+	// with a doc comment claiming "called by the rotation executor when a
+	// rotation job starts, completes, or fails" — but nothing here ever actually
+	// called it, so the endpoint always reported "idle" regardless of real
+	// activity. Best-effort: a failure to stamp state must not abort a
+	// rotation that otherwise succeeded or genuinely failed.
+	c.stampRotationState(ctx, policy.ID, RotationStateRotating, "")
 	val, gerr := generateRotatedValueSpec(secret.RotationLength, secret.RotationCharset)
 	if gerr != nil {
 		log.Printf("auto-rotation: generate value for secret %d: %v", secret.ID, gerr)
 		failed[secret.ID] = fmt.Sprintf("%q: generate value: %v", secret.Name, gerr)
+		c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID])
 		return false
 	}
 	// Backend rotation (ADR-047): if the secret names a configured executor, rotate the
@@ -400,6 +409,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 				fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
 			log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
 			failed[secret.ID] = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
+			c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID])
 			return false
 		default:
 			storeVal = upstreamVal
@@ -422,6 +432,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
 		}
+		c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID])
 		return false
 	}
 	if incompleteMsg != "" {
@@ -435,6 +446,7 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 		c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 			fmt.Sprintf("auto-rotation INCOMPLETE for secret %q: new credential stored but a prior credential is still live and must be removed manually — %s", secret.Name, incompleteMsg))
 		log.Printf("auto-rotation: incomplete cleanup for secret %d: %s", secret.ID, incompleteMsg)
+		c.stampRotationState(ctx, policy.ID, RotationStateFailed, incompleteMsg)
 		return true
 	}
 	delete(failed, secret.ID)
@@ -446,7 +458,17 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 	}
 	c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 		fmt.Sprintf("auto-rotated secret %q (policy %q, interval %dd)%s", secret.Name, policy.Name, policy.IntervalDays, via))
+	c.stampRotationState(ctx, policy.ID, RotationStateSucceeded, "")
 	return true
+}
+
+// stampRotationState calls SetRotationState best-effort — a failure to persist
+// the execution-state marker must never abort or fail an otherwise-complete
+// rotation attempt, so it is logged rather than propagated.
+func (c *KeyorixCore) stampRotationState(ctx context.Context, policyID uint, state, errMsg string) {
+	if err := c.SetRotationState(ctx, policyID, state, errMsg); err != nil {
+		log.Printf("auto-rotation: policy %d: failed to stamp rotation state %q: %v", policyID, state, err)
+	}
 }
 
 // applyBackendRotation resolves the secret's named rotation executor and rotates the

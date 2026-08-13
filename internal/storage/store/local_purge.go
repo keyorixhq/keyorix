@@ -194,12 +194,41 @@ func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, befo
 // not just the ID list — so a row a restore raced out from under the purge is left alone.
 func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
 	var purged int64
+	// #G43: SetSecretRetentionOverride's per-secret window was never consulted here —
+	// every secret purged strictly on the deployment-wide cutoff regardless of a set
+	// override. The candidate set below is intentionally wider than sqlWhereDeletedBefore
+	// (every still-soft-deleted secret, not just ones past the global cutoff) so a
+	// SHORTER override (secret should be gone sooner than the global window) is caught
+	// too, not just a longer one; GetEffectiveRetentionDays (the same helper
+	// SetSecretRetentionOverride's own doc points callers to) then decides per row
+	// whether `before` (no override) or `now - override days` (override set) applies.
+	// now is a single wall-clock read for the whole sweep, not per-row, so every
+	// candidate in this run is judged against the same instant.
+	now := time.Now()
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var ids []uint
+		var candidates []struct {
+			ID                    uint
+			DeletedAt             gorm.DeletedAt
+			RetentionOverrideDays int
+		}
 		if e := tx.Unscoped().Model(&models.SecretNode{}).
-			Where(sqlWhereDeletedBefore, before).
-			Pluck("id", &ids).Error; e != nil {
+			Select("id, deleted_at, retention_override_days").
+			Where("deleted_at IS NOT NULL").
+			Find(&candidates).Error; e != nil {
 			return e
+		}
+		var ids []uint
+		for _, cand := range candidates {
+			if !cand.DeletedAt.Valid {
+				continue
+			}
+			cutoff := before
+			if cand.RetentionOverrideDays > 0 {
+				cutoff = now.AddDate(0, 0, -cand.RetentionOverrideDays)
+			}
+			if cand.DeletedAt.Time.Before(cutoff) {
+				ids = append(ids, cand.ID)
+			}
 		}
 		if len(ids) == 0 {
 			return nil
@@ -210,10 +239,15 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 		// than the stale `ids` list, so a secret restored after the SELECT above is
 		// excluded from every delete below it. A fresh subquery builder is used per
 		// reference since a *gorm.DB is stateful and must not be shared across clauses.
+		// #G43: this re-check only re-asserts "still soft-deleted" (id IN ids AND
+		// deleted_at IS NOT NULL), not the age predicate sqlWhereIDsDeletedBefore
+		// re-asserts elsewhere — ids above was already computed per-secret against
+		// GetEffectiveRetentionDays, which a blanket "< before" re-check would
+		// silently undo for any secret whose override differs from the global window.
 		stillEligible := func() *gorm.DB {
 			return tx.Unscoped().Model(&models.SecretNode{}).
 				Select("id").
-				Where(sqlWhereIDsDeletedBefore, ids, before)
+				Where("id IN ? AND deleted_at IS NOT NULL", ids)
 		}
 		if e := tx.Where("secret_node_id IN (?)", stillEligible()).Delete(&models.SecretVersion{}).Error; e != nil {
 			return e
@@ -223,7 +257,7 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 			return e
 		}
 		rn := tx.Unscoped().
-			Where(sqlWhereIDsDeletedBefore, ids, before).
+			Where("id IN ? AND deleted_at IS NOT NULL", ids).
 			Delete(&models.SecretNode{})
 		if rn.Error != nil {
 			return rn.Error

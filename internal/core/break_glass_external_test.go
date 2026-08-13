@@ -290,6 +290,15 @@ func TestListBreakGlassActivations_ExpiredReconciliation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, core.BreakGlassExpired, list[0].State, "an active grant past expiry reads as expired")
+
+	// #G43: the transition must be PERSISTED to the row, not just reflected in
+	// the in-memory copy returned above — otherwise any consumer reading the
+	// table directly (a storage.type: remote proxy endpoint, a report) sees a
+	// stale 'active' state until the much-later data-retention purge deletes
+	// the row outright.
+	var stored models.BreakGlassActivation
+	require.NoError(t, h.DB.First(&stored, list[0].ID).Error)
+	assert.Equal(t, core.BreakGlassExpired, stored.State, "the TTL-lapse transition must be persisted to the database row")
 }
 
 // An expired break-glass grant must confer NO access at the authorization boundary — not

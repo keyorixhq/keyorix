@@ -87,6 +87,47 @@ func TestRunAutoRotation_RotatesOverdueOptedInOnly(t *testing.T) {
 	assert.Equal(t, 1, latestVersion(t, db, 3).VersionNumber, "non-opted-in secret unchanged")
 }
 
+// TestRunAutoRotation_StampsRotationStateOnSuccess is #G43: SetRotationState was
+// fully wired at the storage layer (with a doc comment claiming "called by the
+// rotation executor when a rotation job starts, completes, or fails") but the
+// executor never actually called it, so GetRotationState always reported "idle"
+// regardless of real activity.
+func TestRunAutoRotation_StampsRotationStateOnSuccess(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30,
+		IsActive: true, CreatedBy: "admin",
+	}).Error)
+	seedRotatableSecret(t, db, 1, "due-managed", true, fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	info, err := c.GetRotationState(context.Background(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, RotationStateSucceeded, info.State)
+	assert.Empty(t, info.LastRotationError)
+}
+
+// TestRunAutoRotation_StampsRotationStateOnFailure covers the failure branch of
+// the same #G43 gap: a backend rotation failure must also be visible via
+// GetRotationState, not just in the run's return value / audit trail.
+func TestRunAutoRotation_StampsRotationStateOnFailure(t *testing.T) {
+	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
+	c, db, fixed := backendPolicyCore(t, fake)
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
+
+	_, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+
+	info, err := c.GetRotationState(context.Background(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, RotationStateFailed, info.State)
+	assert.Contains(t, info.LastRotationError, "connection refused")
+}
+
 // TestRunAutoRotation_AuditEventsCarryProjectID is #G23: every rotation-domain
 // audit event used to be written with ProjectID=nil, even though the secret
 // (and its ProjectID) is known at every one of these call sites — an operator
