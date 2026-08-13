@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -14,6 +15,30 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
+
+// SanitizeForTerminal strips control characters (CR/LF, ANSI/C1 escapes, NUL,
+// etc.) from untrusted text before it's echoed to the operator's terminal in a
+// table/report row. #G69: a crafted username/secret name/description/etc.
+// could otherwise embed terminal escape sequences that overwrite, hide, or
+// spoof rows in a reviewing operator's terminal — undermining the "read this
+// table and trust what it says" use case these commands exist for (audit
+// review, access-review recertification, anomaly triage, compliance
+// evidence, billing/hygiene reports, machine-identity review). Originally
+// local to internal/cli/secret/import.go (the first caller to need it);
+// promoted here so every CLI table/report renderer can share one
+// implementation instead of re-deriving it ad hoc or omitting it entirely. A
+// tab is normalized to a space; other controls are dropped.
+func SanitizeForTerminal(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1 // drop
+		}
+		return r
+	}, s)
+}
 
 // cliActorEnvVar lets an operator self-assert their own Keyorix user ID for local
 // CLI mutations (#150). Local mode has no authenticated session — every core
