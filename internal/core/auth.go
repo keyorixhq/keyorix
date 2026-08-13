@@ -38,11 +38,6 @@ type LoginRequest struct {
 	IPAddress string
 }
 
-// dummyBcryptHash is a fixed bcrypt hash used to equalize the timing of the
-// user-not-found login path with the wrong-password path, so /auth/login can't
-// be used as a username-existence oracle. Initialized in bcrypt_cost.go init().
-var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("keyorix-login-timing-equalizer"), bcryptCost) // NOSONAR -- not a credential; timing-equalization sentinel
-
 // RemoteLoginVerifier is implemented by storage backends that cannot themselves
 // supply a real password hash for VerifyPasswordCredentials to compare against
 // (#506): models.User.PasswordHash is deliberately `json:"-"` and NEVER crosses
@@ -105,7 +100,7 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	if err != nil {
 		// Spend an equivalent bcrypt comparison so a missing username doesn't return
 		// faster than a wrong password (account-enumeration timing side-channel).
-		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(password))
+		_ = bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
 		return nil, fmt.Errorf("invalid credentials")
 	}
 	// Per-account lockout gate: while locked, refuse regardless of the password, so
@@ -114,7 +109,7 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	// fast (no-bcrypt) response on a locked account is a username-existence oracle (the
 	// attacker first forces the lockout, then probes by timing).
 	if c.loginLocked(user) {
-		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(password))
+		_ = bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
 		return nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
