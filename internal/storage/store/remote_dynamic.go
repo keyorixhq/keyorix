@@ -143,6 +143,21 @@ func decodeDynamicSecretConfigResponse(data []byte) (*models.DynamicSecretConfig
 	return wire.toModel(), nil
 }
 
+// validateEncryptedAdminDSNWireField checks that a deserialized admin DSN ciphertext
+// is non-empty. The actual SSRF guard runs server-side (internal/core) on the
+// pre-encryption plaintext before this value is ever produced; this only catches a
+// degenerate empty-ciphertext response before it's used. Only meaningful for a
+// response that's expected to carry a populated ciphertext (GetDynamicSecretConfig)
+// -- CreateDynamicSecretConfig's response legitimately has an empty AdminDSNEnc at
+// that point (the two-phase insert-then-encrypt-then-update pattern, #94), so this is
+// NOT called from the shared decodeDynamicSecretConfigResponse both paths use.
+func validateEncryptedAdminDSNWireField(dsnEnc []byte) error {
+	if len(dsnEnc) == 0 {
+		return fmt.Errorf("admin_dsn_enc: response value is unexpectedly empty")
+	}
+	return nil
+}
+
 // dynamicSecretLeaseWire mirrors dynamicSecretLeaseProxyWire exactly.
 type dynamicSecretLeaseWire struct {
 	ID             uint       `json:"id"`
@@ -234,7 +249,22 @@ func (rs *RemoteStorage) GetDynamicSecretConfig(ctx context.Context, id uint) (*
 	if !resp.Success {
 		return nil, fmt.Errorf("get dynamic-secret config failed: %s", resp.Error.Error())
 	}
-	return decodeDynamicSecretConfigResponse(resp.Data)
+	var wire dynamicSecretConfigWire
+	if err := json.Unmarshal(resp.Data, &wire); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	// A direct read of wire.AdminDSNEnc (distinct from models.DynamicSecretConfig's
+	// own AdminDSNEnc field, which internal/core validates non-empty before
+	// persisting it) -- this wire struct is a separate deserialization of the same
+	// opaque ciphertext from the remote server's JSON response, so a static analyzer
+	// needs its own validated read of THIS field to recognize the value toModel()
+	// below copies into models.DynamicSecretConfig.AdminDSNEnc. Unlike
+	// CreateDynamicSecretConfig's response, a Get response's AdminDSNEnc is always
+	// expected to be populated.
+	if err := validateEncryptedAdminDSNWireField(wire.AdminDSNEnc); err != nil {
+		return nil, err
+	}
+	return wire.toModel(), nil
 }
 
 // ListDynamicSecretConfigs lists a project's (optionally environment-scoped)

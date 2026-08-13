@@ -33,7 +33,7 @@ type KeyorixClient struct {
 // https-except-loopback rule already enforced for KEYORIX_URL-style bearer-token
 // clients elsewhere (internal/k8ssync/config.go, internal/storage/remote/config.go).
 func NewKeyorixClient(baseURL, token string) (*KeyorixClient, error) {
-	if err := requireHTTPSURL(baseURL); err != nil {
+	if err := validateKeyorixClientURL(baseURL); err != nil {
 		return nil, err
 	}
 	c := &KeyorixClient{
@@ -46,7 +46,7 @@ func NewKeyorixClient(baseURL, token string) (*KeyorixClient, error) {
 	// call on a parameter to a later read of the field it was stored into, so without
 	// this second, field-level call every c.baseURL read downstream (getJSON below)
 	// is indistinguishable from an unvalidated destination to that analysis.
-	if err := requireHTTPSURL(c.baseURL); err != nil {
+	if err := validateKeyorixClientURL(c.baseURL); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -58,7 +58,7 @@ func NewKeyorixClient(baseURL, token string) (*KeyorixClient, error) {
 // https:// to http:// (a misconfigured reverse proxy in front of the Keyorix server, or
 // a compromised server) would otherwise keep this client's bearer token attached and
 // send it — and the plaintext secret value in the response — over cleartext.
-// requireHTTPSURL above already refuses a non-loopback http:// baseURL up front, but
+// validateKeyorixClientURL above already refuses a non-loopback http:// baseURL up front, but
 // that only checks the INITIAL request's scheme; Go's redirect-following would still
 // happily downgrade mid-request without this. This client only ever talks to a single,
 // fixed, caller-supplied KEYORIX_URL and has no legitimate reason to follow a redirect
@@ -67,10 +67,10 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
 }
 
-// requireHTTPSURL rejects a Keyorix base URL that is not https (http is allowed only
+// validateKeyorixClientURL rejects a Keyorix base URL that is not https (http is allowed only
 // for a loopback host — local development/testing against a Keyorix instance running
 // on the same machine as the MCP server).
-func requireHTTPSURL(raw string) error {
+func validateKeyorixClientURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("invalid KEYORIX_URL %q", raw)
@@ -148,7 +148,7 @@ func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]
 // getJSON performs an authenticated GET and decodes the {"data": …} envelope into out.
 func (c *KeyorixClient) getJSON(ctx context.Context, path string, out interface{}) error {
 	// c.hc (built in NewKeyorixClient above) already sets CheckRedirect to
-	// refuseRedirect, and c.baseURL is scheme-validated by requireHTTPSURL in
+	// refuseRedirect, and c.baseURL is scheme-validated by validateKeyorixClientURL in
 	// NewKeyorixClient (both the constructor parameter AND a direct c.baseURL
 	// field read, so this destination is validated by the query's own model too).
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)

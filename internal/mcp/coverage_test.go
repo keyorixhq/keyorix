@@ -118,24 +118,24 @@ type errSentinel string
 
 func (e errSentinel) Error() string { return string(e) }
 
-// -- requireHTTPSURL: uncovered branches -------------------------------------
+// -- validateKeyorixClientURL: uncovered branches -------------------------------------
 
 // TestRequireHTTPSURL_InvalidURL covers the url.Parse error / empty host branch.
 func TestRequireHTTPSURL_InvalidURL(t *testing.T) {
 	// An empty string produces a URL with no host.
-	err := requireHTTPSURL("")
+	err := validateKeyorixClientURL("")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid KEYORIX_URL")
 
 	// A relative path also has no host.
-	err2 := requireHTTPSURL("/no-host/path")
+	err2 := validateKeyorixClientURL("/no-host/path")
 	require.Error(t, err2)
 	assert.Contains(t, err2.Error(), "invalid KEYORIX_URL")
 }
 
 // TestRequireHTTPSURL_UnknownScheme covers the default case (not http or https).
 func TestRequireHTTPSURL_UnknownScheme(t *testing.T) {
-	err := requireHTTPSURL("ftp://keyorix.example.com")
+	err := validateKeyorixClientURL("ftp://keyorix.example.com")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must use https")
 }

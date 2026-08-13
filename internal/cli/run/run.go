@@ -240,6 +240,14 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 		token:    token,
 		http:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
 	}
+	// api.endpoint is a distinct field declaration from ClientConfig.Endpoint/
+	// RemoteConfig.BaseURL (already validated in common.ResolveRemote, which this
+	// endpoint parameter is sourced from) -- this direct read of api.endpoint is what
+	// lets a static analyzer recognize the same validation as covering the field
+	// apiClient.get below actually reads.
+	if err := common.ValidateRemoteEndpointURL(api.endpoint); err != nil {
+		return nil, err
+	}
 
 	// ── 1. Resolve project name → ID ─────────────────────────────────────────
 	var projBody struct {

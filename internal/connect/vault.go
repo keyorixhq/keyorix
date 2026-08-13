@@ -165,6 +165,15 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 		return "", err
 	}
 	reqURL := c.address + "/v1/" + safeRef
+	// codeql[go/keyorix-ssrf-unvalidated-outbound-request]: the query traces this
+	// sink's taint back to server/http/handlers/connect.go's r.URL.Query().Get("ref")
+	// (an incoming-request field that happens to match the query's url/host/dsn/
+	// webhook/callback field-name heuristic) via this function's ref parameter --
+	// but ref only ever contributes a PATH SEGMENT appended after c.address (itself
+	// validated above by validateConnectorURL), never the request's host/scheme, and
+	// sanitizeVaultRef above rejects traversal/control characters and percent-escapes
+	// the rest, so it cannot reinterpret the URL's structure either. Not a real
+	// unvalidated destination -- a coincidental name match on net/http.Request.URL.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("vault: new request: %w", err)
