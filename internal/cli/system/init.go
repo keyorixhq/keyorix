@@ -342,7 +342,11 @@ func runRemoteInit() error { // NOSONAR -- cognitive complexity 16, suppress go:
 	fmt.Printf("  keyorix run --env production -- your-app\n")
 
 	if initAdminPassword == "admin" {
-		fmt.Printf("\nWARNING: You are using the default password %q. Change it immediately.\n", initAdminPassword)
+		// Deliberately doesn't interpolate initAdminPassword: it's already known to be
+		// literally "admin" inside this branch, and echoing a caller-supplied secret
+		// back to stdout (terminal scrollback, CI logs) is itself a cleartext-logging
+		// exposure independent of what value it happens to be.
+		fmt.Printf("\nWARNING: You are using the default password %q. Change it immediately.\n", "admin")
 	}
 
 	return nil
