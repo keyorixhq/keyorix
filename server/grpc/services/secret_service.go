@@ -111,7 +111,7 @@ func (s *SecretGRPCService) ListSecretDependencies(ctx context.Context, req *pb.
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
-	deps, err := s.core.ListSecretDependencies(ctx, uint(req.GetId()))
+	deps, err := s.core.ListSecretDependencies(ctx, user.ActorKind(), user.PrincipalID(), uint(req.GetId()))
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
@@ -128,7 +128,7 @@ func (s *SecretGRPCService) GetSecretImpact(ctx context.Context, req *pb.GetSecr
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
-	impact, err := s.core.GetSecretImpact(ctx, uint(req.GetId()))
+	impact, err := s.core.GetSecretImpact(ctx, user.ActorKind(), user.PrincipalID(), uint(req.GetId()))
 	if err != nil {
 		return nil, mapSecretError(err)
 	}

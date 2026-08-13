@@ -15,7 +15,8 @@ import (
 
 // GetBlastRadius handles GET /api/v1/secrets/{id}/blast-radius
 func (h *SecretHandler) GetBlastRadius(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -24,7 +25,7 @@ func (h *SecretHandler) GetBlastRadius(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
-	report, err := h.coreService.GetBlastRadius(r.Context(), uint(id))
+	report, err := h.coreService.GetBlastRadius(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
 		status := dependencyErrorStatus(err.Error())
 		msg := err.Error()
