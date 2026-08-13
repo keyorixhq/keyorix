@@ -275,8 +275,19 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	case MembershipRevoked:
 		m.RevokedAt = &now
 	}
-	if err := c.storage.UpdateProjectMembership(ctx, m); err != nil {
+	// #G42: a blind UpdateProjectMembership (full-row Save) here would race a
+	// concurrent TransitionMembership call on the same membership — m was
+	// read above via GetProjectMembership with no lock, so a concurrent
+	// transition landing between that read and this write would be silently
+	// reverted (or, if this write lands first, silently clobbered). Route
+	// through the conditional write gated on the state this call actually
+	// observed (prevState).
+	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, prevState)
+	if err != nil {
 		return nil, fmt.Errorf("failed to update membership: %w", err)
+	}
+	if !matched {
+		return nil, fmt.Errorf("membership %d: %w", membershipID, ErrMembershipStateConflict)
 	}
 
 	// Side effects on the role grant.
@@ -375,6 +386,11 @@ func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, 
 // audited (flagged for manual cleanup) rather than returned or retried — a partial
 // revert is strictly better than silently leaving the active row standing.
 func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.ProjectMembership, toState string) {
+	// #G42: m.State is still MembershipActive here (TransitionMembership's own
+	// write above just committed it) — capture that as fromState so this
+	// revert's write only matches if nothing else has touched the row since,
+	// same as TransitionMembership's own conditional write.
+	fromState := m.State
 	m.State = toState
 	m.UpdatedAt = c.now()
 	if toState == MembershipRevoked {
@@ -383,7 +399,11 @@ func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.Proj
 	} else {
 		m.ActivatedAt = nil
 	}
-	if err := c.storage.UpdateProjectMembership(ctx, m); err != nil {
+	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, fromState)
+	if err == nil && !matched {
+		err = fmt.Errorf("%w", ErrMembershipStateConflict)
+	}
+	if err != nil {
 		c.auditProjectScoped(ctx, "membership.activation_race_revert_failed", m.UserID, m.ProjectID,
 			fmt.Sprintf("failed to revert orphaned active membership %d for user %d in project %d (state %s) after a role-grant failure: %v — MANUAL CLEANUP REQUIRED",
 				m.ID, m.UserID, m.ProjectID, toState, err))

@@ -329,6 +329,7 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 	// changes (#454) — avoiding a hard failure on RemoteStorage for a plain name/email
 	// PATCH that never touches lifecycle state.
 	origState := user.AccountState
+	wasActive := user.IsActive
 	if displayName != nil {
 		user.DisplayName = *displayName
 	}
@@ -345,11 +346,23 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 		}
 	}
 	user.UpdatedAt = c.now()
-	u, err := tx.UpdateUser(ctx, user)
+	// #G42: LockUserForUpdate above only takes a real row lock on Postgres: on
+	// SQLite (this codebase's default embedded deployment) a deferred
+	// transaction doesn't acquire its exclusive write lock until the FIRST
+	// write statement, leaving a window between this read and that first
+	// write where a concurrent, un-transacted core.UpdateUser call can commit
+	// its own IsActive flip via UpdateUserIfActiveStateMatches. A blind
+	// tx.UpdateUser here would silently revert that flip using the
+	// now-stale in-memory user struct. Route through the same
+	// state-conditional write core.UpdateUser itself uses instead.
+	matched, err := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
 	if err != nil {
 		return nil, false, err
 	}
-	return u, deactivated, nil
+	if !matched {
+		return nil, false, fmt.Errorf("user %d: %w", id, ErrUserActiveStateConflict)
+	}
+	return user, deactivated, nil
 }
 
 // applySCIMActiveState applies an IdP active=true/false directive to the user model,

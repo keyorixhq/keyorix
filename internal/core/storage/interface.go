@@ -516,6 +516,20 @@ type Storage interface {
 	CreateProjectMembership(ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
 	GetProjectMembership(ctx context.Context, id uint) (*models.ProjectMembership, error)
 	UpdateProjectMembership(ctx context.Context, m *models.ProjectMembership) error
+	// TransitionProjectMembershipState persists m's full row via a single
+	// conditional write — "UPDATE ... WHERE id = ? AND state = ?" — succeeding
+	// only if the row's CURRENT persisted state still equals fromState (the
+	// value TransitionMembership/revertFailedActivation observed immediately
+	// before mutating m in memory), mirroring TransitionMachineIdentityState's
+	// exact shape (#G42). Unlike that helper, there's no row lock backing this
+	// read — the conditional write is the ONLY thing closing the race, so
+	// UpdateProjectMembership must never be used for a state transition: a
+	// concurrent TransitionMembership call landing between the read and the
+	// write would otherwise be silently reverted (or silently revert this
+	// call), corrupting the ADR-022 state machine. Returns whether the write
+	// actually matched a row; a false match must be treated exactly like an
+	// illegal transition, not retried or silently overwritten.
+	TransitionProjectMembershipState(ctx context.Context, m *models.ProjectMembership, fromState string) (bool, error)
 	ListProjectMemberships(ctx context.Context, projectID uint) ([]*models.ProjectMembership, error)
 	// GetActiveProjectMembership returns the user's non-revoked membership in a
 	// project, or an error if none exists.

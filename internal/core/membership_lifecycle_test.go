@@ -133,7 +133,7 @@ func TestTransitionMembership_RejectsIllegalJump(t *testing.T) {
 	_, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot transition")
-	store.AssertNotCalled(t, "UpdateProjectMembership", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "TransitionProjectMembershipState", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership is the
@@ -163,9 +163,9 @@ func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *t
 	// any caller whose role is already held via an independent path).
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).
 		Return(fmt.Errorf("Role already assigned"))
-	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.ID == 51 && m.State == MembershipRevoked && m.RevokedAt != nil
-	})).Return(nil)
+	}), MembershipActive).Return(true, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	m, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, false)
@@ -176,7 +176,7 @@ func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *t
 	assert.Nil(t, m)
 
 	// (b) the just-created row was actually reverted, not left standing active.
-	store.AssertNumberOfCalls(t, "UpdateProjectMembership", 1)
+	store.AssertNumberOfCalls(t, "TransitionProjectMembershipState", 1)
 	assert.Equal(t, MembershipRevoked, created.State, "orphaned row must not still read as active")
 	assert.NotNil(t, created.RevokedAt)
 }
@@ -198,15 +198,15 @@ func TestTransitionMembership_ActivationFailure_RevertsToPriorState(t *testing.T
 	store.On("GetProjectMembership", ctx, uint(50)).Return(existing, nil)
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
 	// First write: persists the (about to be reverted) active state.
-	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.ID == 50 && m.State == MembershipActive
-	})).Return(nil).Once()
+	}), MembershipProvisioned).Return(true, nil).Once()
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).
 		Return(fmt.Errorf("Role already assigned"))
 	// Revert write: must go back to `provisioned`, not `revoked`.
-	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.ID == 50 && m.State == MembershipProvisioned
-	})).Return(nil).Once()
+	}), MembershipActive).Return(true, nil).Once()
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	m, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9)
@@ -215,7 +215,7 @@ func TestTransitionMembership_ActivationFailure_RevertsToPriorState(t *testing.T
 	assert.Contains(t, err.Error(), "failed to grant role on activation")
 	assert.Nil(t, m)
 	assert.Equal(t, MembershipProvisioned, existing.State, "must revert to the pre-transition state, not stay active or jump to revoked")
-	store.AssertNumberOfCalls(t, "UpdateProjectMembership", 2)
+	store.AssertNumberOfCalls(t, "TransitionProjectMembershipState", 2)
 }
 
 // Cross-project guard: a membership in project 2 must not be transitionable when
@@ -230,7 +230,7 @@ func TestTransitionMembership_RejectsOtherProject(t *testing.T) {
 	_, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
-	store.AssertNotCalled(t, "UpdateProjectMembership", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "TransitionProjectMembershipState", mock.Anything, mock.Anything, mock.Anything)
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
@@ -240,9 +240,9 @@ func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
 	ctx := context.Background()
 	m := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, Role: "project_developer", State: MembershipProvisioned}
 	store.On("GetProjectMembership", ctx, uint(50)).Return(m, nil)
-	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
+	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
 		return x.State == MembershipActive && x.ActivatedAt != nil
-	})).Return(nil)
+	}), MembershipProvisioned).Return(true, nil)
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -259,9 +259,9 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 	ctx := context.Background()
 	m := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, State: MembershipActive}
 	store.On("GetProjectMembership", ctx, uint(50)).Return(m, nil)
-	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
+	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
 		return x.State == MembershipRevoked && x.RevokedAt != nil
-	})).Return(nil)
+	}), MembershipActive).Return(true, nil)
 	// RemoveProjectMember resolves and drops the role grant (best-effort). The
 	// role (5) doesn't carry roles.assign, so the last-admin guard (#236) is a
 	// fast no-op. ListProjectRoleAssignments is still consulted unconditionally

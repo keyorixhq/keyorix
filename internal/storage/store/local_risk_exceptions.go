@@ -63,9 +63,20 @@ func (ls *LocalStorage) UpdateRiskException(ctx context.Context, e *models.RiskE
 // caller mutated on e — Revoked, RevokedBy, RevokedAt — is persisted in the same
 // statement, not just a hardcoded column subset.
 func (ls *LocalStorage) RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *models.RiskException) (bool, error) {
+	// #G42: unlike ApproveRiskExceptionIfPending (whose WHERE clause already
+	// guards on both revoked AND approved, so it can never clobber a
+	// concurrent revoke), this WHERE clause only guards on revoked — it can't
+	// also gate on approved without incorrectly blocking a legitimate revoke
+	// of an already-approved exception. A Select("*") here would still be
+	// wrong: if a concurrent ApproveRiskException committed between the
+	// caller's GetRiskException read and this write, this call's `e` carries
+	// stale (pre-approval) Approved/ApprovedBy/ApprovedAt, and a full-row
+	// overwrite would silently revert that just-committed approval even
+	// though the revoke itself is legitimate. Whitelist only the columns
+	// this transition actually owns.
 	res := ls.db.WithContext(ctx).Model(&models.RiskException{}).
 		Where("id = ? AND revoked = ?", e.ID, false).
-		Select("*").
+		Select("Revoked", "RevokedBy", "RevokedAt").
 		Updates(e)
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)

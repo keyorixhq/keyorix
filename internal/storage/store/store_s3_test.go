@@ -921,6 +921,46 @@ func TestTransitionDynamicSecretConfigDisabled_ClosesRace(t *testing.T) {
 	assert.True(t, matched3)
 }
 
+// TestTransitionDynamicSecretConfigDisabled_DoesNotClobberConcurrentDSNRotation
+// is #G42: the guard only checks `disabled`, so a concurrent DSN rotation
+// (UpdateDynamicSecretConfig, an unconditional Save that never touches
+// `disabled`) still matches this WHERE clause. The toggle itself must
+// succeed, but must not revert the rotation using its own stale copy of
+// AdminDSNEnc.
+func TestTransitionDynamicSecretConfigDisabled_DoesNotClobberConcurrentDSNRotation(t *testing.T) {
+	ctx := context.Background()
+	ls := newDynamicFullStore(t)
+
+	cfg, err := ls.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
+		Name: "rotate-config", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres",
+		Disabled: false, AdminDSNEnc: []byte("old-dsn"),
+	})
+	require.NoError(t, err)
+
+	// An admin reads the config to disable it — this copy has NO knowledge of
+	// the DSN rotation about to land.
+	toggle := *cfg
+	toggle.Disabled = true
+
+	// A concurrent DSN rotation commits FIRST, via the plain (non-conditional)
+	// update path — this is what a real rotation job uses.
+	rotated := *cfg
+	rotated.AdminDSNEnc = []byte("new-dsn")
+	require.NoError(t, ls.UpdateDynamicSecretConfig(ctx, &rotated))
+
+	// The disable toggle still legitimately matches (disabled was still false
+	// when this call's WHERE clause evaluated) — it must succeed, but must NOT
+	// revert the just-committed DSN rotation using its own stale copy.
+	matched, err := ls.TransitionDynamicSecretConfigDisabled(ctx, &toggle, false)
+	require.NoError(t, err)
+	assert.True(t, matched, "disabling a config that was just rotated is legitimate")
+
+	got, err := ls.GetDynamicSecretConfig(ctx, cfg.ID)
+	require.NoError(t, err)
+	assert.True(t, got.Disabled, "the toggle itself must have taken effect")
+	assert.Equal(t, []byte("new-dsn"), got.AdminDSNEnc, "the concurrent DSN rotation must survive the toggle")
+}
+
 // TestTransitionDynamicSecretConfigDisabled_NotFound verifies the
 // RowsAffected == 0 path when the config id doesn't exist at all.
 func TestTransitionDynamicSecretConfigDisabled_NotFound(t *testing.T) {

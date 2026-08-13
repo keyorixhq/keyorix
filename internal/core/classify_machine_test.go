@@ -18,10 +18,10 @@ func TestClassifyMachineIdentity(t *testing.T) {
 		c := newMachineCore(store)
 		store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, Name: "ci"}, nil)
 		var saved *models.MachineIdentity
-		store.On("UpdateMachineIdentity", mock.Anything, mock.MatchedBy(func(m *models.MachineIdentity) bool {
+		store.On("TransitionMachineIdentityState", mock.Anything, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			saved = m
 			return true
-		})).Return(nil)
+		}), "").Return(true, nil)
 		store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
 			return e.EventType == "machine_identity.classified"
 		})).Return(nil)
@@ -30,6 +30,18 @@ func TestClassifyMachineIdentity(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "restricted", m.Classification)
 		assert.Equal(t, "restricted", saved.Classification)
+	})
+
+	t.Run("loses the race against a concurrent transition", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newMachineCore(store)
+		store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, Name: "ci", State: MachineActive}, nil)
+		store.On("TransitionMachineIdentityState", mock.Anything, mock.Anything, MachineActive).Return(false, nil)
+
+		_, err := c.ClassifyMachineIdentity(ctx, 2, 1, ClassificationRestricted, 9)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrMachineStateConflict)
+		store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 	})
 
 	t.Run("invalid level rejected", func(t *testing.T) {
@@ -46,7 +58,7 @@ func TestClassifyMachineIdentity(t *testing.T) {
 		store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2}, nil)
 		_, err := c.ClassifyMachineIdentity(ctx, 999, 1, ClassificationInternal, 9) // wrong project
 		require.Error(t, err)
-		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "TransitionMachineIdentityState", mock.Anything, mock.Anything, mock.Anything)
 	})
 }
 
