@@ -96,13 +96,15 @@ Requires audit.read.`,
 			"----------------------", "----------------", "----------------",
 			"----------------", "--------------------", "------")
 		for _, e := range report.Changes {
+			// #G69: actor/target/role names are attacker-controlled free text
+			// in this auditor-facing evidence output.
 			fmt.Printf("%-22s  %-16s  %-16s  %-16s  %-20s  %s\n",
 				e.ChangedAt.UTC().Format(permChangeTimeFormat),
-				truncate(e.ActorName, 16),
+				truncate(common.SanitizeForTerminal(e.ActorName), 16),
 				truncate(e.Action, 16),
-				truncate(e.TargetUser, 16),
-				truncate(e.RoleName, 20),
-				e.Scope,
+				truncate(common.SanitizeForTerminal(e.TargetUser), 16),
+				truncate(common.SanitizeForTerminal(e.RoleName), 20),
+				common.SanitizeForTerminal(e.Scope),
 			)
 		}
 		return nil

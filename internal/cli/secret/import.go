@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -109,16 +108,12 @@ type secretEntry struct {
 // embed terminal escape sequences that overwrite or hide the CLI's own status
 // lines during the same run. This only affects what's printed — the value
 // actually stored in the vault is left untouched.
+//
+// #G69: promoted to common.SanitizeForTerminal so every CLI table/report
+// renderer shares one implementation; kept as a local alias here rather than
+// rewriting every call site in this file/package's own extensive test suite.
 func sanitizeForTerminal(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\t' {
-			return ' '
-		}
-		if unicode.IsControl(r) {
-			return -1 // drop
-		}
-		return r
-	}, s)
+	return common.SanitizeForTerminal(s)
 }
 
 func runImport(cmd *cobra.Command, args []string) error {

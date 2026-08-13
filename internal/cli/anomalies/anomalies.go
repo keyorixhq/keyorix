@@ -82,8 +82,12 @@ func runListRemote(rc *common.RemoteClient) error {
 			ack = " [ACK]"
 		}
 		fmt.Printf("[%d] %s | %s | %s%s\n", a.ID, a.Severity, a.AlertType, a.DetectedAt[:min(16, len(a.DetectedAt))], ack)
-		fmt.Printf("    Secret: %s | User: %s | IP: %s\n", a.SecretName, a.AccessedBy, a.IPAddress)
-		fmt.Printf("    %s\n\n", a.Description)
+		// #G69: secret name/accessed-by/description are all attacker-controlled
+		// free text (the actor who triggered the alert influences all three) —
+		// they must not be able to hide or spoof their own alert row.
+		fmt.Printf("    Secret: %s | User: %s | IP: %s\n",
+			common.SanitizeForTerminal(a.SecretName), common.SanitizeForTerminal(a.AccessedBy), common.SanitizeForTerminal(a.IPAddress))
+		fmt.Printf("    %s\n\n", common.SanitizeForTerminal(a.Description))
 	}
 	return nil
 }
