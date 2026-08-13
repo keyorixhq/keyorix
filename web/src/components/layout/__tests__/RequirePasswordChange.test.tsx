@@ -64,4 +64,21 @@ describe('RequirePasswordChange', () => {
         renderAt('/dashboard');
         expect(screen.getByText('App Content')).toBeInTheDocument();
     });
+
+    // #G46: a raw `location.pathname.startsWith(ROUTES.PROFILE)` would also match an
+    // unrelated sibling route that merely shares the '/profile' prefix (e.g.
+    // '/profile-settings') — this must still redirect a restricted user, not treat it
+    // as if it were the profile page.
+    it('redirects a restricted user away from a route that only shares the /profile prefix', () => {
+        mockUser = { id: 1, passwordChangeRequired: true };
+        renderAt('/profile-settings');
+        expect(screen.getByText('Profile Page')).toBeInTheDocument();
+        expect(screen.queryByText('App Content')).not.toBeInTheDocument();
+    });
+
+    it('lets a restricted user reach a true sub-route of /profile', () => {
+        mockUser = { id: 1, passwordChangeRequired: true };
+        renderAt('/profile/security');
+        expect(screen.getByText('App Content')).toBeInTheDocument();
+    });
 });

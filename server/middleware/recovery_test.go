@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,4 +51,45 @@ func TestRecovery_PassesThroughNonPanic(t *testing.T) {
 	Recovery()(ok).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "ok", strings.TrimSpace(rec.Body.String()))
+}
+
+// TestRecovery_RedactsSetupTokenInPanicContextLog is #G29 (high + low): the
+// PANIC CONTEXT log line used to write r.URL.Path raw, bypassing logger.go's
+// redaction entirely — a panic mid-request to GET /auth/setup/{token} would
+// write that single-use bearer credential straight to the panic log.
+func TestRecovery_RedactsSetupTokenInPanicContextLog(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	const token = "panicPathMustNotLeakThisSetupToken456"
+	panicking := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })
+
+	rec := httptest.NewRecorder()
+	Recovery()(panicking).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/setup/"+token, nil))
+
+	logged := buf.String()
+	assert.NotContains(t, logged, token, "the setup token must never reach the panic-context log")
+	assert.Contains(t, logged, "[REDACTED]")
+}
+
+// TestRecovery_RedactsSSOCallbackQueryInPanicContextLog covers the same gap
+// for the OAuth/OIDC SSO callback's authorization code.
+func TestRecovery_RedactsSSOCallbackQueryInPanicContextLog(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	const code = "panicPathMustNotLeakThisOAuthCode789"
+	panicking := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/okta/callback?code="+code+"&state=xyz", nil)
+	Recovery()(panicking).ServeHTTP(rec, req)
+
+	logged := buf.String()
+	assert.NotContains(t, logged, code, "the OAuth authorization code must never reach the panic-context log")
+	assert.Contains(t, logged, "[redacted]")
 }

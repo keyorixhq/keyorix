@@ -75,6 +75,11 @@ func TestRotationWavesDetectsCycle(t *testing.T) {
 
 // --- integration against a real in-memory store ---
 
+// plannerTestActor is granted global admin below so #G32's independent peer-secret
+// authorization check doesn't interfere with these tests, which are about rotation-plan
+// waving/ordering, not authorization.
+const plannerTestActor = uint(1)
+
 func newPlannerCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -82,7 +87,12 @@ func newPlannerCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.RotationPolicy{},
 		&models.SecretDependency{}, &models.ShareRecord{}, &models.SecretAccessLog{}, &models.AuditEvent{},
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.MachineIdentityRole{}, &models.SecretACL{},
 	))
+	role := &models.Role{Name: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: plannerTestActor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db
 }
@@ -112,7 +122,7 @@ func TestGenerateRotationPlan(t *testing.T) {
 	mk(4, "healthy-key", daysAgo(5))   // ok → excluded from the plan
 
 	// overdue-app depends on overdue-db → it must rotate in a later wave.
-	_, err := c.AddSecretDependency(ctx, 1, 1, 2, "app token derives from db password")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, plannerTestActor, 1, 2, "app token derives from db password")
 	require.NoError(t, err)
 
 	plan, err := c.GenerateRotationPlan(ctx, projectID)

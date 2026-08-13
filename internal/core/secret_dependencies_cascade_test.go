@@ -34,9 +34,9 @@ func TestGetProjectRotationOrder_CascadesSoftDeleteAndRestore(t *testing.T) {
 	appTok := mkSecret(t, db, 1, "app-token")
 	cacheKey := mkSecret(t, db, 1, "cache-key")
 	// app-token and cache-key both depend on db-password.
-	_, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "")
 	require.NoError(t, err)
-	_, err = c.AddSecretDependency(ctx, 10, cacheKey, dbPass, "")
+	_, err = c.AddSecretDependency(ctx, ActorTypeUser, 10, cacheKey, dbPass, "")
 	require.NoError(t, err)
 
 	// Baseline: dependency first, then its two dependents (sorted by id).
@@ -61,13 +61,13 @@ func TestGetSecretImpact_CascadesSoftDeleteAndRestore(t *testing.T) {
 	dbPass := mkSecret(t, db, 1, "db-password")
 	appTok := mkSecret(t, db, 1, "app-token")
 	cacheKey := mkSecret(t, db, 1, "cache-key")
-	_, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "")
 	require.NoError(t, err)
-	_, err = c.AddSecretDependency(ctx, 10, cacheKey, dbPass, "")
+	_, err = c.AddSecretDependency(ctx, ActorTypeUser, 10, cacheKey, dbPass, "")
 	require.NoError(t, err)
 
 	impactNames := func() []string {
-		si, err := c.GetSecretImpact(ctx, dbPass)
+		si, err := c.GetSecretImpact(ctx, ActorTypeUser, 10, dbPass)
 		require.NoError(t, err)
 		names := make([]string, len(si.Affected))
 		for i, a := range si.Affected {
@@ -96,9 +96,9 @@ func TestDeleteSecret_EmitsDependencyInvalidatedAuditEvents(t *testing.T) {
 	appTok := mkSecret(t, db, 1, "app-token")
 	cacheKey := mkSecret(t, db, 1, "cache-key")
 	// appTok and cacheKey both depend on dbPass.
-	_, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "")
 	require.NoError(t, err)
-	_, err = c.AddSecretDependency(ctx, 10, cacheKey, dbPass, "")
+	_, err = c.AddSecretDependency(ctx, ActorTypeUser, 10, cacheKey, dbPass, "")
 	require.NoError(t, err)
 
 	// Soft-delete the dependency target (dbPass). Both edges become invalid.
@@ -128,9 +128,9 @@ func TestRestoreSecret_EmitsDependencyRestoredAuditEvents(t *testing.T) {
 	dbPass := mkSecret(t, db, 1, "db-password")
 	appTok := mkSecret(t, db, 1, "app-token")
 	cacheKey := mkSecret(t, db, 1, "cache-key")
-	_, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "")
 	require.NoError(t, err)
-	_, err = c.AddSecretDependency(ctx, 10, cacheKey, dbPass, "")
+	_, err = c.AddSecretDependency(ctx, ActorTypeUser, 10, cacheKey, dbPass, "")
 	require.NoError(t, err)
 
 	require.NoError(t, c.DeleteSecret(ctx, dbPass))
@@ -163,7 +163,7 @@ func TestDeleteSecret_EmitsEventWhenDeletedSecretIsDependent(t *testing.T) {
 	upstream := mkSecret(t, db, 1, "upstream")
 	downstream := mkSecret(t, db, 1, "downstream")
 	// downstream depends on upstream.
-	_, err := c.AddSecretDependency(ctx, 10, downstream, upstream, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, downstream, upstream, "")
 	require.NoError(t, err)
 
 	// Delete the dependent (downstream). The edge is incident to it, so one event

@@ -64,9 +64,19 @@ func runRender(_ *cobra.Command, args []string) error {
 	}
 
 	if renderOutput != "" {
-		// #nosec G703 -- renderOutput is the operator's own --output flag (trusted CLI input).
-		if err := os.WriteFile(renderOutput, []byte(out), 0o600); err != nil {
+		// #G26: os.WriteFile follows a symlink at renderOutput and truncates whatever it
+		// points to — createSecureOutputFile (export.go) refuses that (O_EXCL+O_NOFOLLOW).
+		f, err := createSecureOutputFile(renderOutput)
+		if err != nil {
 			return fmt.Errorf("write output: %w", err)
+		}
+		_, werr := f.Write([]byte(out))
+		cerr := f.Close()
+		if werr != nil {
+			return fmt.Errorf("write output: %w", werr)
+		}
+		if cerr != nil {
+			return fmt.Errorf("write output: %w", cerr)
 		}
 		fmt.Printf("✓ Rendered to %s\n", renderOutput)
 		return nil

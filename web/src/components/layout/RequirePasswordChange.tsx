@@ -2,6 +2,7 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { useAuth } from '../../features/auth';
 import { ROUTES } from '../../constants';
+import { matchesRoutePrefix } from '../../utils/routing';
 
 interface RequirePasswordChangeProps {
     children: React.ReactNode;
@@ -19,7 +20,7 @@ export const RequirePasswordChange: React.FC<RequirePasswordChangeProps> = ({ ch
     const { user } = useAuth();
     const location = useLocation();
 
-    if (user?.passwordChangeRequired && !location.pathname.startsWith(ROUTES.PROFILE)) {
+    if (user?.passwordChangeRequired && !matchesRoutePrefix(location.pathname, ROUTES.PROFILE)) {
         return <Navigate to={ROUTES.PROFILE} replace />;
     }
 

@@ -197,7 +197,15 @@ func SecureDeleteFile(path string) error {
 	}
 	size := info.Size()
 
-	f, err := os.OpenFile(path, os.O_WRONLY, 0) // #nosec G304 -- caller-controlled key-backup path, not network input
+	// #G26: every other write primitive in this file (SecureWriteFile,
+	// SecureWriteFileSync, FixFilePerms) opens with O_NOFOLLOW; this one didn't — a
+	// symlink at path (planted after the Stat above, or simply never checked for) would
+	// have this shred-then-unlink through it to the symlink's target, overwriting an
+	// arbitrary file the process can write to with random-then-zero bytes. os.Remove
+	// below still only unlinks the symlink itself, never touching the shredded target —
+	// so without O_NOFOLLOW this destroys arbitrary file content while leaving no trace
+	// at the expected path.
+	f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- caller-controlled key-backup path, not network input
 	if err != nil {
 		return err
 	}

@@ -218,6 +218,15 @@ func (m Migrator) DropConstraint(value interface{}, name string) error {
 	})
 }
 
+// likeEscaper escapes SQLite LIKE's own wildcard characters ('%', '_') plus the escape
+// character itself, so a value spliced into a LIKE pattern is matched literally. #G46: a
+// constraint name containing '_' (extremely common — GORM's own default FK-name
+// convention is "fk_<table>_<column>") was previously spliced unescaped, where '_'
+// matches ANY single character in a LIKE pattern — silently over-matching a similarly-
+// shaped but different constraint and corrupting HasConstraint's existence check (a false
+// positive here makes a migration skip creating a genuinely-missing constraint).
+var likeEscaper = strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_")
+
 func (m Migrator) HasConstraint(value interface{}, name string) bool {
 	var count int64
 	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
@@ -225,10 +234,11 @@ func (m Migrator) HasConstraint(value interface{}, name string) bool {
 		if constraint != nil {
 			name = constraint.GetName()
 		}
+		escaped := likeEscaper.Replace(name)
 
 		_ = m.DB.Raw(
-			"SELECT count(*) FROM sqlite_master WHERE type = ? AND tbl_name = ? AND (sql LIKE ? OR sql LIKE ? OR sql LIKE ? OR sql LIKE ? OR sql LIKE ?)",
-			"table", table, `%CONSTRAINT "`+name+`" %`, `%CONSTRAINT `+name+` %`, "%CONSTRAINT `"+name+"`%", "%CONSTRAINT ["+name+"]%", "%CONSTRAINT \t"+name+"\t%",
+			"SELECT count(*) FROM sqlite_master WHERE type = ? AND tbl_name = ? AND (sql LIKE ? ESCAPE '\\' OR sql LIKE ? ESCAPE '\\' OR sql LIKE ? ESCAPE '\\' OR sql LIKE ? ESCAPE '\\' OR sql LIKE ? ESCAPE '\\')",
+			"table", table, `%CONSTRAINT "`+escaped+`" %`, `%CONSTRAINT `+escaped+` %`, "%CONSTRAINT `"+escaped+"`%", "%CONSTRAINT ["+escaped+"]%", "%CONSTRAINT \t"+escaped+"\t%",
 		).Row().Scan(&count)
 
 		return nil

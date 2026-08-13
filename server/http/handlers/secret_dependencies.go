@@ -44,7 +44,8 @@ func dependencyErrorStatus(msg string) int {
 
 // ListSecretDependencies handles GET /api/v1/secrets/{id}/dependencies
 func (h *SecretHandler) ListSecretDependencies(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -53,7 +54,7 @@ func (h *SecretHandler) ListSecretDependencies(w http.ResponseWriter, r *http.Re
 		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
-	deps, err := h.coreService.ListSecretDependencies(r.Context(), uint(id))
+	deps, err := h.coreService.ListSecretDependencies(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return
@@ -85,7 +86,7 @@ func (h *SecretHandler) AddSecretDependency(w http.ResponseWriter, r *http.Reque
 		h.sendError(w, "InvalidParameter", "depends_on_id is required", http.StatusBadRequest, nil)
 		return
 	}
-	dep, err := h.coreService.AddSecretDependency(r.Context(), userCtx.UserID, uint(id), reqBody.DependsOnID, reqBody.Note)
+	dep, err := h.coreService.AddSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), reqBody.DependsOnID, reqBody.Note)
 	if err != nil {
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return
@@ -110,7 +111,7 @@ func (h *SecretHandler) RemoveSecretDependency(w http.ResponseWriter, r *http.Re
 		h.sendError(w, "InvalidParameter", "Invalid dependency ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RemoveSecretDependency(r.Context(), userCtx.UserID, uint(id), uint(depID)); err != nil {
+	if err := h.coreService.RemoveSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), uint(depID)); err != nil {
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return
 	}
@@ -119,7 +120,8 @@ func (h *SecretHandler) RemoveSecretDependency(w http.ResponseWriter, r *http.Re
 
 // GetSecretImpact handles GET /api/v1/secrets/{id}/impact
 func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -128,7 +130,7 @@ func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) 
 		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
-	impact, err := h.coreService.GetSecretImpact(r.Context(), uint(id))
+	impact, err := h.coreService.GetSecretImpact(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return
@@ -141,7 +143,8 @@ func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) 
 // if the given secret were soft-deleted: direct dependent count, total transitive
 // count, all affected IDs, and the maximum dependency chain depth reached.
 func (h *SecretHandler) GetSecretImpactPreview(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -150,7 +153,7 @@ func (h *SecretHandler) GetSecretImpactPreview(w http.ResponseWriter, r *http.Re
 		h.sendError(w, "InvalidParameter", errInvalidSecretID, http.StatusBadRequest, nil)
 		return
 	}
-	preview, err := h.coreService.GetSecretImpactPreview(r.Context(), uint(id))
+	preview, err := h.coreService.GetSecretImpactPreview(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return

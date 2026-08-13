@@ -109,6 +109,30 @@ func TestInviteMember_RejectsDisallowedDomain(t *testing.T) {
 	store.AssertNotCalled(t, "CreateProjectMembership", mock.Anything, mock.Anything)
 }
 
+// TestDomainAllowed_RejectsMalformedMultiAtEmail is #G46: domainAllowed used to extract
+// the domain via strings.LastIndex(email, "@"), which silently accepts a malformed
+// multi-'@' address like "attacker@evil.com@allowed.com" and reports "allowed.com" (its
+// trailing segment) as the domain — a parser-differential risk if any downstream mail/
+// identity consumer of the same raw string parses '@' differently. A well-formed email
+// has exactly one '@'; anything else must be rejected outright, not domain-guessed.
+func TestDomainAllowed_RejectsMalformedMultiAtEmail(t *testing.T) {
+	store := new(MockStorage)
+	c := newMembershipCore(store)
+	c.membershipDomainAllowlist = []string{"allowed.com"}
+
+	adversarial := []string{
+		"attacker@evil.com@allowed.com",
+		"attacker@allowed.com@evil.com",
+		"@allowed.com",
+		"user@",
+		"nodomainatall",
+	}
+	for _, email := range adversarial {
+		assert.False(t, c.domainAllowed(email), "%q must be rejected as malformed, not domain-guessed", email)
+	}
+	assert.True(t, c.domainAllowed("user@allowed.com"), "a well-formed single-'@' email on the allowlist must still pass")
+}
+
 func TestInviteMember_RejectsDuplicate(t *testing.T) {
 	store := new(MockStorage)
 	c := newMembershipCore(store)

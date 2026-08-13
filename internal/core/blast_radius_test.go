@@ -60,6 +60,16 @@ func TestBlastRiskLevel_AllBranches(t *testing.T) {
 
 // ── GetBlastRadius integration tests using real SQLite ────────────────────────
 
+// blastRadiusTestActor is the caller identity used by every real-SQLite test in this
+// file (see newBlastRadiusCore's grantGlobalAdmin call). #G32: GetBlastRadius now
+// independently authorizes each peer secret it discloses, so a caller with no RBAC
+// grant at all would see every Dependents entry filtered out — these tests are about
+// the BFS/risk-level shape, not authorization, so the fixture actor is granted global
+// admin to keep that orthogonal (peer-authorization-gap regression tests live in
+// TestGetBlastRadius_DoesNotDiscloseUnauthorizedPeer below, with a deliberately
+// unprivileged actor).
+const blastRadiusTestActor = uint(999)
+
 // newBlastRadiusCore creates an isolated in-memory core for blast-radius tests.
 func newBlastRadiusCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
@@ -68,13 +78,22 @@ func newBlastRadiusCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{},
 		&models.SecretDependency{},
+		&models.SecretACL{},
 		&models.AuditEvent{},
 		&models.Project{},
 		&models.Environment{},
 		&models.ShareRecord{},
+		&models.User{}, &models.Role{}, &models.UserRole{},
+		&models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.MachineIdentityRole{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
+	// Global admin bypass for blastRadiusTestActor (see its doc comment above).
+	role := &models.Role{Name: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: blastRadiusTestActor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db
@@ -117,7 +136,7 @@ func mkBlastDep(t *testing.T, db *gorm.DB, dependent, dependsOn uint) {
 
 func TestGetBlastRadius_SourceNotFound(t *testing.T) {
 	c, _ := newBlastRadiusCore(t)
-	_, err := c.GetBlastRadius(context.Background(), 99999)
+	_, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, 99999)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -125,7 +144,7 @@ func TestGetBlastRadius_SourceNotFound(t *testing.T) {
 func TestGetBlastRadius_NoDependents(t *testing.T) {
 	c, db := newBlastRadiusCore(t)
 	srcID := mkBlastSecret(t, db, "standalone")
-	report, err := c.GetBlastRadius(context.Background(), srcID)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, srcID)
 	require.NoError(t, err)
 	assert.Equal(t, srcID, report.SourceSecretID)
 	assert.Equal(t, "standalone", report.SourceSecretName)
@@ -140,7 +159,7 @@ func TestGetBlastRadius_OneDirectDependent(t *testing.T) {
 	depID := mkBlastSecret(t, db, "app-token", withOwner(20))
 	mkBlastDep(t, db, depID, srcID) // app-token depends on db-password
 
-	report, err := c.GetBlastRadius(context.Background(), srcID)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, srcID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.TotalImpact)
 	assert.Equal(t, 1, report.MaxDepth)
@@ -162,7 +181,7 @@ func TestGetBlastRadius_TransitiveDependents(t *testing.T) {
 	mkBlastDep(t, db, b, a)  // B depends on A
 	mkBlastDep(t, db, cc, b) // C depends on B
 
-	report, err := c.GetBlastRadius(context.Background(), a)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, a)
 	require.NoError(t, err)
 	assert.Equal(t, 2, report.TotalImpact)
 	assert.Equal(t, 2, report.MaxDepth)
@@ -192,7 +211,7 @@ func TestGetBlastRadius_CycleDetection(t *testing.T) {
 
 	// Starting from A: B is a direct dependent (depth=1).
 	// From B, A is a dependent, but A is already visited → stop.
-	report, err := c.GetBlastRadius(context.Background(), a)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, a)
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.TotalImpact) // only B, not A again
 	assert.Equal(t, b, report.Dependents[0].SecretID)
@@ -208,7 +227,7 @@ func TestGetBlastRadius_MaxDepthRespected(t *testing.T) {
 		prev = next
 	}
 
-	report, err := c.GetBlastRadius(context.Background(), 1)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, 1)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, report.MaxDepth, 10,
 		"BFS must not exceed maxDepth=10, got %d", report.MaxDepth)
@@ -228,7 +247,7 @@ func TestGetBlastRadius_NotTruncatedWhenWithinDepth(t *testing.T) {
 		prev = next
 	}
 
-	report, err := c.GetBlastRadius(context.Background(), 1)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, 1)
 	require.NoError(t, err)
 	assert.False(t, report.Truncated)
 }
@@ -240,7 +259,7 @@ func TestGetBlastRadius_RiskLevelCritical(t *testing.T) {
 	depID := mkBlastSecret(t, db, "dep-secret")
 	mkBlastDep(t, db, depID, srcID)
 
-	report, err := c.GetBlastRadius(context.Background(), srcID)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, srcID)
 	require.NoError(t, err)
 	require.Len(t, report.Dependents, 1)
 	assert.Equal(t, "critical", report.Dependents[0].RiskLevel)
@@ -253,7 +272,7 @@ func TestGetBlastRadius_RiskLevelDepClassification(t *testing.T) {
 	depID := mkBlastSecret(t, db, "restricted-dep", withClassification("restricted"))
 	mkBlastDep(t, db, depID, srcID)
 
-	report, err := c.GetBlastRadius(context.Background(), srcID)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, srcID)
 	require.NoError(t, err)
 	require.Len(t, report.Dependents, 1)
 	assert.Equal(t, "critical", report.Dependents[0].RiskLevel)
@@ -269,7 +288,7 @@ func TestGetBlastRadius_RiskLevelHighFromDeepConfidential(t *testing.T) {
 	mkBlastDep(t, db, midID, srcID)  // depth=1
 	mkBlastDep(t, db, leafID, midID) // depth=2
 
-	report, err := c.GetBlastRadius(context.Background(), srcID)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, srcID)
 	require.NoError(t, err)
 	require.Len(t, report.Dependents, 2)
 	// depth=1 node → high (from depth=1 rule, not critical since src is confidential not restricted)
@@ -289,7 +308,7 @@ func TestGetBlastRadius_RiskLevelLow(t *testing.T) {
 	mkBlastDep(t, db, cc, b)
 	mkBlastDep(t, db, d, cc)
 
-	report, err := c.GetBlastRadius(context.Background(), a)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, a)
 	require.NoError(t, err)
 	require.Len(t, report.Dependents, 3)
 	assert.Equal(t, "low", report.Dependents[2].RiskLevel) // depth=3
@@ -306,7 +325,7 @@ func TestGetBlastRadius_SameDeptSortedByID(t *testing.T) {
 	mkBlastDep(t, db, bID, aID) // B depends on A (depth=1)
 	mkBlastDep(t, db, cID, aID) // C depends on A (depth=1)
 
-	report, err := c.GetBlastRadius(context.Background(), aID)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, aID)
 	require.NoError(t, err)
 	assert.Equal(t, 2, report.TotalImpact)
 	assert.Equal(t, 1, report.MaxDepth)
@@ -331,7 +350,7 @@ func TestGetBlastRadius_StorageErrorOnListDependencies(t *testing.T) {
 	ms.On("ListSecretDependenciesForProject", mock.Anything, uint(1)).
 		Return(nil, errors.New("db error"))
 
-	_, err := c.GetBlastRadius(context.Background(), 1)
+	_, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db error")
 }
@@ -341,7 +360,7 @@ func TestGetBlastRadius_SourceIsFolder_Rejected(t *testing.T) {
 	folder := &models.SecretNode{ID: 5, ProjectID: 1, EnvironmentID: 1, Name: "folder", IsSecret: false}
 	ms.On("GetSecret", mock.Anything, uint(5)).Return(folder, nil)
 
-	_, err := c.GetBlastRadius(context.Background(), 5)
+	_, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not a secret")
 }
@@ -365,7 +384,7 @@ func TestGetBlastRadius_SkipsSoftDeletedDependent(t *testing.T) {
 	// Then during the BFS result phase, GetSecret is called again and returns not-found
 	ms.On("GetSecret", mock.Anything, uint(2)).Return(nil, errors.New("not found"))
 
-	report, err := c.GetBlastRadius(context.Background(), 1)
+	report, err := c.GetBlastRadius(context.Background(), ActorTypeUser, blastRadiusTestActor, 1)
 	require.NoError(t, err)
 	assert.Empty(t, report.Dependents)
 	assert.Equal(t, 0, report.TotalImpact)
