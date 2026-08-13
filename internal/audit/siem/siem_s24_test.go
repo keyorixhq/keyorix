@@ -3,11 +3,13 @@ package siem
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -150,32 +152,38 @@ func TestSpool_ReplayFileVanishesMidReconcileWithRemaining(t *testing.T) {
 	assert.NoError(t, statErr, "replay must re-persist failed lines even if the file vanished mid-reconcile")
 }
 
-// TestSpool_TailScanErrorIsLogged verifies that a bufio.ErrTooLong error
-// encountered while scanning the concurrent-append tail (the second scanner
-// inside replay()) triggers the "tail-scan stopped early" log message.
-// This exercises the `ts.Err()` error branch at line ~216 of spool.go.
-func TestSpool_TailScanErrorIsLogged(t *testing.T) {
+// TestSpool_OversizedTailLineIsSkippedNotFatal is #G56: an oversized line
+// appended concurrently (landing in the "tail" — bytes beyond snapshotLen that
+// the reconcile step scans separately) used to make bufio.Scanner stop
+// entirely, silently losing everything scanned after it. Now only the
+// oversized tail line itself is skipped (logged) — a well-formed event added
+// AFTER it in the same concurrent-append tail must still be kept for replay.
+func TestSpool_OversizedTailLineIsSkippedNotFatal(t *testing.T) {
 	dir := t.TempDir()
 	tr := true
 
-	// The deliver hook appends an oversized line to the spool on first call,
-	// making it land in the "tail" (bytes beyond snapshotLen) that the second
-	// scanner reads during reconcile. The delivery itself succeeds so the
-	// snapshot lines are removed; only the oversized tail causes the scan error.
+	// The deliver hook appends an oversized line, then a well-formed one, to the
+	// spool on the first call — both land in the "tail" (bytes beyond
+	// snapshotLen) that the reconcile step scans after delivery. The delivery
+	// itself succeeds so the snapshot line is removed; only the tail matters.
+	var mu sync.Mutex
+	var delivered []uint
 	var hookCount int
 	hook := func(_ context.Context, e *models.AuditEvent) error {
 		hookCount++
 		if hookCount == 1 {
-			// Append an oversized line into the spool while holding no lock
-			// (simulating a concurrent add with an enormous payload). This makes
-			// the tail-scan hit bufio.ErrTooLong.
 			f, ferr := os.OpenFile(filepath.Join(dir, spoolFileName), os.O_APPEND|os.O_WRONLY, 0o600)
 			if ferr == nil {
 				oversized := bytes.Repeat([]byte("x"), 5<<20) // 5 MiB > 4 MiB cap
 				_, _ = f.Write(append(oversized, '\n'))
+				wellFormed, _ := json.Marshal(&models.AuditEvent{ID: 21, EventType: "secret.read", Success: &tr})
+				_, _ = f.Write(append(wellFormed, '\n'))
 				_ = f.Close()
 			}
 		}
+		mu.Lock()
+		delivered = append(delivered, e.ID)
+		mu.Unlock()
 		return nil // delivery succeeds
 	}
 
@@ -191,23 +199,15 @@ func TestSpool_TailScanErrorIsLogged(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(prevOut) })
 
 	s.replay()
+	// The well-formed tail event (id 21) survived the reconcile and is now on
+	// disk for the next replay to pick up.
+	s.replay()
 
-	assert.Contains(t, logBuf.String(), "tail-scan stopped early",
-		"an oversized tail line must trigger the tail-scan error log")
-}
-
-// TestData2Reader verifies the data2reader helper returns a working reader
-// over the supplied bytes. Although it is exercised implicitly by replay(),
-// a direct unit test ensures the helper itself is counted as covered.
-func TestData2Reader(t *testing.T) {
-	input := []byte("hello world")
-	r := data2reader(input)
-	require.NotNil(t, r)
-	buf := make([]byte, len(input))
-	n, readErr := r.Read(buf)
-	require.NoError(t, readErr)
-	assert.Equal(t, len(input), n)
-	assert.Equal(t, input, buf[:n])
+	assert.Contains(t, logBuf.String(), "oversized spool line",
+		"an oversized tail line must be logged, not silently dropped")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, delivered, uint(21), "the well-formed tail event after the oversized line must still be replayed")
 }
 
 // TestSpool_LoopTickerDrivesReplay verifies that the background loop's ticker

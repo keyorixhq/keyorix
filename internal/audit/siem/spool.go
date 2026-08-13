@@ -10,7 +10,6 @@
 package siem
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -32,6 +31,12 @@ const (
 	// audit chain remains the durable system of record regardless. Beyond the cap, new
 	// events are dropped (counted) rather than appended.
 	defaultSpoolMaxBytes int64 = 100 << 20 // 100 MiB
+	// maxSpoolLineBytes bounds a single spool line (one JSON-encoded audit event). A
+	// line exceeding this is corrupt/oversized and is SKIPPED — not fatal to the rest
+	// of the file (#G56: bufio.Scanner's default behavior on a token over its buffer
+	// cap is to stop scanning entirely, which silently dropped every legitimate event
+	// after the oversized line on the next rewrite).
+	maxSpoolLineBytes = 4 << 20 // 4 MiB
 )
 
 // spool persists undelivered events and replays them on an interval. deliverOnce
@@ -151,18 +156,13 @@ func (s *spool) replay() { // NOSONAR -- cognitive complexity 26, suppress go:S3
 	}
 
 	var remaining [][]byte
-	sc := bufio.NewScanner(data2reader(data))
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
+	for _, line := range scanSpoolLines(data) {
 		var event models.AuditEvent
 		if err := json.Unmarshal(line, &event); err != nil {
 			// A corrupt line can never be delivered; drop it loudly rather than wedging
 			// the whole spool on it forever.
 			log.Printf("siem: discarding unparseable spool line: %v", err)
+			siemForwards.WithLabelValues(outcomeSpoolCorrupt).Inc()
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
@@ -175,14 +175,6 @@ func (s *spool) replay() { // NOSONAR -- cognitive complexity 26, suppress go:S3
 		} else {
 			siemForwards.WithLabelValues(outcomeDelivered).Inc()
 		}
-	}
-	if err := sc.Err(); err != nil {
-		// bufio.Scanner stops silently on any read/token error (e.g. bufio.ErrTooLong for a
-		// line over the buffer cap, or a torn write). Everything from the failing line onward
-		// was never scanned, so it's about to be dropped by the rewrite below — log loudly so
-		// this isn't silent, even though we deliberately don't abort the replay (the lines
-		// already reconciled above are still correctly delivered/kept).
-		log.Printf("siem: spool scan stopped early (data past this point is being dropped from the spool): %v", err)
 	}
 
 	// Reconcile under the lock: the file is now [snapshot bytes][lines add()ed meanwhile].
@@ -201,20 +193,7 @@ func (s *spool) replay() { // NOSONAR -- cognitive complexity 26, suppress go:S3
 		return
 	}
 	if int64(len(cur)) > snapshotLen {
-		ts := bufio.NewScanner(data2reader(cur[snapshotLen:]))
-		ts.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-		for ts.Scan() {
-			line := ts.Bytes()
-			if len(bytes.TrimSpace(line)) == 0 {
-				continue
-			}
-			kept := make([]byte, len(line))
-			copy(kept, line)
-			remaining = append(remaining, kept)
-		}
-		if err := ts.Err(); err != nil {
-			log.Printf("siem: spool tail-scan stopped early (data past this point is being dropped from the spool): %v", err)
-		}
+		remaining = append(remaining, scanSpoolLines(cur[snapshotLen:])...)
 	}
 
 	if len(remaining) == 0 {
@@ -260,6 +239,33 @@ func (s *spool) close() {
 	<-s.done
 }
 
-// data2reader wraps a byte slice as an io.Reader for the scanner without pulling in
-// bytes.NewReader at every call site.
-func data2reader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
+// scanSpoolLines splits data on newlines and returns the non-blank lines, each a
+// fresh slice safe to retain past data's lifetime. A line exceeding
+// maxSpoolLineBytes is corrupt/oversized and is SKIPPED (logged + counted) rather
+// than treated as fatal — #G56: data is already fully in memory (read via
+// os.ReadFile by the caller), so there is no streaming-buffer memory risk to
+// guard against here; the cap exists only to bound a single malformed/oversized
+// record, and one such record must not take the rest of the file down with it.
+func scanSpoolLines(data []byte) [][]byte {
+	var lines [][]byte
+	for len(data) > 0 {
+		var line []byte
+		if idx := bytes.IndexByte(data, '\n'); idx >= 0 {
+			line, data = data[:idx], data[idx+1:]
+		} else {
+			line, data = data, nil
+		}
+		if len(line) > maxSpoolLineBytes {
+			log.Printf("siem: discarding oversized spool line (%d bytes > %d cap)", len(line), maxSpoolLineBytes)
+			siemForwards.WithLabelValues(outcomeSpoolCorrupt).Inc()
+			continue
+		}
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		kept := make([]byte, len(line))
+		copy(kept, line)
+		lines = append(lines, kept)
+	}
+	return lines
+}

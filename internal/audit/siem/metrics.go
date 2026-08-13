@@ -13,12 +13,17 @@ import (
 
 var (
 	// siemForwards counts each audit event by terminal outcome:
-	//   - delivered: the SIEM accepted it (2xx).
-	//   - failed:    a permanent error (4xx) or retries exhausted / abandoned on shutdown.
-	//   - dropped:   the bounded queue was full (a wedged SIEM) so it was never sent.
+	//   - delivered:     the SIEM accepted it (2xx).
+	//   - failed:        a permanent error (4xx) or retries exhausted / abandoned on shutdown.
+	//   - dropped:       the bounded in-memory queue was full (a wedged SIEM) so it was
+	//     never sent.
+	//   - spool_corrupt: a spool line exceeded the per-line size cap or failed to parse
+	//     as JSON during replay — a distinct failure mode from "dropped" (#G56): this is
+	//     data corruption/oversize on disk, not backpressure, so it must be visible
+	//     separately rather than folded into either dropped or failed.
 	siemForwards = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "keyorix_siem_forwards_total",
-		Help: "SIEM audit-event forwards by terminal outcome (delivered|failed|dropped).",
+		Help: "SIEM audit-event forwards by terminal outcome (delivered|failed|dropped|spool_corrupt).",
 	}, []string{"outcome"})
 
 	// siemRetries counts forwards retried after a transient (5xx/429/transport) failure.
@@ -35,4 +40,7 @@ const (
 	// spooled: persisted to the on-disk durable spool for later replay instead of being
 	// dropped (only when Config.SpoolDir is set).
 	outcomeSpooled = "spooled"
+	// spoolCorrupt: a spool line was skipped during replay for being oversized or
+	// unparseable — see siemForwards' doc comment.
+	outcomeSpoolCorrupt = "spool_corrupt"
 )
