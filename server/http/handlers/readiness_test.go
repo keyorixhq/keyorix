@@ -41,7 +41,7 @@ func TestReadinessCheck(t *testing.T) {
 	})
 
 	t.Run("reports 503 not_ready when the database is unreachable", func(t *testing.T) {
-		require.NoError(t, sqlDB.Close()) // sever the DB connection → SELECT 1 fails
+		require.NoError(t, sqlDB.Close())            // sever the DB connection → SELECT 1 fails
 		fakeNow = fakeNow.Add(2 * readinessCacheTTL) // force the cached "ready" result to expire
 		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 		w := httptest.NewRecorder()
