@@ -79,6 +79,16 @@ func (h *AuthHandler) ListSSOProviders(w http.ResponseWriter, _ *http.Request) {
 // BeginSSO handles GET /auth/sso/{provider}/login — redirects the browser to the IdP
 // authorization endpoint with a fresh state + nonce.
 func (h *AuthHandler) BeginSSO(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	if h.coreService.IsSSOBeginRateLimited(r.Context(), ip) {
+		sendError(w, "TooManyRequests", "Too many login attempts. Try again later.", http.StatusTooManyRequests, nil)
+		return
+	}
+	h.coreService.RecordSSOBeginAttempt(r.Context(), ip)
+
 	provider := chi.URLParam(r, "provider")
 	authURL, err := h.coreService.BeginSSO(r.Context(), provider, r.URL.Query().Get("return_to"))
 	if err != nil {

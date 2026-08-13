@@ -63,6 +63,53 @@ func TestRateLimit_EmptyIPNeverLimited(t *testing.T) {
 	assert.False(t, c.IsLoginRateLimited(ctx, ""), "an empty IP is never rate-limited")
 }
 
+// TestRateLimit_SSOBegin_BlocksAtBudgetAndExpiresWithWindow is #G82: BeginSSO/
+// BeginSAML previously had no rate limit at all, letting an unauthenticated
+// flood grow the SSOLoginState table without bound.
+func TestRateLimit_SSOBegin_BlocksAtBudgetAndExpiresWithWindow(t *testing.T) {
+	c, setNow := newRateLimitCore(t)
+	ctx := context.Background()
+	base := c.now()
+
+	for i := 0; i < SSOBeginMaxAttempts-1; i++ {
+		c.RecordSSOBeginAttempt(ctx, "1.2.3.4")
+	}
+	assert.False(t, c.IsSSOBeginRateLimited(ctx, "1.2.3.4"), "under budget is allowed")
+
+	c.RecordSSOBeginAttempt(ctx, "1.2.3.4")
+	assert.True(t, c.IsSSOBeginRateLimited(ctx, "1.2.3.4"), "at the budget the IP is blocked")
+
+	assert.False(t, c.IsSSOBeginRateLimited(ctx, "9.9.9.9"), "a different IP is unaffected")
+
+	setNow(base.Add(SSOBeginWindow + time.Minute))
+	assert.False(t, c.IsSSOBeginRateLimited(ctx, "1.2.3.4"), "attempts age out of the window")
+}
+
+func TestRateLimit_SSOBegin_EmptyIPNeverLimited(t *testing.T) {
+	c, _ := newRateLimitCore(t)
+	ctx := context.Background()
+	for i := 0; i < SSOBeginMaxAttempts+5; i++ {
+		c.RecordSSOBeginAttempt(ctx, "")
+	}
+	assert.False(t, c.IsSSOBeginRateLimited(ctx, ""), "an empty IP is never rate-limited")
+}
+
+// TestRateLimit_SSOBegin_SharesLoginAttemptTableButOwnBudget confirms the
+// ssoRateLimitPrefix namespacing: an IP flooding the login endpoint doesn't
+// also consume its SSO-begin budget, and vice versa — they're independent
+// counters sharing one table (matching the existing password-reset prefix
+// convention).
+func TestRateLimit_SSOBegin_SharesLoginAttemptTableButOwnBudget(t *testing.T) {
+	c, _ := newRateLimitCore(t)
+	ctx := context.Background()
+
+	for i := 0; i < LoginMaxAttempts; i++ {
+		c.RecordFailedLogin(ctx, "1.2.3.4")
+	}
+	require.True(t, c.IsLoginRateLimited(ctx, "1.2.3.4"))
+	assert.False(t, c.IsSSOBeginRateLimited(ctx, "1.2.3.4"), "login attempts must not consume the SSO-begin budget")
+}
+
 func TestRateLimit_PruneRemovesAgedRows(t *testing.T) {
 	c, setNow := newRateLimitCore(t)
 	ctx := context.Background()

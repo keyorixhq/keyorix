@@ -477,6 +477,26 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("project %d not found: %w", projectID, err)
 	}
+	// #G82: refuse a second pending PROJECT-ROLE request for the SAME (user,
+	// project) pair — without this, any authenticated user could call this
+	// endpoint in a tight loop and flood the project with an unbounded number
+	// of pending AccessRequest rows, each firing its own admin notification
+	// (notifyAccessRequested below). Scoped to e.SecretID == nil: a
+	// SECRET-scoped request (RequestSecretAccess, classification_gate.go)
+	// shares the same (UserID, ProjectID) shape but is a semantically
+	// different request the user may legitimately have pending at the same
+	// time as a project-role request. ListAccessRequests lazily expires stale
+	// pending rows on read, so this check is never blocked by a request
+	// that's actually expired.
+	existing, err := c.storage.ListAccessRequests(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing access requests: %w", err)
+	}
+	for _, e := range existing {
+		if e.UserID == userID && e.State == AccessRequestPending && e.SecretID == nil {
+			return nil, fmt.Errorf("you already have a pending access request for this project")
+		}
+	}
 	now := c.now()
 	expires := now.Add(accessRequestTTL)
 	req := &models.AccessRequest{
