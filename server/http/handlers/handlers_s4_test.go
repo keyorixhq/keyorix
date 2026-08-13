@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -653,13 +654,18 @@ func TestRestoreEnvironment_BadEnvID(t *testing.T) {
 
 // ── connect.go ────────────────────────────────────────────────────────────────
 
+// TestIsSafeConnectError checks isSafeConnectError's classification of the
+// core package's typed connect sentinels (see also
+// TestIsSafeConnectError_ExtraStrings_S23 for the G50 anti-spoofing coverage:
+// a look-alike error carrying the same text but not wrapping a sentinel must
+// NOT be classified as safe).
 func TestIsSafeConnectError(t *testing.T) {
-	assert.True(t, isSafeConnectError("keyorix connect is not enabled"))
-	assert.True(t, isSafeConnectError("unknown connector: foo"))
-	assert.True(t, isSafeConnectError("a role is required for a connect ref-grant"))
-	assert.True(t, isSafeConnectError("is not permitted for your roles on connector"))
-	assert.False(t, isSafeConnectError("some storage layer error"))
-	assert.False(t, isSafeConnectError(""))
+	assert.True(t, isSafeConnectError(core.ErrConnectDisabled))
+	assert.True(t, isSafeConnectError(fmt.Errorf("%w %q", core.ErrConnectUnknownConnector, "foo")))
+	assert.True(t, isSafeConnectError(core.ErrConnectRoleRequired))
+	assert.True(t, isSafeConnectError(fmt.Errorf("ref %q %w %q", "r", core.ErrConnectRefNotPermitted, "c")))
+	assert.False(t, isSafeConnectError(errors.New("some storage layer error")))
+	assert.False(t, isSafeConnectError(nil))
 }
 
 func TestNewConnectHandler(t *testing.T) {
@@ -1390,12 +1396,108 @@ func newGroupHandler(t *testing.T) *GroupHandler {
 	return h
 }
 
+// TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin is the #G79 regression:
+// DeleteGroupProxy previously called storage.DeleteGroup directly, bypassing
+// every core-layer escalation guard. Now that it routes through
+// core.KeyorixCore.DeleteGroup, guardLastGlobalAdminGroupDelete must refuse a
+// system.write-only caller from deleting a group holding the install's last
+// admin-conferring role grant via this proxy route, identical to the
+// human-facing path (see group_admin_guard_test.go's core-level coverage of
+// the same guard).
+func TestDeleteGroupProxy_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, i18n.InitializeForTesting())
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h, err := NewGroupHandler(cs)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", Email: "root@x.io"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 5, Name: "Keyorix-Admins"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 5, RoleID: 10}).Error) // group confers admin, globally
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 5}).Error)  // user 1 is the group's ONLY member
+
+	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/api/v1/system/groups/5", nil), "id", "5")
+	w := httptest.NewRecorder()
+	h.DeleteGroupProxy(w, req)
+
+	assert.NotEqual(t, http.StatusOK, w.Code, "must refuse to delete a group holding the install's last admin route, even via the system-proxy path")
+	var stillExists models.Group
+	require.NoError(t, db.First(&stillExists, 5).Error, "the group must not have been deleted when the guard refuses")
+}
+
+// TestUpdateLoginLockoutStateProxy_RefusesAbsurdLockDuration is the #G79
+// regression: UpdateLoginLockoutStateProxy previously persisted whatever
+// login_locked_until the caller supplied with no bound at all, letting a
+// system.write caller lock an arbitrary user out indefinitely. An absurdly
+// far-future value must now be refused.
+func TestUpdateLoginLockoutStateProxy_RefusesAbsurdLockDuration(t *testing.T) {
+	h := newAuthHandlerWithWebAuthn(t)
+	farFuture := time.Now().Add(365 * 24 * time.Hour).Format(time.RFC3339)
+	body := fmt.Sprintf(`{"failed_login_attempts":5,"login_locked_until":%q,"login_lockout_count":1}`, farFuture)
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
+	req = withChiParam(req, "id", "1")
+	w := httptest.NewRecorder()
+	h.UpdateLoginLockoutStateProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "an absurdly far-future login_locked_until must be refused")
+}
+
+// TestCreateSetupTokenProxy_RefusesUnmatchedSubject is the #G79 regression:
+// CreateSetupTokenProxy previously persisted whatever token_hash/subject_email
+// the caller supplied with no check that either referenced anything real,
+// letting a system.write caller mint an active token binding a plaintext it
+// already knows to an arbitrary identity — then redeem it via the public
+// /auth/setup/consume endpoint. A subject_user_id that doesn't reference an
+// existing user must now be refused, and no token must be persisted.
+func TestCreateSetupTokenProxy_RefusesUnmatchedSubject(t *testing.T) {
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+
+	body := `{"token_hash":"deadbeef","purpose":"account_setup","subject_email":"nobody@example.com","subject_user_id":999999,"expires_at":"` +
+		time.Now().Add(24*time.Hour).Format(time.RFC3339) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSetupTokenProxy(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, "a subject_user_id with no matching user must be refused")
+	_, err := cs.Storage().GetSetupTokenByHash(context.Background(), "deadbeef")
+	assert.Error(t, err, "no setup token must be persisted when the subject is unverified")
+}
+
+// TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant is the #G79
+// regression: CreateUserWithRoleGrantsProxy previously called
+// storage.CreateUserWithRoleGrants directly, persisting whatever grants the
+// caller supplied with none of core.CreateUserWithAssignments's
+// escalation-ceiling check (requireAuthorityForRole). A caller with no admin
+// authority of its own (actorID 0 — no user context, matching an unauthenticated
+// or under-privileged system.write holder) must be refused when the grant set
+// includes an admin-tier role, and no user must be persisted.
+func TestCreateUserWithRoleGrantsProxy_RefusesUnauthorizedAdminGrant(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, i18n.InitializeForTesting())
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h, err := NewUserHandler(cs)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Create(&models.Role{ID: 20, Name: "super_admin"}).Error)
+
+	body := fmt.Sprintf(`{"username":"evil","email":"evil@example.com","password_hash":"$2a$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0","is_active":true,"account_state":"active","grants":[{"role_id":%d,"project_id":0}]}`, 20)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateUserWithRoleGrantsProxy(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "an admin-tier role grant from an unauthorized caller must be refused")
+	var count int64
+	require.NoError(t, db.Model(&models.User{}).Where("username = ?", "evil").Count(&count).Error)
+	assert.Zero(t, count, "no user must be persisted when the grant is refused")
+}
+
 func TestGroupProxyWireRoundTrip(t *testing.T) {
-	w := groupProxyWire{ID: 1, Name: "devs", Description: "dev team"}
-	m := w.toModel()
-	require.Equal(t, uint(1), m.ID)
-	w2 := newGroupProxyWire(m)
-	assert.Equal(t, w.Name, w2.Name)
+	m := &models.Group{ID: 1, Name: "devs", Description: "dev team"}
+	w := newGroupProxyWire(m)
+	assert.Equal(t, uint(1), w.ID)
+	assert.Equal(t, "devs", w.Name)
+	assert.Equal(t, "dev team", w.Description)
 }
 
 func TestIsGroupNotFound(t *testing.T) {
@@ -3315,8 +3417,6 @@ func TestRiskExceptionProxyWireRoundTrip(t *testing.T) {
 	w := newRiskExceptionProxyWire(e)
 	assert.Equal(t, "Risk001", w.Title)
 	assert.Equal(t, "accepted risk", w.Justification)
-	m := w.toModel()
-	assert.Equal(t, "Risk001", m.Title)
 }
 
 func TestCreateRiskExceptionProxy_BadJSON(t *testing.T) {
@@ -3360,13 +3460,8 @@ func TestListRiskExceptionsProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestUpdateRiskExceptionProxy_BadID(t *testing.T) {
-	h := NewDashboardHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{}")), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// UpdateRiskExceptionProxy was removed (#G79) — see risk_exceptions_proxy.go's
+// removal comment.
 
 // ── retention_proxy.go ───────────────────────────────────────────────────────
 
@@ -10194,8 +10289,11 @@ func TestSecretHandler_CreateSecretDependencyExclusiveProxy_HappyPath(t *testing
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateSecretDependencyExclusiveProxy(w, req)
-	// secrets don't exist → error (but not 400 for missing fields)
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	// #G79: crossReferenceSecretDependencyProxy now refuses (400) when the
+	// referenced secrets don't actually exist/belong to project_id, rather than
+	// falling through to whatever error the storage layer produced for a
+	// dangling foreign key.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ── machine_identities.go: ListMachineTokens ─────────────────────────────────
@@ -10888,23 +10986,8 @@ func TestAuthHandler_CountUnusedMFARecoveryCodesProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// ── risk_exceptions_proxy.go: UpdateRiskExceptionProxy ───────────────────────
-
-func TestDashboardHandler_UpdateRiskExceptionProxy_BadID(t *testing.T) {
-	h := NewDashboardHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)), "id", "bad")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestDashboardHandler_UpdateRiskExceptionProxy_BadJSON(t *testing.T) {
-	h := NewDashboardHandler(newHandlerCoreS4(t))
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1")
-	w := httptest.NewRecorder()
-	h.UpdateRiskExceptionProxy(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+// UpdateRiskExceptionProxy was removed (#G79) — see risk_exceptions_proxy.go's
+// removal comment.
 
 // ── rbac_role_grants_proxy.go: happy paths ────────────────────────────────────
 
@@ -11541,6 +11624,51 @@ func TestCatalogHandler_CreateBreakGlassActivationProxy_HappyPath(t *testing.T) 
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
+// TestCreateBreakGlassActivationProxy_RefusesAdminTierRole is the #G79
+// regression: CreateBreakGlassActivationProxy previously called
+// storage.CreateBreakGlassActivation directly, persisting whatever role_id
+// the caller supplied with none of core.ActivateBreakGlass's containment
+// checks. An admin-tier role must be refused.
+func TestCreateBreakGlassActivationProxy_RefusesAdminTierRole(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}))
+	require.NoError(t, i18n.InitializeForTesting())
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
+
+	body := fmt.Sprintf(`{"project_id":1,"user_id":1,"role_id":%d,"state":"active","reason":"test","expires_at":"2026-12-31T00:00:00Z"}`, 10)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateBreakGlassActivationProxy(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, "an admin-tier role must be refused")
+
+	var count int64
+	require.NoError(t, db.Model(&models.BreakGlassActivation{}).Count(&count).Error)
+	assert.Zero(t, count, "no activation record must be persisted when the role is refused")
+}
+
+// TestCreateBreakGlassActivationProxy_RefusesRoleWithRolesAssign is the same
+// regression for the second containment check: a role that can itself assign
+// roles (and so could mint a permanent grant during the emergency window)
+// must also be refused.
+func TestCreateBreakGlassActivationProxy_RefusesRoleWithRolesAssign(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}))
+	require.NoError(t, i18n.InitializeForTesting())
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	require.NoError(t, db.Create(&models.Role{ID: 11, Name: "project_admin"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "roles.assign"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 11, PermissionID: 1}).Error)
+
+	body := fmt.Sprintf(`{"project_id":1,"user_id":1,"role_id":%d,"state":"active","reason":"test","expires_at":"2026-12-31T00:00:00Z"}`, 11)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateBreakGlassActivationProxy(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, "a role carrying roles.assign must be refused")
+}
+
 func TestCatalogHandler_UpdateBreakGlassActivationProxy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"state":"revoked"}`
@@ -11994,21 +12122,56 @@ func TestDashboardHandler_UpdateLegalHoldProxy_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestDashboardHandler_UpdateLegalHoldProxy_HappyPath: UpdateLegalHoldProxy
+// now routes through core.KeyorixCore.LiftLegalHold (#G79), which requires
+// the caller to be either the original placer or admin-tier. This request
+// carries no user context (actorID 0), so LiftLegalHold correctly refuses —
+// asserting non-400 (not the specific refusal code) keeps this test focused
+// on "malformed request handling still works," matching its sibling
+// BadID/BadJSON tests; TestDashboardHandler_UpdateLegalHoldProxy_RefusesNonPlacerNonAdmin
+// below is the dedicated regression for the refusal itself. The Cleanup is a
+// no-op here (LiftLegalHold's own refusal means nothing was mutated) but kept
+// for safety against future changes to this test's fixture.
 func TestDashboardHandler_UpdateLegalHoldProxy_HappyPath(t *testing.T) {
 	h := NewDashboardHandler(newHandlerCoreS4(t))
 	t.Cleanup(func() { releaseActiveLegalHoldS4(t, h) })
-	// NOTE: UpdateLegalHoldProxy is a raw full-row Save (see legal_hold_proxy.go) —
-	// this body omits "released"/"placed_by", so it zeroes those fields out on the
-	// row with id=1 (created by TestDashboardHandler_CreateLegalHoldProxy_HappyPath
-	// just above). Without the Cleanup above, that leaves a permanently "active"
-	// hold with no valid placer in the shared sharedS4Core DB, which breaks
-	// TestLiftLegalHold_NoActiveHold on any later run against the same process
-	// (e.g. `go test -count=2`).
 	body := `{"reason":"Updated hold reason"}`
 	req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateLegalHoldProxy(w, req)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+}
+
+// TestDashboardHandler_UpdateLegalHoldProxy_RefusesNonPlacerNonAdmin is the
+// #G79 regression: UpdateLegalHoldProxy previously called
+// storage.UpdateLegalHold directly (an unconditional full-row Save), letting
+// ANY system.write-only caller silently release an active legal hold. Now
+// that it routes through core.KeyorixCore.LiftLegalHold, a caller who is
+// neither the original placer nor admin-tier must be refused, and the hold
+// must remain active.
+func TestDashboardHandler_UpdateLegalHoldProxy_RefusesNonPlacerNonAdmin(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.LegalHold{}))
+	require.NoError(t, i18n.InitializeForTesting())
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	h := NewDashboardHandler(cs)
+
+	// withUserCtx injects UserID=1 as the caller — seed that user with NO admin
+	// role, and the hold's actual placer as a DIFFERENT user (2), so the caller
+	// is neither the placer nor admin-tier.
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "mallory", Email: "mallory@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "placer", Email: "placer@x.io"}).Error)
+	require.NoError(t, db.Create(&models.LegalHold{ID: 1, Reason: "orig", PlacedBy: 2, PlacedAt: time.Now(), Released: false}).Error)
+
+	body := `{"release_reason":"attacker-forced release"}`
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", "1"))
+	w := httptest.NewRecorder()
+	h.UpdateLegalHoldProxy(w, req)
+	assert.NotEqual(t, http.StatusOK, w.Code, "a caller who is neither the placer nor admin-tier must not be able to lift the hold")
+
+	var hold models.LegalHold
+	require.NoError(t, db.First(&hold, 1).Error)
+	assert.False(t, hold.Released, "the hold must remain active when the lift is refused")
 }
 
 // releaseActiveLegalHoldS4 marks any currently-active legal hold in the shared
@@ -12068,6 +12231,27 @@ func TestCatalogHandler_CreateSoDPolicyProxy_HappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateSoDPolicyProxy(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestCreateSoDPolicyProxy_WritesAuditEvent is the #G79 regression:
+// CreateSoDPolicyProxy previously called storage.CreateSoDPolicy directly,
+// writing no audit trail on the upstream side. Now that it routes through
+// core.KeyorixCore.CreateSoDPolicy, a policy created via node-sync is
+// audited exactly like one created through the human-facing route.
+func TestCreateSoDPolicyProxy_WritesAuditEvent(t *testing.T) {
+	db := openHandlerTestDB(t)
+	require.NoError(t, i18n.InitializeForTesting())
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	body := `{"name":"test-audit","permission_a":"read","permission_b":"write"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSoDPolicyProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var count int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", core.EventSoDPolicyCreated).Count(&count).Error)
+	assert.EqualValues(t, 1, count, "creating a SoD policy via the proxy must write an audit event")
 }
 
 // ── legal_hold.go: GetLegalHold, PlaceLegalHold ───────────────────────────────
@@ -12329,8 +12513,13 @@ func TestAuthHandler_CreateSetupTokenProxy_MissingFields(t *testing.T) {
 }
 
 func TestAuthHandler_CreateSetupTokenProxy_HappyPath(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	body := `{"token_hash":"abc123","purpose":"invite","subject_email":"test@example.com","expires_at":"2026-12-31T00:00:00Z"}`
+	cs := newHandlerCoreS4(t)
+	h := NewAuthHandler(cs, false)
+	user, err := cs.Storage().CreateUser(context.Background(), &models.User{
+		Username: "setup_s4", Email: "test@example.com", PasswordHash: "x",
+	})
+	require.NoError(t, err)
+	body := fmt.Sprintf(`{"token_hash":"abc123","purpose":"account_setup","subject_email":"test@example.com","subject_user_id":%d,"expires_at":%q}`, user.ID, time.Now().Add(24*time.Hour).Format(time.RFC3339))
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.CreateSetupTokenProxy(w, req)

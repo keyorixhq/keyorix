@@ -33,7 +33,7 @@ func TestRotateSecret_RefreshesCertNotAfterCache(t *testing.T) {
 	// Rotate to a renewed certificate with a later expiry.
 	newExpiry := now.Add(90 * 24 * time.Hour)
 	cert2, _ := selfSignedPEM(t, "a.example.com", newExpiry)
-	_, err = c.RotateSecret(ctx, 1, cert2, "tester")
+	_, err = c.RotateSecret(ctx, 1, cert2, 0, "tester")
 	require.NoError(t, err)
 
 	got, err := c.storage.GetSecret(ctx, 1)
@@ -51,7 +51,7 @@ func TestRotateSecret_NonCertSecretLeavesCertNotAfterNil(t *testing.T) {
 	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "api-key", IsSecret: true, Status: "active", Type: "api_key"}).Error)
 	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("old-value")}).Error)
 
-	_, err := c.RotateSecret(ctx, 1, []byte("new-random-value"), "tester")
+	_, err := c.RotateSecret(ctx, 1, []byte("new-random-value"), 0, "tester")
 	require.NoError(t, err)
 
 	got, err := c.storage.GetSecret(ctx, 1)
@@ -70,7 +70,7 @@ func TestRotateSecret_CertRotatedToNonCertClearsCache(t *testing.T) {
 	_, err := c.InspectCertificate(ctx, 9, 1) // prime the cache
 	require.NoError(t, err)
 
-	_, err = c.RotateSecret(ctx, 1, []byte("no-longer-a-certificate"), "tester")
+	_, err = c.RotateSecret(ctx, 1, []byte("no-longer-a-certificate"), 0, "tester")
 	require.NoError(t, err)
 
 	got, err := c.storage.GetSecret(ctx, 1)

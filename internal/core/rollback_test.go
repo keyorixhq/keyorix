@@ -29,7 +29,7 @@ func TestRollbackSecret(t *testing.T) {
 		SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("v1-secret"), EncryptionMetadata: []byte("{}"),
 	}).Error)
 	// Rotate to v2 (a "bad" change we'll undo).
-	_, err := c.RotateSecret(ctx, 1, []byte("v2-bad"), "ada")
+	_, err := c.RotateSecret(ctx, 1, []byte("v2-bad"), 0, "ada")
 	require.NoError(t, err)
 
 	// Roll back to v1 → re-instated as a NEW version (v3) with v1's value.

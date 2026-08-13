@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -99,7 +100,8 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	if wantName != "" {
 		groups, err := h.coreService.ListGroups(r.Context())
 		if err != nil {
-			scimError(w, http.StatusInternalServerError, err.Error())
+			log.Printf("Error listing SCIM groups: %v", err)
+			scimError(w, http.StatusInternalServerError, clientSafe(err))
 			return
 		}
 		matched := groups[:0]
@@ -114,7 +116,8 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 		var err error
 		page, total, err = h.coreService.ListSCIMGroupsPage(r.Context(), startIndex, count)
 		if err != nil {
-			scimError(w, http.StatusInternalServerError, err.Error())
+			log.Printf("Error listing SCIM groups (page): %v", err)
+			scimError(w, http.StatusInternalServerError, clientSafe(err))
 			return
 		}
 	}
@@ -179,10 +182,15 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	g, err := h.coreService.ProvisionSCIMGroup(r.Context(), 0, p.DisplayName, p.memberIDs())
 	if err != nil {
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "already exists"), strings.Contains(msg, "UNIQUE"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error provisioning SCIM group %q: %v", p.DisplayName, err)
+			msg = clientSafe(err)
 		}
-		scimError(w, status, err.Error())
+		scimError(w, status, msg)
 		return
 	}
 	h.renderGroup(w, r.Context(), g, http.StatusCreated)
@@ -205,7 +213,8 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	g, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
 	if err != nil {
-		scimError(w, http.StatusNotFound, err.Error())
+		log.Printf("Error replacing SCIM group %d: %v", id, err)
+		scimError(w, http.StatusNotFound, clientSafe(err))
 		return
 	}
 	h.renderGroup(w, r.Context(), g, http.StatusOK)
@@ -308,7 +317,8 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) { // NO
 		g, err = h.coreService.PatchSCIMGroup(r.Context(), 0, id, newName, addIDs, removeIDs)
 	}
 	if err != nil {
-		scimError(w, http.StatusNotFound, err.Error())
+		log.Printf("Error patching SCIM group %d: %v", id, err)
+		scimError(w, http.StatusNotFound, clientSafe(err))
 		return
 	}
 	h.renderGroup(w, r.Context(), g, http.StatusOK)
@@ -321,7 +331,8 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.DeprovisionSCIMGroup(r.Context(), 0, id); err != nil {
-		scimError(w, http.StatusNotFound, err.Error())
+		log.Printf("Error deprovisioning SCIM group %d: %v", id, err)
+		scimError(w, http.StatusNotFound, clientSafe(err))
 		return
 	}
 	w.Header().Set("Content-Type", scimContentType)

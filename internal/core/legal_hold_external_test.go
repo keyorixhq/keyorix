@@ -84,6 +84,29 @@ func TestLegalHold_PlaceDeniedForNonAdmin(t *testing.T) {
 	assert.False(t, hold.Released)
 }
 
+// TestLegalHold_PlaceDeniedForProjectScopedAdmin is the #G01 regression: an
+// admin-tier role granted only at a specific project must not be treated as
+// install-wide admin-bypass authority — PlaceLegalHold is a deployment-wide
+// control, and a project-scoped admin does not hold "all permissions" the
+// way a true global admin does.
+func TestLegalHold_PlaceDeniedForProjectScopedAdmin(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
+	ctx := context.Background()
+
+	// Actor 30 holds "admin" (role 2), but scoped ONLY to project 5 — not global.
+	projectID := uint(5)
+	h.AssignUserRole(t, 30, 2, &projectID)
+
+	_, err := h.CoreService.PlaceLegalHold(ctx, 30, "bogus decoy hold from project-scoped admin")
+	require.Error(t, err, "a project-scoped admin must not be able to place a deployment-wide legal hold")
+
+	active, aerr := h.CoreService.IsLegalHoldActive(ctx)
+	require.NoError(t, aerr)
+	assert.False(t, active, "the denied placement must not create a hold")
+}
+
 // #380: lifting a hold records the WHY, not just the who/when — the reason is
 // persisted on the row (ReleaseReason) and appears in the audit description, and an
 // empty reason is rejected just like placement's.

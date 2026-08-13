@@ -24,17 +24,68 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// auditIngestProxyValidActorTypes mirrors internal/core/audit_context.go's
+// ActorTypeUser/ActorTypeMachine/ActorTypeSystem constants — duplicated here
+// (a small, stable enum) because this proxy cannot import internal/core's
+// unexported values directly.
+var auditIngestProxyValidActorTypes = map[string]bool{
+	"":                 true, // LogAuditEvent normalizes empty to "user" before hashing
+	"user":             true,
+	"machine_identity": true,
+	"system":           true,
+}
+
+// auditIngestProxyMaxClockSkew bounds how far a submitted event_time may
+// diverge from this server's own clock, in either direction.
+//
+// #G79: this does NOT close the finding's core issue — LogAuditEvent computes
+// EntryHash over whatever fields are set on the event it's given, so any
+// system.write holder able to reach this endpoint directly (bypassing the
+// emitting server's own core.KeyorixCore) can still submit a fully fabricated,
+// self-consistent event (wrong actor, wrong description, wrong outcome) that
+// passes VerifyAuditChain — a hash chain only detects tampering with entries
+// already written, it cannot attest that a NEW entry's content is genuine.
+// Closing that fully needs a way to attest the submitter really is a
+// legitimate downstream node (the G79 structural part: a node-identity
+// credential distinct from the RBAC permission tier, deferred to Wave 4).
+// What IS closable here without that: reject the cruder abuse of an
+// attacker-chosen event_time used to plant a forged entry at an arbitrary
+// point in the forensic timeline (far in the past or future), and reject
+// empty/unrecognized required fields no legitimate emitAudit call would ever
+// leave that way.
+const auditIngestProxyMaxClockSkew = 24 * time.Hour
+
 // IngestAuditEventProxy accepts a single models.AuditEvent from a remote-
 // storage follower and persists it in this server's own storage backend.
-// Registered at POST /api/v1/system/audit/event (system.write).
+// Registered at POST /api/v1/system/audit/event (system.write). See
+// auditIngestProxyMaxClockSkew's doc for what this validation does and does
+// not close.
 func (h *AuditHandler) IngestAuditEventProxy(w http.ResponseWriter, r *http.Request) {
 	var event models.AuditEvent
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 		sendError(w, "BadRequest", "invalid audit event body", http.StatusBadRequest, nil)
+		return
+	}
+	if event.EventType == "" {
+		sendError(w, "BadRequest", "event_type is required", http.StatusBadRequest, nil)
+		return
+	}
+	if !auditIngestProxyValidActorTypes[event.ActorType] {
+		sendError(w, "BadRequest", "unrecognized actor_type", http.StatusBadRequest, nil)
+		return
+	}
+	if event.EventTime.IsZero() {
+		sendError(w, "BadRequest", "event_time is required", http.StatusBadRequest, nil)
+		return
+	}
+	now := time.Now()
+	if event.EventTime.Before(now.Add(-auditIngestProxyMaxClockSkew)) || event.EventTime.After(now.Add(auditIngestProxyMaxClockSkew)) {
+		sendError(w, "BadRequest", "event_time is too far from the current time", http.StatusBadRequest, nil)
 		return
 	}
 	// Zero the ID so the hub's DB assigns it. A caller-supplied ID could forge a

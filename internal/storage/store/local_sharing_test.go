@@ -432,6 +432,39 @@ func TestCheckSharePermission_DirectVsGroupConflict_StrongestWins(t *testing.T) 
 	})
 }
 
+// TestCheckSharePermission_ProjectScopedMembershipDoesNotCrossProjects is the
+// #G01 regression: a group MEMBERSHIP scoped to one project must not confer
+// that group's share permission on a secret in a DIFFERENT project.
+func TestCheckSharePermission_ProjectScopedMembershipDoesNotCrossProjects(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner2", Email: "o2@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 3, Username: "member2", Email: "m2@x.io"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 11, Name: "team2"}).Error)
+	// member2's membership in group 11 is scoped ONLY to project 7.
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 3, GroupID: 11, ProjectID: 7}).Error)
+
+	// The secret is in project 9 — a DIFFERENT project than the membership.
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 200, Name: "s3", ProjectID: 9, EnvironmentID: 1, OwnerID: 1, Status: "active", Type: "password",
+	}).Error)
+	_, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: 200, RecipientID: 11, IsGroup: true, OwnerID: 1, Permission: "write",
+	})
+	require.NoError(t, err)
+
+	perm, err := ls.CheckSharePermission(ctx, 200, 3)
+	require.Error(t, err, "a membership scoped to project 7 must not grant access to a secret in project 9")
+	assert.Empty(t, perm)
+
+	secrets, err := ls.ListSharedSecrets(ctx, 3)
+	require.NoError(t, err)
+	for _, s := range secrets {
+		assert.NotEqual(t, uint(200), s.ID, "ListSharedSecrets must not surface a secret reached only via a cross-project membership")
+	}
+}
+
 // CWE-284 / sibling of #370: DeleteSecret must also delete SecretACL rows in the
 // same transaction so that ACL-based access cannot silently reactivate when the
 // secret is later restored from the recycle bin (the same class of bug fixed for

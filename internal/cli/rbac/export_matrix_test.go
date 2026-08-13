@@ -3,6 +3,7 @@ package rbac
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -218,6 +219,53 @@ func TestWriteMatrixEmbedded_CSV(t *testing.T) {
 	assert.Contains(t, out, "carol")
 	assert.Contains(t, out, "2028-06-15T00:00:00Z")
 	assert.Contains(t, out, "never") // nil ExpiresAt → "never"
+}
+
+// TestWriteMatrixEmbedded_CSV_FormulaInjection — a project name starting with a
+// formula-injection character (=, +, -, @) must be escaped with a leading single quote
+// in the embedded CSV export (G49: CSVSafe() formula-injection escaping).
+func TestWriteMatrixEmbedded_CSV_FormulaInjection(t *testing.T) {
+	rows := []*core.PermissionMatrixRow{
+		{
+			Username: "mallory", Email: "mallory@example.com",
+			RoleName: "viewer", PermissionName: "secrets.read",
+			Resource: "secrets", Action: "read",
+			Scope: "project", ProjectName: "=cmd|' /C calc'!A1",
+		},
+	}
+	var buf bytes.Buffer
+	err := writeMatrixEmbedded(&buf, rows, "csv")
+	require.NoError(t, err)
+
+	r := csv.NewReader(&buf)
+	records, err := r.ReadAll()
+	require.NoError(t, err)
+	require.Len(t, records, 2, "header + 1 data row")
+	// header: username, email, role, permission, resource, action, scope, project, environment, expires_at
+	projectCell := records[1][7]
+	assert.True(t, strings.HasPrefix(projectCell, "'"), "formula-injection prefix must be neutralized, got %q", projectCell)
+}
+
+// TestWriteMatrixRemote_CSV_FormulaInjection — same escaping guarantee on the
+// embedded-JSON-then-locally-rendered CSV remote path (writeMatrixRemote / remoteRowToCSV).
+func TestWriteMatrixRemote_CSV_FormulaInjection(t *testing.T) {
+	rows := []remoteMatrixRow{
+		{
+			Username: "=SUM(A1:A9)", Email: "eve@example.com",
+			RoleName: "jit", PermissionName: "secrets.read",
+			Scope: "global",
+		},
+	}
+	var buf bytes.Buffer
+	err := writeMatrixRemote(&buf, rows, "csv")
+	require.NoError(t, err)
+
+	r := csv.NewReader(&buf)
+	records, err := r.ReadAll()
+	require.NoError(t, err)
+	require.Len(t, records, 2, "header + 1 data row")
+	usernameCell := records[1][0]
+	assert.True(t, strings.HasPrefix(usernameCell, "'"), "formula-injection prefix must be neutralized, got %q", usernameCell)
 }
 
 // TestWriteMatrixEmbedded_TableEmpty — empty rows print "No permission grants found."

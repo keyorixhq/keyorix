@@ -649,9 +649,16 @@ func (rs *RemoteStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID 
 	return nil
 }
 
-// RemoveRoleFromGroup removes a role from a group via remote API.
-func (rs *RemoteStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, _ storage.Scope) error {
-	path := fmt.Sprintf("/api/v1/groups/%d/roles/%d", groupID, roleID)
+// RemoveRoleFromGroup removes a role from a group at scope via remote API.
+// scope must be sent as query params (DELETE has no body) — RemoveRoleFromGroup's
+// server-side handler (server/http/handlers/rbac.go) reads project_id/environment_id
+// exactly like its AssignRoleToGroup sibling; silently discarding scope here (#G80)
+// meant a scoped revocation could never hit its target grant.
+func (rs *RemoteStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
+	q := url.Values{}
+	q.Set("project_id", strconv.FormatUint(uint64(scope.ProjectID), 10))
+	q.Set("environment_id", strconv.FormatUint(uint64(scope.EnvironmentID), 10))
+	path := fmt.Sprintf("/api/v1/groups/%d/roles/%d?%s", groupID, roleID, q.Encode())
 	resp, err := rs.client.Delete(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed to remove role from group: %w", err)

@@ -36,4 +36,36 @@ var (
 	// must retry against the current state, not have its change silently
 	// dropped or silently clobber the winner.
 	ErrUserActiveStateConflict = errors.New("user's active state changed concurrently")
+
+	// ErrConnectDisabled is returned by the Keyorix Connect (ADR-043) methods when
+	// no external-store connector is configured.
+	ErrConnectDisabled = errors.New("keyorix connect is not enabled")
+
+	// ErrConnectUnknownConnector is returned when a caller (or a per-reference
+	// grant) names a connector that isn't configured.
+	ErrConnectUnknownConnector = errors.New("unknown connector")
+
+	// ErrConnectRoleRequired is returned by CreateConnectRefGrant when roleID is 0.
+	ErrConnectRoleRequired = errors.New("a role is required for a connect ref-grant")
+
+	// ErrConnectRefNotPermitted is returned by ReadFederatedSecret when the
+	// per-reference RBAC policy (ADR-045) denies the read. These four Connect
+	// sentinels exist so the HTTP layer (isSafeConnectError) can classify its own
+	// deliberately-crafted, safe error text via errors.Is instead of a
+	// strings.Contains substring match against err.Error() — the ref itself is
+	// caller-controlled and, if echoed back by an upstream connector's own error
+	// text, could otherwise spoof a substring match and let raw upstream error
+	// detail pass through unsanitized (backlog #116).
+	ErrConnectRefNotPermitted = errors.New("is not permitted for your roles on connector")
+
+	// ErrAuditCheckpointRefused is returned by WriteAuditCheckpoint (via
+	// writeAuditCheckpointLocked) whenever it declines to sign a checkpoint: the
+	// chain doesn't verify, a prior checkpoint proves a truncation, a prior
+	// checkpoint's signature was tampered with, or the chain sits below the
+	// certified high-water mark. Callers use errors.Is against this sentinel to
+	// distinguish this expected, safe-to-surface precondition failure from an
+	// unclassified storage/internal error, instead of substring-matching
+	// err.Error() (which the dynamic %s/%d detail appended to each of these
+	// errors would make spoofable by anything that can influence that detail).
+	ErrAuditCheckpointRefused = errors.New("refusing to checkpoint")
 )

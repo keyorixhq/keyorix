@@ -134,6 +134,45 @@ func TestTransitionSecretStatusProxy_HappyPath(t *testing.T) {
 	assert.Equal(t, true, data["matched"])
 }
 
+// TestTransitionSecretStatusProxy_RefusesFieldRewrite is the #G79 regression:
+// TransitionSecretStatusProxy previously persisted the caller's entire
+// wire-supplied *models.SecretNode via a Select("*") full-row update, so a
+// client claiming a different owner_id/classification alongside the status
+// transition silently rewrote those fields too. Only status/updated_at must
+// change; every other field must come from the server's own authoritative
+// row, not the wire body.
+func TestTransitionSecretStatusProxy_RefusesFieldRewrite(t *testing.T) {
+	h := freshSecretHandlerForProxyS13(t)
+	secret := seedSecretForProxyS13(t, h)
+	idStr := strconv.FormatUint(uint64(secret.ID), 10)
+
+	body := proxyJSON(map[string]interface{}{
+		"secret": map[string]interface{}{
+			"name":           "renamed-by-attacker",
+			"project_id":     secret.ProjectID,
+			"environment_id": secret.EnvironmentID,
+			"type":           secret.Type,
+			"owner_id":       secret.OwnerID + 999, // attacker-claimed owner
+			"classification": "public",             // attacker-claimed classification
+			"status":         "suspended",
+		},
+		"from_status": "active",
+	})
+	req := withChiParam(
+		httptest.NewRequest(http.MethodPut, "/system/secrets/"+idStr+"/transition-status", body),
+		"id", idStr,
+	)
+	w := httptest.NewRecorder()
+	h.TransitionSecretStatusProxy(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	updated, err := h.coreService.Storage().GetSecret(context.Background(), secret.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "suspended", updated.Status, "the actual transition must still apply")
+	assert.Equal(t, secret.OwnerID, updated.OwnerID, "owner_id must not be rewritten by the wire body")
+	assert.Equal(t, "secret-status-s13", updated.Name, "name must not be rewritten by the wire body")
+}
+
 // TestTransitionSecretStatusProxy_LostRace — a second conditional write still
 // asserting the same (now-stale) from_status as a call that already won must
 // report matched:false, proving the CAS race closes at the HTTP-proxy

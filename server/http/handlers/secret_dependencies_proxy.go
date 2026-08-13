@@ -43,8 +43,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -104,6 +106,28 @@ const (
 	secretDependencyCycleCode     = "SECRET_DEPENDENCY_CYCLE"
 )
 
+// crossReferenceSecretDependencyProxy verifies that dependentID/dependsOnID
+// are both real secrets that actually belong to projectID and share the same
+// environment — the same same-project/same-environment check
+// core.AddSecretDependency applies (secret_dependencies.go) before it will
+// accept an edge. #G79: without this, CreateSecretDependencyProxy/
+// CreateSecretDependencyExclusiveProxy accepted any ProjectID/
+// DependentSecretID/DependsOnSecretID combination the caller supplied, with
+// no cross-reference to what those IDs actually resolve to — letting a
+// caller record a dependency edge that names secrets in an entirely
+// different project/environment than the one it claims.
+func crossReferenceSecretDependencyProxy(ctx context.Context, h *SecretHandler, projectID, dependentID, dependsOnID uint) error {
+	dependent, err := h.coreService.Storage().GetSecret(ctx, dependentID)
+	if err != nil || dependent.ProjectID != projectID {
+		return fmt.Errorf("dependent_secret_id does not belong to project_id")
+	}
+	dependsOn, err := h.coreService.Storage().GetSecret(ctx, dependsOnID)
+	if err != nil || dependsOn.ProjectID != projectID || dependsOn.EnvironmentID != dependent.EnvironmentID {
+		return fmt.Errorf("depends_on_secret_id must be a secret in the same project and environment")
+	}
+	return nil
+}
+
 // CreateSecretDependencyProxy handles POST /api/v1/system/secret-dependencies. A raw,
 // unconditional persist (storage.Storage.CreateSecretDependency), kept for interface
 // parity — AddSecretDependency's real add path goes through
@@ -116,6 +140,10 @@ func (h *SecretHandler) CreateSecretDependencyProxy(w http.ResponseWriter, r *ht
 	}
 	if body.ProjectID == 0 || body.DependentSecretID == 0 || body.DependsOnSecretID == 0 {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, dependent_secret_id, and depends_on_secret_id are required")
+		return
+	}
+	if err := crossReferenceSecretDependencyProxy(r.Context(), h, body.ProjectID, body.DependentSecretID, body.DependsOnSecretID); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
 		return
 	}
 	created, err := h.coreService.Storage().CreateSecretDependency(r.Context(), body.toModel())
@@ -141,7 +169,16 @@ func (h *SecretHandler) CreateSecretDependencyExclusiveProxy(w http.ResponseWrit
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "project_id, dependent_secret_id, and depends_on_secret_id are required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateSecretDependencyExclusive(r.Context(), body.toModel())
+	if err := crossReferenceSecretDependencyProxy(r.Context(), h, body.ProjectID, body.DependentSecretID, body.DependsOnSecretID); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
+		return
+	}
+	// #G79: routed through core.LockedCreateSecretDependencyExclusive (holds the
+	// same secretDependencyMu core.AddSecretDependency holds around the identical
+	// storage call) rather than calling storage.CreateSecretDependencyExclusive
+	// directly — see that method's doc for why the storage-layer cycle check alone
+	// isn't race-safe against two concurrent same-process proxy requests.
+	created, err := h.coreService.LockedCreateSecretDependencyExclusive(r.Context(), body.toModel())
 	if err != nil {
 		switch {
 		case errors.Is(err, coreStorage.ErrDuplicateSecretDependency):

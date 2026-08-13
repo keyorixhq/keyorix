@@ -20,6 +20,39 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// runCreateRemote shares a secret via POST /api/v1/secrets/{id}/share so the
+// grant is recorded against the connected server's own store, with the
+// server resolving the caller from the session token (#G66 — the embedded
+// path previously ran unconditionally, silently no-opping against local
+// storage even when connected to a real server).
+func runCreateRemote(rc *common.RemoteClient, secretID, recipientID uint, isGroup bool, permission string, expiresAt *time.Time) error {
+	body := struct {
+		RecipientID uint       `json:"recipient_id"`
+		IsGroup     bool       `json:"is_group"`
+		Permission  string     `json:"permission"`
+		ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	}{
+		RecipientID: recipientID,
+		IsGroup:     isGroup,
+		Permission:  permission,
+		ExpiresAt:   expiresAt,
+	}
+	var resp models.ShareRecord
+	if err := rc.Post(context.Background(), fmt.Sprintf("/api/v1/secrets/%d/share", secretID), body, &resp); err != nil {
+		return fmt.Errorf("failed to share secret: %w", err)
+	}
+	fmt.Printf("✅ Secret shared successfully!\n")
+	fmt.Printf("Share ID: %d\n", resp.ID)
+	fmt.Printf("Secret ID: %d\n", resp.SecretID)
+	fmt.Printf("Owner ID: %d\n", resp.OwnerID)
+	fmt.Printf("Recipient ID: %d\n", resp.RecipientID)
+	fmt.Printf("Is Group: %t\n", resp.IsGroup)
+	fmt.Printf("Permission: %s\n", resp.Permission)
+	fmt.Printf("Created At: %s\n", resp.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("Expires At: %s\n", formatShareExpiry(resp.ExpiresAt))
+	return nil
+}
+
 func runListRemote(rc *common.RemoteClient, secretID uint) error {
 	var resp struct {
 		Shares []models.ShareRecord `json:"shares"`

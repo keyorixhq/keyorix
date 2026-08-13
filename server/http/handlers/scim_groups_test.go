@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // provisionUser creates a SCIM user (with a real externalId, so it's SCIM-managed
@@ -139,4 +141,113 @@ func TestSCIM_CreateGroupRequiresDisplayName(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateGroup(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader([]byte(`{"members":[]}`))))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── G50 regression coverage: SCIM group handlers must never forward a raw
+// backend/driver error to the client. Mirrors scim_test.go's convention: drop
+// the groups table so the underlying core call fails with a genuine SQLite
+// driver error, and assert that text never reaches the SCIM "detail" field
+// while it still lands in the server-side log.
+
+// TestSCIM_CreateGroup_DBErrorSanitized drops the groups table so
+// ProvisionSCIMGroup's storage.CreateGroup insert fails with a raw SQLite
+// driver error, returned bare — proving CreateGroup's default/fallback
+// branch sanitizes it instead of echoing err.Error() straight through.
+func TestSCIM_CreateGroup_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Migrator().DropTable(&models.Group{}))
+
+	logBuf := captureLogBuf(t)
+	body := `{"displayName":"Engineers"}`
+	w := httptest.NewRecorder()
+	h.CreateGroup(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader([]byte(body))))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
+}
+
+// TestSCIM_ReplaceGroup_DBErrorSanitized provisions a real group, then drops
+// the groups table so ReplaceSCIMGroup's initial GetGroup read fails with a
+// raw SQLite driver error wrapped as "not found: %w" — proving ReplaceGroup
+// sanitizes it instead of forwarding err.Error() raw.
+func TestSCIM_ReplaceGroup_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	body := `{"displayName":"Engineers"}`
+	w := httptest.NewRecorder()
+	h.CreateGroup(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader([]byte(body))))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	gid, _ := decodeSCIM(t, w)["id"].(string)
+	require.NotEmpty(t, gid)
+
+	require.NoError(t, db.Migrator().DropTable(&models.Group{}))
+
+	logBuf := captureLogBuf(t)
+	put := `{"displayName":"Engineers Updated"}`
+	w = httptest.NewRecorder()
+	h.ReplaceGroup(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Groups/"+gid, bytes.NewReader([]byte(put))), gid))
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
+}
+
+// TestSCIM_PatchGroup_DBErrorSanitized is PatchGroup's counterpart to
+// TestSCIM_ReplaceGroup_DBErrorSanitized — same underlying GetGroup read,
+// reached via PATCH instead of PUT.
+func TestSCIM_PatchGroup_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	body := `{"displayName":"Engineers"}`
+	w := httptest.NewRecorder()
+	h.CreateGroup(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader([]byte(body))))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	gid, _ := decodeSCIM(t, w)["id"].(string)
+	require.NotEmpty(t, gid)
+
+	require.NoError(t, db.Migrator().DropTable(&models.Group{}))
+
+	logBuf := captureLogBuf(t)
+	patch := `{"Operations":[{"op":"replace","path":"displayName","value":"Renamed"}]}`
+	w = httptest.NewRecorder()
+	h.PatchGroup(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Groups/"+gid, bytes.NewReader([]byte(patch))), gid))
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
+}
+
+// TestSCIM_DeleteGroup_DBErrorSanitized provisions a real group, then drops
+// the groups table so DeprovisionSCIMGroup's storage.DeleteGroup fails with a
+// raw SQLite driver error, returned bare — proving DeleteGroup sanitizes it
+// instead of forwarding err.Error() raw.
+func TestSCIM_DeleteGroup_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	body := `{"displayName":"Engineers"}`
+	w := httptest.NewRecorder()
+	h.CreateGroup(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader([]byte(body))))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	gid, _ := decodeSCIM(t, w)["id"].(string)
+	require.NotEmpty(t, gid)
+
+	require.NoError(t, db.Migrator().DropTable(&models.Group{}))
+
+	logBuf := captureLogBuf(t)
+	w = httptest.NewRecorder()
+	h.DeleteGroup(w, withID(httptest.NewRequest(http.MethodDelete, "/scim/v2/Groups/"+gid, nil), gid))
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
+}
+
+// TestSCIM_ListGroups_DBErrorSanitized drops the groups table so
+// ListSCIMGroupsPage's read fails with a raw SQLite driver error — proving
+// the unfiltered ListGroups path (already using clientSafe before this G50
+// pass, kept here as a regression pin) still sanitizes it.
+func TestSCIM_ListGroups_DBErrorSanitized(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Migrator().DropTable(&models.Group{}))
+
+	logBuf := captureLogBuf(t)
+	w := httptest.NewRecorder()
+	h.ListGroups(w, httptest.NewRequest(http.MethodGet, "/scim/v2/Groups", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
 }

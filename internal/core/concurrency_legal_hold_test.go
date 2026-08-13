@@ -33,7 +33,12 @@ func TestConcurrency_PlaceLegalHold_OnlyOneWins(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "c.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.Role{}, &models.UserRole{}))
+	// #G01: PlaceLegalHold now resolves admin authority via isGlobalAdminRoleName
+	// (scopedRoleIDs), which LEFT JOINs projects/environments and unions in
+	// group-inherited roles (user_groups/groups/group_roles) — all must be
+	// migrated even though this test grants the role directly, not via a group.
+	require.NoError(t, db.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.Role{}, &models.UserRole{},
+		&models.Project{}, &models.Environment{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 	// The production migration (storage.ensureLegalHoldActiveIndex) creates this;
 	// replicate it for the test DB.
 	require.NoError(t, db.Exec(

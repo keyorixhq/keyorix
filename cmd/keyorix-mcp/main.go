@@ -36,6 +36,12 @@ var version = "dev"
 // with legitimate high-volume needs raise it via KEYORIX_MCP_MAX_READS.
 const defaultMaxReads = 100
 
+// defaultMaxListCalls is the per-process keyorix_list_secrets ceiling applied when
+// KEYORIX_MCP_MAX_LIST_CALLS is left unset — the same reasoning as defaultMaxReads
+// (#G44): a listing call does no per-item value disclosure, but a manipulated agent
+// can still be driven to repeat it an unbounded number of times in one session.
+const defaultMaxListCalls = 100
+
 // resolveMaxReads parses KEYORIX_MCP_MAX_READS. An empty raw value (the variable unset
 // or blank) applies defaultMaxReads rather than "unlimited". A non-empty value that
 // isn't a positive integer is a fatal misconfiguration, not a silent fallback —
@@ -47,6 +53,18 @@ func resolveMaxReads(raw string) (n int, usedDefault bool, err error) {
 	n, perr := strconv.Atoi(raw)
 	if perr != nil || n <= 0 {
 		return 0, false, fmt.Errorf("KEYORIX_MCP_MAX_READS must be a positive integer, got %q", raw)
+	}
+	return n, false, nil
+}
+
+// resolveMaxListCalls parses KEYORIX_MCP_MAX_LIST_CALLS, mirroring resolveMaxReads.
+func resolveMaxListCalls(raw string) (n int, usedDefault bool, err error) {
+	if raw == "" {
+		return defaultMaxListCalls, true, nil
+	}
+	n, perr := strconv.Atoi(raw)
+	if perr != nil || n <= 0 {
+		return 0, false, fmt.Errorf("KEYORIX_MCP_MAX_LIST_CALLS must be a positive integer, got %q", raw)
 	}
 	return n, false, nil
 }
@@ -120,6 +138,17 @@ func main() {
 		log.Printf("KEYORIX_MCP_MAX_READS not set — applying default per-process read cap of %d (override via KEYORIX_MCP_MAX_READS)", maxReads)
 	} else {
 		log.Printf("per-process read cap active: %d", maxReads)
+	}
+
+	maxListCalls, usedListDefault, lerr := resolveMaxListCalls(strings.TrimSpace(os.Getenv("KEYORIX_MCP_MAX_LIST_CALLS")))
+	if lerr != nil {
+		log.Fatal(lerr)
+	}
+	server.SetMaxListCalls(maxListCalls)
+	if usedListDefault {
+		log.Printf("KEYORIX_MCP_MAX_LIST_CALLS not set — applying default per-process list-call cap of %d (override via KEYORIX_MCP_MAX_LIST_CALLS)", maxListCalls)
+	} else {
+		log.Printf("per-process list-call cap active: %d", maxListCalls)
 	}
 
 	log.Printf("ready (server %s) — read-only Keyorix tools over stdio", version)

@@ -691,7 +691,8 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	}
 
 	pageSize := clampPageSize(filter.PageSize)
-	offset := (filter.Page - 1) * pageSize
+	page := clampPage(filter.Page)
+	offset := (page - 1) * pageSize
 	query = query.Offset(offset).Limit(pageSize)
 
 	var secrets []*models.SecretNode
@@ -714,6 +715,7 @@ func (ls *LocalStorage) ListOrphanedSecrets(ctx context.Context, projectID uint)
 		Where("secret_nodes.project_id = ?", projectID).
 		Where("users.id IS NULL").
 		Order("secret_nodes.name ASC").
+		Limit(maxUnboundedListRows).
 		Find(&secrets).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

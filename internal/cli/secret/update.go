@@ -65,12 +65,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return runUpdateRemote(rc)
 	}
 
-	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
-	st, err := common.InitializeStorage()
+	// InitializeCoreService (not a bare InitializeStorage()+core.NewKeyorixCore
+	// pair) so this embedded-mode write goes through the SAME at-rest
+	// secret-value-encryption wiring the server and every other embedded write
+	// path use (#G66) — a bare core.NewKeyorixCore(st) here silently wrote new
+	// values in plaintext even when storage.encryption.enabled is true.
+	service, err := common.InitializeCoreService()
 	if err != nil {
 		return err
 	}
-	service := core.NewKeyorixCore(st)
 
 	// Create context
 	ctx := context.Background()

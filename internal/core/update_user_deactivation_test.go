@@ -45,6 +45,15 @@ func TestUpdateUser_Deactivation_RevokesSessionsAndPATs(t *testing.T) {
 		&models.AuditEvent{},
 		&models.UserRole{},
 		&models.Role{},
+		// Group/UserGroup/GroupRole/Project/Environment are needed by
+		// guardLastAdminDeactivation (#G02), which UpdateUser's deactivating
+		// path now calls — without them the role lookup fails on a missing
+		// table and the guard fails closed, refusing every deactivation.
+		&models.Group{},
+		&models.UserGroup{},
+		&models.GroupRole{},
+		&models.Project{},
+		&models.Environment{},
 	))
 
 	st := store.NewLocalStorage(db)
@@ -127,6 +136,15 @@ func TestUpdateUser_NoRevocation_WhenAlreadyInactive(t *testing.T) {
 		&models.AuditEvent{},
 		&models.UserRole{},
 		&models.Role{},
+		// Group/UserGroup/GroupRole/Project/Environment are needed by
+		// guardLastAdminDeactivation (#G02), which UpdateUser's deactivating
+		// path now calls — without them the role lookup fails on a missing
+		// table and the guard fails closed, refusing every deactivation.
+		&models.Group{},
+		&models.UserGroup{},
+		&models.GroupRole{},
+		&models.Project{},
+		&models.Environment{},
 	))
 
 	st := store.NewLocalStorage(db)

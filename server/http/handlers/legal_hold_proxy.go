@@ -60,13 +60,12 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -78,10 +77,15 @@ import (
 // client checks for to reconstruct the sentinel client-side.
 const legalHoldAlreadyActiveCode = "LEGAL_HOLD_ALREADY_ACTIVE"
 
-// CreateLegalHoldProxy handles POST /api/v1/system/legal-hold. Persists the
-// caller's already-fully-built hold row as-is (a raw storage-layer create) — the
-// admin-tier placement gate and required-reason validation already ran in the
-// CALLING server's own core.PlaceLegalHold before this is ever invoked.
+// CreateLegalHoldProxy handles POST /api/v1/system/legal-hold. Routes through
+// core.KeyorixCore.PlaceLegalHold (not a bare storage.CreateLegalHold) so the
+// admin-tier placement gate (#377) also covers a hold placed via node-sync
+// (#G79) — a system.write-only caller without admin-tier authority is
+// refused, matching the human-facing path. PlaceLegalHold resolves the full
+// row itself (reason only is accepted from the caller); the error text for
+// "already active" is matched by substring since PlaceLegalHold does not wrap
+// storage.ErrLegalHoldAlreadyActive with %w (its own pre-check and the DB-race
+// branch both produce the identical "a legal hold is already active" text).
 func (h *DashboardHandler) CreateLegalHoldProxy(w http.ResponseWriter, r *http.Request) {
 	var body models.LegalHold
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -92,10 +96,10 @@ func (h *DashboardHandler) CreateLegalHoldProxy(w http.ResponseWriter, r *http.R
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "reason is required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateLegalHold(r.Context(), &body)
+	created, err := h.coreService.PlaceLegalHold(r.Context(), actorID(r), body.Reason)
 	if err != nil {
-		if errors.Is(err, storage.ErrLegalHoldAlreadyActive) {
-			writeRemoteAPIError(w, http.StatusConflict, legalHoldAlreadyActiveCode, storage.ErrLegalHoldAlreadyActive.Error())
+		if strings.Contains(err.Error(), "already active") {
+			writeRemoteAPIError(w, http.StatusConflict, legalHoldAlreadyActiveCode, err.Error())
 			return
 		}
 		log.Printf("legal-hold proxy: create failed: %v", err)
@@ -116,7 +120,7 @@ type legalHoldActiveResponse struct {
 
 // GetActiveLegalHoldProxy handles GET /api/v1/system/legal-hold/active.
 func (h *DashboardHandler) GetActiveLegalHoldProxy(w http.ResponseWriter, r *http.Request) {
-	hold, err := h.coreService.Storage().GetActiveLegalHold(r.Context())
+	hold, err := h.coreService.GetActiveLegalHold(r.Context())
 	if err != nil {
 		log.Printf("legal-hold proxy: get active failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -129,13 +133,18 @@ func (h *DashboardHandler) GetActiveLegalHoldProxy(w http.ResponseWriter, r *htt
 	writeRemoteAPISuccess(w, legalHoldActiveResponse{Active: true, Hold: hold})
 }
 
-// UpdateLegalHoldProxy handles PUT /api/v1/system/legal-hold/{id}. A raw persist
-// (storage.Storage.UpdateLegalHold is an unconditional full-row Save, matching
-// LocalStorage's own semantics exactly — see the package doc for why there is no
-// conditional-write guarantee to preserve here).
+// UpdateLegalHoldProxy handles PUT /api/v1/system/legal-hold/{id}. The only
+// real "update" LiftLegalHold ever performs is a release, so this routes
+// through core.KeyorixCore.LiftLegalHold (not a bare storage.UpdateLegalHold
+// full-row Save) so the placer-or-admin-tier lift gate also covers a release
+// via node-sync (#G79) — a system.write-only caller who is neither the
+// original placer nor admin-tier is refused, matching the human-facing path.
+// LiftLegalHold re-resolves the active hold and every other field itself
+// (Released/ReleasedBy/ReleasedAt) — only ReleaseReason is taken from the
+// caller's body, so a client can no longer rewrite PlacedBy/PlacedAt/Reason
+// on an unrelated field set.
 func (h *DashboardHandler) UpdateLegalHoldProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
+	if _, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid legal hold id")
 		return
 	}
@@ -144,8 +153,7 @@ func (h *DashboardHandler) UpdateLegalHoldProxy(w http.ResponseWriter, r *http.R
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
 	}
-	body.ID = uint(id)
-	if err := h.coreService.Storage().UpdateLegalHold(r.Context(), &body); err != nil {
+	if err := h.coreService.LiftLegalHold(r.Context(), actorID(r), body.ReleaseReason); err != nil {
 		log.Printf("legal-hold proxy: update failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return

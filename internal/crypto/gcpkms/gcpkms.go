@@ -80,7 +80,7 @@ func (c *client) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) 
 	}
 	resp, err := c.kms.Encrypt(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gcp-kms: encrypt: %w", err)
 	}
 	return resp.GetCiphertext(), nil
 }
@@ -102,7 +102,7 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gcp-kms: decrypt: %w", err)
 	}
 	return resp.GetPlaintext(), nil
 }

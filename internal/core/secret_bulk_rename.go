@@ -29,6 +29,12 @@ type SecretRename struct {
 	NewName string `json:"new_name"`
 }
 
+// maxBulkRenameBatchSize bounds the renames list — each entry does several per-item
+// storage round trips, so an unbounded list is a per-request resource-exhaustion
+// vector (#G44), the same class of bug as maxBulkAccessRequestBatchSize
+// (bulk_access_requests.go).
+const maxBulkRenameBatchSize = 500
+
 // SecretRenameOutcome reports what happened (or, in dry-run, would happen) for one
 // requested rename. Skipped outcomes carry the reason.
 type SecretRenameOutcome struct {
@@ -63,6 +69,9 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 	}
 	if len(renames) == 0 {
 		return nil, fmt.Errorf("at least one rename is required")
+	}
+	if len(renames) > maxBulkRenameBatchSize {
+		return nil, fmt.Errorf("renames exceeds the maximum batch size of %d", maxBulkRenameBatchSize)
 	}
 
 	report := &BulkRenameReport{DryRun: dryRun, Outcomes: make([]SecretRenameOutcome, 0, len(renames))}
@@ -108,6 +117,14 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		}
 		if secret.Name == newName {
 			skip(rn.ID, secret.Name, newName, "name unchanged")
+			continue
+		}
+		// The mandatory length cap applies regardless of whether a naming policy is
+		// configured — validateSecretName below only enforces a length cap when a
+		// policy is enabled, so this call is the only thing standing between an
+		// unbounded new_name and storage when no policy is set (#G44).
+		if verr := validateNameLength("secret name", newName); verr != nil {
+			skip(rn.ID, secret.Name, newName, verr.Error())
 			continue
 		}
 		// Rename toward conformance only — refuse a new name that itself violates the

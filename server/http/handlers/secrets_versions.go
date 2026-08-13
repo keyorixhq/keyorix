@@ -95,7 +95,7 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	// credential too (the same machinery the auto-rotation scheduler uses) rather than
 	// just overwriting the stored value — never report success while the real,
 	// potentially compromised credential is still live untouched upstream.
-	secret, err := h.coreService.RotateSecretOnDemand(r.Context(), uint(id), []byte(reqBody.NewValue), userCtx.Username)
+	secret, err := h.coreService.RotateSecretOnDemand(r.Context(), uint(id), []byte(reqBody.NewValue), userCtx.UserID, userCtx.Username)
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), errNotFound):

@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,10 +44,14 @@ func (h *SecretHandler) ExtendExpiringSecrets(w http.ResponseWriter, r *http.Req
 	n, truncated, err := h.coreService.ExtendExpiringSecrets(r.Context(), uint(id), reqBody.WithinDays, reqBody.NewWindowDays, userCtx.Username, userCtx.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "required") {
+		msg := err.Error()
+		if strings.Contains(msg, "required") {
 			status = http.StatusBadRequest
+		} else {
+			log.Printf("Error extending expiring secrets for project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		h.sendError(w, "Error", err.Error(), status, nil)
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	// #G24: "truncated" tells the caller more secrets matched the window than the

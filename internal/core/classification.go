@@ -69,6 +69,18 @@ func (c *KeyorixCore) ClassifySecret(ctx context.Context, actorID uint, username
 	if secret.Classification == level {
 		return secret, nil // no-op
 	}
+	// #G09: stripping/downgrading the "restricted" label is at least as
+	// sensitive as a single value read of the secret — it removes the
+	// classification-restricted read-gate (step-up/approval/permission) from
+	// every FUTURE read, not just this one. Require the actor to pass that
+	// same gate before allowing the downgrade, closing an otherwise-trivial
+	// way for any secrets.write holder to unprotect a restricted secret
+	// without ever needing the authority to read it.
+	if secret.Classification == ClassificationRestricted {
+		if err := c.checkRestrictedSecretReadApproval(ctx, secret, actorID); err != nil {
+			return nil, err
+		}
+	}
 	old := secret.Classification
 	secret.Classification = level
 	updated, err := c.storage.UpdateSecret(ctx, secret)

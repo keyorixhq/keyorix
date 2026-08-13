@@ -5,6 +5,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -25,7 +26,13 @@ func (h *SecretHandler) GetBlastRadius(w http.ResponseWriter, r *http.Request) {
 	}
 	report, err := h.coreService.GetBlastRadius(r.Context(), uint(id))
 	if err != nil {
-		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		status := dependencyErrorStatus(err.Error())
+		msg := err.Error()
+		if status == http.StatusInternalServerError {
+			log.Printf("Error getting blast radius for secret %d: %v", id, err)
+			msg = clientSafe(err)
+		}
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	h.sendSuccess(w, report, "")

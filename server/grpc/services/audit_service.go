@@ -2,9 +2,9 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -210,11 +210,19 @@ func (s *AuditGRPCService) VerifyAuditChain(ctx context.Context, _ *emptypb.Empt
 }
 
 // WriteAuditCheckpoint signs a checkpoint of the verified audit-chain head on demand
-// (ADR-029). Mirrors POST /api/v1/audit/checkpoint; privileged (system.write). Returns
-// FailedPrecondition when the chain does not verify or encryption is disabled.
+// (ADR-029). Mirrors POST /api/v1/audit/checkpoint, which stacks TWO permissions:
+// the /audit route group's base audit.read (server/http/router.go, RequirePermission
+// on the "/audit" group) plus an extra system.write gate specifically on the
+// /checkpoint route (it's a privileged integrity-control action, gated above the
+// group's audit.read with system.write). Mirror both checks here — checking only
+// system.write let a principal without audit.read reach this RPC directly over
+// gRPC even though every other audit endpoint requires it (G16).
 func (s *AuditGRPCService) WriteAuditCheckpoint(ctx context.Context, _ *emptypb.Empty) (*pb.WriteAuditCheckpointResponse, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	if err := authorizeGlobal(ctx, s.core, actor, "system.write"); err != nil {
@@ -225,9 +233,12 @@ func (s *AuditGRPCService) WriteAuditCheckpoint(ctx context.Context, _ *emptypb.
 		// The chain did not verify (broken, or a prior signed checkpoint proves a
 		// truncation) — refuse to notarise it. A precondition failure, not an error.
 		// core.WriteAuditCheckpoint also propagates raw storage-layer errors on this
-		// path, which must not reach the client verbatim.
+		// path, which must not reach the client verbatim. Classify via errors.Is
+		// against the typed sentinel (core.ErrAuditCheckpointRefused) rather than a
+		// substring match against err.Error() — the dynamic detail appended to that
+		// error must not be able to spoof the classification.
 		msg := err.Error()
-		if !strings.Contains(msg, "refusing to checkpoint") {
+		if !errors.Is(err, core.ErrAuditCheckpointRefused) {
 			log.Printf("Error writing audit checkpoint: %v", err)
 			msg = clientSafe(err)
 		}
@@ -370,6 +381,9 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 				ProjectID: optUint(req.ProjectId),
 			})
 			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
 				return status.Error(codes.Internal, "failed to read audit logs")
 			}
 			if len(events) == 0 {

@@ -217,7 +217,7 @@ func (c *KeyorixCore) appendUserSoDViolations(ctx context.Context, report *SoDVi
 // the caller (DetectSoDViolations) must record that the scan is incomplete instead of
 // looking clean.
 func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, policies []*models.SoDPolicy) ([]SoDViolation, error) {
-	if adminRole := c.adminRoleName(ctx, u.ID); adminRole != "" {
+	if adminRole := c.isGlobalAdminRoleName(ctx, u.ID); adminRole != "" {
 		out := make([]SoDViolation, 0, len(policies))
 		detail := fmt.Sprintf("holds all permissions via admin role %q", adminRole)
 		for _, pol := range policies {
@@ -338,33 +338,37 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViola
 	}
 }
 
-// adminRoleName returns the name of an admin (permission-bypass) role the user holds
-// in ANY scope — direct or group-inherited — or "" if none. The SoD scan is
-// scope-agnostic, so both direct and group-inherited admin grants must be checked:
-// a user who is a member of an admin-role group effectively holds all permissions
-// and must be flagged, exactly like a directly-granted admin.
-func (c *KeyorixCore) adminRoleName(ctx context.Context, userID uint) string {
-	roles, err := c.storage.GetUserRoles(ctx, userID)
-	if err == nil {
-		for _, r := range roles {
-			if isAdminRoleName(r.Name) {
-				return r.Name
-			}
-		}
-	}
-	groups, err := c.storage.GetUserGroups(ctx, userID)
+// isGlobalAdminRoleName returns the name of an admin (permission-bypass) role
+// the user holds at GLOBAL SCOPE specifically (ProjectID 0) — direct or
+// group-inherited — or "" if none.
+//
+// #G01: this replaces the former adminRoleName, which checked the role NAME
+// only and ignored the grant's own scope — so a role named like an admin role
+// but granted (directly, or via a group's role grant, or via the user's own
+// group MEMBERSHIP) at a single project was wrongly treated as install-wide
+// admin-bypass authority everywhere it was checked (legal-hold placement/lift,
+// the SoD preventive gate's admin-bypass exemption). A project-scoped admin
+// does not hold "all permissions" the way a true global admin does, so it must
+// not exempt a principal from a deployment-wide control or a deployment-wide
+// SoD policy. scopedRoleIDs(ctx, userID, Scope{}) — the same primitive
+// requireAdminAuthorityAt already uses for its own scope-aware admin check —
+// unions direct (GetUserRoleIDsAt) and group-inherited (GetUserGroupRoleIDsAt)
+// roles, and BOTH of those storage queries already correctly filter to
+// project_id=0 rows (and, for the group-inherited case, ALSO require the
+// user's own group membership to be project_id=0) when called with the global
+// scope — so this call is scope-correct for free, reusing already-tested code.
+func (c *KeyorixCore) isGlobalAdminRoleName(ctx context.Context, userID uint) string {
+	ids, err := c.scopedRoleIDs(ctx, userID, Scope{})
 	if err != nil {
 		return ""
 	}
-	for _, g := range groups {
-		groupRoles, err := c.storage.GetGroupRoles(ctx, g.ID)
-		if err != nil {
+	for _, id := range ids {
+		role, rerr := c.storage.GetRole(ctx, id)
+		if rerr != nil {
 			continue
 		}
-		for _, r := range groupRoles {
-			if isAdminRoleName(r.Name) {
-				return r.Name
-			}
+		if isAdminRoleName(role.Name) {
+			return role.Name
 		}
 	}
 	return ""
@@ -476,7 +480,7 @@ func (c *KeyorixCore) requireNoSoDViolation(ctx context.Context, userID, roleID 
 	if len(policies) == 0 {
 		return nil
 	}
-	if c.adminRoleName(ctx, userID) != "" {
+	if c.isGlobalAdminRoleName(ctx, userID) != "" {
 		return nil // already holds admin-bypass — see package doc above
 	}
 	role, err := c.storage.GetRole(ctx, roleID)
@@ -538,7 +542,7 @@ func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, group
 		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 	}
 	for _, m := range members {
-		if !m.IsActive || c.adminRoleName(ctx, m.ID) != "" {
+		if !m.IsActive || c.isGlobalAdminRoleName(ctx, m.ID) != "" {
 			continue
 		}
 		held, err := c.userHeldPermissionSet(ctx, m.ID)

@@ -88,6 +88,7 @@ func (ls *LocalStorage) ListStaleInvitedMemberships(ctx context.Context, before 
 	err := ls.db.WithContext(ctx).
 		Where("state = ? AND invited_at < ?", "invited", before).
 		Order("invited_at ASC").
+		Limit(maxUnboundedListRows).
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

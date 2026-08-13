@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,6 +85,36 @@ func TestRevokeProjectAccessReview_NoUserCtx_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.RevokeProjectAccessReview(w, r)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestAttestProjectAccessReview_StorageError_S13 — G50: a raw storage/DB
+// error surfacing from verifyAccessReviewGrantExists (e.g. a broken
+// user_roles table) must not leak internal detail (table/column names) to
+// the client; AttestProjectAccessReview must sanitize it via clientSafe,
+// matching RevokeProjectAccessReview's sibling pattern in this file.
+func TestAttestProjectAccessReview_StorageError_S13(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
+	proj, err := cs.CreateProject(context.Background(), "s13attest-storageerr", "")
+	require.NoError(t, err)
+
+	// Break the table verifyAccessReviewGrantExists queries for a "role"
+	// source decision, forcing a raw driver error out of core.
+	require.NoError(t, db.Exec("DROP TABLE IF EXISTS user_roles").Error)
+
+	body := `{"source":"role","principal_type":"user","principal_id":1,"role_id":1}`
+	r := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)),
+		"id", fmt.Sprintf("%d", proj.ID),
+	))
+	w := httptest.NewRecorder()
+	h.AttestProjectAccessReview(w, r)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "user_roles")
+	assert.NotContains(t, w.Body.String(), "no such table")
+	assert.Contains(t, w.Body.String(), "an internal error occurred")
 }
 
 // TestUpdateProjectMember_NoUserCtx_S13 — no user context → 401.
@@ -549,6 +580,31 @@ func TestUpdateProjectProxy_HappyPath_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.UpdateProjectProxy(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestUpdateProjectProxy_PreservesTimestamps_G80 is the #G80 regression:
+// projectProxyWire.toModel() previously dropped CreatedAt/UpdatedAt/DeletedAt
+// even though the wire struct (and its response-leg constructor) carry them,
+// so every proxied update silently zeroed the project's CreatedAt.
+func TestUpdateProjectProxy_PreservesTimestamps_G80(t *testing.T) {
+	t.Parallel()
+	cs := freshCoreS12(t)
+	h := NewCatalogHandler(cs)
+	proj, err := cs.CreateProject(context.Background(), "s13g80timestamps", "")
+	require.NoError(t, err)
+	require.False(t, proj.CreatedAt.IsZero(), "fixture project must have a real CreatedAt to prove it survives")
+
+	body := fmt.Sprintf(`{"id":%d,"name":"s13g80timestamps-new","description":"updated","created_at":%q}`,
+		proj.ID, proj.CreatedAt.Format(time.RFC3339Nano))
+	r := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", fmt.Sprintf("%d", proj.ID))
+	w := httptest.NewRecorder()
+	h.UpdateProjectProxy(w, r)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	updated, err := cs.Storage().GetProject(context.Background(), proj.ID)
+	require.NoError(t, err)
+	assert.False(t, updated.CreatedAt.IsZero(), "CreatedAt must not be zeroed by the proxy update")
+	assert.WithinDuration(t, proj.CreatedAt, updated.CreatedAt, time.Second)
 }
 
 // TestDeleteProjectProxy_BadID_S13 — non-numeric id → 400.

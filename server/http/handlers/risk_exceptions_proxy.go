@@ -106,29 +106,13 @@ func newRiskExceptionProxyWire(e *models.RiskException) riskExceptionProxyWire {
 	}
 }
 
-func (w riskExceptionProxyWire) toModel() *models.RiskException {
-	return &models.RiskException{
-		ID:            w.ID,
-		Title:         w.Title,
-		Category:      w.Category,
-		Reference:     w.Reference,
-		Justification: w.Justification,
-		CreatedBy:     w.CreatedBy,
-		CreatedAt:     w.CreatedAt,
-		ExpiresAt:     w.ExpiresAt,
-		Revoked:       w.Revoked,
-		RevokedBy:     w.RevokedBy,
-		RevokedAt:     w.RevokedAt,
-		Approved:      w.Approved,
-		ApprovedBy:    w.ApprovedBy,
-		ApprovedAt:    w.ApprovedAt,
-	}
-}
-
-// CreateRiskExceptionProxy handles POST /api/v1/system/risk-exceptions. Persists
-// the caller's already-fully-built (and already-validated) exception row as-is —
-// see the package doc for why this is NOT a re-run of
-// core.CreateRiskException's validation.
+// CreateRiskExceptionProxy handles POST /api/v1/system/risk-exceptions. Routes
+// through core.KeyorixCore.CreateRiskException (not a bare
+// storage.CreateRiskException) so the title/category/justification validation
+// and the expiry-in-the-future / max-365-day-sunset bounds also cover an
+// exception created via node-sync (#G79) — the previous raw persist let a
+// caller mint an already-approved or already-revoked exception, or one with an
+// expiry far in the future, by simply setting those fields on the wire body.
 func (h *DashboardHandler) CreateRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	var body riskExceptionProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -139,7 +123,7 @@ func (h *DashboardHandler) CreateRiskExceptionProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "title and justification are required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateRiskException(r.Context(), body.toModel())
+	created, err := h.coreService.CreateRiskException(r.Context(), actorID(r), body.Title, body.Category, body.Reference, body.Justification, body.ExpiresAt)
 	if err != nil {
 		log.Printf("risk-exceptions proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -188,77 +172,60 @@ func (h *DashboardHandler) ListRiskExceptionsProxy(w http.ResponseWriter, r *htt
 	writeRemoteAPISuccess(w, map[string]interface{}{"exceptions": wire})
 }
 
-// UpdateRiskExceptionProxy handles PUT /api/v1/system/risk-exceptions/{id}. A raw
-// persist (storage.Storage.UpdateRiskException is an unconditional full-row Save,
-// matching LocalStorage's own semantics exactly) — see the package doc for why no
-// conditional write is needed here.
-func (h *DashboardHandler) UpdateRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
-		return
-	}
-	var body riskExceptionProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.ID = uint(id)
-	if err := h.coreService.Storage().UpdateRiskException(r.Context(), body.toModel()); err != nil {
-		log.Printf("risk-exceptions proxy: update failed: %v", err)
-		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
-		return
-	}
-	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
-}
+// UpdateRiskExceptionProxy (#G79 — REMOVED, not fixed-in-place): this route
+// used to accept a client-supplied models.RiskException and persist it as an
+// unconditional full-row Save with no auth/business-logic decision at all —
+// the mandatory dual-control invariant (approver != creator) and every other
+// field were entirely caller-controlled. It is not merely fixed but deleted
+// (see router.go) because it has NO legitimate caller: core.RevokeRiskException/
+// ApproveRiskException (the only two functions that ever mutate an existing
+// risk exception) both moved to the conditional
+// RevokeRiskExceptionIfNotRevoked/ApproveRiskExceptionIfPending primitives
+// below years ago (StateTransitionMissingCAS.ql fix) and have never called
+// storage.UpdateRiskException since — a repo-wide search found no caller of
+// it anywhere, local or remote. RemoteStorage.UpdateRiskException (the
+// client-side stub) and the storage.Storage interface method are left in
+// place — dead but harmless, since nothing reaches them without this route —
+// removing those is an unrelated dead-code cleanup, not a security fix.
 
 // RevokeRiskExceptionProxy handles PUT /api/v1/system/risk-exceptions/{id}/revoke.
-// Runs the SAME conditional "WHERE id = ? AND revoked = false" write
-// core.KeyorixCore.RevokeRiskException now relies on against a local backend,
-// closing the TOCTOU race a plain UpdateRiskExceptionProxy call would reopen
-// across this HTTP hop — see the package doc's atomicity note.
+// Routes through core.KeyorixCore.RevokeRiskException (not the raw conditional
+// storage primitive with a client-supplied row) so the already-revoked/
+// already-expired preconditions and the audit-event write also cover a revoke
+// via node-sync (#G79); RevokeRiskException re-fetches the row and resolves
+// RevokedBy/RevokedAt itself, so none of that is accepted from the wire body.
 func (h *DashboardHandler) RevokeRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
 		return
 	}
-	var body riskExceptionProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.ID = uint(id)
-	matched, err := h.coreService.Storage().RevokeRiskExceptionIfNotRevoked(r.Context(), body.toModel())
-	if err != nil {
+	if err := h.coreService.RevokeRiskException(r.Context(), actorID(r), uint(id)); err != nil {
 		log.Printf("risk-exceptions proxy: revoke failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
-	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
+	writeRemoteAPISuccess(w, map[string]bool{"matched": true})
 }
 
 // ApproveRiskExceptionProxy handles PUT /api/v1/system/risk-exceptions/{id}/approve.
-// Runs the SAME conditional "WHERE id = ? AND revoked = false AND approved =
-// false" write core.KeyorixCore.ApproveRiskException now relies on against a
-// local backend — see RevokeRiskExceptionProxy's doc for the race this closes.
+// Routes through core.KeyorixCore.ApproveRiskException (not the raw conditional
+// storage primitive with a client-supplied row) so the mandatory dual-control
+// invariant (actorID must differ from the exception's CreatedBy) — previously
+// never checked at all by this proxy — also covers an approval via node-sync
+// (#G79); ApproveRiskException re-fetches the row and resolves
+// Approved/ApprovedBy/ApprovedAt itself, so none of that (nor any other field
+// on the row) is accepted from the wire body anymore.
 func (h *DashboardHandler) ApproveRiskExceptionProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidExceptionID)
 		return
 	}
-	var body riskExceptionProxyWire
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
-		return
-	}
-	body.ID = uint(id)
-	matched, err := h.coreService.Storage().ApproveRiskExceptionIfPending(r.Context(), body.toModel())
-	if err != nil {
+	if err := h.coreService.ApproveRiskException(r.Context(), actorID(r), uint(id)); err != nil {
 		log.Printf("risk-exceptions proxy: approve failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
 	}
-	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
+	writeRemoteAPISuccess(w, map[string]bool{"matched": true})
 }

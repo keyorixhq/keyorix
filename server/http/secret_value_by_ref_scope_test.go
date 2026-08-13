@@ -42,6 +42,7 @@ func setupByRefScopeCore(t *testing.T) *core.KeyorixCore {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.Session{},
+		&models.SecretAccessSchedule{},
 	))
 
 	now := time.Now()

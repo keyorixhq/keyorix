@@ -38,6 +38,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -45,8 +46,16 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// maxGroupsPageLimit bounds ListGroupsPageProxy's caller-supplied limit (#G44).
+const maxGroupsPageLimit = 1000
+
+// maxGroupMembersByIDsCount bounds ListGroupMembersByIDsProxy's comma-separated
+// ids query parameter (#G44) — each ID drives further per-group work downstream.
+const maxGroupMembersByIDsCount = 1000
 
 // groupProxyWire mirrors models.Group's fields exactly (snake_case) — the wire
 // shape internal/storage/store/remote_users.go's groupWire sends/expects. See
@@ -77,14 +86,6 @@ func newGroupProxyWire(g *models.Group) groupProxyWire {
 	return w
 }
 
-func (w groupProxyWire) toModel() *models.Group {
-	return &models.Group{
-		ID:          w.ID,
-		Name:        w.Name,
-		Description: w.Description,
-	}
-}
-
 // isGroupNotFound reports whether err is LocalStorage's errGroupNotFoundLower
 // error (local_users.go wraps i18n.T("ErrorGroupNotFound", ...), which does
 // not necessarily contain the literal substring "not found" in every locale —
@@ -95,7 +96,10 @@ func isGroupNotFound(err error) bool {
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "notfound")
 }
 
-// CreateGroupProxy handles POST /api/v1/system/groups.
+// CreateGroupProxy handles POST /api/v1/system/groups. Routes through
+// core.KeyorixCore.CreateGroup (not a bare storage.CreateGroup) so the
+// anti-homograph identifier validation the human-facing path applies also
+// covers a group created via node-sync (#G79).
 func (h *GroupHandler) CreateGroupProxy(w http.ResponseWriter, r *http.Request) {
 	var body groupProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -106,7 +110,9 @@ func (h *GroupHandler) CreateGroupProxy(w http.ResponseWriter, r *http.Request) 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "name is required")
 		return
 	}
-	created, err := h.coreService.Storage().CreateGroup(r.Context(), body.toModel())
+	created, err := h.coreService.CreateGroup(r.Context(), actorID(r), &core.CreateGroupRequest{
+		Name: body.Name, Description: body.Description,
+	})
 	if err != nil {
 		log.Printf("groups proxy: create failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
@@ -135,11 +141,10 @@ func (h *GroupHandler) GetGroupProxy(w http.ResponseWriter, r *http.Request) {
 	writeRemoteAPISuccess(w, newGroupProxyWire(g))
 }
 
-// UpdateGroupProxy handles PUT /api/v1/system/groups/{id}. Like the invitation
-// proxy's raw persist, this trusts the caller's already-fully-resolved final
-// desired state (the calling core.KeyorixCore.UpdateGroup already merged the
-// existing row with the requested changes before invoking storage.UpdateGroup)
-// rather than re-deriving a partial update here.
+// UpdateGroupProxy handles PUT /api/v1/system/groups/{id}. Routes through
+// core.KeyorixCore.UpdateGroup (not a bare storage.UpdateGroup) so the
+// anti-homograph identifier validation the human-facing path applies also
+// covers a rename via node-sync (#G79).
 func (h *GroupHandler) UpdateGroupProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -151,8 +156,9 @@ func (h *GroupHandler) UpdateGroupProxy(w http.ResponseWriter, r *http.Request) 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
-	body.ID = uint(id)
-	updated, err := h.coreService.Storage().UpdateGroup(r.Context(), body.toModel())
+	updated, err := h.coreService.UpdateGroup(r.Context(), actorID(r), &core.UpdateGroupRequest{
+		ID: uint(id), Name: body.Name, Description: body.Description,
+	})
 	if err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errGroupNotFoundLower)
@@ -165,9 +171,12 @@ func (h *GroupHandler) UpdateGroupProxy(w http.ResponseWriter, r *http.Request) 
 	writeRemoteAPISuccess(w, newGroupProxyWire(updated))
 }
 
-// DeleteGroupProxy handles DELETE /api/v1/system/groups/{id}. Soft-deletes the
-// group (LocalStorage.DeleteGroup), preserving its role grants and
-// memberships for a later RestoreGroupProxy call — identical to a local
+// DeleteGroupProxy handles DELETE /api/v1/system/groups/{id}. Routes through
+// core.KeyorixCore.DeleteGroup (not a bare storage.DeleteGroup) so
+// guardLastGlobalAdminGroupDelete — refusing to delete a group holding the
+// install's last global-admin-conferring role grant — also covers a delete
+// via node-sync (#G79); soft-deletes the group, preserving its role grants
+// and memberships for a later RestoreGroupProxy call, identical to a local
 // backend.
 func (h *GroupHandler) DeleteGroupProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -175,7 +184,7 @@ func (h *GroupHandler) DeleteGroupProxy(w http.ResponseWriter, r *http.Request) 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
-	if err := h.coreService.Storage().DeleteGroup(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.DeleteGroup(r.Context(), actorID(r), uint(id)); err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", errGroupNotFoundLower)
 			return
@@ -187,14 +196,18 @@ func (h *GroupHandler) DeleteGroupProxy(w http.ResponseWriter, r *http.Request) 
 	writeRemoteAPISuccess(w, map[string]bool{"deleted": true})
 }
 
-// RestoreGroupProxy handles POST /api/v1/system/groups/{id}/restore.
+// RestoreGroupProxy handles POST /api/v1/system/groups/{id}/restore. Routes
+// through core.KeyorixCore.RestoreGroup (not a bare storage.RestoreGroup) so
+// requireGlobalAdminToReinstateAdminRoles — the ceiling check on reinstating
+// every role a restored group held, including admin-tier ones — also covers
+// a restore via node-sync (#G79).
 func (h *GroupHandler) RestoreGroupProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", errInvalidGroupIDLower)
 		return
 	}
-	if err := h.coreService.Storage().RestoreGroup(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.RestoreGroup(r.Context(), actorID(r), uint(id)); err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "group not found or not deleted")
 			return
@@ -224,13 +237,15 @@ func (h *GroupHandler) ListGroupsProxy(w http.ResponseWriter, r *http.Request) {
 // ListGroupsPageProxy handles GET /api/v1/system/groups/page?offset=&limit=.
 func (h *GroupHandler) ListGroupsPageProxy(w http.ResponseWriter, r *http.Request) {
 	offset, err := strconv.Atoi(r.URL.Query().Get("offset"))
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "offset must be a valid integer")
+	if err != nil || offset < 0 {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "offset must be a non-negative integer")
 		return
 	}
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
-	if err != nil {
-		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "limit must be a valid integer")
+	// #G44: a negative limit reaches GORM's Limit() unclamped, which removes the
+	// LIMIT clause entirely (Limit(-1) semantics) rather than restricting the page.
+	if err != nil || limit <= 0 || limit > maxGroupsPageLimit {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", fmt.Sprintf("limit must be a positive integer up to %d", maxGroupsPageLimit))
 		return
 	}
 	groups, total, err := h.coreService.Storage().ListGroupsPage(r.Context(), offset, limit)
@@ -253,7 +268,11 @@ type groupMemberBody struct {
 	ProjectID uint `json:"project_id"`
 }
 
-// AddGroupMemberProxy handles POST /api/v1/system/groups/{id}/members.
+// AddGroupMemberProxy handles POST /api/v1/system/groups/{id}/members. Routes
+// through core.KeyorixCore.AddUserToGroup (not a bare storage.AddUserToGroup)
+// so the escalation-by-proxy ceiling and SoD checks (validateGroupJoinRoles)
+// on joining an admin-conferring group also cover a membership add via
+// node-sync (#G79).
 func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -269,7 +288,7 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "user_id is required")
 		return
 	}
-	if err := h.coreService.Storage().AddUserToGroup(r.Context(), body.UserID, uint(groupID), body.ProjectID); err != nil {
+	if err := h.coreService.AddUserToGroup(r.Context(), actorID(r), body.UserID, uint(groupID), body.ProjectID); err != nil {
 		if isGroupNotFound(err) {
 			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "user or group not found")
 			return
@@ -282,7 +301,12 @@ func (h *GroupHandler) AddGroupMemberProxy(w http.ResponseWriter, r *http.Reques
 }
 
 // RemoveGroupMemberProxy handles DELETE /api/v1/system/groups/{id}/members/{userId}.
-// Optional query param: project_id (default 0 = global membership).
+// Optional query param: project_id (default 0 = global membership). Routes
+// through core.KeyorixCore.RemoveUserFromGroup (not a bare
+// storage.RemoveUserFromGroup) so guardLastGlobalAdminMembership — refusing to
+// remove a user whose global admin-tier authority comes solely from this
+// group's role grant when no other admin route remains — also covers a
+// membership removal via node-sync (#G79).
 func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Request) {
 	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -303,7 +327,7 @@ func (h *GroupHandler) RemoveGroupMemberProxy(w http.ResponseWriter, r *http.Req
 		}
 		projectID = uint(pid)
 	}
-	if err := h.coreService.Storage().RemoveUserFromGroup(r.Context(), uint(userID), uint(groupID), projectID); err != nil {
+	if err := h.coreService.RemoveUserFromGroup(r.Context(), actorID(r), uint(userID), uint(groupID), projectID); err != nil {
 		log.Printf("groups proxy: remove member failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
 		return
@@ -346,6 +370,10 @@ func (h *GroupHandler) ListGroupMembersByIDsProxy(w http.ResponseWriter, r *http
 		return
 	}
 	parts := strings.Split(idsParam, ",")
+	if len(parts) > maxGroupMembersByIDsCount {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", fmt.Sprintf("ids exceeds the maximum of %d", maxGroupMembersByIDsCount))
+		return
+	}
 	groupIDs := make([]uint, 0, len(parts))
 	for _, p := range parts {
 		id, err := strconv.ParseUint(strings.TrimSpace(p), 10, 32)

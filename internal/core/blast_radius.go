@@ -37,11 +37,12 @@ type BlastRadiusReport struct {
 	Dependents       []BlastRadiusNode `json:"dependents"`
 	TotalImpact      int               `json:"total_impact"` // == len(Dependents)
 	MaxDepth         int               `json:"max_depth"`
-	// Truncated is true when the BFS hit its depth ceiling (maxDepth in blastBFS)
-	// while dependents still existed beyond it — TotalImpact/Dependents then
-	// reflect only the reachable-within-depth subset, not the true full impact
-	// (#G24: previously dropped entirely, so a capped result was indistinguishable
-	// from a genuinely complete one).
+	// Truncated is true when either bound was hit: the true dependent count
+	// exceeds maxBlastRadiusNodes (#G44), or the BFS hit its depth ceiling
+	// (maxDepth in blastBFS) while dependents still existed beyond it (#G24).
+	// Either way, Dependents/TotalImpact reflect only the reachable subset,
+	// not the true full impact — never silently reported as a complete
+	// picture.
 	Truncated bool `json:"truncated"`
 }
 
@@ -51,20 +52,30 @@ type blastBFSNode struct {
 	depth int
 }
 
+// maxBlastRadiusNodes bounds the total number of dependent nodes blastBFS will
+// return (#G44) — depth alone (maxDepth below) doesn't bound BREADTH: a secret
+// with a very wide fan-out at a single depth can still produce an unbounded node
+// count, and GetBlastRadius does one storage.GetSecret call PER node afterward
+// (an N+1 query pattern), so an unbounded node count is a per-request
+// resource-exhaustion vector.
+const maxBlastRadiusNodes = 2000
+
 // blastBFS performs a bounded BFS over the dependents adjacency map starting
-// from rootID, returning nodes ordered by (depth, id). Max depth is 10.
-// truncated is true when any node reached maxDepth — the BFS stops expanding a
-// node once it hits the ceiling, so a node's own further dependents (if any)
-// are never discovered; reaching the ceiling at all means the true tree MAY
-// extend further than what's returned (#G24 — conservative: flagged even if
-// that specific node turns out to have no further children, since "possibly
-// truncated" must never be silently reported as complete).
+// from rootID, returning nodes ordered by (depth, id). Max depth is 10; max
+// total nodes is maxBlastRadiusNodes. truncated is true when any node reached
+// maxDepth — the BFS stops expanding a node once it hits the ceiling, so a
+// node's own further dependents (if any) are never discovered; reaching the
+// ceiling at all means the true tree MAY extend further than what's returned
+// (#G24 — conservative: flagged even if that specific node turns out to have
+// no further children, since "possibly truncated" must never be silently
+// reported as complete). The maxBlastRadiusNodes breadth cap (#G44) is
+// reported separately by the caller.
 func blastBFS(rootID uint, adj map[uint][]uint) (ordered []blastBFSNode, truncated bool) {
 	const maxDepth = 10
 	visited := map[uint]bool{rootID: true}
 	queue := []blastBFSNode{{id: rootID, depth: 0}}
 
-	for len(queue) > 0 {
+	for len(queue) > 0 && len(ordered) < maxBlastRadiusNodes {
 		cur := queue[0]
 		queue = queue[1:]
 		for _, dep := range adj[cur.id] {
@@ -78,6 +89,9 @@ func blastBFS(rootID uint, adj map[uint][]uint) (ordered []blastBFSNode, truncat
 				queue = append(queue, next)
 			} else {
 				truncated = true
+			}
+			if len(ordered) >= maxBlastRadiusNodes {
+				break
 			}
 		}
 	}
@@ -142,7 +156,7 @@ func (k *KeyorixCore) GetBlastRadius(ctx context.Context, secretID uint) (*Blast
 		Dependents:       nodes,
 		TotalImpact:      len(nodes),
 		MaxDepth:         maxDepthSeen,
-		Truncated:        truncated,
+		Truncated:        truncated || len(ordered) >= maxBlastRadiusNodes,
 	}, nil
 }
 

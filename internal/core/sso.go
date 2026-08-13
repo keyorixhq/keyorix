@@ -339,7 +339,14 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		if !p.AutoProvision {
 			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
 		}
-		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, true, info.Name); err != nil {
+		// p.TrustAssertedEmail, not a hardcoded true — provisionSSOUser's own
+		// race-guard re-runs resolveSSOUser with this exact value to decide
+		// whether a just-materialised existing account may be claimed by email
+		// match. Hardcoding true here let that internal re-check treat the
+		// SAML-asserted email as verified regardless of the provider's own
+		// TrustAssertedEmail setting, reopening the #89 SAML account-takeover
+		// through the resolve-then-provision race window specifically.
+		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, p.TrustAssertedEmail, info.Name); err != nil {
 			return nil, nil, "", err
 		}
 	}

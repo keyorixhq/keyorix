@@ -338,6 +338,19 @@ func (h *CatalogHandler) GetLatestClosedAccessReviewCampaignProxy(w http.Respons
 // UpdateAccessReviewCampaign does — see the package doc for why relaying that
 // call's bool result (not synthesizing one) is the entire atomicity
 // contract here.
+//
+// ARC-006: the only caller of storage.UpdateAccessReviewCampaign,
+// core.CloseAccessReviewCampaign, ever sets exactly four fields on the
+// campaign it fetched and mutated in place: State, ClosedBy, ClosedAt,
+// ForcedIncomplete. It never touches ProjectID/Name/CreatedBy/CreatedAt/
+// Degraded/DegradedReasons — those always carry through from the row it
+// loaded. Because the underlying storage call is a `Select("*")` full-row
+// update (see package doc's Atomicity note), a client-supplied wire body
+// could otherwise rewrite a campaign's identity or silently clear its
+// degraded-snapshot flag in the same call. Re-fetch the authoritative row
+// and apply only the four legitimate transition fields from the wire —
+// mirrors the ARC-003 stripping CreateAccessReviewCampaignProxy already
+// applies, just on the opposite field set.
 func (h *CatalogHandler) UpdateAccessReviewCampaignProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -349,8 +362,21 @@ func (h *CatalogHandler) UpdateAccessReviewCampaignProxy(w http.ResponseWriter, 
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", errInvalidBody)
 		return
 	}
-	body.ID = uint(id)
-	updated, err := h.coreService.Storage().UpdateAccessReviewCampaign(r.Context(), body.toModel())
+	existing, err := h.coreService.Storage().GetAccessReviewCampaign(r.Context(), uint(id))
+	if err != nil {
+		if isNotFoundErr(err) {
+			writeRemoteAPIError(w, http.StatusNotFound, "NOT_FOUND", "access-review campaign not found")
+			return
+		}
+		log.Printf("access-review-campaigns proxy: update campaign lookup failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	existing.State = body.State
+	existing.ClosedBy = body.ClosedBy
+	existing.ClosedAt = body.ClosedAt
+	existing.ForcedIncomplete = body.ForcedIncomplete
+	updated, err := h.coreService.Storage().UpdateAccessReviewCampaign(r.Context(), existing)
 	if err != nil {
 		log.Printf("access-review-campaigns proxy: update campaign failed: %v", err)
 		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))

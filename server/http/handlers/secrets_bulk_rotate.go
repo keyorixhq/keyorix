@@ -59,7 +59,7 @@ func (h *SecretHandler) BulkRotateSecrets(w http.ResponseWriter, r *http.Request
 	result, err := h.coreService.BulkRotateSecrets(r.Context(), req)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "required") {
+		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "exceeds the maximum batch size") {
 			status = http.StatusBadRequest
 		}
 		h.sendError(w, "Error", err.Error(), status, nil)

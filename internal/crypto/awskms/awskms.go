@@ -53,7 +53,7 @@ func (c *client) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) 
 	}
 	out, err := c.kms.Encrypt(ctx, in)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("aws-kms: encrypt: %w", err)
 	}
 	return out.CiphertextBlob, nil
 }
@@ -83,7 +83,7 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("aws-kms: decrypt: %w", err)
 	}
 	return out.Plaintext, nil
 }

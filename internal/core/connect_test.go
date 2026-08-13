@@ -111,3 +111,63 @@ func TestReadFederatedSecret_UserAuditedAsUser(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, ActorTypeUser, got.ActorType)
 }
+
+// TestConnectErrors_AreTypedSentinels proves the errors ReadFederatedSecret /
+// CreateConnectRefGrant produce for their deliberately-crafted, safe outcomes are
+// identifiable via errors.Is against the core package's sentinels (G50). This is
+// what lets the HTTP layer's isSafeConnectError classify safe vs. unsafe errors by
+// type instead of by substring-matching err.Error() against caller-influenced text.
+func TestConnectErrors_AreTypedSentinels(t *testing.T) {
+	c := &KeyorixCore{storage: new(MockStorage)}
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConnectDisabled)
+
+	c2, _ := connectTestCore(t, fakeConnector{name: "aws"})
+	_, err = c2.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "nope", "ref")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConnectUnknownConnector)
+
+	_, err = c2.CreateConnectRefGrant(context.Background(), 1, 0, "aws", "", nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConnectRoleRequired)
+
+	_, err = c2.CreateConnectRefGrant(context.Background(), 1, 5, "nope", "", nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrConnectUnknownConnector)
+}
+
+// TestReadFederatedSecret_AuditDescriptionRedactsRawUpstreamError is the G50
+// regression test (detection_idea): a caller-influenced ref, echoed back by the
+// upstream connector inside its own error text along with internal-looking detail
+// (a fake internal hostname plus a "safe" marker phrase that isSafeConnectError
+// would previously have substring-matched), must never be persisted verbatim into
+// the audit_events.Description written for the failed read.
+func TestReadFederatedSecret_AuditDescriptionRedactsRawUpstreamError(t *testing.T) {
+	const ref = "prod/db"
+	rawUpstreamErr := errors.New(
+		"dial tcp 10.0.0.5:8200: connection refused (ref=" + ref +
+			") — is not permitted for your roles on connector \"aws\"")
+
+	ms := new(MockStorage)
+	var got *models.AuditEvent
+	ms.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		got = e
+		return true
+	})).Return(nil)
+	c := &KeyorixCore{storage: ms}
+	c.SetConnectManager(connect.NewManager([]connect.Connector{
+		fakeConnector{name: "aws", err: rawUpstreamErr},
+	}))
+
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", ref)
+	require.Error(t, err)
+	// The caller (HTTP layer) still gets the raw err back to classify/sanitize itself.
+	assert.Equal(t, rawUpstreamErr, err)
+
+	require.NotNil(t, got, "a failed federated read must still be audited")
+	assert.NotContains(t, got.Description, "10.0.0.5", "raw upstream host detail must not reach the audit trail")
+	assert.NotContains(t, got.Description, "connection refused", "raw upstream error text must not reach the audit trail")
+	assert.Contains(t, got.Description, "FAILED")
+	assert.Contains(t, got.Description, "an internal error occurred")
+}

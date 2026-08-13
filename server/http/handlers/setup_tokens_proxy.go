@@ -92,10 +92,44 @@ func (w setupTokenProxyWire) toModel() *models.SetupToken {
 	}
 }
 
+// validSetupTokenProxyPurposes mirrors internal/core/setup_token.go's unexported
+// validSetupPurpose — duplicated here (a small, stable enum) because this proxy
+// cannot import internal/core's unexported validator. Kept as the authoritative
+// list CreateSetupTokenProxy checks the wire body's Purpose against.
+var validSetupTokenProxyPurposes = map[string]bool{
+	"invitation_accept":   true,
+	"account_setup":       true,
+	"password_reset_link": true,
+}
+
+// maxSetupTokenProxyTTL bounds how far in the future a proxied setup token's
+// ExpiresAt may be, independent of whatever core.DefaultSetupTokenTTL (24h) the
+// calling server is configured with — a generous ceiling, not the real policy,
+// since this proxy has no visibility into the calling server's actual TTL
+// setting; it exists only to reject an unbounded/absurd expiry.
+const maxSetupTokenProxyTTL = 30 * 24 * time.Hour
+
 // CreateSetupTokenProxy handles POST /api/v1/system/setup-tokens. The caller (the
 // downstream server's own core.KeyorixCore.IssueSetupToken) has already computed
 // every field — the hash, purpose, TTL, subject — exactly as it would for
-// LocalStorage; this is a raw persist, no policy decision.
+// LocalStorage; this is otherwise a raw persist, no policy decision.
+//
+// #G79: token_hash is, by design, always caller-supplied — the raw token is
+// generated with crypto/rand on whichever node calls IssueSetupToken (local or
+// remote), and only its hash ever crosses this wire; there is no way to
+// regenerate or independently verify it here without defeating the entire
+// point of hashing (the plaintext must never reach this layer). What WAS
+// missing is any check tying the token to a real, already-vetted record: a
+// caller reachable directly via system.write (bypassing the calling server's
+// own IssueSetupToken) could otherwise mint an active token binding an
+// arbitrary token_hash of a plaintext value it already knows to an arbitrary
+// subject_email, then immediately redeem it via the public, unauthenticated
+// /auth/setup/consume endpoint — full account takeover with no invitation or
+// existing account required at all. Every legitimate IssueSetupToken call site
+// (invitations.go/auth.go/setup_delivery.go) either supplies an InvitationID
+// referencing a real, matching-email invitation (invitation_accept) or a
+// SubjectUserID referencing a real, matching-email user (account_setup/
+// password_reset_link) — never neither, never both. Re-verify that shape here.
 func (h *AuthHandler) CreateSetupTokenProxy(w http.ResponseWriter, r *http.Request) {
 	var body setupTokenProxyWire
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -105,6 +139,36 @@ func (h *AuthHandler) CreateSetupTokenProxy(w http.ResponseWriter, r *http.Reque
 	if body.TokenHash == "" || body.Purpose == "" || body.SubjectEmail == "" {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "token_hash, purpose, and subject_email are required")
 		return
+	}
+	if !validSetupTokenProxyPurposes[body.Purpose] {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "unknown setup-token purpose")
+		return
+	}
+	if body.ExpiresAt.After(time.Now().Add(maxSetupTokenProxyTTL)) {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "expires_at is too far in the future")
+		return
+	}
+	subjectEmail := strings.ToLower(strings.TrimSpace(body.SubjectEmail))
+	if body.Purpose == "invitation_accept" {
+		if body.InvitationID == nil || body.SubjectUserID != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invitation_accept requires invitation_id and no subject_user_id")
+			return
+		}
+		inv, err := h.coreService.Storage().GetProjectInvitation(r.Context(), *body.InvitationID)
+		if err != nil || !strings.EqualFold(strings.TrimSpace(inv.Email), subjectEmail) {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invitation_id does not reference a matching invitation")
+			return
+		}
+	} else {
+		if body.SubjectUserID == nil || body.InvitationID != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "this purpose requires subject_user_id and no invitation_id")
+			return
+		}
+		user, err := h.coreService.Storage().GetUser(r.Context(), *body.SubjectUserID)
+		if err != nil || !strings.EqualFold(strings.TrimSpace(user.Email), subjectEmail) {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "subject_user_id does not reference a matching user")
+			return
+		}
 	}
 	created, err := h.coreService.Storage().CreateSetupToken(r.Context(), body.toModel())
 	if err != nil {

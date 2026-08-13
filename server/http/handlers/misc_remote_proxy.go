@@ -51,6 +51,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -246,6 +247,28 @@ type roleGrantBody struct {
 // / internal/storage/store/remote_legal_hold.go).
 const duplicateEmailProxyCode = "DUPLICATE_EMAIL"
 
+// bcryptHashPrefixes are the recognizable prefixes of a golang.org/x/crypto/bcrypt
+// hash ($2a$/$2b$/$2y$ cost-and-salt header). CreateUserWithRoleGrantsProxy uses
+// this as a cheap format sanity check — see its doc for why full password-policy
+// validation cannot happen at this layer.
+var bcryptHashPrefixes = [...]string{"$2a$", "$2b$", "$2y$"}
+
+// isPlausibleBcryptHash reports whether s is shaped like a bcrypt hash
+// (correct prefix and length; golang.org/x/crypto/bcrypt hashes are always 60
+// bytes). This cannot confirm the hash was produced by a real password-policy
+// check — it only rejects empty/garbage/non-hash values.
+func isPlausibleBcryptHash(s string) bool {
+	if len(s) != 60 {
+		return false
+	}
+	for _, p := range bcryptHashPrefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateUserWithRoleGrantsProxy handles POST /api/v1/system/users/with-role-grants
 // — the ONE handler in this file that is not a plain CRUD passthrough.
 //
@@ -262,11 +285,21 @@ const duplicateEmailProxyCode = "DUPLICATE_EMAIL"
 // remote_users.go's CreateUserWithRoleGrants doc for the full "why a naive
 // two-call proxy would reopen this" reasoning.
 //
-// The caller (internal/core.CreateUserWithAssignments on the downstream server)
-// has already run every validation/escalation-ceiling/SoD check BEFORE ever
-// reaching storage.Storage, so this handler makes NO policy decision of its
-// own — it persists exactly what it's given, mirroring LocalStorage's own raw
-// tx.Create semantics.
+// #G79: the calling server's own core.CreateUserWithAssignments DOES run
+// every validation/escalation-ceiling/SoD check before ever reaching
+// storage.Storage — but that only holds for a caller that goes through the
+// calling server's human-facing flow first. This HTTP route is reachable
+// directly by anyone holding system.write (the same broad permission every
+// other RemoteStorage proxy needs), so a caller that skips the calling
+// server's core layer entirely and hits this endpoint straight would
+// otherwise mint a fully-active account with an attacker-chosen grant set
+// and no SoD gate. core.ValidateRoleGrantAuthority re-applies the same
+// escalation-ceiling + SoD checks CreateUserWithAssignments uses, against
+// actorID(r) (the authenticated caller of THIS request). It cannot
+// re-validate password strength (only a pre-computed hash crosses this
+// wire, by design — see remote_users.go's doc on why the plaintext never
+// leaves the downstream node for this atomic path), so
+// isPlausibleBcryptHash is a narrower, format-only backstop instead.
 func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *http.Request) {
 	var body createUserWithRoleGrantsProxyBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -277,6 +310,26 @@ func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *ht
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "username, email, and password_hash are required")
 		return
 	}
+	if !isPlausibleBcryptHash(body.PasswordHash) {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "password_hash is not a recognizable bcrypt hash")
+		return
+	}
+	grants := make([]storage.RoleGrant, 0, len(body.Grants))
+	for _, g := range body.Grants {
+		grants = append(grants, storage.RoleGrant{
+			RoleID: g.RoleID,
+			Scope:  storage.Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID},
+		})
+	}
+	if err := h.coreService.ValidateRoleGrantAuthority(r.Context(), actorID(r), grants); err != nil {
+		// Fail closed: an underlying storage error while evaluating authority is
+		// indistinguishable from a genuine refusal at this layer, and reporting it
+		// as anything other than a flat denial risks leaking whether a specific
+		// role/grant combination exists — same fail-closed choice
+		// checkBreakGlassRoleContainment makes for RoleSetHasPermission's error path.
+		writeRemoteAPIError(w, http.StatusForbidden, "FORBIDDEN", clientSafe(err))
+		return
+	}
 	user := &models.User{
 		Username:          body.Username,
 		Email:             body.Email,
@@ -285,13 +338,6 @@ func (h *UserHandler) CreateUserWithRoleGrantsProxy(w http.ResponseWriter, r *ht
 		IsActive:          body.IsActive,
 		AccountState:      body.AccountState,
 		PasswordChangedAt: body.PasswordChangedAt,
-	}
-	grants := make([]storage.RoleGrant, 0, len(body.Grants))
-	for _, g := range body.Grants {
-		grants = append(grants, storage.RoleGrant{
-			RoleID: g.RoleID,
-			Scope:  storage.Scope{ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID},
-		})
 	}
 	created, err := h.coreService.Storage().CreateUserWithRoleGrants(r.Context(), user, grants)
 	if err != nil {

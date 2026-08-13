@@ -189,6 +189,7 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 	if limit <= 0 {
 		limit = 10
 	}
+	limit = clampPageSize(limit)
 	q := ls.db.WithContext(ctx).
 		Table("secret_access_logs AS l").
 		Select("l.secret_node_id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, COUNT(*) AS read_count, MAX(l.access_time) AS last_read").
@@ -237,7 +238,8 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notR
 		Where("s.deleted_at IS NULL").
 		Group("s.id, s.name, s.environment_id").
 		Having("MAX(l.access_time) IS NULL OR MAX(l.access_time) < ?", notReadSince).
-		Order("(MAX(l.access_time) IS NULL) DESC, last_read ASC")
+		Order("(MAX(l.access_time) IS NULL) DESC, last_read ASC").
+		Limit(maxUnboundedListRows)
 	if projectID != nil {
 		q = q.Where("s.project_id = ?", *projectID)
 	}
@@ -452,7 +454,7 @@ func (ls *LocalStorage) GetSecretReadCounts(ctx context.Context, secretID uint, 
 		Where("ae.secret_node_id = ? AND ae.event_type = ? AND ae.event_time >= ? AND ae.event_time < ?", secretID, "secret.read", since, until).
 		Group("ae.user_id").
 		Order("read_count DESC").
-		Limit(limit).
+		Limit(clampPageSize(limit)).
 		Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("GetSecretReadCounts: %w", err)

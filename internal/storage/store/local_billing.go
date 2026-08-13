@@ -8,10 +8,16 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
+
+// maxBillingReportProjectIDs bounds the caller-supplied project_id filter list —
+// without a cap, a large externally-supplied list is interpolated directly into
+// a SQL "project_id IN (...)" clause on every aggregation query in this file (#G44).
+const maxBillingReportProjectIDs = 1000
 
 // selectProjectCount is the shared "GROUP BY project_id" count projection
 // used by every per-project aggregation query below.
@@ -34,6 +40,9 @@ type billingCounts struct {
 // activity in the window. Projects with no secrets and no activity are omitted
 // to keep the report concise.
 func (ls *LocalStorage) GetBillingReport(ctx context.Context, from, to time.Time, projectIDs []uint) (*storage.BillingReport, error) {
+	if len(projectIDs) > maxBillingReportProjectIDs {
+		return nil, fmt.Errorf("project_id filter accepts at most %d ids, got %d", maxBillingReportProjectIDs, len(projectIDs))
+	}
 	if len(projectIDs) == 0 {
 		var err error
 		if projectIDs, err = ls.allProjectIDs(ctx); err != nil {

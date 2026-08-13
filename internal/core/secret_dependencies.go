@@ -135,6 +135,26 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorID, dependen
 	return created, nil
 }
 
+// LockedCreateSecretDependencyExclusive persists d via
+// storage.CreateSecretDependencyExclusive while holding secretDependencyMu —
+// the same mutex AddSecretDependency holds around the identical storage call
+// above. #G79: CreateSecretDependencyExclusiveProxy (server/http/handlers/
+// secret_dependencies_proxy.go) calls the raw storage primitive directly on
+// behalf of a RemoteStorage node that already ran AddSecretDependency's
+// authorization/same-project/same-environment checks itself — this proxy
+// deliberately does not re-run those (see that handler's doc) — but it still
+// needs the SAME in-process serialization AddSecretDependency provides:
+// storage.CreateSecretDependencyExclusive's cycle check has no row to lock on
+// SQLite (no FOR UPDATE support) or on Postgres when the project has zero
+// existing edges (FOR UPDATE only locks rows that already exist), so two
+// concurrent same-process calls adding A→B and B→A could otherwise both pass
+// the cycle check before either commits.
+func (c *KeyorixCore) LockedCreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
+	c.secretDependencyMu.Lock()
+	defer c.secretDependencyMu.Unlock()
+	return c.storage.CreateSecretDependencyExclusive(ctx, d)
+}
+
 // RemoveSecretDependency deletes one edge. focalSecretID is the secret the request is
 // scoped to (the {id} in the route): the edge must actually reference that secret, so
 // the environment-scoped authorization the caller passed on focalSecretID also governs

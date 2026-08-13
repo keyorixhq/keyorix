@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/spf13/cobra"
 )
@@ -100,7 +101,12 @@ func runAssignRoleToGroup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := st.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
+	// core.KeyorixCore.AssignRoleToGroup (not a bare st.AssignRoleToGroup) so this
+	// embedded-mode grant goes through the SAME escalation-by-proxy ceiling
+	// (requireAuthorityForRole) and SoD check (requireGroupGrantNoSoDViolation)
+	// the remote/HTTP path enforces (#G66) — a direct storage write here bypassed
+	// both and skipped the RBAC audit event.
+	if err := core.NewKeyorixCore(st).AssignRoleToGroup(ctx, common.ResolveActorID(), groupID, roleID, scope); err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
 
@@ -162,7 +168,11 @@ func runRemoveRoleFromGroup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := st.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
+	// core.KeyorixCore.RemoveRoleFromGroup (not a bare st.RemoveRoleFromGroup) so
+	// this embedded-mode removal goes through the SAME last-global-admin lockout
+	// guard (guardLastGlobalAdminGroupRole) the remote/HTTP path enforces (#G66)
+	// — a direct storage write here bypassed it and skipped the RBAC audit event.
+	if err := core.NewKeyorixCore(st).RemoveRoleFromGroup(ctx, common.ResolveActorID(), groupID, roleID, scope); err != nil {
 		return fmt.Errorf("failed to remove role: %w", err)
 	}
 

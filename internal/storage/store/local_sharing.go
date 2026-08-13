@@ -188,7 +188,7 @@ func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) (
 	if err := ls.db.Where(
 		"secret_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		secretID, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -219,7 +219,7 @@ func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*m
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		userID, false, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -234,7 +234,7 @@ func (ls *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]
 	if err := ls.db.Where(
 		"owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		ownerID, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -247,7 +247,7 @@ func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]
 	if err := ls.db.Where(
 		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		groupID, true, time.Now(),
-	).Find(&shares).Error; err != nil {
+	).Limit(maxUnboundedListRows).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
@@ -259,19 +259,27 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 	// Expired (time-bound) shares no longer authorize, so they must not surface in
 	// the "shared with me" listing either — filter them the same way the auth queries do.
 	now := time.Now()
-	directQuery := `
+	directQuery := fmt.Sprintf(`
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
 		WHERE sr.recipient_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
-	`
+		LIMIT %d
+	`, maxUnboundedListRows)
 	if err := ls.db.Raw(directQuery, userID, false, now).Scan(&secrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 
 	// JOIN groups … deleted_at IS NULL: a soft-deleted group's shares grant nothing,
 	// even though the share/membership rows are kept for restore.
-	groupQuery := `
+	//
+	// #G01: ug.project_id = 0 OR ug.project_id = s.project_id — a membership
+	// scoped to a DIFFERENT project than the secret being listed must not
+	// confer access to it. Without this, a user who is only a project-scoped
+	// member of a group in project X could see secrets shared with that group
+	// in every other project too (mirrors GetUserRoleIDsAt/
+	// GetUserGroupRoleIDsAt's own project_id=0-OR-exact-match convention).
+	groupQuery := fmt.Sprintf(`
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
 		JOIN user_groups ug ON sr.recipient_id = ug.group_id
@@ -279,7 +287,9 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 		JOIN users u ON u.id = ug.user_id AND u.deleted_at IS NULL
 		WHERE ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
-	`
+		  AND (ug.project_id = 0 OR ug.project_id = s.project_id)
+		LIMIT %d
+	`, maxUnboundedListRows)
 	var groupSecrets []*models.SecretNode
 	if err := ls.db.Raw(groupQuery, userID, true, now).Scan(&groupSecrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
@@ -333,6 +343,10 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 
+	// #G01: ug.project_id = 0 OR ug.project_id = ? (secret.ProjectID) — a
+	// membership scoped to a DIFFERENT project than this secret must not
+	// confer the group's share permission on it. See ListSharedSecrets's
+	// identical fix above for the full reasoning.
 	var groupShare models.ShareRecord
 	groupQuery := `
 		SELECT sr.* FROM share_records sr
@@ -341,9 +355,10 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		JOIN users u ON u.id = ug.user_id AND u.deleted_at IS NULL
 		WHERE sr.secret_id = ? AND ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
+		  AND (ug.project_id = 0 OR ug.project_id = ?)
 		LIMIT 1
 	`
-	res := ls.db.Raw(groupQuery, secretID, userID, true, now).Scan(&groupShare)
+	res := ls.db.Raw(groupQuery, secretID, userID, true, now, secret.ProjectID).Scan(&groupShare)
 	haveGroup := res.Error == nil && groupShare.ID != 0
 	if res.Error != nil && !errors.Is(res.Error, gorm.ErrRecordNotFound) {
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), res.Error)
