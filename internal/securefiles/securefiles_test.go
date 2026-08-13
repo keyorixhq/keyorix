@@ -3,6 +3,7 @@ package securefiles
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -334,4 +335,29 @@ func TestSecureDeleteFile_OverwritesAndRemoves(t *testing.T) {
 
 func TestSecureDeleteFile_MissingFileIsNotAnError(t *testing.T) {
 	require.NoError(t, SecureDeleteFile(filepath.Join(t.TempDir(), "does-not-exist")))
+}
+
+// TestSecureDeleteFile_RefusesSymlinkTarget is #G26: unlike every other write
+// primitive in this file, SecureDeleteFile's open had no O_NOFOLLOW — a symlink at
+// path would have the shred pass (random-then-zero overwrite) write through it to the
+// target, destroying arbitrary file content the process can write to. The final
+// os.Remove only unlinks the symlink itself, so without O_NOFOLLOW the corrupted
+// target would be left with no trace at the expected path.
+func TestSecureDeleteFile_RefusesSymlinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+	dir := t.TempDir()
+	evilTarget := filepath.Join(dir, "attacker-owned.txt")
+	original := []byte("do-not-shred-me")
+	require.NoError(t, os.WriteFile(evilTarget, original, 0600))
+	link := filepath.Join(dir, "dek.key.migrate-backup.456")
+	require.NoError(t, os.Symlink(evilTarget, link))
+
+	err := SecureDeleteFile(link)
+	require.Error(t, err, "a symlinked backup path must be refused, not followed")
+
+	content, rerr := os.ReadFile(evilTarget)
+	require.NoError(t, rerr)
+	assert.Equal(t, original, content, "the symlink target must never be shredded")
 }
