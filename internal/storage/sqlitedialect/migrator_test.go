@@ -41,6 +41,21 @@ func TestMigrator_HasColumnAndDropColumn(t *testing.T) {
 	assert.False(t, m.HasColumn(&migratorTestModel{}, "Email"))
 }
 
+// TestMigrator_DropColumn_NonexistentColumnErrors is #G54: before the fix,
+// DropColumn reported success for a column name that was never actually
+// present in the table's DDL — removeColumn's bool signaling "not found" was
+// discarded, so a caller relying on DropColumn to actually remove a
+// deprecated or insecure column got no indication the drop silently no-op'd.
+func TestMigrator_DropColumn_NonexistentColumnErrors(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&migratorTestModel{}))
+	m := db.Migrator()
+
+	err := m.DropColumn(&migratorTestModel{}, "DoesNotExist")
+	require.Error(t, err, "dropping a column that was never in the table must report failure, not silent success")
+	assert.Contains(t, err.Error(), "not found")
+}
+
 func TestMigrator_IndexLifecycle(t *testing.T) {
 	db := openTestDB(t)
 	require.NoError(t, db.AutoMigrate(&migratorTestModel{}))

@@ -304,8 +304,20 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	case MembershipRevoked:
-		// Best-effort: the membership is already revoked; a missing grant is fine.
-		_ = c.RemoveProjectMember(ctx, actorID, m.ProjectID, m.UserID)
+		if err := c.RemoveProjectMember(ctx, actorID, m.ProjectID, m.UserID); err != nil && !errors.Is(err, ErrNotProjectMember) {
+			// #G54: a security-relevant refusal (guardLastProjectAdmin: this user is
+			// the project's last roles.assign holder) or a real storage failure must
+			// not be silently swallowed — the membership row was just committed as
+			// `revoked` above, but if the underlying role grant removal was
+			// REFUSED, the user still holds full access via that live grant while
+			// ListProjectMemberships and friends report them as removed. Revert the
+			// membership back to its pre-transition state and surface the error,
+			// same as the activation-failure handling above. ErrNotProjectMember
+			// (no grant existed to remove — already gone via some other path) is
+			// the one genuinely benign case and is still ignored.
+			c.revertFailedActivation(ctx, m, prevState)
+			return nil, fmt.Errorf("failed to remove role grant on revocation: %w", err)
+		}
 	}
 
 	c.logMembershipEvent(ctx, "membership."+transitionVerb(to), m, actorID)

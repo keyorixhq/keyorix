@@ -37,6 +37,12 @@ var (
 	// dropped or silently clobber the winner.
 	ErrUserActiveStateConflict = errors.New("user's active state changed concurrently")
 
+	// ErrNotProjectMember is returned by RemoveProjectMember when the target
+	// user holds no role grant in the project — a benign no-op distinguishable
+	// (via errors.Is) from a real refusal such as guardLastProjectAdmin's,
+	// which callers must NOT treat the same way (#G54).
+	ErrNotProjectMember = errors.New("user is not a member of this project")
+
 	// ErrMembershipStateConflict is returned by TransitionMembership when it
 	// loses a race against a concurrent TransitionMembership call on the same
 	// project membership — the row's persisted state moved away from the

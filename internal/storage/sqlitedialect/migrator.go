@@ -161,7 +161,18 @@ func (m Migrator) DropColumn(value interface{}, name string) error {
 				name = field.DBName
 			}
 
-			ddl.removeColumn(name)
+			// #G54: removeColumn's bool return, previously discarded, signals
+			// whether the requested column was actually found and removed
+			// from the table's DDL. Ignoring it here meant DropColumn always
+			// reported success — including recreating the whole table for no
+			// reason when name didn't match anything — even when the column
+			// it was asked to drop never went away. A caller relying on
+			// DropColumn to actually remove a deprecated or insecure column
+			// (e.g. a plaintext field superseded by an encrypted one) would
+			// get no indication the drop silently no-op'd.
+			if !ddl.removeColumn(name) {
+				return nil, nil, fmt.Errorf("sqlitedialect: column %q not found, nothing dropped", name)
+			}
 			return ddl, nil, nil
 		})
 	})

@@ -282,6 +282,46 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 	store.AssertCalled(t, "ClearProjectSecretOwnership", ctx, uint(2), uint(1))
 }
 
+// TestTransitionMembership_RevokeRefusedForLastAdmin_RevertsAndReturnsError is
+// #G54: RemoveProjectMember's guardLastProjectAdmin refusal (the target is the
+// project's last roles.assign holder) must not be silently swallowed. Before
+// the fix, TransitionMembership discarded this error entirely — the
+// membership row committed as `revoked` while the user's role grant (their
+// actual access) stayed fully live, a security-relevant inconsistency. The
+// fix must revert the membership back to its pre-transition state and
+// surface the error.
+func TestTransitionMembership_RevokeRefusedForLastAdmin_RevertsAndReturnsError(t *testing.T) {
+	store := new(MockStorage)
+	c := newMembershipCore(store)
+	ctx := context.Background()
+	m := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, State: MembershipActive}
+	store.On("GetProjectMembership", ctx, uint(50)).Return(m, nil)
+	// First write: persists the (about to be reverted) revoked state.
+	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
+		return x.State == MembershipRevoked
+	}), MembershipActive).Return(true, nil).Once()
+	// RemoveProjectMember's guardLastProjectAdmin: user 2 is the project's
+	// only roles.assign holder, so removal is refused.
+	store.On("GetUserRoleIDsExact", ctx, uint(2), storage.Scope{ProjectID: 1}).Return([]uint{5}, nil)
+	store.On("RoleSetHasPermission", ctx, []uint{5}, "roles.assign").Return(true, nil)
+	store.On("RoleSetHasPermission", ctx, []uint(nil), "roles.assign").Return(false, nil)
+	store.On("ListProjectRoleAssignments", ctx, uint(1)).Return([]storage.RoleAssignment{
+		{PrincipalType: "user", PrincipalID: 2, RoleID: 5, ProjectID: 1},
+	}, nil)
+	// Revert write: must go back to `active`, not stay revoked.
+	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
+		return x.State == MembershipActive
+	}), MembershipRevoked).Return(true, nil).Once()
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	out, err := c.TransitionMembership(ctx, 1, 50, MembershipRevoked, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove role grant on revocation")
+	assert.Nil(t, out)
+	assert.Equal(t, MembershipActive, m.State, "must revert to active, not leave the row revoked while the grant stays live")
+	store.AssertNotCalled(t, "RemoveAllProjectRoleGrants", mock.Anything, mock.Anything, mock.Anything)
+}
+
 func TestStaleInvites_PassesCutoff(t *testing.T) {
 	store := new(MockStorage)
 	c := newMembershipCore(store)
