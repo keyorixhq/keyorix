@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -68,14 +70,24 @@ func init() {
 	// Remote-bootstrap flags
 	InitCmd.Flags().StringVar(&initServer, "server", "", "Bootstrap a remote Keyorix server (triggers remote mode)")
 	InitCmd.Flags().StringVar(&initAdminUsername, "admin-username", "admin", "Admin username to create")
-	InitCmd.Flags().StringVar(&initAdminPassword, "admin-password", "admin", "Admin password (change after first login)")
+	// #G76: no default. A defaulted "admin" password bootstrapped a live remote
+	// server with a well-known admin/admin credential pair, and the only
+	// feedback (the trailing success banner) arrived AFTER the account already
+	// existed — an operator who forgot the flag never saw a warning until the
+	// account was already live. Now it's REQUIRED for --server mode, checked
+	// before the request is ever sent (see runRemoteInit).
+	InitCmd.Flags().StringVar(&initAdminPassword, "admin-password", "", "Admin password (required for --server; INSECURE on the command line — prefer KEYORIX_ADMIN_PASSWORD env var, or omit to be prompted)")
 	InitCmd.Flags().StringVar(&initAdminEmail, "admin-email", "admin@localhost", "Admin email address")
 	InitCmd.Flags().StringVar(&initBootstrapToken, "bootstrap-token", "", "Bootstrap token authorizing first-admin creation (or env KEYORIX_BOOTSTRAP_TOKEN; printed in the server log on first boot)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	if initServer != "" {
-		common.WarnInsecureFlag(cmd, "admin-password", "consider leaving it unset and changing the password after first login instead.")
+		password, err := resolveAdminPassword(cmd)
+		if err != nil {
+			return err
+		}
+		initAdminPassword = password
 		return runRemoteInit()
 	}
 
@@ -196,6 +208,38 @@ func initializeLogging() error {
 		return fmt.Errorf("failed to create log file: %w", err)
 	}
 	return nil
+}
+
+// resolveAdminPassword resolves the remote-bootstrap admin password in order
+// of preference, mirroring common.ResolveAPIKey's tiered shape for "supply a
+// secret to a CLI command safely":
+//  1. the (insecure, warned) --admin-password flag, if set;
+//  2. the KEYORIX_ADMIN_PASSWORD environment variable;
+//  3. an interactive no-echo prompt.
+//
+// #G76: --admin-password used to default to the literal "admin", silently
+// bootstrapping a live remote server with a well-known admin/admin credential
+// pair — the only feedback was a warning in the trailing success banner,
+// printed AFTER the account already existed. Requiring an explicit choice
+// here, before runRemoteInit ever POSTs to the server, closes that gap.
+func resolveAdminPassword(cmd *cobra.Command) (string, error) {
+	if initAdminPassword != "" {
+		common.WarnInsecureFlag(cmd, "admin-password", "prefer the KEYORIX_ADMIN_PASSWORD environment variable, or omit it to be prompted.")
+		return initAdminPassword, nil
+	}
+	if p := os.Getenv("KEYORIX_ADMIN_PASSWORD"); p != "" {
+		return p, nil
+	}
+	fmt.Fprint(os.Stderr, "Enter admin password for the new account: ")
+	b, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("failed to read admin password: %w", err)
+	}
+	if len(b) == 0 {
+		return "", fmt.Errorf("admin password is required to bootstrap a remote server (--admin-password, KEYORIX_ADMIN_PASSWORD, or enter one at the prompt)")
+	}
+	return string(b), nil
 }
 
 // ── Remote bootstrap ──────────────────────────────────────────────────────────
