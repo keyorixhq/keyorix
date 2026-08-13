@@ -47,6 +47,14 @@ type Server struct {
 	maxReads int64
 	// readCount is incremented atomically per successful keyorix_get_secret call.
 	readCount atomic.Int64
+	// maxListCalls, when > 0, caps the number of keyorix_list_secrets calls this
+	// server process will serve for its whole stdio session (#G44) — the same
+	// per-process resource-exhaustion reasoning as maxReads above: a manipulated
+	// agent can be driven to call a read-only listing tool an unbounded number of
+	// times just as easily as a value-reading one. 0 = unlimited. Set via SetMaxListCalls.
+	maxListCalls int64
+	// listCallCount is incremented atomically per successful keyorix_list_secrets call.
+	listCallCount atomic.Int64
 	// maxMessageBytes caps a single inbound JSON-RPC message (see maxMessageReader).
 	// 0 (the default, i.e. never set by NewServer) means "use defaultMaxMessageBytes" —
 	// tests may override this field directly to exercise the cap without transferring
@@ -74,6 +82,15 @@ func (s *Server) SetAllowedRefs(patterns []string) {
 func (s *Server) SetMaxReads(n int) {
 	if n > 0 {
 		s.maxReads = int64(n)
+	}
+}
+
+// SetMaxListCalls caps the number of keyorix_list_secrets calls this process will
+// serve for its whole session. A non-positive value means unlimited (the default)
+// — see maxListCalls.
+func (s *Server) SetMaxListCalls(n int) {
+	if n > 0 {
+		s.maxListCalls = int64(n)
 	}
 }
 

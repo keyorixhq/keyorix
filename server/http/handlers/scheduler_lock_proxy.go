@@ -51,6 +51,14 @@ type schedulerLockAcquireBody struct {
 	TTLMillis int64  `json:"ttl_millis"`
 }
 
+// maxSchedulerLockTTLMillis bounds the caller-supplied lease TTL (#G44) — without
+// a ceiling, a caller can acquire a named scheduler lock with an effectively
+// unbounded TTL, starving every other replica's (or every future tick's) attempt
+// to acquire that SAME lock indefinitely. 1 hour comfortably exceeds every real
+// scheduler tick interval in this codebase (retention purge, auto-rotation,
+// recertification, etc. all tick far more often than hourly).
+const maxSchedulerLockTTLMillis = int64(time.Hour / time.Millisecond)
+
 // AcquireSchedulerLockProxy handles POST /api/v1/system/scheduler-lock/acquire.
 // It calls storage.TryAcquireSchedulerLock directly, so it performs the SAME
 // atomic acquire-or-renew-or-reclaim decision local_scheduler_lock_lease.go's
@@ -68,6 +76,10 @@ func (h *AuthHandler) AcquireSchedulerLockProxy(w http.ResponseWriter, r *http.R
 	}
 	if body.TTLMillis <= 0 {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "ttl_millis must be positive")
+		return
+	}
+	if body.TTLMillis > maxSchedulerLockTTLMillis {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "ttl_millis exceeds the maximum allowed lease duration")
 		return
 	}
 	acquired, err := h.coreService.Storage().TryAcquireSchedulerLock(r.Context(), body.Key, body.Holder, time.Duration(body.TTLMillis)*time.Millisecond)

@@ -11,6 +11,10 @@ const (
 	defaultUsageWindowDays   = 30
 	defaultMostAccessedLimit = 10
 	maxMostAccessedLimit     = 100
+	// maxUsageWindowDays bounds the caller-supplied lookback window (#G44) — an
+	// unbounded value passed to AddDate can produce a pathological cutoff time
+	// and, more importantly, no longer matches "recent usage analytics" intent.
+	maxUsageWindowDays = 3650 // 10 years
 )
 
 // MostAccessedSecrets returns the most-read secrets (optionally scoped to a
@@ -19,6 +23,9 @@ const (
 func (c *KeyorixCore) MostAccessedSecrets(ctx context.Context, projectID *uint, days, limit int) ([]storage.SecretUsageStat, error) {
 	if days <= 0 {
 		days = defaultUsageWindowDays
+	}
+	if days > maxUsageWindowDays {
+		days = maxUsageWindowDays
 	}
 	if limit <= 0 {
 		limit = defaultMostAccessedLimit
@@ -40,6 +47,9 @@ func (c *KeyorixCore) MostAccessedSecrets(ctx context.Context, projectID *uint, 
 func (c *KeyorixCore) UnusedSecrets(ctx context.Context, projectID *uint, days int) ([]storage.UnusedSecretStat, error) {
 	if days <= 0 {
 		days = defaultUsageWindowDays
+	}
+	if days > maxUsageWindowDays {
+		days = maxUsageWindowDays
 	}
 	cutoff := c.now().AddDate(0, 0, -days)
 	stats, err := c.storage.UnusedSecrets(ctx, projectID, cutoff)

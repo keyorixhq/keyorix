@@ -137,7 +137,10 @@ func (h *DashboardHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	pageSize := 10
 
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
-		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+		// #G44: an unbounded page number forces an equally unbounded SQL OFFSET
+		// downstream (deep-pagination DoS), the same class of bug the storage
+		// layer's own maxStoragePage ceiling exists to prevent.
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 && p <= 10000 {
 			page = p
 		}
 	}

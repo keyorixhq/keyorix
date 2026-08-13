@@ -28,7 +28,7 @@ func (ls *LocalStorage) ListRiskExceptions(ctx context.Context, activeOnly bool)
 	if activeOnly {
 		q = q.Where("revoked = ?", false)
 	}
-	if err := q.Find(&rows).Error; err != nil {
+	if err := q.Limit(maxUnboundedListRows).Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil

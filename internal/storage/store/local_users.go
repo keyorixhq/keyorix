@@ -292,6 +292,7 @@ func (ls *LocalStorage) ListUsersInStateBefore(ctx context.Context, state string
 	err := ls.db.WithContext(ctx).
 		Where("account_state = ? AND created_at < ?", state, before).
 		Order("created_at ASC").
+		Limit(maxUnboundedListRows).
 		Find(&users).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -307,6 +308,7 @@ func (ls *LocalStorage) ListInactiveUsers(ctx context.Context, threshold time.Ti
 	err := ls.db.WithContext(ctx).
 		Where("(last_login_at IS NULL AND created_at < ?) OR last_login_at < ?", threshold, threshold).
 		Order("id ASC").
+		Limit(maxUnboundedListRows).
 		Find(&users).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -371,7 +373,8 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	}
 
 	pageSize := clampPageSize(filter.PageSize)
-	offset := (filter.Page - 1) * pageSize
+	page := clampPage(filter.Page)
+	offset := (page - 1) * pageSize
 	if filter.Offset > 0 {
 		offset = filter.Offset
 	}

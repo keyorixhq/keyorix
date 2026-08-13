@@ -571,6 +571,25 @@ func TestPurgeDeletedSecretsBeforeProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+// TestPurgeDeletedSecretsBeforeProxy_FutureBefore_S13 is the #G44 regression: every
+// route in retention_proxy.go is a "purge/strip everything older than before" sweep.
+// A small future skew (up to maxRetentionCutoffSkew) is legitimate padding — this
+// test uses a WILDLY distant cutoff, the actual attack shape the review flagged:
+// before the fix, a caller holding the same system.write credential any
+// RemoteStorage node already needs could set `before` decades out and instantly
+// purge every soft-deleted row.
+func TestPurgeDeletedSecretsBeforeProxy_FutureBefore_S13(t *testing.T) {
+	h := freshSecretHandlerForProxyS13(t)
+	body := proxyJSON(map[string]interface{}{"before": time.Now().AddDate(10, 0, 0)})
+	req := httptest.NewRequest(http.MethodPost, "/system/retention/secrets/purge", body)
+	w := httptest.NewRecorder()
+	h.PurgeDeletedSecretsBeforeProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
+	assert.Contains(t, resp.Error.Message, "future")
+}
+
 // TestDeleteAnomalyAlertsBeforeProxy_BadBody_S13 — malformed JSON → 400.
 func TestDeleteAnomalyAlertsBeforeProxy_BadBody_S13(t *testing.T) {
 	h := freshAuditHandlerS13(t)
@@ -595,6 +614,21 @@ func TestDeleteAnomalyAlertsBeforeProxy_HappyPath_S13(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	resp := decodeRemoteResp(t, w)
 	assert.True(t, resp.Success)
+}
+
+// TestDeleteAnomalyAlertsBeforeProxy_FutureAckBefore_S13 — #G44 regression, same as
+// the secrets-purge sibling above: a wildly distant future ack_before must be rejected.
+func TestDeleteAnomalyAlertsBeforeProxy_FutureAckBefore_S13(t *testing.T) {
+	h := freshAuditHandlerS13(t)
+	body := proxyJSON(map[string]interface{}{
+		"ack_before": time.Now().AddDate(10, 0, 0),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/system/retention/anomaly-alerts/purge", body)
+	w := httptest.NewRecorder()
+	h.DeleteAnomalyAlertsBeforeProxy(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "INVALID_BODY", resp.Error.Code)
 }
 
 // TestDeleteClosedAccessReviewsBeforeProxy_BadBody_S13 — bad JSON → 400.

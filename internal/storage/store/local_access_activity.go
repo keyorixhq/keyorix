@@ -90,6 +90,18 @@ var secretsDeletionActivityEventTypes = []string{"secret.deleted"}
 // row seen per user (rather than SQL MAX(), whose result is an untyped string that
 // SQLite can't scan into time.Time). No row cap — a user's only activity could be
 // old, and capping would mis-report them as never-active (a silent-truncation bug).
+//
+// #G44: flagged for "no row cap" — a naive LIMIT is intentionally NOT applied here.
+// Because rows are ordered newest-first and results are deduped per-user in Go,
+// a LIMIT returns the N most recent events ACROSS ALL USERS, not the most recent
+// event PER USER — a project with more than N recent events from a few active
+// users would silently drop every dormant user from the result entirely (the
+// exact bug this function's own comment above already guards against). A correct
+// bound here needs either a per-user-windowed query (ROW_NUMBER() OVER PARTITION
+// BY user_id, unused elsewhere in this codebase and untested against both SQLite
+// and Postgres dialects) or a domain decision on how far back "last activity"
+// needs to look before a user is presumed dormant regardless. Left unfixed
+// pending that decision — see REMEDIATION-STATUS.md G44.
 func (ls *LocalStorage) lastUserActivityByEventTypes(ctx context.Context, projectID uint, eventTypes []string) (map[uint]time.Time, error) {
 	type row struct {
 		UserID    uint

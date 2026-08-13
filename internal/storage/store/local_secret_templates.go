@@ -44,7 +44,7 @@ func (ls *LocalStorage) GetSecretTemplateByName(ctx context.Context, name string
 
 func (ls *LocalStorage) ListSecretTemplates(ctx context.Context) ([]*models.SecretTemplate, error) {
 	var templates []*models.SecretTemplate
-	if err := ls.db.WithContext(ctx).Order("name").Find(&templates).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Order("name").Limit(maxUnboundedListRows).Find(&templates).Error; err != nil {
 		return nil, fmt.Errorf("failed to list secret templates: %w", err)
 	}
 	return templates, nil

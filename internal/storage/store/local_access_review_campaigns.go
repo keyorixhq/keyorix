@@ -35,6 +35,7 @@ func (ls *LocalStorage) ListAccessReviewCampaigns(ctx context.Context, projectID
 	err := ls.db.WithContext(ctx).
 		Where("project_id = ?", projectID).
 		Order(sqlOrderCreatedAtDesc).
+		Limit(maxUnboundedListRows).
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -128,6 +129,7 @@ func (ls *LocalStorage) ListAccessReviewItems(ctx context.Context, campaignID ui
 	err := ls.db.WithContext(ctx).
 		Where("campaign_id = ?", campaignID).
 		Order("id ASC").
+		Limit(maxUnboundedListRows).
 		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
