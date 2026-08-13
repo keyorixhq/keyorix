@@ -107,12 +107,39 @@ func decodeRetentionBeforeBody(w http.ResponseWriter, r *http.Request) (time.Tim
 	return body.Before.Local(), true
 }
 
+// refuseIfLegalHoldActive is #G52: PurgeExpiredSoftDeletes (internal/core/purge.go)
+// gates its user/project/environment/secret purges behind ONE combined
+// GetActiveLegalHold check (ISO A.5.34 — no destroying potentially
+// litigation-relevant data while a hold is active). The four retention-proxy
+// routes below reach the SAME underlying storage.Storage purge primitives
+// directly, with no core-layer involvement at all, so without this they
+// completely bypass that guard — a storage.type: remote caller holding
+// system.write (the same credential a legitimate RemoteStorage client needs)
+// could purge exactly the data a legal hold exists to protect. Returns true
+// (and has already written the HTTP response) if the caller should stop.
+func refuseIfLegalHoldActive(w http.ResponseWriter, r *http.Request, storage coreStorage.Storage) bool {
+	hold, err := storage.GetActiveLegalHold(r.Context())
+	if err != nil {
+		log.Printf("retention proxy: could not confirm legal-hold status: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", "could not confirm legal-hold status")
+		return true
+	}
+	if hold != nil {
+		writeRemoteAPIError(w, http.StatusConflict, "LEGAL_HOLD_ACTIVE", "refusing to purge: a deployment-wide legal hold is active")
+		return true
+	}
+	return false
+}
+
 // --- SecretHandler: PurgeDeletedSecretsBefore (ADR-032) ---
 
 // PurgeDeletedSecretsBeforeProxy handles POST /api/v1/system/retention/secrets/purge.
 func (h *SecretHandler) PurgeDeletedSecretsBeforeProxy(w http.ResponseWriter, r *http.Request) {
 	before, ok := decodeRetentionBeforeBody(w, r)
 	if !ok {
+		return
+	}
+	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
 		return
 	}
 	n, err := h.coreService.Storage().PurgeDeletedSecretsBefore(r.Context(), before)
@@ -219,6 +246,9 @@ func (h *CatalogHandler) PurgeDeletedProjectsBeforeProxy(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
+	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
+		return
+	}
 	n, err := h.coreService.Storage().PurgeDeletedProjectsBefore(r.Context(), before)
 	if err != nil {
 		log.Printf("retention proxy: purge deleted projects failed: %v", err)
@@ -233,6 +263,9 @@ func (h *CatalogHandler) PurgeDeletedProjectsBeforeProxy(w http.ResponseWriter, 
 func (h *CatalogHandler) PurgeDeletedEnvironmentsBeforeProxy(w http.ResponseWriter, r *http.Request) {
 	before, ok := decodeRetentionBeforeBody(w, r)
 	if !ok {
+		return
+	}
+	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
 		return
 	}
 	n, err := h.coreService.Storage().PurgeDeletedEnvironmentsBefore(r.Context(), before)
@@ -362,6 +395,9 @@ func newUserRetentionProxyWire(u *models.User) userRetentionProxyWire {
 func (h *UserHandler) PurgeDeletedUsersBeforeProxy(w http.ResponseWriter, r *http.Request) {
 	before, ok := decodeRetentionBeforeBody(w, r)
 	if !ok {
+		return
+	}
+	if refuseIfLegalHoldActive(w, r, h.coreService.Storage()) {
 		return
 	}
 	n, err := h.coreService.Storage().PurgeDeletedUsersBefore(r.Context(), before)

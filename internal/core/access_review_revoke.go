@@ -55,6 +55,58 @@ type accessReviewAuditDetail struct {
 	SecretID      uint   `json:"secret_id,omitempty"`
 }
 
+// principalTypeForDecision normalizes d's principal type for the reviewer-
+// independence check, mirroring GenerateProjectAccessReview's own
+// PrincipalType assignment per source (access_review.go): "role" decisions
+// carry an explicit, caller-supplied PrincipalType (user/group/machine); the
+// other three sources don't (AccessReviewDecision's PrincipalType field is
+// documented "for role grants" only) but their principal kind is fixed by
+// the source itself — a direct_share/owner principal is always a user, a
+// group_share principal is always a group.
+func principalTypeForDecision(d AccessReviewDecision) string {
+	switch d.Source {
+	case "direct_share", "owner":
+		return "user"
+	case "group_share":
+		return "group"
+	default: // "role"
+		return d.PrincipalType
+	}
+}
+
+// enforceAccessReviewReviewerControls applies the SAME reviewer-independence
+// and human-reviewer controls DecideAccessReviewItem enforces for the
+// campaign flow (SOC2 CC6.2-6.3 / ISO A.5.18 / ARC-001) to the standalone
+// attest/revoke endpoints (#G52). Before this fix, RevokeAccessReviewGrant/
+// AttestAccessReviewGrant had NO such checks at all — DecideAccessReviewItem
+// only ever applied them BEFORE calling into these two functions, so a
+// caller reaching them directly (project_members.go's standalone HTTP
+// handlers) could self-certify their own access, certify access for a group
+// they belong to, or have a machine-identity token "review" (attest/revoke)
+// with no attributable human reviewer at all.
+func (c *KeyorixCore) enforceAccessReviewReviewerControls(ctx context.Context, actorID uint, d AccessReviewDecision) error {
+	if err := requireHumanReviewer(actorID); err != nil {
+		return err
+	}
+	principalType := principalTypeForDecision(d)
+	if err := c.checkReviewerIndependence(ctx, actorID, principalType, d.PrincipalID); err != nil {
+		return err
+	}
+	// ARC-001: a machine identity provisioned by the actor must not be
+	// self-certified by its creator — mirrors DecideAccessReviewItem's
+	// identical inline check. Fails closed on a lookup error.
+	if d.Source == "role" && principalType == "machine" {
+		machine, err := c.storage.GetMachineIdentity(ctx, d.PrincipalID)
+		if err != nil {
+			return fmt.Errorf("loading machine identity: %w", err)
+		}
+		if machine.CreatedBy == actorID {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
+		}
+	}
+	return nil
+}
+
 // RevokeAccessReviewGrant removes the grant identified by the decision: a project-
 // scoped role assignment (user or group) or a secret share (direct or group). The
 // underlying removal is itself audited (role.removed / role.group_removed for
@@ -63,6 +115,9 @@ type accessReviewAuditDetail struct {
 func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
 	if projectID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+	}
+	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
+		return err
 	}
 	switch d.Source {
 	case "role":
@@ -148,6 +203,9 @@ func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, proj
 	}
 	if d.Source == "" {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source is required")
+	}
+	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
+		return err
 	}
 	if err := c.verifyAccessReviewGrantExists(ctx, projectID, d); err != nil {
 		return err

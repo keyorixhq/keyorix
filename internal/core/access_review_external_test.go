@@ -171,6 +171,72 @@ func TestRevokeAccessReviewGrant_Role(t *testing.T) {
 	assert.Empty(t, after.Entries, "alice's role grant is gone after revoke")
 }
 
+// TestRevokeAccessReviewGrant_RejectsSelfCertification is #G52: before the
+// fix, the standalone RevokeAccessReviewGrant/AttestAccessReviewGrant
+// endpoints had NO reviewer-independence check at all — only
+// DecideAccessReviewItem (the campaign flow) enforced it, BEFORE calling
+// into these same two functions. A caller reaching them directly (the
+// project_members.go standalone HTTP handlers) could self-certify their own
+// access.
+func TestRevokeAccessReviewGrant_RejectsSelfCertification(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → write
+
+	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 10, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+	})
+	require.Error(t, err, "alice must not be able to revoke her own access")
+	assert.Contains(t, err.Error(), "your own access")
+}
+
+// TestRevokeAccessReviewGrant_RejectsNonHumanReviewer is #G52: actorID 0
+// (a machine-identity credential, which authorizes via PrincipalID not
+// UserID) must not be able to act as a reviewer via the standalone endpoint.
+func TestRevokeAccessReviewGrant_RejectsNonHumanReviewer(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 0, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "attributable human reviewer")
+}
+
+// TestAttestAccessReviewGrant_RejectsSelfCertification_Share is #G52's share
+// case: a direct-share recipient must not be able to attest their OWN share
+// via the standalone endpoint — AccessReviewDecision.PrincipalType is only
+// ever populated for "role" sources, so this exercises
+// principalTypeForDecision's "direct_share is always a user" inference.
+func TestAttestAccessReviewGrant_RejectsSelfCertification_Share(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}, &models.AuditEvent{}))
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10) // owner
+	h.CreateTestUser(t, "bob", 11)   // direct-share recipient
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 20, ProjectID: proj, Name: "prod"}).Error)
+	require.NoError(t, h.DB.Create(&models.SecretNode{
+		ID: 500, ProjectID: proj, EnvironmentID: 20, OwnerID: 10, Name: "db-pw", Type: "password", Status: "active", IsSecret: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 500, RecipientID: 11, IsGroup: false, Permission: "read"}).Error)
+
+	err := h.CoreService.AttestAccessReviewGrant(context.Background(), 11, proj, core.AccessReviewDecision{
+		Source: "direct_share", PrincipalID: 11, SecretID: 500,
+	})
+	require.Error(t, err, "bob must not be able to attest his own share")
+	assert.Contains(t, err.Error(), "your own access")
+}
+
 // Revoking a group share removes that ShareRecord; revoking ownership is refused.
 func TestRevokeAccessReviewGrant_ShareAndOwner(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)

@@ -571,6 +571,26 @@ func TestPurgeDeletedSecretsBeforeProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+// TestPurgeDeletedSecretsBeforeProxy_RefusesUnderLegalHold_S13 is #G52: this
+// route reaches storage.PurgeDeletedSecretsBefore directly, with no
+// core-layer involvement — before the fix it completely bypassed the SAME
+// legal-hold guard PurgeExpiredSoftDeletes (internal/core/purge.go) enforces
+// for the identical underlying purge.
+func TestPurgeDeletedSecretsBeforeProxy_RefusesUnderLegalHold_S13(t *testing.T) {
+	h := freshSecretHandlerForProxyS13(t)
+	_, err := h.coreService.Storage().CreateLegalHold(context.Background(), &models.LegalHold{Reason: "litigation hold", PlacedBy: 1})
+	require.NoError(t, err)
+
+	body := proxyJSON(map[string]interface{}{"before": time.Now()})
+	req := httptest.NewRequest(http.MethodPost, "/system/retention/secrets/purge", body)
+	w := httptest.NewRecorder()
+	h.PurgeDeletedSecretsBeforeProxy(w, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "LEGAL_HOLD_ACTIVE", resp.Error.Code)
+}
+
 // TestDeleteAnomalyAlertsBeforeProxy_BadBody_S13 — malformed JSON → 400.
 func TestDeleteAnomalyAlertsBeforeProxy_BadBody_S13(t *testing.T) {
 	h := freshAuditHandlerS13(t)
@@ -693,6 +713,22 @@ func TestPurgeDeletedProjectsBeforeProxy_HappyPath_S13(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
+// TestPurgeDeletedProjectsBeforeProxy_RefusesUnderLegalHold_S13 is #G52 — see
+// TestPurgeDeletedSecretsBeforeProxy_RefusesUnderLegalHold_S13's comment.
+func TestPurgeDeletedProjectsBeforeProxy_RefusesUnderLegalHold_S13(t *testing.T) {
+	h := freshCatalogHandlerS13(t)
+	_, err := h.coreService.Storage().CreateLegalHold(context.Background(), &models.LegalHold{Reason: "litigation hold", PlacedBy: 1})
+	require.NoError(t, err)
+
+	body := proxyJSON(map[string]interface{}{"before": time.Now()})
+	req := httptest.NewRequest(http.MethodPost, "/system/retention/projects/purge", body)
+	w := httptest.NewRecorder()
+	h.PurgeDeletedProjectsBeforeProxy(w, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "LEGAL_HOLD_ACTIVE", resp.Error.Code)
+}
+
 // TestPurgeDeletedEnvironmentsBeforeProxy_BadBody_S13 — bad JSON → 400.
 func TestPurgeDeletedEnvironmentsBeforeProxy_BadBody_S13(t *testing.T) {
 	h := freshCatalogHandlerS13(t)
@@ -712,6 +748,22 @@ func TestPurgeDeletedEnvironmentsBeforeProxy_HappyPath_S13(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	resp := decodeRemoteResp(t, w)
 	assert.True(t, resp.Success)
+}
+
+// TestPurgeDeletedEnvironmentsBeforeProxy_RefusesUnderLegalHold_S13 is #G52 —
+// see TestPurgeDeletedSecretsBeforeProxy_RefusesUnderLegalHold_S13's comment.
+func TestPurgeDeletedEnvironmentsBeforeProxy_RefusesUnderLegalHold_S13(t *testing.T) {
+	h := freshCatalogHandlerS13(t)
+	_, err := h.coreService.Storage().CreateLegalHold(context.Background(), &models.LegalHold{Reason: "litigation hold", PlacedBy: 1})
+	require.NoError(t, err)
+
+	body := proxyJSON(map[string]interface{}{"before": time.Now()})
+	req := httptest.NewRequest(http.MethodPost, "/system/retention/environments/purge", body)
+	w := httptest.NewRecorder()
+	h.PurgeDeletedEnvironmentsBeforeProxy(w, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "LEGAL_HOLD_ACTIVE", resp.Error.Code)
 }
 
 // TestDeleteExpiredRoleGrantsProxy_BadBody_S13 — bad JSON → 400.
@@ -775,6 +827,22 @@ func TestPurgeDeletedUsersBeforeProxy_HappyPath_S13(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	resp := decodeRemoteResp(t, w)
 	assert.True(t, resp.Success)
+}
+
+// TestPurgeDeletedUsersBeforeProxy_RefusesUnderLegalHold_S13 is #G52 — see
+// TestPurgeDeletedSecretsBeforeProxy_RefusesUnderLegalHold_S13's comment.
+func TestPurgeDeletedUsersBeforeProxy_RefusesUnderLegalHold_S13(t *testing.T) {
+	h := freshUserHandlerForProxyS13(t)
+	_, err := h.coreService.Storage().CreateLegalHold(context.Background(), &models.LegalHold{Reason: "litigation hold", PlacedBy: 1})
+	require.NoError(t, err)
+
+	body := proxyJSON(map[string]interface{}{"before": time.Now()})
+	req := httptest.NewRequest(http.MethodPost, "/system/retention/users/purge", body)
+	w := httptest.NewRecorder()
+	h.PurgeDeletedUsersBeforeProxy(w, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	resp := decodeRemoteResp(t, w)
+	assert.Equal(t, "LEGAL_HOLD_ACTIVE", resp.Error.Code)
 }
 
 // TestListUsersInStateBeforeProxy_MissingState_S13 — missing state → 400.
