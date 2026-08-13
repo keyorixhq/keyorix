@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 // PurgeResult reports how many soft-deleted rows each entity purge removed.
@@ -28,15 +30,20 @@ func (r PurgeResult) Total() int64 {
 // it emits one system-actored `data.purged` audit event with the counts. Errors on
 // individual entities are collected but do not abort the others.
 func (c *KeyorixCore) PurgeExpiredSoftDeletes(ctx context.Context, before time.Time) (*PurgeResult, error) {
-	// Re-check the legal hold HERE — inside the purge, under the scheduler lock and
-	// immediately before the deletes — not only in the scheduler closure before the lock
-	// is taken. Otherwise a hold placed after the pre-lock check (PlaceLegalHold doesn't
-	// take the lock) would not stop an in-flight purge from hard-deleting records that are
-	// now under hold (irreversible spoliation, ISO A.5.34). Fails SAFE: an unconfirmable
-	// hold status aborts the purge.
-	if err := c.legalHoldGuard(ctx); err != nil {
-		return &PurgeResult{}, err
-	}
+	// #G21: the legal-hold check and all four deletes below run inside ONE
+	// transaction — previously the guard was checked once, then four SEPARATE,
+	// unsynchronized delete calls followed, leaving a window across all four
+	// where PlaceLegalHold could commit in between (irreversible spoliation,
+	// ISO A.5.34). SQLite's single-writer model means this transaction holds an
+	// exclusive write lock for its whole duration, so a concurrent
+	// PlaceLegalHold's INSERT cannot land partway through. Each Purge*Before
+	// call already manages its own internal atomicity (a nested
+	// transaction/savepoint), so a single entity's failure doesn't abort the
+	// others — matching the pre-existing "continue past individual errors,
+	// report the first" partial-success design. NOTE: RemoteStorage.WithTransaction
+	// is a no-op passthrough — under storage.type: remote this narrows the
+	// window but does not eliminate it (see audit_retention.go's PurgeAuditLogs
+	// for the same caveat).
 	res := &PurgeResult{}
 	var firstErr error
 	record := func(n int64, err error) int64 {
@@ -46,10 +53,23 @@ func (c *KeyorixCore) PurgeExpiredSoftDeletes(ctx context.Context, before time.T
 		return n
 	}
 
-	res.Users = record(c.storage.PurgeDeletedUsersBefore(ctx, before))
-	res.Projects = record(c.storage.PurgeDeletedProjectsBefore(ctx, before))
-	res.Environments = record(c.storage.PurgeDeletedEnvironmentsBefore(ctx, before))
-	res.Secrets = record(c.storage.PurgeDeletedSecretsBefore(ctx, before))
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		hold, err := tx.GetActiveLegalHold(ctx)
+		if err != nil {
+			return fmt.Errorf("refusing to purge: could not confirm legal-hold status: %w", err)
+		}
+		if hold != nil {
+			return fmt.Errorf("refusing to purge: a deployment-wide legal hold is active")
+		}
+		res.Users = record(tx.PurgeDeletedUsersBefore(ctx, before))
+		res.Projects = record(tx.PurgeDeletedProjectsBefore(ctx, before))
+		res.Environments = record(tx.PurgeDeletedEnvironmentsBefore(ctx, before))
+		res.Secrets = record(tx.PurgeDeletedSecretsBefore(ctx, before))
+		return nil
+	})
+	if txErr != nil {
+		return &PurgeResult{}, txErr
+	}
 
 	if res.Total() > 0 {
 		sysCtx := WithActorType(ctx, ActorTypeSystem)

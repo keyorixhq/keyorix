@@ -69,6 +69,19 @@ func (k *KeyorixCore) CheckReadQuotas(ctx context.Context) (*ReadQuotaCheckResul
 		title, msg := quotaMessage(s.Name, s.ReadCount, *s.MaxReads, exhausted)
 		nType := quotaNotificationType(severity)
 
+		// #G21: this check-then-act (read here, CreateNotification below) has no
+		// DB-level backstop — unlike rotation/expiry reminders, which get one from
+		// uniq_notifications_unread_reminder (#488). That index can't simply be
+		// extended to cover read-quota notifications: it's keyed on (user_id,
+		// type, project_id), but read-quota dedup is per-SECRET (unreadQuotaNotification
+		// matches on secretID via Link content, see below) — a blanket per-project
+		// index would silently drop a legitimate second secret's notification
+		// while the first is still unread. A correct fix needs a stable,
+		// structured dedup key (not the current strings.Contains(Link, ...)
+		// content match — see G22, the same underlying gap) plus a schema
+		// migration; deferred as a larger, separate change. Worst case today is
+		// a duplicate notification under a genuine concurrent-run race, not a
+		// security or data-integrity issue.
 		existing := k.unreadQuotaNotification(ctx, s.OwnerID, s.ID)
 		if existing != nil {
 			if severity <= existing.Severity {

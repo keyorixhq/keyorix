@@ -299,22 +299,27 @@ func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore
 // Open campaigns (closed_at IS NULL) are never touched.
 func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
 	var campaigns, items int64
+	eligible := "state = ? AND closed_at IS NOT NULL AND closed_at < ?"
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var ids []uint
-		if e := tx.Model(&models.AccessReviewCampaign{}).
-			Where("state = ? AND closed_at IS NOT NULL AND closed_at < ?", "closed", before).
-			Pluck("id", &ids).Error; e != nil {
-			return e
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		ri := tx.Where("campaign_id IN ?", ids).Delete(&models.AccessReviewItem{})
+		// #G21: both deletes re-evaluate the eligibility predicate LIVE, at the
+		// moment each DELETE statement executes, instead of deleting by a
+		// Pluck'd ID list captured earlier in the transaction. A campaign
+		// reopened between an initial Pluck and a later delete-by-ID would
+		// still be destroyed under the old pattern — under Postgres READ
+		// COMMITTED (unlike SQLite's single-writer exclusivity) a concurrent
+		// transaction's UPDATE can commit in that window without this one
+		// seeing it via a lock. Filtering the item-delete via a live subquery
+		// against the campaign table's CURRENT state, and the campaign-delete
+		// via the same live predicate directly, closes that gap for both
+		// backends.
+		ri := tx.Where("campaign_id IN (?)", tx.Model(&models.AccessReviewCampaign{}).
+			Select("id").Where(eligible, "closed", before)).
+			Delete(&models.AccessReviewItem{})
 		if ri.Error != nil {
 			return ri.Error
 		}
 		items = ri.RowsAffected
-		rc := tx.Where("id IN ?", ids).Delete(&models.AccessReviewCampaign{})
+		rc := tx.Where(eligible, "closed", before).Delete(&models.AccessReviewCampaign{})
 		if rc.Error != nil {
 			return rc.Error
 		}
@@ -344,22 +349,21 @@ func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, befor
 // transaction. Pending requests (resolved_at IS NULL) are never touched.
 func (ls *LocalStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
 	var requests, approvals int64
+	eligible := "resolved_at IS NOT NULL AND resolved_at < ?"
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var ids []uint
-		if e := tx.Model(&models.AccessRequest{}).
-			Where("resolved_at IS NOT NULL AND resolved_at < ?", before).
-			Pluck("id", &ids).Error; e != nil {
-			return e
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		ra := tx.Where("request_id IN ?", ids).Delete(&models.AccessRequestApproval{})
+		// #G21: same live-predicate-at-delete-time fix as
+		// DeleteClosedAccessReviewsBefore above — see its comment for why a
+		// Pluck'd ID list captured earlier in the transaction can go stale
+		// under Postgres READ COMMITTED if a request is un-resolved
+		// concurrently.
+		ra := tx.Where("request_id IN (?)", tx.Model(&models.AccessRequest{}).
+			Select("id").Where(eligible, before)).
+			Delete(&models.AccessRequestApproval{})
 		if ra.Error != nil {
 			return ra.Error
 		}
 		approvals = ra.RowsAffected
-		rr := tx.Where("id IN ?", ids).Delete(&models.AccessRequest{})
+		rr := tx.Where(eligible, before).Delete(&models.AccessRequest{})
 		if rr.Error != nil {
 			return rr.Error
 		}

@@ -115,47 +115,65 @@ func (ls *LocalStorage) assignUserRole(ctx context.Context, userID, roleID uint,
 		utc := expiresAt.UTC()
 		expiresAt = &utc
 	}
-	var existing models.UserRole
-	err := ls.db.WithContext(ctx).
-		Where(sqlWhereUserRoleEnv,
+	// #G21: the read (is there a stale, expired row blocking this key?), the
+	// delete of that stale row, and the create of the fresh grant all run
+	// inside ONE database transaction, so SQLite's single-writer locking
+	// (acquired at the first write statement below, held until commit)
+	// prevents a concurrent assignUserRole call from inserting its own live
+	// grant at this key in between our read and our write — a plain
+	// match-by-composite-key delete run outside a transaction could
+	// otherwise silently destroy that concurrently-created live grant. (An
+	// earlier version of this fix tried to additionally re-assert the exact
+	// observed expires_at value in the delete's WHERE clause, but GORM's
+	// struct-field writes and a raw driver parameter bind serialize
+	// time.Time inconsistently with this driver — confirmed empirically, not
+	// just suspected — so any Go-side round trip of the value risked a
+	// false-negative byte mismatch even for the SAME row; transactional
+	// isolation avoids depending on that comparison at all.) See
+	// WithTransaction's doc comment for the caveat that RemoteStorage's
+	// implementation is a passthrough, so this narrows but doesn't eliminate
+	// the race under storage.type: remote deployments.
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing models.UserRole
+		err := tx.Where(sqlWhereUserRoleEnv,
 			userID, roleID, scope.ProjectID, scope.EnvironmentID).First(&existing).Error
-	switch err {
-	case nil:
-		// A row already exists at this exact (user, role, project, environment) key. A
-		// still-live grant (no expiry, or an expiry still in the future) genuinely blocks
-		// a duplicate assignment. But an EXPIRED grant is a stale, un-reaped row — e.g. a
-		// prior break-glass activation whose time-bound grant naturally lapsed — and must
-		// be treated as ABSENT for this check, or a second real-incident activation for
-		// the same user/role/scope is permanently refused with "already assigned" even
-		// though nothing live is actually being duplicated (#263). Delete the stale row
-		// so the composite primary key (user_id, role_id, project_id, environment_id) is
-		// free for the fresh Create below, mirroring how live-authorization queries
-		// elsewhere (e.g. GetUserRoles) already exclude expired grants.
-		if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
-			return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
-		}
-		if derr := ls.db.WithContext(ctx).
-			Where(sqlWhereUserRoleEnv,
+		switch err {
+		case nil:
+			// A row already exists at this exact (user, role, project, environment) key. A
+			// still-live grant (no expiry, or an expiry still in the future) genuinely blocks
+			// a duplicate assignment. But an EXPIRED grant is a stale, un-reaped row — e.g. a
+			// prior break-glass activation whose time-bound grant naturally lapsed — and must
+			// be treated as ABSENT for this check, or a second real-incident activation for
+			// the same user/role/scope is permanently refused with "already assigned" even
+			// though nothing live is actually being duplicated (#263). Delete the stale row
+			// so the composite primary key (user_id, role_id, project_id, environment_id) is
+			// free for the fresh Create below, mirroring how live-authorization queries
+			// elsewhere (e.g. GetUserRoles) already exclude expired grants.
+			if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
+				return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+			}
+			if derr := tx.Where(sqlWhereUserRoleEnv,
 				userID, roleID, scope.ProjectID, scope.EnvironmentID).
-			Delete(&models.UserRole{}).Error; derr != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), derr)
+				Delete(&models.UserRole{}).Error; derr != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), derr)
+			}
+		case gorm.ErrRecordNotFound:
+			// no existing row for this key — proceed to create.
+		default:
+			return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 		}
-	case gorm.ErrRecordNotFound:
-		// no existing row for this key — proceed to create.
-	default:
-		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
-	}
-	userRole := models.UserRole{
-		UserID:        userID,
-		RoleID:        roleID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		ExpiresAt:     expiresAt,
-	}
-	if err := ls.db.WithContext(ctx).Create(&userRole).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return nil
+		userRole := models.UserRole{
+			UserID:        userID,
+			RoleID:        roleID,
+			ProjectID:     scope.ProjectID,
+			EnvironmentID: scope.EnvironmentID,
+			ExpiresAt:     expiresAt,
+		}
+		if err := tx.Create(&userRole).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
 }
 
 // RemoveRole removes a role from a user at scope.
@@ -662,46 +680,54 @@ func (ls *LocalStorage) assignGroupRole(ctx context.Context, groupID, roleID uin
 		utc := expiresAt.UTC()
 		expiresAt = &utc
 	}
-	var existing models.GroupRole
-	err := ls.db.WithContext(ctx).
-		Where(sqlWhereGroupRoleEnv,
+	// #G21: see assignUserRole's identical fix — the read, the stale-row
+	// delete, and the fresh-grant create all run inside ONE transaction so
+	// SQLite's single-writer locking prevents a concurrent
+	// AssignRoleToGroup call from inserting its own live grant at this key
+	// in between our read and our write, rather than trying to re-verify the
+	// observed expires_at value in the delete's WHERE clause (abandoned:
+	// GORM's struct-field writes and a raw driver parameter bind serialize
+	// time.Time inconsistently with this driver, confirmed empirically).
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing models.GroupRole
+		err := tx.Where(sqlWhereGroupRoleEnv,
 			groupID, roleID, scope.ProjectID, scope.EnvironmentID).First(&existing).Error
-	switch err {
-	case nil:
-		// A row already exists at this exact (group, role, project, environment) key. A
-		// still-live grant (no expiry, or an expiry still in the future) genuinely blocks
-		// a duplicate assignment. But an EXPIRED grant is a stale, un-reaped row — e.g. a
-		// prior break-glass activation whose time-bound grant naturally lapsed — and must
-		// be treated as ABSENT for this check, or a second real-incident activation for
-		// the same group/role/scope is permanently refused with "already assigned" even
-		// though nothing live is actually being duplicated (#263/#471). Delete the stale
-		// row so the composite primary key (group_id, role_id, project_id, environment_id)
-		// is free for the fresh Create below, mirroring assignUserRole's identical fix.
-		if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
-			return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
-		}
-		if derr := ls.db.WithContext(ctx).
-			Where(sqlWhereGroupRoleEnv,
+		switch err {
+		case nil:
+			// A row already exists at this exact (group, role, project, environment) key. A
+			// still-live grant (no expiry, or an expiry still in the future) genuinely blocks
+			// a duplicate assignment. But an EXPIRED grant is a stale, un-reaped row — e.g. a
+			// prior break-glass activation whose time-bound grant naturally lapsed — and must
+			// be treated as ABSENT for this check, or a second real-incident activation for
+			// the same group/role/scope is permanently refused with "already assigned" even
+			// though nothing live is actually being duplicated (#263/#471). Delete the stale
+			// row so the composite primary key (group_id, role_id, project_id, environment_id)
+			// is free for the fresh Create below, mirroring assignUserRole's identical fix.
+			if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
+				return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+			}
+			if derr := tx.Where(sqlWhereGroupRoleEnv,
 				groupID, roleID, scope.ProjectID, scope.EnvironmentID).
-			Delete(&models.GroupRole{}).Error; derr != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), derr)
+				Delete(&models.GroupRole{}).Error; derr != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), derr)
+			}
+		case gorm.ErrRecordNotFound:
+			// no existing row for this key — proceed to create.
+		default:
+			return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 		}
-	case gorm.ErrRecordNotFound:
-		// no existing row for this key — proceed to create.
-	default:
-		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
-	}
-	groupRole := models.GroupRole{
-		GroupID:       groupID,
-		RoleID:        roleID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		ExpiresAt:     expiresAt,
-	}
-	if err := ls.db.WithContext(ctx).Create(&groupRole).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return nil
+		groupRole := models.GroupRole{
+			GroupID:       groupID,
+			RoleID:        roleID,
+			ProjectID:     scope.ProjectID,
+			EnvironmentID: scope.EnvironmentID,
+			ExpiresAt:     expiresAt,
+		}
+		if err := tx.Create(&groupRole).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
 }
 
 // DeleteExpiredRoleGrants removes user_roles and group_roles whose ExpiresAt is
