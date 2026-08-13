@@ -42,6 +42,12 @@ type ProjectStats struct {
 	ClassificationCounts map[string]int `json:"classification_counts"`
 
 	ComputedAt time.Time `json:"computed_at"`
+
+	// Truncated is true when the project has more live secrets than the 50 000-row
+	// cap ListLiveSecretNamesByProject applied — TotalSecrets/ClassificationCounts
+	// then reflect only the fetched sample, not the project's true secret count
+	// (#G24: previously the storage layer's own truncation flag was discarded).
+	Truncated bool `json:"truncated"`
 }
 
 // GetProjectStats computes statistics for a project by querying existing storage
@@ -69,11 +75,12 @@ func (c *KeyorixCore) GetProjectStats(ctx context.Context, projectID uint) (*Pro
 	// ListLiveSecretNamesByProject returns one row per live secret with enough
 	// metadata for classification bucketing and ID cross-referencing (anomaly
 	// lookup). Cap at 50 000 to bound memory on very large projects.
-	nameRows, _, err := c.storage.ListLiveSecretNamesByProject(ctx, []uint{projectID}, 50_000)
+	nameRows, truncated, err := c.storage.ListLiveSecretNamesByProject(ctx, []uint{projectID}, 50_000)
 	if err != nil {
 		return nil, fmt.Errorf("list project secret names: %w", err)
 	}
 	out.TotalSecrets = len(nameRows)
+	out.Truncated = truncated
 	classCounts, secretIDs := buildClassificationCounts(nameRows)
 	out.ClassificationCounts = classCounts
 

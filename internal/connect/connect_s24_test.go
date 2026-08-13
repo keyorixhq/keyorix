@@ -32,19 +32,19 @@ func TestVault_S24_GetSecret_SanitizeRefError(t *testing.T) {
 		"sanitizeVaultRef must reject control characters")
 }
 
-// TestVault_S24_GetSecret_NewRequestError verifies the branch at vault.go:116
-// where http.NewRequestWithContext returns an error because the connector's
-// address makes the final URL unparseable. Using address "://" produces the
-// URL ":///v1/secret/data/app", which url.Parse rejects with "missing protocol
-// scheme".
-func TestVault_S24_GetSecret_NewRequestError(t *testing.T) {
+// TestVault_S24_GetSecret_InvalidAddress verifies GetSecret's validateConnectorURL
+// call (added for the CodeQL keyorix-ssrf-unvalidated-outbound-request rule): an
+// unparseable connector address is now rejected up front, before ever reaching
+// http.NewRequestWithContext. Using address "://" produces a trimmed address of
+// ":", which url.Parse rejects with "missing protocol scheme".
+func TestVault_S24_GetSecret_InvalidAddress(t *testing.T) {
 	// "://" is non-empty (so the empty-address guard does not fire), has a token,
-	// and the ref is clean — the error surfaces only at http.NewRequestWithContext.
+	// and the ref is clean — the error surfaces only at validateConnectorURL.
 	c := NewVaultConnector("v", "://", "tok", nil)
 	_, err := c.GetSecret(context.Background(), "secret/data/app")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "new request",
-		"error must originate from http.NewRequestWithContext")
+	assert.Contains(t, err.Error(), "invalid connector address",
+		"error must originate from validateConnectorURL")
 }
 
 // TestVault_S24_GetSecret_ReadBodyError verifies the branch at vault.go:130

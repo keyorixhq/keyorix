@@ -240,6 +240,14 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 		token:    token,
 		http:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
 	}
+	// api.endpoint is a distinct field declaration from ClientConfig.Endpoint/
+	// RemoteConfig.BaseURL (already validated in common.ResolveRemote, which this
+	// endpoint parameter is sourced from) -- this direct read of api.endpoint is what
+	// lets a static analyzer recognize the same validation as covering the field
+	// apiClient.get below actually reads.
+	if err := common.ValidateRemoteEndpointURL(api.endpoint); err != nil {
+		return nil, err
+	}
 
 	// ── 1. Resolve project name → ID ─────────────────────────────────────────
 	var projBody struct {
@@ -280,6 +288,12 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 	// ── 3+4. Page through ALL secrets and fetch each value ─────────────────────
 	// (a single capped page would inject only the first page's env vars).
 	const pageSize = 500
+	// maxRunInjectedSecrets bounds the total number of secrets injected as child-
+	// process env vars (#G44): with no cap, a project holding a very large number of
+	// secrets can exhaust CLI memory fetching them one by one, or overrun the OS's
+	// environment-block size limit (ARG_MAX) when they're handed to the child
+	// process, silently truncating or failing the launch instead of a clear error.
+	const maxRunInjectedSecrets = 2000
 	result := make(map[string]string)
 	for page := 1; ; page++ {
 		listPath := fmt.Sprintf(
@@ -294,6 +308,9 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 		}
 		if err := api.get(ctx, listPath, &secretsBody); err != nil {
 			return nil, fmt.Errorf("list secrets: %w", err)
+		}
+		if len(result)+len(secretsBody.Secrets) > maxRunInjectedSecrets {
+			return nil, fmt.Errorf("project %q/environment %q has more than %d secrets — 'keyorix run' injects every secret as an env var and refuses to continue past this cap; narrow the environment or use a different injection method", project, env, maxRunInjectedSecrets)
 		}
 		for _, s := range secretsBody.Secrets {
 			var secretBody struct {

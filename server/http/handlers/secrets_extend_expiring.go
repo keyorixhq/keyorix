@@ -41,7 +41,7 @@ func (h *SecretHandler) ExtendExpiringSecrets(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	n, err := h.coreService.ExtendExpiringSecrets(r.Context(), uint(id), reqBody.WithinDays, reqBody.NewWindowDays, userCtx.Username, userCtx.UserID)
+	n, truncated, err := h.coreService.ExtendExpiringSecrets(r.Context(), uint(id), reqBody.WithinDays, reqBody.NewWindowDays, userCtx.Username, userCtx.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
@@ -54,5 +54,8 @@ func (h *SecretHandler) ExtendExpiringSecrets(w http.ResponseWriter, r *http.Req
 		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
-	h.sendSuccess(w, map[string]interface{}{"extended": n}, "")
+	// #G24: "truncated" tells the caller more secrets matched the window than the
+	// scan cap covered — the soonest-expiring ones were still renewed first
+	// (storage orders by expiration ascending), but not every matching secret was.
+	h.sendSuccess(w, map[string]interface{}{"extended": n, "truncated": truncated}, "")
 }

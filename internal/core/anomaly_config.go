@@ -2,10 +2,40 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// Anomaly config knob ceilings (#G44) — without an upper bound, a caller-supplied
+// value drives real per-scan work: LookbackDays widens the audit_events window
+// scanned every detection tick, and MLNumTrees/MLSampleSize scale the isolation-
+// forest training cost directly, so an unbounded value is a resource-exhaustion
+// vector each time the detector runs.
+const (
+	maxAnomalyLookbackDays  = 365
+	maxAnomalyQuarantineHrs = 24 * 90 // 90 days
+	maxAnomalyMLNumTrees    = 1000
+	maxAnomalyMLSampleSize  = 100000
+)
+
+// validateAnomalyConfig bounds the knobs that drive per-scan detector cost.
+func validateAnomalyConfig(cfg *models.AnomalyConfigRecord) error {
+	if cfg.LookbackDays > maxAnomalyLookbackDays {
+		return fmt.Errorf("lookback_days exceeds the maximum of %d", maxAnomalyLookbackDays)
+	}
+	if cfg.QuarantineHours > maxAnomalyQuarantineHrs {
+		return fmt.Errorf("quarantine_hours exceeds the maximum of %d", maxAnomalyQuarantineHrs)
+	}
+	if cfg.MLNumTrees > maxAnomalyMLNumTrees {
+		return fmt.Errorf("ml_num_trees exceeds the maximum of %d", maxAnomalyMLNumTrees)
+	}
+	if cfg.MLSampleSize > maxAnomalyMLSampleSize {
+		return fmt.Errorf("ml_sample_size exceeds the maximum of %d", maxAnomalyMLSampleSize)
+	}
+	return nil
+}
 
 // ApplyAnomalyConfig loads the persisted anomaly config and applies it to the
 // given detector. Call at startup and before each detection scan so runtime
@@ -59,6 +89,9 @@ func (c *KeyorixCore) GetAnomalyConfig(ctx context.Context) (*models.AnomalyConf
 // purposes); the caller is responsible for applying the new config to the live
 // detector via ApplyAnomalyConfig if one is running.
 func (c *KeyorixCore) UpdateAnomalyConfig(ctx context.Context, cfg *models.AnomalyConfigRecord, updatedBy string) error {
+	if err := validateAnomalyConfig(cfg); err != nil {
+		return err
+	}
 	cfg.UpdatedBy = updatedBy
 	cfg.UpdatedAt = time.Now()
 	return c.storage.SaveAnomalyConfig(ctx, cfg)

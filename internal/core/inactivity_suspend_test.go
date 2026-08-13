@@ -70,6 +70,26 @@ func TestSuspendInactiveUsers_InvalidDays(t *testing.T) {
 	}
 }
 
+// TestSuspendInactiveUsers_ExceedsMaxDays is the #G44 regression: before the fix,
+// InactiveDays had no upper bound, so time.Duration(cfg.InactiveDays)*24*time.Hour
+// could overflow int64 nanoseconds and wrap to a NEGATIVE duration — landing the
+// suspension threshold in the FUTURE and making every user in the deployment
+// appear inactive. A value comfortably past MaxInactiveDays must be rejected
+// before that arithmetic ever runs, and MockStorage has no ListInactiveUsers
+// expectation configured — if the rejection happened AFTER computing the
+// threshold, the mock call would panic instead of returning a clean error.
+func TestSuspendInactiveUsers_ExceedsMaxDays(t *testing.T) {
+	store := new(MockStorage)
+	c := newInactivityCore(store)
+	ctx := context.Background()
+
+	for _, days := range []int{MaxInactiveDays + 1, 1 << 30, 1 << 62} {
+		_, err := c.SuspendInactiveUsers(ctx, InactivitySuspendConfig{InactiveDays: days})
+		require.Error(t, err, "days=%d should be rejected", days)
+		assert.Contains(t, err.Error(), "exceeds the maximum")
+	}
+}
+
 // TestSuspendInactiveUsers_EmptyList ensures an empty inactive-user list returns a zero result.
 func TestSuspendInactiveUsers_EmptyList(t *testing.T) {
 	store := new(MockStorage)

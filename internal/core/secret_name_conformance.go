@@ -33,6 +33,11 @@ type SecretNameConformanceReport struct {
 	MaxLength     int                   `json:"max_length,omitempty"`
 	TotalSecrets  int                   `json:"total_secrets"`
 	Violations    []SecretNameViolation `json:"violations"`
+	// Truncated reports whether secretInventoryMaxRows was hit, i.e. the project
+	// has more secrets than were scanned — TotalSecrets/Violations then reflect
+	// only the scanned sample (#G24: matches the deployment-wide sibling's own
+	// Truncated field, which this per-project report previously lacked).
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // SecretNameConformance scans every live secret in the project (folders excluded) and
@@ -56,12 +61,13 @@ func (c *KeyorixCore) SecretNameConformance(ctx context.Context, projectID uint)
 		return report, nil
 	}
 
-	secrets, _, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+	secrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
 		ProjectID: &projectID, Page: 1, PageSize: secretInventoryMaxRows,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list secrets: %w", err)
 	}
+	report.Truncated = int64(len(secrets)) < total
 
 	for _, s := range secrets {
 		if !s.IsSecret {

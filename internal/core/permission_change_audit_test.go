@@ -212,7 +212,12 @@ func TestGetPermissionChangeAudit_LimitApplied(t *testing.T) {
 
 	report, err := c.GetPermissionChangeAudit(ctx, now.Add(-time.Minute), now.Add(time.Minute), 3)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, report.Total, 3)
+	// #G24: Total now reports the TRUE matching count (5), not the returned page
+	// size — Changes is what's capped at the requested limit, and Truncated
+	// signals the gap between them.
+	assert.LessOrEqual(t, len(report.Changes), 3)
+	assert.Equal(t, 5, report.Total)
+	assert.True(t, report.Truncated)
 }
 
 // TestGetPermissionChangeAudit_LimitExceedsMax — limit > 1000 is capped at 1000.

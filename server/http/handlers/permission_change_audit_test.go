@@ -184,11 +184,17 @@ func TestGetPermissionChangeAudit_LimitParam(t *testing.T) {
 
 	var resp struct {
 		Data struct {
-			Total int `json:"total"`
+			Total     int                      `json:"total"`
+			Changes   []map[string]interface{} `json:"changes"`
+			Truncated bool                     `json:"truncated"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.LessOrEqual(t, resp.Data.Total, 2)
+	// #G24: total now reports the TRUE matching count (5), not the returned page
+	// size — changes is what's capped at the requested limit.
+	assert.LessOrEqual(t, len(resp.Data.Changes), 2)
+	assert.Equal(t, 5, resp.Data.Total)
+	assert.True(t, resp.Data.Truncated)
 }
 
 // TestGetPermissionChangeAudit_StorageError_500 — storage failure → 500.

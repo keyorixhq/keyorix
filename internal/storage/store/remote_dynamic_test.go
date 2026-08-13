@@ -85,7 +85,12 @@ func TestRemoteStorage_GetDynamicSecretConfig(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/system/dynamic-secrets/configs/1", r.URL.Path)
-		_, _ = w.Write(apiOK(dynamicConfigWireData(1, "pg-dynamic")))
+		// Unlike CreateDynamicSecretConfig's fixture, a Get response always carries
+		// the (still-encrypted) admin_dsn_enc ciphertext -- the config already exists
+		// with it persisted, unlike a just-created row's two-phase empty-then-update.
+		data := dynamicConfigWireData(1, "pg-dynamic")
+		data["admin_dsn_enc"] = []byte("ciphertext")
+		_, _ = w.Write(apiOK(data))
 	}))
 	defer srv.Close()
 

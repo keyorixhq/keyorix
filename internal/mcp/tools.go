@@ -122,6 +122,14 @@ func (s *Server) toolGetSecret(ctx context.Context, args json.RawMessage) map[st
 }
 
 func (s *Server) toolListSecrets(ctx context.Context, args json.RawMessage) map[string]interface{} {
+	// #G44: a per-process cap on how many keyorix_list_secrets calls this session
+	// serves, mirroring keyorix_get_secret's maxReads cap above for the same reason
+	// — a manipulated agent can be driven to repeat a read-only listing call just as
+	// easily as a value-reading one.
+	if s.maxListCalls > 0 && s.listCallCount.Load() >= s.maxListCalls {
+		log.Printf("keyorix_list_secrets: per-process call cap (%d) reached; refusing further listings this session", s.maxListCalls)
+		return errorResult(genericListError)
+	}
 	var a struct {
 		Environment string `json:"environment"`
 	}

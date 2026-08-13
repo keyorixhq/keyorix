@@ -42,7 +42,7 @@ func (ls *LocalStorage) ListRotationPolicies(ctx context.Context, projectID *uin
 		query = query.Where("environment_id = ?", *environmentID)
 	}
 	var policies []*models.RotationPolicy
-	if err := query.Find(&policies).Error; err != nil {
+	if err := query.Limit(maxUnboundedListRows).Find(&policies).Error; err != nil {
 		return nil, fmt.Errorf("failed to list rotation policies: %w", err)
 	}
 	return policies, nil

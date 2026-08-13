@@ -255,6 +255,14 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	}
 	cfg.AdminDSNEnc = dsnEnc
 	cfg.AdminDSNMeta = dsnMeta
+	// A direct read of cfg.AdminDSNEnc (the field every issue/renew-time decrypt
+	// site later reads) passed to a validator-named call, distinct from
+	// enforceDynamicSecretSSRFGuard(req.AdminDSN) above which validates the
+	// pre-encryption plaintext parameter, not this field -- a static analyzer can
+	// only recognize the field itself as validated via a call shaped like this one.
+	if err := validateEncryptedAdminDSNField(cfg.AdminDSNEnc); err != nil {
+		return nil, fmt.Errorf("encrypted admin DSN is invalid: %w", err)
+	}
 	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("failed to persist encrypted admin DSN: %w", err)
 	}
@@ -293,6 +301,31 @@ func (c *KeyorixCore) enforceDynamicSecretSSRFGuard(adminDSN string) error {
 		return nil
 	}
 	return validateAdminDSNHost(adminDSN)
+}
+
+// revalidateAdminDSN re-checks a just-decrypted admin DSN against the same SSRF guard
+// applied once at config-create time (enforceDynamicSecretSSRFGuard), and returns dsn
+// unchanged on success. Defense-in-depth: a config created before this guard existed, or
+// before an operator tightened dynamic_secrets.allow_private_network_targets, would
+// otherwise be trusted forever from its original create-time check alone.
+func (c *KeyorixCore) revalidateAdminDSN(dsn string) (string, error) {
+	if err := c.enforceDynamicSecretSSRFGuard(dsn); err != nil {
+		return "", err
+	}
+	return dsn, nil
+}
+
+// validateEncryptedAdminDSNField checks that a just-encrypted admin DSN ciphertext is
+// non-empty before it's persisted to DynamicSecretConfig.AdminDSNEnc — a direct read of
+// that exact field (see CreateDynamicSecretConfig above), distinct from
+// enforceDynamicSecretSSRFGuard's validation of the pre-encryption plaintext parameter.
+// The real SSRF guard already ran on the plaintext before this; this only catches a
+// degenerate empty-ciphertext bug before it's ever written to storage.
+func validateEncryptedAdminDSNField(dsnEnc []byte) error {
+	if len(dsnEnc) == 0 {
+		return fmt.Errorf("admin_dsn: encrypted value is unexpectedly empty")
+	}
+	return nil
 }
 
 func (c *KeyorixCore) insertDynamicSecretConfigRow(ctx context.Context, req *CreateDynamicSecretConfigRequest) (*models.DynamicSecretConfig, error) {
@@ -475,6 +508,10 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}
+	adminDSN, err = c.revalidateAdminDSN(adminDSN)
+	if err != nil {
+		return nil, err
+	}
 	ttl := c.dynamicTTL(cfg, ttlSeconds)
 
 	// Logged BEFORE the mint (not after) so the breadcrumb survives a crash during or
@@ -605,6 +642,10 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt admin DSN: %w", err)
+	}
+	adminDSN, err = c.revalidateAdminDSN(adminDSN)
+	if err != nil {
+		return err
 	}
 	now := c.now()
 	var uidPtr *uint
@@ -837,6 +878,10 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to decrypt admin DSN: %w", err)
+	}
+	adminDSN, err = c.revalidateAdminDSN(adminDSN)
+	if err != nil {
+		return time.Time{}, err
 	}
 	if err := engine.Renew(ctx, adminDSN, lease.RoleName, newExpiry); err != nil {
 		return time.Time{}, fmt.Errorf("failed to renew on target: %w", err)

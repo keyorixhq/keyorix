@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/digitorus/timestamp"
@@ -47,7 +48,29 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 
 func (r *RFC3161) Provider() string { return "rfc3161:" + r.url }
 
+// validateTSAURL checks that the configured TSA URL is a well-formed absolute
+// http(s) URL. Deliberately does NOT reject private/loopback hosts: this is
+// operator-configured deployment config (see the RFC3161 doc comment above) that
+// may legitimately point at an internal/self-hosted TSA — this only rejects a
+// malformed or non-HTTP(S) destination reaching the outbound client.
+func validateTSAURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("rfc3161: invalid url %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("rfc3161: url %q must use http or https", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("rfc3161: url %q is missing a host", raw)
+	}
+	return nil
+}
+
 func (r *RFC3161) Anchor(ctx context.Context, message []byte) (_ *Receipt, err error) {
+	if err := validateTSAURL(r.url); err != nil {
+		return nil, err
+	}
 	// #G61: digitorus/pkcs7 panics on certain malformed BER inputs instead of
 	// returning an error (index out of range in ber.go:readObject, found by
 	// fuzz rig) — the same known parser panic class notary.go's VerifyReceipt

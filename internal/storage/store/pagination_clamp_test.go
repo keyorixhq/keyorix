@@ -27,13 +27,44 @@ func TestClampPageSize(t *testing.T) {
 		{"one over the ceiling clamped down", maxStoragePageSize + 1, maxStoragePageSize},
 		{"wildly oversized clamped down", 1 << 30, maxStoragePageSize},
 		{"zero passed through (caller's own default applies)", 0, 0},
-		{"negative passed through (caller's own default applies)", -1, -1},
+		// #G44: a negative size must NEVER reach GORM's Limit() — Limit(-1) (or any
+		// negative) removes the LIMIT clause entirely, turning a caller-controlled
+		// negative page size into an unbounded query. Clamped to 0, not passed through.
+		{"negative clamped to zero, not passed through", -1, 0},
+		{"large negative clamped to zero", -1 << 30, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, clampPageSize(tc.in))
 		})
 	}
+}
+
+// TestClampPageSize_NegativeNeverReachesGORMLimit is the #G44 regression: before the
+// fix, a negative pageSize passed straight through clampPageSize into GORM's
+// Limit(), which treats any negative value as "no limit" — turning a caller-
+// controlled negative page size into an unbounded query. This proves the actual
+// query result is bounded, not just the clamp helper's return value.
+func TestClampPageSize_NegativeNeverReachesGORMLimit(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "dev"}).Error)
+	for i := 0; i < 5; i++ {
+		require.NoError(t, db.Create(&models.SecretNode{
+			ProjectID: 1, EnvironmentID: 1, Name: fmt.Sprintf("secret-%d", i),
+			IsSecret: true, Type: "api_key", Status: "active",
+		}).Error)
+	}
+
+	secrets, _, err := ls.ListSecrets(ctx, &storage.SecretFilter{
+		Page: 1, PageSize: -1, // a caller supplying a hostile negative page size
+	})
+	require.NoError(t, err)
+	assert.Empty(t, secrets, "a negative page size must return zero rows, never every row")
 }
 
 // TestClampPage pins the ceiling on caller-supplied page numbers to prevent

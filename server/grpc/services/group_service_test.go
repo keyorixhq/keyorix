@@ -102,3 +102,47 @@ func TestGroupService_Unauthenticated(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
+
+// TestGroupService_RestoreGroup_RequiresRolesAssign is the G16 regression test:
+// RestoreGroup reinstates every role grant the group carried at deletion (the
+// same blast radius as a role grant), so it must require roles.assign — not
+// users.write, which the HTTP sibling (POST /groups/{id}/restore, #147) never
+// accepted either. A users.write-only holder must be refused; a roles.assign
+// holder must succeed.
+func TestGroupService_RestoreGroup_RequiresRolesAssign(t *testing.T) {
+	svc, h := newGroupService(t)
+
+	// A group to soft-delete + attempt restoring with an insufficient grant.
+	g1, err := svc.CreateGroup(groupCtx(), &pb.CreateGroupRequest{Name: "team-a"})
+	require.NoError(t, err)
+	_, err = svc.DeleteGroup(groupCtx(), &pb.DeleteGroupRequest{Id: g1.GetId()})
+	require.NoError(t, err)
+
+	// A second group to soft-delete + restore with a sufficient grant.
+	g2, err := svc.CreateGroup(groupCtx(), &pb.CreateGroupRequest{Name: "team-b"})
+	require.NoError(t, err)
+	_, err = svc.DeleteGroup(groupCtx(), &pb.DeleteGroupRequest{Id: g2.GetId()})
+	require.NoError(t, err)
+
+	// User 2 holds ONLY users.write (the old, too-weak gate) — must be refused.
+	h.CreateTestUser(t, "writer-only", 2)
+	writerRole := h.CreateTestRole(t, "writer_only", "users.write only", 100)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name = 'users.write'`, writerRole.ID)
+	h.AssignUserRole(t, 2, writerRole.ID, nil)
+
+	_, err = svc.RestoreGroup(authCtx(2, "writer-only"), &pb.RestoreGroupRequest{Id: g1.GetId()})
+	require.Error(t, err, "users.write holder without roles.assign must NOT restore a group")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// User 3 holds roles.assign (the new, correct gate) — must succeed.
+	h.CreateTestUser(t, "assigner", 3)
+	assignerRole := h.CreateTestRole(t, "assigner_only", "roles.assign only", 101)
+	h.ExecuteRawSQL(t, `INSERT INTO role_permissions (role_id, permission_id)
+		SELECT ?, id FROM permissions WHERE name = 'roles.assign'`, assignerRole.ID)
+	h.AssignUserRole(t, 3, assignerRole.ID, nil)
+
+	restored, err := svc.RestoreGroup(authCtx(3, "assigner"), &pb.RestoreGroupRequest{Id: g2.GetId()})
+	require.NoError(t, err, "roles.assign holder should be allowed to restore a group")
+	assert.Equal(t, g2.GetId(), restored.GetId())
+}

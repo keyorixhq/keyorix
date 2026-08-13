@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -39,6 +40,10 @@ func (h *AdminJobsHandler) SuspendInactiveUsers(w http.ResponseWriter, r *http.R
 
 	if req.InactiveDays <= 0 {
 		sendError(w, "Bad Request", "inactive_days must be greater than 0", http.StatusBadRequest, nil)
+		return
+	}
+	if req.InactiveDays > core.MaxInactiveDays {
+		sendError(w, "Bad Request", fmt.Sprintf("inactive_days exceeds the maximum of %d", core.MaxInactiveDays), http.StatusBadRequest, nil)
 		return
 	}
 

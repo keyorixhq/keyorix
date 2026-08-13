@@ -139,6 +139,14 @@ func (b *permBaselineBuilder) groupGrantRowsForUser(ctx context.Context, u *mode
 // tuple becomes one PermissionBaselineRow. Expired grants are included (snapshot
 // of all grants, including time-bound ones) so the auditor sees the full history;
 // callers that need only live grants should filter by expiry themselves.
+//
+// #G44: groupGrantRowsForUser below runs one GetUserGroups + one GetGroupRoles
+// call PER USER — a genuine N+1 whose cost scales with the deployment's own user
+// count, not with any caller-controlled input. Unlike this group's other members,
+// there's no bound to add here that wouldn't just silently drop users from a
+// compliance/audit report; the real fix is restructuring to batch-load every
+// user's group/role memberships in one or two queries up front. Left unfixed —
+// see REMEDIATION-STATUS.md G44.
 func (k *KeyorixCore) GetPermissionBaseline(ctx context.Context) (*PermissionBaseline, error) {
 	// 1. Load all users (no filter — we want every principal).
 	users, _, err := k.storage.ListUsers(ctx, &storage.UserFilter{PageSize: 100000})

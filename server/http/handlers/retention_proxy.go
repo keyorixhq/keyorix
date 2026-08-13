@@ -76,6 +76,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -92,6 +93,28 @@ type retentionBeforeBody struct {
 	Before time.Time `json:"before"`
 }
 
+// maxRetentionCutoffSkew bounds how far into the future a caller-supplied `before`
+// cutoff may sit relative to this server's own clock (#G44). Every route in this
+// file is a retention/expiry SWEEP — "purge/strip everything already older than
+// before" — so without SOME bound, a caller (holding the same system.read/
+// system.write credential any RemoteStorage node already needs) could set `before`
+// far in the future (e.g. decades out) and instantly purge every soft-deleted row,
+// or strip role grants/shares that have not actually expired yet, system-wide. A
+// generous 24h allowance is kept for legitimate near-future padding — every proxy
+// handler's own test suite already exercises a +1h cutoff as valid input (a caller
+// pre-emptively sweeping things that will have expired shortly) — while still
+// rejecting the actual attack shape (a wildly distant cutoff).
+const maxRetentionCutoffSkew = 24 * time.Hour
+
+// validateRetentionCutoff rejects a `before` timestamp that sits more than
+// maxRetentionCutoffSkew in the future relative to this server's clock.
+func validateRetentionCutoff(before time.Time) error {
+	if before.After(time.Now().Add(maxRetentionCutoffSkew)) {
+		return fmt.Errorf("before must not be in the future")
+	}
+	return nil
+}
+
 func decodeRetentionBeforeBody(w http.ResponseWriter, r *http.Request) (time.Time, bool) {
 	var body retentionBeforeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -100,6 +123,10 @@ func decodeRetentionBeforeBody(w http.ResponseWriter, r *http.Request) (time.Tim
 	}
 	if body.Before.IsZero() {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "before is required")
+		return time.Time{}, false
+	}
+	if err := validateRetentionCutoff(body.Before); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
 		return time.Time{}, false
 	}
 	// See the package doc's timezone note: re-express in this server's own process
@@ -170,6 +197,20 @@ func (h *AuditHandler) DeleteAnomalyAlertsBeforeProxy(w http.ResponseWriter, r *
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
 		return
+	}
+	// A zero value disables the corresponding clause (see the type doc) — only a
+	// genuinely-set field needs the future-cutoff bound.
+	if !body.AckBefore.IsZero() {
+		if err := validateRetentionCutoff(body.AckBefore); err != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "ack_before: "+err.Error())
+			return
+		}
+	}
+	if !body.UnackCeiling.IsZero() {
+		if err := validateRetentionCutoff(body.UnackCeiling); err != nil {
+			writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "unack_ceiling: "+err.Error())
+			return
+		}
 	}
 	// See the package doc's timezone note. .Local() on an already-zero time.Time
 	// leaves it zero (IsZero() depends only on the represented instant, not the
@@ -431,6 +472,10 @@ func (h *UserHandler) ListUsersInStateBeforeProxy(w http.ResponseWriter, r *http
 		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_QUERY", "before must be an RFC3339 timestamp")
 		return
 	}
+	// Unlike every other route in this file, a future `before` here is legitimate:
+	// this is a READ (stale-account WARNING report), not a purge, and "list users
+	// who will still be in this state as of tomorrow" is valid usage — no
+	// "not in the future" bound applies (see TestListUsersInStateBeforeProxy_WithUsers_S11).
 	// See the package doc's timezone note.
 	rows, err := h.coreService.Storage().ListUsersInStateBefore(r.Context(), state, before.Local())
 	if err != nil {

@@ -308,7 +308,7 @@ func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, fmt.Errorf("kubernetes: no certificates in ca bundle")
 	}
-	return &realK8sMinter{
+	m := &realK8sMinter{
 		host:  host,
 		token: token,
 		hc: &http.Client{
@@ -318,7 +318,30 @@ func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
 			},
 			CheckRedirect: refuseRedirect,
 		},
-	}, nil
+	}
+	if err := validateAPIServerHost(m.host); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// validateAPIServerHost checks that the resolved Kubernetes API server host is a
+// well-formed absolute https URL. Both code paths that set it (an operator-configured
+// api_server, or the in-cluster KUBERNETES_SERVICE_HOST/PORT env vars) always
+// produce https — this only rejects a malformed or non-HTTPS destination reaching
+// the TokenRequest/Secret client.
+func validateAPIServerHost(host string) error {
+	u, err := url.Parse(host)
+	if err != nil {
+		return fmt.Errorf("kubernetes: invalid api_server %q: %w", host, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("kubernetes: api_server %q must use https", host)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("kubernetes: api_server %q is missing a host", host)
+	}
+	return nil
 }
 
 // refuseRedirect stops the TokenRequest/Secret-create/Secret-delete client from

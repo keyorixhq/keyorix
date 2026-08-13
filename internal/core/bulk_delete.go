@@ -15,6 +15,12 @@ type BulkDeleteRequest struct {
 	SecretIDs []uint `json:"secret_ids"`
 }
 
+// maxBulkDeleteBatchSize bounds how many secret IDs a single bulk-delete call
+// accepts — each ID does a per-item storage round trip (GetSecret + DeleteSecret),
+// so an unbounded list is a per-request resource-exhaustion vector (#G44), the
+// same class of bug as maxBulkAccessRequestBatchSize (bulk_access_requests.go).
+const maxBulkDeleteBatchSize = 500
+
 // BulkOpError captures why a single secret in a bulk operation could not be processed.
 type BulkOpError struct {
 	SecretID uint   `json:"secret_id"`
@@ -41,6 +47,9 @@ type BulkDeleteResult struct {
 func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteRequest, projectID uint, deletedBy string, actorID uint, ip, ua string) (*BulkDeleteResult, error) {
 	if len(req.SecretIDs) == 0 {
 		return nil, fmt.Errorf("at least one secret ID is required")
+	}
+	if len(req.SecretIDs) > maxBulkDeleteBatchSize {
+		return nil, fmt.Errorf("secret_ids exceeds the maximum batch size of %d", maxBulkDeleteBatchSize)
 	}
 
 	result := &BulkDeleteResult{

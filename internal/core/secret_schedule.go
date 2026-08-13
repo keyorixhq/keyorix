@@ -117,6 +117,13 @@ func validateScheduleParams(days string, startHour, endHour int, timezone string
 		return fmt.Errorf("invalid timezone %q: %w", timezone, err)
 	}
 	if days != "*" {
+		// #G44: bound the string before splitting — 7 distinct days ("1,2,3,4,5,6,7")
+		// need at most 13 characters; an unbounded caller-supplied string otherwise
+		// drives an unbounded number of strconv.Atoi calls below.
+		const maxAllowedDaysLen = 64
+		if len(days) > maxAllowedDaysLen {
+			return fmt.Errorf("days exceeds the maximum length of %d characters", maxAllowedDaysLen)
+		}
 		for _, part := range strings.Split(days, ",") {
 			d, err := strconv.Atoi(strings.TrimSpace(part))
 			if err != nil || d < 1 || d > 7 {

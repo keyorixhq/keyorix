@@ -72,11 +72,17 @@ import (
 const maxStoragePageSize = 10000
 
 // clampPageSize bounds a caller-supplied page size to (0, maxStoragePageSize].
-// A non-positive size is passed through unchanged — several callers rely on
-// their own default/zero-value handling before this clamp runs.
+// A non-positive size is passed through as 0 rather than negative — several
+// callers rely on 0 meaning "use my own default" before this clamp runs, but
+// a negative value must never reach GORM's Limit(): Limit(-1) (or any
+// negative) removes the LIMIT clause entirely, turning a caller-controlled
+// negative page size into an unbounded query (#G44).
 func clampPageSize(pageSize int) int {
 	if pageSize > maxStoragePageSize {
 		return maxStoragePageSize
+	}
+	if pageSize < 0 {
+		return 0
 	}
 	return pageSize
 }
@@ -88,6 +94,14 @@ func clampPageSize(pageSize int) int {
 // 10000 pages × up to 100 rows/page = 1 million rows, far above any real
 // audit log a single deployment would accumulate.
 const maxStoragePage = 10_000
+
+// maxUnboundedListRows caps LocalStorage list queries that have no caller-
+// supplied pagination at all (no Page/PageSize/limit param in their
+// signature) — a defense-in-depth ceiling so a table that grows without
+// bound in production (rotation policies, SoD policies, dynamic leases,
+// access-review campaigns, etc.) can't turn a routine list call into an
+// unbounded full-table scan (#G44).
+const maxUnboundedListRows = 10000
 
 // clampPage bounds a caller-supplied page number to [1, maxStoragePage].
 func clampPage(page int) int {

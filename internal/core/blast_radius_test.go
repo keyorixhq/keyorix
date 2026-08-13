@@ -212,6 +212,25 @@ func TestGetBlastRadius_MaxDepthRespected(t *testing.T) {
 	require.NoError(t, err)
 	assert.LessOrEqual(t, report.MaxDepth, 10,
 		"BFS must not exceed maxDepth=10, got %d", report.MaxDepth)
+	// #G24: hitting the depth ceiling with dependents still beyond it must be
+	// flagged — a capped result must never be silently reported as complete.
+	assert.True(t, report.Truncated, "depth-capped report must set Truncated")
+}
+
+// TestGetBlastRadius_NotTruncatedWhenWithinDepth is the #G24 counterpart: a
+// chain shorter than maxDepth must NOT be flagged as truncated.
+func TestGetBlastRadius_NotTruncatedWhenWithinDepth(t *testing.T) {
+	c, db := newBlastRadiusCore(t)
+	prev := mkBlastSecret(t, db, "root")
+	for i := 0; i < 3; i++ {
+		next := mkBlastSecret(t, db, "link")
+		mkBlastDep(t, db, next, prev)
+		prev = next
+	}
+
+	report, err := c.GetBlastRadius(context.Background(), 1)
+	require.NoError(t, err)
+	assert.False(t, report.Truncated)
 }
 
 func TestGetBlastRadius_RiskLevelCritical(t *testing.T) {

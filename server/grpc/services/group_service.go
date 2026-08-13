@@ -116,7 +116,11 @@ func (s *GroupGRPCService) RestoreGroup(ctx context.Context, req *pb.RestoreGrou
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor, permUsersWrite); err != nil {
+	// Restore reinstates every role grant the group carried at deletion — the same
+	// blast radius as a role grant — so gate on roles.assign, not users.write,
+	// matching the HTTP sibling (server/http/router.go: POST /groups/{id}/restore,
+	// gated permRolesAssign, #147) (G16).
+	if err := authorizeGlobal(ctx, s.core, actor, permRolesAssign); err != nil {
 		return nil, err
 	}
 	if err := s.core.RestoreGroup(ctx, actor.UserID, uint(req.GetId())); err != nil {

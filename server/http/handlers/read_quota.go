@@ -24,7 +24,10 @@ type QuotaReportRow struct {
 
 // GetQuotaReport handles GET /api/v1/secrets/quota-report — returns every live
 // secret with MaxReads > 0 and its current usage percentage and status.
-// Requires secrets.read (enforced by the router).
+// Requires audit.read (enforced by the router) — it's a report-viewing
+// endpoint (usage %/status metadata, no secret values), not secret-value
+// access, so it belongs in the audit-report disclosure family, not
+// secrets.read (G16).
 func (h *SecretHandler) GetQuotaReport(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
 		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

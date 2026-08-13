@@ -41,7 +41,7 @@ func (h *SecretHandler) ExpiringSecrets(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	secrets, err := h.coreService.ListExpiringSecrets(r.Context(), uint(id), days)
+	secrets, truncated, err := h.coreService.ListExpiringSecrets(r.Context(), uint(id), days)
 	if err != nil {
 		h.sendError(w, "InternalError", "Failed to list expiring secrets", http.StatusInternalServerError, nil)
 		return
@@ -59,5 +59,9 @@ func (h *SecretHandler) ExpiringSecrets(w http.ResponseWriter, r *http.Request) 
 		}
 		entries = append(entries, e)
 	}
-	h.sendSuccess(w, map[string]interface{}{"expiring": entries, "total": len(entries)}, "")
+	// #G24: "total" reflects the returned sample size, not necessarily the true
+	// count of matching secrets — "truncated" tells the caller/UI whether more
+	// exist beyond expiringScanPageSize (soonest-expiring are still guaranteed
+	// to be included, since storage orders by expiration ascending).
+	h.sendSuccess(w, map[string]interface{}{"expiring": entries, "total": len(entries), "truncated": truncated}, "")
 }

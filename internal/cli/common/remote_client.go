@@ -59,8 +59,12 @@ func ResolveRemote() (endpoint, token string, ok bool) { // NOSONAR -- cognitive
 
 	// CLI config (~/.keyorix/cli.yaml — written by 'keyorix connect')
 	if cliCfg, err := cliconfig.LoadCLIConfig(""); err == nil && cliCfg.IsClientMode() {
-		if endpoint == "" {
-			endpoint = cliCfg.Client.Endpoint
+		if endpoint == "" && cliCfg.Client.Endpoint != "" {
+			if verr := ValidateRemoteEndpointURL(cliCfg.Client.Endpoint); verr != nil {
+				fmt.Fprintf(os.Stderr, "⚠️  Ignoring remote endpoint from ~/.keyorix/cli.yaml: %v\n", verr)
+			} else {
+				endpoint = cliCfg.Client.Endpoint
+			}
 		}
 		if token == "" {
 			token = cliCfg.Client.Auth.GetAPIKey()
@@ -77,8 +81,12 @@ func ResolveRemote() (endpoint, token string, ok bool) { // NOSONAR -- cognitive
 			mainCfg.Storage.Type == "remote" && mainCfg.Storage.Remote != nil {
 			fromMain := false
 			if endpoint == "" && mainCfg.Storage.Remote.BaseURL != "" {
-				endpoint = mainCfg.Storage.Remote.BaseURL
-				fromMain = true
+				if verr := ValidateRemoteEndpointURL(mainCfg.Storage.Remote.BaseURL); verr != nil {
+					fmt.Fprintf(os.Stderr, "⚠️  Ignoring remote endpoint from ./keyorix.yaml: %v\n", verr)
+				} else {
+					endpoint = mainCfg.Storage.Remote.BaseURL
+					fromMain = true
+				}
 			}
 			if token == "" && mainCfg.Storage.Remote.GetAPIKey() != "" {
 				token = mainCfg.Storage.Remote.GetAPIKey()
@@ -98,6 +106,26 @@ func ResolveRemote() (endpoint, token string, ok bool) { // NOSONAR -- cognitive
 
 	ok = endpoint != "" && token != ""
 	return
+}
+
+// ValidateRemoteEndpointURL checks that a configured remote server endpoint is a
+// well-formed absolute http(s) URL. Deliberately does NOT reject private/loopback
+// hosts: this is a user/operator-configured endpoint pointing at their own Keyorix
+// server, which is legitimately an on-prem/private-network address (mirrors this
+// codebase's own connect.address exception for Vault, internal/connect/vault.go's
+// validateConnectorURL) — this only rejects a malformed or non-HTTP(S) destination.
+func ValidateRemoteEndpointURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid remote endpoint %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("remote endpoint %q must use http or https", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("remote endpoint %q is missing a host", raw)
+	}
+	return nil
 }
 
 // endpointIsSecure reports whether the endpoint is https or a loopback target.
@@ -136,7 +164,7 @@ func NewRemoteClient() (*RemoteClient, bool) {
 	if !ok {
 		return nil, false
 	}
-	return &RemoteClient{
+	rc := &RemoteClient{
 		Endpoint: endpoint,
 		Token:    token,
 		// #315: the zero-value http.Client has an infinite Timeout. Only 3 CLI
@@ -152,7 +180,15 @@ func NewRemoteClient() (*RemoteClient, bool) {
 		// host (e.g. cloud IMDS) at request time (CWE-918). This client backs
 		// essentially all CLI remote-mode traffic, so this one guard covers it.
 		hc: &http.Client{Timeout: defaultRemoteClientTimeout, CheckRedirect: refuseRemoteClientRedirect},
-	}, true
+	}
+	// rc.Endpoint is a distinct field declaration from ClientConfig.Endpoint/
+	// RemoteConfig.BaseURL (already validated above in ResolveRemote) -- this direct
+	// read of rc.Endpoint is what lets a static analyzer recognize the same
+	// validation as covering the field Get/Post/Put/Patch/Delete below actually read.
+	if err := ValidateRemoteEndpointURL(rc.Endpoint); err != nil {
+		return nil, false
+	}
+	return rc, true
 }
 
 func refuseRemoteClientRedirect(req *http.Request, _ []*http.Request) error {

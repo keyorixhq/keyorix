@@ -32,15 +32,8 @@ func (c *Config) Validate() error {
 	c.APIKey = expandEnvVars(c.APIKey)
 	c.BaseURL = expandEnvVars(c.BaseURL)
 
-	// The API key is sent as a bearer token on every request, so refuse a cleartext
-	// base URL — it would leak the token in transit. Allow http only for a loopback
-	// target (local dev).
-	u, perr := url.Parse(c.BaseURL)
-	if perr != nil {
-		return fmt.Errorf("invalid base_url %q: %w", c.BaseURL, perr)
-	}
-	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
-		return fmt.Errorf("base_url must use https (got scheme %q) so the API key is not sent in cleartext", u.Scheme)
+	if err := validateBaseURL(c.BaseURL); err != nil {
+		return err
 	}
 
 	// Set defaults
@@ -58,6 +51,20 @@ func (c *Config) Validate() error {
 // GetTimeout returns the timeout duration
 func (c *Config) GetTimeout() time.Duration {
 	return time.Duration(c.TimeoutSeconds) * time.Second
+}
+
+// validateBaseURL rejects a base_url that isn't a well-formed URL using https (http is
+// allowed only for a loopback host, for local development). The API key is sent as a
+// bearer token on every request, so a cleartext base URL would leak it in transit.
+func validateBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid base_url %q: %w", raw, err)
+	}
+	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("base_url must use https (got scheme %q) so the API key is not sent in cleartext", u.Scheme)
+	}
+	return nil
 }
 
 // isLoopbackHost reports whether host is localhost or a loopback IP.

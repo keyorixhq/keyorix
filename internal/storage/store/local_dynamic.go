@@ -99,7 +99,7 @@ func (ls *LocalStorage) GetDynamicSecretLease(ctx context.Context, leaseID strin
 
 func (ls *LocalStorage) ListDynamicSecretLeases(ctx context.Context, configID uint) ([]*models.DynamicSecretLease, error) {
 	var ls2 []*models.DynamicSecretLease
-	if err := ls.db.WithContext(ctx).Where("config_id = ?", configID).Order("issued_at desc").Find(&ls2).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where("config_id = ?", configID).Order("issued_at desc").Limit(maxUnboundedListRows).Find(&ls2).Error; err != nil {
 		return nil, err
 	}
 	return ls2, nil
@@ -132,7 +132,7 @@ func (ls *LocalStorage) ListExpiredActiveLeases(ctx context.Context, before time
 	var leases []*models.DynamicSecretLease
 	if err := ls.db.WithContext(ctx).
 		Where("status IN ? AND expires_at < ?", []string{"active", "revoke_failed"}, before).
-		Order("id").Find(&leases).Error; err != nil {
+		Order("id").Limit(maxUnboundedListRows).Find(&leases).Error; err != nil {
 		return nil, err
 	}
 	return leases, nil

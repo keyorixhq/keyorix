@@ -210,11 +210,19 @@ func (s *AuditGRPCService) VerifyAuditChain(ctx context.Context, _ *emptypb.Empt
 }
 
 // WriteAuditCheckpoint signs a checkpoint of the verified audit-chain head on demand
-// (ADR-029). Mirrors POST /api/v1/audit/checkpoint; privileged (system.write). Returns
-// FailedPrecondition when the chain does not verify or encryption is disabled.
+// (ADR-029). Mirrors POST /api/v1/audit/checkpoint, which stacks TWO permissions:
+// the /audit route group's base audit.read (server/http/router.go, RequirePermission
+// on the "/audit" group) plus an extra system.write gate specifically on the
+// /checkpoint route (it's a privileged integrity-control action, gated above the
+// group's audit.read with system.write). Mirror both checks here — checking only
+// system.write let a principal without audit.read reach this RPC directly over
+// gRPC even though every other audit endpoint requires it (G16).
 func (s *AuditGRPCService) WriteAuditCheckpoint(ctx context.Context, _ *emptypb.Empty) (*pb.WriteAuditCheckpointResponse, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return nil, err
 	}
 	if err := authorizeGlobal(ctx, s.core, actor, "system.write"); err != nil {
@@ -376,6 +384,9 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 				ProjectID: optUint(req.ProjectId),
 			})
 			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
 				return status.Error(codes.Internal, "failed to read audit logs")
 			}
 			if len(events) == 0 {
