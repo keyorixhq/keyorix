@@ -23,11 +23,12 @@ type RBACAuditEntry struct {
 	ActorUserID  *uint  // the principal who made the change (nil for system/CLI)
 	TargetUserID *uint  // set for user-role events
 	GroupID      *uint  // set for group-role events
-	RoleID       *uint
-	PermissionID *uint // set for permission-to-role events
-	ProjectID    *uint
-	Details      string
-	CreatedAt    time.Time
+	RoleID        *uint
+	PermissionID  *uint // set for permission-to-role events
+	ProjectID     *uint
+	EnvironmentID *uint
+	Details       string
+	CreatedAt     time.Time
 }
 
 // ListRBACAuditLogs returns the RBAC audit trail (role assignments/removals),
@@ -80,6 +81,10 @@ func (c *KeyorixCore) ListRBACAuditLogs(ctx context.Context, page, pageSize int)
 			if d.ProjectID != 0 {
 				p := d.ProjectID
 				entry.ProjectID = &p
+			}
+			if d.EnvironmentID != 0 {
+				e := d.EnvironmentID
+				entry.EnvironmentID = &e
 			}
 		}
 		entries = append(entries, entry)

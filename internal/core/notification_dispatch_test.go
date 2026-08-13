@@ -161,7 +161,7 @@ func TestSendComplianceDigest_UsesBroadcastSinkNotRecipientSink(t *testing.T) {
 	c.SetNotificationSink(broadcast)
 	c.SetRecipientNotificationSink(recipient)
 
-	sent, err := c.SendComplianceDigest(context.Background())
+	sent, err := c.SendComplianceDigest(context.Background(), 0)
 	require.NoError(t, err)
 	assert.True(t, sent)
 	assert.Len(t, broadcast.events, 1, "the compliance digest is deployment-wide and belongs on the broadcast sink")

@@ -197,16 +197,10 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	byProject, projectOrder := groupDueByProject(due, dueOrder)
-	rotated, totalFailed := 0, 0
+	rotated := 0
 	for _, pid := range projectOrder {
-		r, f := c.rotateProject(ctx, pid, byProject[pid], due)
+		r, _ := c.rotateProject(ctx, pid, byProject[pid], due)
 		rotated += r
-		totalFailed += f
-	}
-	if totalFailed > 0 {
-		sysCtx := WithActorType(ctx, ActorTypeSystem)
-		c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
-			fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", totalFailed))
 	}
 	return rotated, nil
 }
@@ -303,6 +297,15 @@ func (c *KeyorixCore) rotateProject(ctx context.Context, pid uint, ids []uint, d
 	// broadcast right after this project finishes, before moving on to the next.
 	failed, n := c.rotateProjectWaves(ctx, waves, due, dependsOnInRun)
 	c.notifyRotationFailures(ctx, pid, failed)
+	if len(failed) > 0 {
+		// #G23: scoped to this project (pid is known here, unlike the old
+		// run-wide summary this replaced, which had to write ProjectID=nil
+		// because it aggregated failures across every project in the run).
+		sysCtx := WithActorType(ctx, ActorTypeSystem)
+		p := pid
+		c.writeAuditEventFull(sysCtx, EventAutoRotationFailures, nil, nil, &p, "",
+			fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate in project %d", len(failed), pid))
+	}
 	return n, len(failed)
 }
 
@@ -322,7 +325,8 @@ func (c *KeyorixCore) rotateProjectWaves(ctx context.Context, waves [][]uint, du
 					depName = d.secret.Name
 				}
 				sid := id
-				c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+				pid := dr.secret.ProjectID
+				c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 					fmt.Sprintf("auto-rotation DEFERRED for secret %q: it depends on %q which did not rotate this run", dr.secret.Name, depName))
 				failed[id] = fmt.Sprintf("%q: deferred — depends on %q which did not rotate this run", dr.secret.Name, depName)
 				continue
@@ -374,7 +378,8 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 		// ROTATION-001: emit before calling upstream so a crash between upstream success
 		// and Keyorix store is visible in the audit trail as an orphaned "started" event.
 		sid := secret.ID
-		c.writeAuditEvent(ctx, EventSecretRotateBackendStarted, nil, &sid,
+		pid := secret.ProjectID
+		c.writeAuditEventFull(ctx, EventSecretRotateBackendStarted, nil, &sid, &pid, "",
 			fmt.Sprintf("auto-rotation: calling upstream backend %q ref %q for secret %q",
 				secret.RotationBackend, secret.RotationRef, secret.Name))
 		upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
@@ -390,7 +395,8 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			incompleteMsg = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
 		case err != nil:
 			sid := secret.ID
-			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+			pid := secret.ProjectID
+			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
 			log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
 			failed[secret.ID] = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
@@ -403,16 +409,17 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 		log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
 		failed[secret.ID] = fmt.Sprintf("%q: store new version: %v", secret.Name, rerr)
 		sid := secret.ID
+		pid := secret.ProjectID
 		if secret.RotationBackend != "" {
 			// The upstream credential was rotated but storing the new value failed: the
 			// live credential and Keyorix's record have now DRIFTED. Audit it distinctly
 			// (the backend-apply-failure path above is audited too) so an operator can
 			// reconcile — the live secret may no longer match Keyorix.
-			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation DRIFT for secret %q: backend %q ref %q rotated upstream but storing the new value failed: %v — the live credential may no longer match Keyorix",
 					secret.Name, secret.RotationBackend, secret.RotationRef, rerr))
 		} else {
-			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+			c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 				fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
 		}
 		return false
@@ -424,18 +431,20 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 		// audit it distinctly.
 		failed[secret.ID] = incompleteMsg
 		sid := secret.ID
-		c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+		pid := secret.ProjectID
+		c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 			fmt.Sprintf("auto-rotation INCOMPLETE for secret %q: new credential stored but a prior credential is still live and must be removed manually — %s", secret.Name, incompleteMsg))
 		log.Printf("auto-rotation: incomplete cleanup for secret %d: %s", secret.ID, incompleteMsg)
 		return true
 	}
 	delete(failed, secret.ID)
 	sid := secret.ID
+	pid := secret.ProjectID
 	via := ""
 	if secret.RotationBackend != "" {
 		via = fmt.Sprintf(" via backend %q ref %q", secret.RotationBackend, secret.RotationRef)
 	}
-	c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+	c.writeAuditEventFull(ctx, EventSecretAutoRotated, nil, &sid, &pid, "",
 		fmt.Sprintf("auto-rotated secret %q (policy %q, interval %dd)%s", secret.Name, policy.Name, policy.IntervalDays, via))
 	return true
 }
@@ -507,7 +516,8 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 	// ROTATION-001: emit before calling upstream so a crash between upstream success
 	// and Keyorix store is visible in the audit trail as an orphaned "started" event.
 	oidSid := id
-	c.writeAuditEvent(ctx, EventSecretRotateBackendStarted, nil, &oidSid,
+	pid := secret.ProjectID
+	c.writeAuditEventFull(ctx, EventSecretRotateBackendStarted, nil, &oidSid, &pid, "",
 		fmt.Sprintf("on-demand rotation: calling upstream backend %q ref %q for secret %q",
 			secret.RotationBackend, secret.RotationRef, secret.Name))
 	upstreamVal, berr := c.applyBackendRotation(ctx, secret, string(newValue))
@@ -522,14 +532,14 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 			return nil, serr
 		}
 		sid := id
-		c.writeAuditEvent(ctx, EventSecretRotateIncomplete, nil, &sid,
+		c.writeAuditEventFull(ctx, EventSecretRotateIncomplete, nil, &sid, &pid, "",
 			fmt.Sprintf("on-demand rotation INCOMPLETE for secret %q via backend %q ref %q: new credential stored but a prior credential is still live and must be removed manually: %v",
 				secret.Name, secret.RotationBackend, secret.RotationRef, berr))
 		return updated, fmt.Errorf("backend %q rotation for secret %q partially completed: new credential stored but a prior credential is still live upstream and must be removed manually: %w",
 			secret.RotationBackend, secret.Name, berr)
 	case berr != nil:
 		sid := id
-		c.writeAuditEvent(ctx, EventSecretRotateFailed, nil, &sid,
+		c.writeAuditEventFull(ctx, EventSecretRotateFailed, nil, &sid, &pid, "",
 			fmt.Sprintf("on-demand rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, berr))
 		return nil, fmt.Errorf("backend %q rotation failed for secret %q (upstream credential NOT rotated): %w", secret.RotationBackend, secret.Name, berr)
 	default:
@@ -664,7 +674,8 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	if spec.Backend != "" {
 		via = fmt.Sprintf(" (backend %q ref %q)", spec.Backend, spec.Ref)
 	}
-	c.writeAuditEvent(ctx, EventSecretAutoRotateConfig, &uid, &sid,
+	pid := secret.ProjectID
+	c.writeAuditEventFull(ctx, EventSecretAutoRotateConfig, &uid, &sid, &pid, "",
 		fmt.Sprintf("auto-rotation %s for secret %q%s", verb, secret.Name, via))
 	return nil
 }

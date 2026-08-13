@@ -1151,7 +1151,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 		log.Printf("Compliance-digest scheduler enabled: every %s", interval)
 		runScheduler(ctx, "compliance_digest", interval, func() middleware.SchedulerOutcome {
 			return lockedRun(ctx, coreService.Storage(), schedLockDigest, "Compliance-digest", func() error {
-				sent, derr := coreService.SendComplianceDigest(ctx)
+				sent, derr := coreService.SendComplianceDigest(ctx, 0)
 				if derr != nil {
 					log.Printf("Compliance-digest error: %v", derr)
 					return derr

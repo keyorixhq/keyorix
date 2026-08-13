@@ -72,7 +72,11 @@ func (h *DashboardHandler) GetComplianceDigest(w http.ResponseWriter, r *http.Re
 // (Slack/Teams/webhook/email). Returns {sent: bool}: false when no channel is wired.
 // Gated by system.write in the router (same as admin-jobs compliance-digest).
 func (h *DashboardHandler) SendComplianceDigest(w http.ResponseWriter, r *http.Request) {
-	sent, err := h.coreService.SendComplianceDigest(r.Context())
+	var actorID uint
+	if userCtx := middleware.GetUserFromContext(r.Context()); userCtx != nil {
+		actorID = userCtx.UserID
+	}
+	sent, err := h.coreService.SendComplianceDigest(r.Context(), actorID)
 	if err != nil {
 		sendError(w, "InternalServerError", "Failed to send compliance digest", http.StatusInternalServerError, nil)
 		return

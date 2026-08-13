@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -84,6 +85,32 @@ func TestRunAutoRotation_RotatesOverdueOptedInOnly(t *testing.T) {
 	// s2 and s3 are untouched (still on version 1).
 	assert.Equal(t, 1, latestVersion(t, db, 2).VersionNumber, "not-due secret unchanged")
 	assert.Equal(t, 1, latestVersion(t, db, 3).VersionNumber, "non-opted-in secret unchanged")
+}
+
+// TestRunAutoRotation_AuditEventsCarryProjectID is #G23: every rotation-domain
+// audit event used to be written with ProjectID=nil, even though the secret
+// (and its ProjectID) is known at every one of these call sites — an operator
+// filtering the audit trail by project couldn't find auto-rotation activity.
+func TestRunAutoRotation_AuditEventsCarryProjectID(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30,
+		IsActive: true, CreatedBy: "admin",
+	}).Error)
+	seedRotatableSecret(t, db, 1, "due-managed", true, fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretAutoRotated).Find(&events).Error)
+	require.NotEmpty(t, events)
+	for _, e := range events {
+		require.NotNil(t, e.ProjectID, "rotation audit event %q must carry a ProjectID", e.EventType)
+		assert.Equal(t, uint(1), *e.ProjectID)
+	}
 }
 
 func TestRunAutoRotation_InactivePolicyIgnored(t *testing.T) {
@@ -733,12 +760,17 @@ func TestRunAutoRotation_FailuresNotBundledAcrossProjects(t *testing.T) {
 		}
 	}
 
-	// The audit trail still records one run-level summary (aggregate count only — no
-	// secret names/reasons, so bundling it is not itself a leak).
+	// #G23: the audit trail now records one summary PER PROJECT (each carrying that
+	// project's ProjectID) rather than a single run-level summary with ProjectID=nil
+	// aggregated across every project in the run.
 	var auditEvents []models.AuditEvent
 	require.NoError(t, db.Where("event_type = ?", EventAutoRotationFailures).Find(&auditEvents).Error)
-	require.Len(t, auditEvents, 1)
-	assert.Contains(t, auditEvents[0].Description, "2 secret")
+	require.Len(t, auditEvents, 2)
+	for _, e := range auditEvents {
+		require.NotNil(t, e.ProjectID)
+		assert.Contains(t, e.Description, "1 secret")
+		assert.Contains(t, e.Description, fmt.Sprintf("project %d", *e.ProjectID))
+	}
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
