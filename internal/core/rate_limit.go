@@ -144,3 +144,48 @@ func (c *KeyorixCore) RecordPasswordResetAttempt(ctx context.Context, ip string)
 	}
 	_ = c.storage.RecordLoginAttempt(ctx, passwordResetRateLimitPrefix+ip, c.now())
 }
+
+// ssoRateLimitPrefix namespaces SSO/SAML login-initiation attempts within the
+// SAME LoginAttempt table (ADR-040), mirroring passwordResetRateLimitPrefix.
+// #G82: BeginSSO/BeginSAML are both fully unauthenticated and each write a
+// SSOLoginState row per call with no rate limit of any kind — an unbounded
+// flood grows that table without limit and, since every SSOLoginState carries
+// a fresh CSRF-protecting state/nonce, also churns through randomness/storage
+// for no legitimate purpose. Shared between SSO and SAML since both are the
+// same "pre-login state write" abuse shape against the same table.
+const ssoRateLimitPrefix = "sso:" // NOSONAR
+
+// SSOBeginMaxAttempts is the request budget per IP within SSOBeginWindow.
+const SSOBeginMaxAttempts = 20
+
+// SSOBeginWindow is the sliding window over which attempts are counted.
+const SSOBeginWindow = 15 * time.Minute
+
+// IsSSOBeginRateLimited reports whether an IP has reached the SSO/SAML
+// login-initiation budget within the window. Fails open (false) on an empty
+// IP or a storage error, matching the login/password-reset limiters' backstop
+// (not the sole abuse control) design.
+func (c *KeyorixCore) IsSSOBeginRateLimited(ctx context.Context, ip string) bool {
+	if ip == "" {
+		return false
+	}
+	n, err := c.storage.CountRecentLoginAttempts(ctx, ssoRateLimitPrefix+ip, c.now().Add(-SSOBeginWindow))
+	if err != nil {
+		if isUnsupportedByBackend(err) {
+			c.warnRateLimitUnsupportedOnce()
+		}
+		return false
+	}
+	return n >= SSOBeginMaxAttempts
+}
+
+// RecordSSOBeginAttempt records an SSO/SAML login-initiation request from an
+// IP. Recorded on every call regardless of outcome (unknown-provider or
+// success) — the request itself is the abuse signal. Best-effort: a storage
+// error does not block the response.
+func (c *KeyorixCore) RecordSSOBeginAttempt(ctx context.Context, ip string) {
+	if ip == "" {
+		return
+	}
+	_ = c.storage.RecordLoginAttempt(ctx, ssoRateLimitPrefix+ip, c.now())
+}

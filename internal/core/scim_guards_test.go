@@ -42,6 +42,33 @@ func TestUpdateSCIMUser_RejectsEmailCollision(t *testing.T) {
 	assert.Contains(t, err.Error(), "already in use")
 }
 
+// TestUpdateSCIMUser_OwnershipCheckedBeforeEmailCollision is the #G14
+// regression: the SCIM-ownership check must run BEFORE checkSCIMEmailCollision
+// — otherwise a SCIM token holder could supply a NATIVE (non-SCIM) account's id
+// together with a probe email and learn, from "email already in use" vs
+// proceeding further, whether that email is registered to a different account —
+// without ever having rights to touch the target id at all.
+func TestUpdateSCIMUser_OwnershipCheckedBeforeEmailCollision(t *testing.T) {
+	c, db := newSCIMGuardCore(t)
+	ctx := context.Background()
+	// user 1 is a NATIVE account (no ExternalID) — never provisioned via SCIM.
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "native-admin", Email: "native@x.io", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "someone-else", Email: "taken@x.io", IsActive: true, AccountState: AccountActive}).Error)
+
+	// Probing with an email that DOES collide must fail with the SAME ownership
+	// error as probing with one that doesn't — never "email already in use".
+	collidingEmail := "taken@x.io"
+	_, err := c.UpdateSCIMUser(ctx, 9, 1, nil, &collidingEmail, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a SCIM-managed account")
+	assert.NotContains(t, err.Error(), "already in use")
+
+	freeEmail := "nobody-has-this@x.io"
+	_, err2 := c.UpdateSCIMUser(ctx, 9, 1, nil, &freeEmail, nil)
+	require.Error(t, err2)
+	assert.Equal(t, err.Error(), err2.Error(), "a colliding and a free probe email must be indistinguishable for a non-SCIM-managed target")
+}
+
 func TestUpdateSCIMUser_RefusesLastAdminDeactivation(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()

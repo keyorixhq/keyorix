@@ -49,7 +49,16 @@ func TestRunLogin_ServerFromExistingConfig(t *testing.T) {
 	require.NoError(t, os.WriteFile("keyorix.yaml", []byte(yaml), 0600))
 
 	t.Setenv("KEYORIX_API_KEY", "kx_env_key")
-	require.NoError(t, runLogin(loginCmd, nil))
+
+	// #G73: a server URL sourced from ./keyorix.yaml (untrusted, CWD-relative,
+	// attacker-plantable) is about to have a freshly-entered real API key
+	// persisted against it — this must warn, the same way ResolveRemote's
+	// other CLI callers already do.
+	out := captureStderr(t, func() {
+		require.NoError(t, runLogin(loginCmd, nil))
+	})
+	assert.Contains(t, out, "keyorix.yaml")
+	assert.Contains(t, out, "malicious file")
 }
 
 func TestRunLogout_WritesLocalConfig(t *testing.T) {

@@ -67,10 +67,22 @@ func validateTSAURL(raw string) error {
 	return nil
 }
 
-func (r *RFC3161) Anchor(ctx context.Context, message []byte) (*Receipt, error) {
+func (r *RFC3161) Anchor(ctx context.Context, message []byte) (_ *Receipt, err error) {
 	if err := validateTSAURL(r.url); err != nil {
 		return nil, err
 	}
+	// #G61: digitorus/pkcs7 panics on certain malformed BER inputs instead of
+	// returning an error (index out of range in ber.go:readObject, found by
+	// fuzz rig) — the same known parser panic class notary.go's VerifyReceipt
+	// was already hardened against. ParseResponse below hands attacker/TSA-
+	// controlled bytes to that same parser, so this needs the identical
+	// recover(): a hostile or buggy TSA endpoint must return an error, not
+	// crash the process anchoring an audit checkpoint.
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("rfc3161: parser panic on malformed TSA response: %v", rec)
+		}
+	}()
 	// CreateRequest hashes the message (SHA-256) into the MessageImprint and asks
 	// the TSA to include its signing certificate so the token is self-contained.
 	reqDER, err := timestamp.CreateRequest(bytes.NewReader(message), &timestamp.RequestOptions{

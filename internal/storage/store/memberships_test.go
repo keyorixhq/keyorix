@@ -50,6 +50,53 @@ func TestProjectMembership_RoundTrip(t *testing.T) {
 	assert.Equal(t, created.ID, active.ID)
 }
 
+func TestTransitionProjectMembershipState_MatchesOnCurrentState(t *testing.T) {
+	ctx := context.Background()
+	ls := newMembershipStore(t)
+	now := time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC)
+
+	created, err := ls.CreateProjectMembership(ctx, &models.ProjectMembership{
+		ProjectID: 1, UserID: 2, Role: "project_developer",
+		State: "provisioned", InvitedBy: 9, InvitedAt: now, UpdatedAt: now,
+	})
+	require.NoError(t, err)
+
+	created.State = "active"
+	matched, err := ls.TransitionProjectMembershipState(ctx, created, "provisioned")
+	require.NoError(t, err)
+	assert.True(t, matched)
+
+	reloaded, err := ls.GetProjectMembership(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "active", reloaded.State)
+}
+
+func TestTransitionProjectMembershipState_LostRaceReturnsFalse(t *testing.T) {
+	ctx := context.Background()
+	ls := newMembershipStore(t)
+	now := time.Date(2026, 6, 4, 9, 0, 0, 0, time.UTC)
+
+	created, err := ls.CreateProjectMembership(ctx, &models.ProjectMembership{
+		ProjectID: 1, UserID: 2, Role: "project_developer",
+		State: "provisioned", InvitedBy: 9, InvitedAt: now, UpdatedAt: now,
+	})
+	require.NoError(t, err)
+
+	// A concurrent caller already moved the row to "active" before this call's
+	// stale fromState ("provisioned") is used — must refuse, not clobber.
+	created.State = "active"
+	require.NoError(t, ls.UpdateProjectMembership(ctx, created))
+
+	stale := &models.ProjectMembership{ID: created.ID, State: "revoked"}
+	matched, err := ls.TransitionProjectMembershipState(ctx, stale, "provisioned")
+	require.NoError(t, err)
+	assert.False(t, matched, "must not match once the row has moved off the observed fromState")
+
+	reloaded, err := ls.GetProjectMembership(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "active", reloaded.State, "the concurrent winner's state must survive untouched")
+}
+
 func TestGetActiveProjectMembership_IgnoresRevoked(t *testing.T) {
 	ctx := context.Background()
 	ls := newMembershipStore(t)

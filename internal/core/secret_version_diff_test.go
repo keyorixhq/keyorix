@@ -349,6 +349,26 @@ func TestDiffSecretVersions_WithACLEntries(t *testing.T) {
 	assert.Contains(t, diff.ACLUserIDs, uint(42), "ACL entry for user 42 must appear in the result")
 }
 
+// TestDiffSecretVersions_DegradedOnACLLookupError is #G54: a ListSecretACLs
+// storage failure must not be reported as an authoritative "this secret has
+// no ACL grants" — that's misleadingly reassuring for a security-relevant
+// diff. The diff must still succeed (ACLs are a supplementary snapshot, not
+// central to the version comparison), but must flag Degraded so a caller
+// doesn't treat the empty ACLUserIDs as confirmed.
+func TestDiffSecretVersions_DegradedOnACLLookupError(t *testing.T) {
+	c, db := newDiffCore(t)
+	sid := seedDiffFixture(t, db, "", nil)
+	addVersion(t, db, sid, 1, 0)
+	addVersion(t, db, sid, 2, 0)
+
+	require.NoError(t, db.Migrator().DropTable(&models.SecretACL{}))
+
+	diff, err := c.DiffSecretVersions(context.Background(), sid, 1, 2)
+	require.NoError(t, err, "the diff itself must still succeed despite the ACL lookup failing")
+	assert.True(t, diff.Degraded, "an ACL lookup failure must be flagged, not silently reported as zero grants")
+	assert.Empty(t, diff.ACLUserIDs)
+}
+
 // ── TestDiffSecretVersions_NegativeDelta ─────────────────────────────────────
 
 // TestDiffSecretVersions_NegativeDelta exercises the branch where to.ReadCount <

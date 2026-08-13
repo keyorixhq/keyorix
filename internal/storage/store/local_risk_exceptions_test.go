@@ -150,3 +150,53 @@ func TestApproveRiskExceptionIfPending_ConditionalOnPending_Sequential(t *testin
 	assert.True(t, final.Revoked)
 	assert.False(t, final.Approved, "the revoked exception must not end up approved")
 }
+
+// TestRevokeRiskExceptionIfNotRevoked_DoesNotClobberConcurrentApproval is #G42:
+// unlike the two tests above (where the SECOND write is the one that must
+// lose), here a legitimate revoke's WHERE clause only guards on `revoked`, so
+// it still matches after a concurrent approve — the risk is the revoke's
+// blind full-row overwrite silently reverting that just-committed approval
+// even though the revoke itself succeeds correctly.
+func TestRevokeRiskExceptionIfNotRevoked_DoesNotClobberConcurrentApproval(t *testing.T) {
+	ctx := context.Background()
+	ls := newRiskTestStore(t)
+	exp := time.Now().AddDate(0, 0, 30)
+
+	created, err := ls.CreateRiskException(ctx, &models.RiskException{
+		Title: "shared exception", Category: "mfa", CreatedBy: 9, ExpiresAt: exp,
+	})
+	require.NoError(t, err)
+
+	// An admin reads the still-pending, unrevoked row to revoke it — this copy
+	// has NO knowledge of the approval about to land.
+	revokeCopy, err := ls.GetRiskException(ctx, created.ID)
+	require.NoError(t, err)
+	revokedAt := time.Now()
+	revokeCopy.Revoked = true
+	revokeCopy.RevokedBy = 1
+	revokeCopy.RevokedAt = &revokedAt
+
+	// A different approver's approval commits FIRST, before the revoke's write.
+	approveCopy, err := ls.GetRiskException(ctx, created.ID)
+	require.NoError(t, err)
+	approvedAt := time.Now()
+	approveCopy.Approved = true
+	approveCopy.ApprovedBy = 2
+	approveCopy.ApprovedAt = &approvedAt
+	ok, err := ls.ApproveRiskExceptionIfPending(ctx, approveCopy)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// The revoke still legitimately matches (revoked was still false when this
+	// call's WHERE clause evaluated) — it must succeed, but must NOT revert the
+	// just-committed approval using its own stale (pre-approval) copy.
+	ok, err = ls.RevokeRiskExceptionIfNotRevoked(ctx, revokeCopy)
+	require.NoError(t, err)
+	require.True(t, ok, "revoking an approved-but-not-yet-revoked exception is legitimate")
+
+	final, err := ls.GetRiskException(ctx, created.ID)
+	require.NoError(t, err)
+	assert.True(t, final.Revoked, "the revoke itself must have taken effect")
+	assert.True(t, final.Approved, "the concurrent approval must survive the revoke")
+	assert.Equal(t, uint(2), final.ApprovedBy, "approval attribution must not be reverted")
+}

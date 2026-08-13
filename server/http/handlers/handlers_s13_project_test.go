@@ -103,7 +103,10 @@ func TestAttestProjectAccessReview_StorageError_S13(t *testing.T) {
 	// source decision, forcing a raw driver error out of core.
 	require.NoError(t, db.Exec("DROP TABLE IF EXISTS user_roles").Error)
 
-	body := `{"source":"role","principal_type":"user","principal_id":1,"role_id":1}`
+	// principal_id deliberately != the acting user's ID (1, per withUserCtx) —
+	// otherwise #G52's new self-review independence check refuses the request
+	// before it ever reaches the broken table this test exists to exercise.
+	body := `{"source":"role","principal_type":"user","principal_id":999,"role_id":1}`
 	r := withUserCtx(withChiParam(
 		httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)),
 		"id", fmt.Sprintf("%d", proj.ID),

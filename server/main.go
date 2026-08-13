@@ -857,6 +857,17 @@ func cmpOr(a, b string) string {
 	return b
 }
 
+// closeAuditForwarder flushes/closes the wired SIEM audit forwarder (if any) on
+// shutdown. core.AuditForwarder only declares Forward (core has no dependency
+// on the concrete siem package), so the Close method is reached via a local
+// interface rather than a direct type assertion to *siem.Forwarder.
+func closeAuditForwarder(coreService *core.KeyorixCore) {
+	type closer interface{ Close() }
+	if cl, ok := coreService.AuditForwarder().(closer); ok {
+		cl.Close()
+	}
+}
+
 func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR -- cognitive complexity 188, suppress go:S3776
 	// Initialize core service (and encryption if enabled)
 	coreService, encSvc, err := initializeCoreService(cfg)
@@ -868,6 +879,12 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 	if encSvc != nil {
 		defer encSvc.Shutdown()
 	}
+
+	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
+	// queues events in memory (worker.go's Deliver is non-blocking, async), and
+	// nothing previously called Close() to drain that queue before the process
+	// exited, silently losing whatever was in flight at SIGTERM.
+	defer closeAuditForwarder(coreService)
 
 	// Record the evaluated license state once at startup (ADR-065), so the entitlement
 	// (and any degrade reason) is on the audit record.
@@ -1151,7 +1168,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 		log.Printf("Compliance-digest scheduler enabled: every %s", interval)
 		runScheduler(ctx, "compliance_digest", interval, func() middleware.SchedulerOutcome {
 			return lockedRun(ctx, coreService.Storage(), schedLockDigest, "Compliance-digest", func() error {
-				sent, derr := coreService.SendComplianceDigest(ctx)
+				sent, derr := coreService.SendComplianceDigest(ctx, 0)
 				if derr != nil {
 					log.Printf("Compliance-digest error: %v", derr)
 					return derr
@@ -1567,6 +1584,10 @@ func startGRPCServer(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize core service: %w", err)
 	}
+	// #G56: this is a SEPARATE core.KeyorixCore (and therefore a separate SIEM
+	// forwarder instance) from startHTTPServer's — each running server owns and
+	// must flush its own.
+	defer closeAuditForwarder(coreService)
 
 	// Create gRPC server
 	grpcServer, err := grpc.NewServer(cfg, coreService)

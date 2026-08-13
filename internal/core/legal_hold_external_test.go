@@ -84,6 +84,29 @@ func TestLegalHold_PlaceDeniedForNonAdmin(t *testing.T) {
 	assert.False(t, hold.Released)
 }
 
+// TestLegalHold_PlaceDeniedAuditsImpersonator is #G23: writeAuditEventFailed
+// (used by the denied-placement path above) didn't stamp impersonation
+// attribution the way the success-path writer (writeAuditEventDiff) already
+// did — an action taken and DENIED inside an impersonation session must still
+// be attributable to the impersonating admin, not just the userID it was
+// attempted as.
+func TestLegalHold_PlaceDeniedAuditsImpersonator(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
+	ctx := core.WithImpersonation(context.Background(), 1) // admin 1 is impersonating actor 9
+
+	// Actor 9 holds no role at all — not admin-tier, so placement is denied.
+	_, err := h.CoreService.PlaceLegalHold(ctx, 9, "bogus decoy hold")
+	require.Error(t, err)
+
+	var event models.AuditEvent
+	require.NoError(t, h.DB.Where("event_type = ? AND success = ?", core.EventLegalHoldPlaced, false).First(&event).Error)
+	require.NotNil(t, event.ImpersonatedBy, "the denied action must record who was impersonating")
+	assert.Equal(t, uint(1), *event.ImpersonatedBy)
+	assert.True(t, event.Impersonation)
+}
+
 // TestLegalHold_PlaceDeniedForProjectScopedAdmin is the #G01 regression: an
 // admin-tier role granted only at a specific project must not be treated as
 // install-wide admin-bypass authority — PlaceLegalHold is a deployment-wide

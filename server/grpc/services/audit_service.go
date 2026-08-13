@@ -316,6 +316,9 @@ func rbacEntryToProto(e *core.RBACAuditEntry) *pb.RBACAuditLog {
 	if e.ProjectID != nil {
 		out.ProjectId = ptrU32(*e.ProjectID)
 	}
+	if e.EnvironmentID != nil {
+		out.EnvironmentId = ptrU32(*e.EnvironmentID)
+	}
 	return out
 }
 

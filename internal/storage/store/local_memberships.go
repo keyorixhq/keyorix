@@ -60,6 +60,22 @@ func (ls *LocalStorage) UpdateProjectMembership(ctx context.Context, m *models.P
 	return nil
 }
 
+// TransitionProjectMembershipState persists m's full row via a conditional
+// UPDATE gated on the row's CURRENT state still being fromState (#G42).
+// Mirrors TransitionMachineIdentityState's `WHERE id = ? AND state = ?` +
+// `Select("*")` shape exactly, so every field the caller mutated on m (State,
+// UpdatedAt, ActivatedAt, RevokedAt, ...) is persisted in the same statement.
+func (ls *LocalStorage) TransitionProjectMembershipState(ctx context.Context, m *models.ProjectMembership, fromState string) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.ProjectMembership{}).
+		Where("id = ? AND state = ?", m.ID, fromState).
+		Select("*").
+		Updates(m)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 func (ls *LocalStorage) ListProjectMemberships(ctx context.Context, projectID uint) ([]*models.ProjectMembership, error) {
 	var rows []*models.ProjectMembership
 	err := ls.db.WithContext(ctx).

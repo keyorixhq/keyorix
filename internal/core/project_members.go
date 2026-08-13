@@ -96,7 +96,7 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 		return err
 	}
 	if len(existing) == 0 {
-		return fmt.Errorf("user is not a member of this project")
+		return ErrNotProjectMember
 	}
 	// Refuse to remove the project's last roles.assign holder (#236): the ordinary
 	// member-management API has no other safeguard, so without this the sole

@@ -102,7 +102,7 @@ func randomPasswordHash() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(b)), bcryptCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(b)), int(bcryptCost.Load()))
 	if err != nil {
 		return "", err
 	}
@@ -232,6 +232,22 @@ func scimManaged(user *models.User) bool {
 // LockUserForUpdate row lock (across replicas, Postgres only). See accountStateMu's doc
 // comment in service.go and setAccountState in account_state.go.
 func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, displayName, email *string, active *bool) (*models.User, error) {
+	// #G14: the SCIM-ownership check runs FIRST, before checkSCIMEmailCollision
+	// below — otherwise a SCIM token holder could supply an arbitrary id it has
+	// no rights to touch (e.g. a native admin's) together with a probe email,
+	// and learn from "email already in use" whether that email is registered to
+	// a DIFFERENT account, without ever needing a target id it can legitimately
+	// act on. This is a best-effort pre-check (matching DeprovisionSCIMUser's
+	// own GetUser+scimManaged pattern) — scimUpdateUserTx below still re-checks
+	// scimManaged against the fresh, lock-guarded read for the authoritative,
+	// race-free decision.
+	target, err := c.storage.GetUser(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	if !scimManaged(target) {
+		return nil, fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+	}
 	// Refuse an email that collides with a DIFFERENT user (#336). Checked up front
 	// (against id, not a pre-fetched struct) since it targets a DIFFERENT user's row
 	// and doesn't need the account-state lock below. The DB partial unique index
@@ -313,6 +329,7 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 	// changes (#454) — avoiding a hard failure on RemoteStorage for a plain name/email
 	// PATCH that never touches lifecycle state.
 	origState := user.AccountState
+	wasActive := user.IsActive
 	if displayName != nil {
 		user.DisplayName = *displayName
 	}
@@ -329,11 +346,23 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 		}
 	}
 	user.UpdatedAt = c.now()
-	u, err := tx.UpdateUser(ctx, user)
+	// #G42: LockUserForUpdate above only takes a real row lock on Postgres: on
+	// SQLite (this codebase's default embedded deployment) a deferred
+	// transaction doesn't acquire its exclusive write lock until the FIRST
+	// write statement, leaving a window between this read and that first
+	// write where a concurrent, un-transacted core.UpdateUser call can commit
+	// its own IsActive flip via UpdateUserIfActiveStateMatches. A blind
+	// tx.UpdateUser here would silently revert that flip using the
+	// now-stale in-memory user struct. Route through the same
+	// state-conditional write core.UpdateUser itself uses instead.
+	matched, err := tx.UpdateUserIfActiveStateMatches(ctx, user, wasActive)
 	if err != nil {
 		return nil, false, err
 	}
-	return u, deactivated, nil
+	if !matched {
+		return nil, false, fmt.Errorf("user %d: %w", id, ErrUserActiveStateConflict)
+	}
+	return user, deactivated, nil
 }
 
 // applySCIMActiveState applies an IdP active=true/false directive to the user model,

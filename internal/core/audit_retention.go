@@ -33,18 +33,38 @@ func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionC
 		return nil, fmt.Errorf("%w: retention_days must be at least %d (got %d)",
 			ErrInvalidAuditRetentionDays, minRetentionDays, cfg.RetentionDays)
 	}
-	// Re-check the legal hold immediately before the delete — same pattern as
-	// PurgeExpiredSoftDeletes / PurgeExpiredComplianceRecords. A hold placed after
-	// the scheduler's pre-lock check would otherwise not stop an in-flight purge
-	// from destroying audit evidence that is now under hold (irreversible spoliation).
-	if err := c.legalHoldGuard(ctx); err != nil {
-		return nil, err
-	}
-
+	// #G21: the legal-hold check and the delete run inside ONE transaction — not
+	// a plain re-check immediately before an otherwise-separate delete call. A
+	// bare "check, then separately delete" still leaves a real (if narrow)
+	// window for PlaceLegalHold to commit an INSERT in between the two calls,
+	// which this closes for LocalStorage: SQLite's single-writer model means
+	// the transaction below holds an exclusive write lock for its whole
+	// duration, so a concurrent PlaceLegalHold's INSERT (also a write) cannot
+	// interleave between the hold check and the delete — it either committed
+	// before this transaction started (the check sees it and aborts) or blocks
+	// until this transaction finishes. NOTE: RemoteStorage.WithTransaction is a
+	// no-op passthrough (fn(rs), no real transaction) — under storage.type:
+	// remote this narrows the window (one closure instead of two independent
+	// core-layer calls) but does not eliminate it; closing it there would need
+	// a dedicated atomic proxy endpoint, out of scope for this pattern-level fix.
 	cutoff := c.now().UTC().AddDate(0, 0, -cfg.RetentionDays)
-	n, err := c.storage.DeleteAuditLogsBefore(ctx, cutoff)
-	if err != nil {
-		return nil, fmt.Errorf("failed to purge audit logs: %w", err)
+	var n int64
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		hold, err := tx.GetActiveLegalHold(ctx)
+		if err != nil {
+			return fmt.Errorf("refusing to purge: could not confirm legal-hold status: %w", err)
+		}
+		if hold != nil {
+			return fmt.Errorf("refusing to purge: a deployment-wide legal hold is active")
+		}
+		n, err = tx.DeleteAuditLogsBefore(ctx, cutoff)
+		if err != nil {
+			return fmt.Errorf("failed to purge audit logs: %w", err)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, txErr
 	}
 
 	// AUD-004: attribute the purge to the triggering user when one is present,

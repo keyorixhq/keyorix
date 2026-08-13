@@ -2,6 +2,7 @@ package trust
 
 import (
 	"crypto/ed25519"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -86,4 +87,45 @@ func TestDefaultRegistry_EmptyByDefaultFailsClosed(t *testing.T) {
 	require.NoError(t, err)
 	assert.ErrorIs(t, r.Verify(PurposeUpdate, "any", []byte("m"), []byte("s")), ErrNoKeys)
 	assert.ErrorIs(t, r.Verify(PurposeLicense, "any", []byte("m"), []byte("s")), ErrNoKeys)
+}
+
+// TestRegistry_ConcurrentAddAndVerify_NoRace is #G63: KeyRegistry.keys is a
+// plain map read by Verify/KeyIDs and written by Add, with no synchronization
+// of its own before this fix — a future runtime key-rotation caller (this
+// package's own doc comment: "the bundle/license phases build on it") racing
+// a concurrent verification is a real, unsynchronized map access under
+// `go test -race`, not just a theoretical one.
+func TestRegistry_ConcurrentAddAndVerify_NoRace(t *testing.T) {
+	r := NewRegistry()
+	pub, priv, err := GenerateKey()
+	require.NoError(t, err)
+	msg := []byte("manifest bytes")
+	sig := ed25519.Sign(priv, msg)
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			keyID := "key"
+			if i%2 == 0 {
+				keyID = "other-key"
+			}
+			_ = r.Add(PurposeUpdate, keyID, pub)
+		}(i)
+	}
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = r.Verify(PurposeUpdate, "key", msg, sig)
+			_ = r.KeyIDs(PurposeUpdate)
+		}()
+	}
+	close(start)
+	wg.Wait()
 }

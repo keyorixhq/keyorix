@@ -27,6 +27,12 @@ type SecretVersionDiff struct {
 	// ACLs are secret-scoped, not version-scoped, so this is always the current
 	// snapshot rather than a per-version diff.
 	ACLUserIDs []uint `json:"acl_user_ids"`
+	// Degraded is true when the ACL lookup itself failed (#G54): ACLUserIDs is
+	// then an EMPTY snapshot, not a confirmed "no ACL grants" — a caller must
+	// not treat it as authoritative (e.g. in a security/audit review) without
+	// checking this flag first, matching this codebase's established
+	// Degraded convention (compliance posture, dashboard, access review).
+	Degraded bool `json:"degraded"`
 }
 
 // SecretVersionChange describes a single metadata field that differs between
@@ -149,7 +155,13 @@ func (c *KeyorixCore) DiffSecretVersions(ctx context.Context, secretID uint, fro
 	}
 
 	// --- ACLs (current snapshot, not per-version) ---
-	acls, _ := c.storage.ListSecretACLs(ctx, secretID) // best-effort; ignore error
+	// #G54: ListSecretACLs' error is no longer silently discarded — a storage
+	// failure here must not be reported as an authoritative "no ACL grants"
+	// (a misleadingly reassuring result for a security-relevant diff); it
+	// surfaces as Degraded instead, same as the codebase's other partial
+	// -result signals.
+	acls, aclErr := c.storage.ListSecretACLs(ctx, secretID)
+	degraded := aclErr != nil
 	var aclUserIDs []uint
 	for _, a := range acls {
 		aclUserIDs = append(aclUserIDs, a.UserID)
@@ -161,6 +173,7 @@ func (c *KeyorixCore) DiffSecretVersions(ctx context.Context, secretID uint, fro
 		FromVersion: fromVersion,
 		ToVersion:   toVersion,
 		Changes:     changes,
+		Degraded:    degraded,
 		ACLUserIDs:  aclUserIDs,
 	}, nil
 }

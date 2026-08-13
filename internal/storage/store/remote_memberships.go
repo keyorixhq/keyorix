@@ -171,8 +171,9 @@ func (rs *RemoteStorage) GetProjectMembership(ctx context.Context, id uint) (*mo
 
 // UpdateProjectMembership persists a membership's current state via PUT
 // /api/v1/system/project-memberships/{id} — a single round trip mapping directly
-// onto local_memberships.go's plain Save (see the package doc: there is no
-// conditional-write guarantee to preserve here, unlike UpdateProjectInvitation).
+// onto local_memberships.go's plain Save. #G42: this must NEVER be used for a
+// state-machine transition (State/ActivatedAt/RevokedAt) — see
+// TransitionProjectMembershipState, which exists specifically for that.
 func (rs *RemoteStorage) UpdateProjectMembership(ctx context.Context, m *models.ProjectMembership) error {
 	path := fmt.Sprintf("/api/v1/system/project-memberships/%d", m.ID)
 	resp, err := rs.client.Put(ctx, path, newMembershipWire(m))
@@ -183,6 +184,22 @@ func (rs *RemoteStorage) UpdateProjectMembership(ctx context.Context, m *models.
 		return fmt.Errorf("update membership failed: %s", resp.Error.Error())
 	}
 	return nil
+}
+
+// TransitionProjectMembershipState persists m's full row via a single
+// conditional PUT to /api/v1/system/project-memberships/{id}/transition,
+// gated server-side on the row's CURRENT state still being fromState —
+// mirrors RevokeRiskExceptionIfNotRevoked/UpdateUserIfActiveStateMatches
+// exactly. See interface.go's doc for why this exists (RemoteStorage has no
+// real transaction/row lock, so this conditional round trip is the ONLY thing
+// closing the TOCTOU across the HTTP hop).
+func (rs *RemoteStorage) TransitionProjectMembershipState(ctx context.Context, m *models.ProjectMembership, fromState string) (bool, error) {
+	path := fmt.Sprintf("/api/v1/system/project-memberships/%d/transition", m.ID)
+	body := struct {
+		Membership membershipWire `json:"membership"`
+		FromState  string         `json:"from_state"`
+	}{Membership: newMembershipWire(m), FromState: fromState}
+	return rs.putConditionalTransition(ctx, path, body, "transition project membership")
 }
 
 // ListProjectMemberships lists a project's memberships via GET

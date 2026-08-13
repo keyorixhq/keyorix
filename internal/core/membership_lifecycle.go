@@ -275,8 +275,19 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	case MembershipRevoked:
 		m.RevokedAt = &now
 	}
-	if err := c.storage.UpdateProjectMembership(ctx, m); err != nil {
+	// #G42: a blind UpdateProjectMembership (full-row Save) here would race a
+	// concurrent TransitionMembership call on the same membership — m was
+	// read above via GetProjectMembership with no lock, so a concurrent
+	// transition landing between that read and this write would be silently
+	// reverted (or, if this write lands first, silently clobbered). Route
+	// through the conditional write gated on the state this call actually
+	// observed (prevState).
+	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, prevState)
+	if err != nil {
 		return nil, fmt.Errorf("failed to update membership: %w", err)
+	}
+	if !matched {
+		return nil, fmt.Errorf("membership %d: %w", membershipID, ErrMembershipStateConflict)
 	}
 
 	// Side effects on the role grant.
@@ -293,8 +304,20 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	case MembershipRevoked:
-		// Best-effort: the membership is already revoked; a missing grant is fine.
-		_ = c.RemoveProjectMember(ctx, actorID, m.ProjectID, m.UserID)
+		if err := c.RemoveProjectMember(ctx, actorID, m.ProjectID, m.UserID); err != nil && !errors.Is(err, ErrNotProjectMember) {
+			// #G54: a security-relevant refusal (guardLastProjectAdmin: this user is
+			// the project's last roles.assign holder) or a real storage failure must
+			// not be silently swallowed — the membership row was just committed as
+			// `revoked` above, but if the underlying role grant removal was
+			// REFUSED, the user still holds full access via that live grant while
+			// ListProjectMemberships and friends report them as removed. Revert the
+			// membership back to its pre-transition state and surface the error,
+			// same as the activation-failure handling above. ErrNotProjectMember
+			// (no grant existed to remove — already gone via some other path) is
+			// the one genuinely benign case and is still ignored.
+			c.revertFailedActivation(ctx, m, prevState)
+			return nil, fmt.Errorf("failed to remove role grant on revocation: %w", err)
+		}
 	}
 
 	c.logMembershipEvent(ctx, "membership."+transitionVerb(to), m, actorID)
@@ -375,6 +398,11 @@ func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, 
 // audited (flagged for manual cleanup) rather than returned or retried — a partial
 // revert is strictly better than silently leaving the active row standing.
 func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.ProjectMembership, toState string) {
+	// #G42: m.State is still MembershipActive here (TransitionMembership's own
+	// write above just committed it) — capture that as fromState so this
+	// revert's write only matches if nothing else has touched the row since,
+	// same as TransitionMembership's own conditional write.
+	fromState := m.State
 	m.State = toState
 	m.UpdatedAt = c.now()
 	if toState == MembershipRevoked {
@@ -383,7 +411,11 @@ func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.Proj
 	} else {
 		m.ActivatedAt = nil
 	}
-	if err := c.storage.UpdateProjectMembership(ctx, m); err != nil {
+	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, fromState)
+	if err == nil && !matched {
+		err = fmt.Errorf("%w", ErrMembershipStateConflict)
+	}
+	if err != nil {
 		c.auditProjectScoped(ctx, "membership.activation_race_revert_failed", m.UserID, m.ProjectID,
 			fmt.Sprintf("failed to revert orphaned active membership %d for user %d in project %d (state %s) after a role-grant failure: %v — MANUAL CLEANUP REQUIRED",
 				m.ID, m.UserID, m.ProjectID, toState, err))

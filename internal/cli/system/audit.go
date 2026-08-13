@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/startup"
 	"github.com/spf13/cobra"
 )
 
@@ -53,10 +54,24 @@ func runAuditNoExit() bool {
 		return true
 	}
 
-	files := []securefiles.FilePermSpec{
-		{Path: configPath, Mode: 0600},
-		{Path: cfg.Storage.Encryption.SaltPath, Mode: 0600},
-		{Path: cfg.Storage.Encryption.DEKPath, Mode: 0600},
+	// #G59 (sibling gap): SaltPath/DEKPath are config-driven and about to be
+	// Lstat'd/opened — sanitized the same way validateFilePermissions and
+	// fixfileperm.go's autofix path do, so a config-driven '..' can't probe an
+	// unintended file's permissions even in audit-only mode.
+	files := []securefiles.FilePermSpec{{Path: configPath, Mode: 0600}}
+	for _, spec := range []struct{ label, path string }{
+		{"KEK salt", cfg.Storage.Encryption.SaltPath},
+		{"DEK", cfg.Storage.Encryption.DEKPath},
+	} {
+		if spec.path == "" {
+			continue
+		}
+		clean, cerr := startup.SafeFilePermPath(spec.label, spec.path)
+		if cerr != nil {
+			fmt.Println("Failed to fix file permissions:", cerr)
+			return true
+		}
+		files = append(files, securefiles.FilePermSpec{Path: clean, Mode: 0600})
 	}
 
 	if err := securefiles.FixFilePerms(files, false); err != nil { // false = audit only

@@ -1,7 +1,10 @@
 package notary
 
 import (
+	"context"
 	"crypto/x509"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -31,5 +34,32 @@ func FuzzVerifyReceipt(f *testing.F) {
 	f.Fuzz(func(t *testing.T, token []byte) {
 		// Must never panic.
 		_, _ = VerifyReceipt(roots, message, token)
+	})
+}
+
+// FuzzRFC3161Anchor is #G61's continuous-fuzz counterpart to FuzzVerifyReceipt:
+// Anchor() hands the TSA response body to digitorus/timestamp.ParseResponse,
+// the same parser family, so a malformed/hostile response must never panic
+// the process — only ever return an error.
+func FuzzRFC3161Anchor(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte("not DER at all"))
+	f.Add([]byte{0x30, 0x00})
+	f.Add([]byte{0x30, 0x01, 0x00})
+	f.Add([]byte{0x30, 0x10, 0x00})
+	f.Add([]byte{0x30, 0x81})
+	f.Add([]byte{0x30, 0x82})
+	f.Add([]byte{0xff, 0x81})
+	f.Add([]byte{0x30, 0x80, 0x00, 0x00})
+
+	f.Fuzz(func(t *testing.T, body []byte) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+		r := NewRFC3161(srv.URL, defaultTimeout)
+		// Must never panic.
+		_, _ = r.Anchor(context.Background(), []byte("fuzz anchor message"))
 	})
 }

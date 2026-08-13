@@ -323,6 +323,33 @@ func TestRequestProjectAccess_RejectsSoftDeletedProject(t *testing.T) {
 	require.Error(t, err, "requesting access to a soft-deleted project must be refused")
 }
 
+// TestRequestProjectAccess_RefusesDuplicatePending is #G82: an authenticated
+// user must not be able to flood a project with unbounded pending access
+// requests (and the admin notification each one fires) by calling this
+// endpoint repeatedly — a second request while the first is still pending
+// must be refused.
+func TestRequestProjectAccess_RefusesDuplicatePending(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	require.NoError(t, err)
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "flood-target"})
+	require.NoError(t, err)
+
+	first, err := c.RequestProjectAccess(ctx, proj.ID, requester.ID, "", "please")
+	require.NoError(t, err)
+	require.Equal(t, AccessRequestPending, first.State)
+
+	_, err = c.RequestProjectAccess(ctx, proj.ID, requester.ID, "", "please again")
+	require.Error(t, err, "a second request while the first is still pending must be refused")
+	assert.Contains(t, err.Error(), "already have a pending")
+
+	requests, err := c.ListAccessRequests(ctx, proj.ID)
+	require.NoError(t, err)
+	assert.Len(t, requests, 1, "the flood attempt must not have created a second row")
+}
+
 // #371: ApproveAccessRequestWithExpiry must refuse to approve a request whose target
 // project has been soft-deleted in the meantime — DeleteProject never touches
 // access_requests, so without this check a stale pending request could be approved
@@ -366,10 +393,11 @@ func TestWithdrawAccessRequest_OwnershipChecked(t *testing.T) {
 	ctx := context.Background()
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{ID: 3, UserID: 2, State: AccessRequestPending}, nil)
 
-	// A different user cannot withdraw it.
+	// A different user cannot withdraw it. #G14: the denial is the same generic
+	// "not found" a nonexistent request ID gets, not a distinct ownership message.
 	err := c.WithdrawAccessRequest(ctx, 3, 99)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not your")
+	assert.Contains(t, err.Error(), "not found")
 	store.AssertNotCalled(t, "UpdateAccessRequest", mock.Anything, mock.Anything)
 }
 

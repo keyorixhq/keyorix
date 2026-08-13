@@ -81,6 +81,41 @@ func TestRemoteStorage_UpdateProjectMembership(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRemoteStorage_TransitionProjectMembershipState(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/api/v1/system/project-memberships/7/transition", r.URL.Path)
+		var body map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "provisioned", body["from_state"])
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": true}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	m := &models.ProjectMembership{ID: 7, ProjectID: 10, UserID: 5, Role: "viewer", State: "active"}
+	matched, err := rs.TransitionProjectMembershipState(context.Background(), m, "provisioned")
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
+func TestRemoteStorage_TransitionProjectMembershipState_NotMatched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(apiOK(map[string]interface{}{"matched": false}))
+	}))
+	defer srv.Close()
+
+	rs, err := store.NewRemoteStorage(testConfig(srv.URL))
+	require.NoError(t, err)
+
+	m := &models.ProjectMembership{ID: 7, State: "active"}
+	matched, err := rs.TransitionProjectMembershipState(context.Background(), m, "provisioned")
+	require.NoError(t, err)
+	assert.False(t, matched)
+}
+
 func TestRemoteStorage_ListProjectMemberships(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)

@@ -44,7 +44,7 @@ func TestFormatComplianceDigest_AllPass(t *testing.T) {
 
 func TestSendComplianceDigest_NoSinkNoOp(t *testing.T) {
 	c := &KeyorixCore{storage: new(MockStorage), now: time.Now}
-	sent, err := c.SendComplianceDigest(context.Background())
+	sent, err := c.SendComplianceDigest(context.Background(), 0)
 	require.NoError(t, err)
 	assert.False(t, sent, "no notification channel → nothing delivered")
 }
@@ -53,7 +53,7 @@ func TestSendComplianceDigest_Broadcasts(t *testing.T) {
 	c, db, _ := newEvidenceExportCore(t) // real store, empty deployment
 	sink := &fakeSink{}
 	c.SetNotificationSink(sink)
-	sent, err := c.SendComplianceDigest(context.Background())
+	sent, err := c.SendComplianceDigest(context.Background(), 0)
 	require.NoError(t, err)
 	assert.True(t, sent)
 	require.Len(t, sink.events, 1)
@@ -65,6 +65,29 @@ func TestSendComplianceDigest_Broadcasts(t *testing.T) {
 	require.Len(t, events, 1)
 	require.NotNil(t, events[0].Success)
 	assert.True(t, *events[0].Success, "the digest genuinely was delivered — the audit event must say so")
+	assert.Nil(t, events[0].UserID, "actorID=0 (scheduler) must audit as system, not attributed to a user")
+}
+
+// TestSendComplianceDigest_AttributesOnDemandSendToActor is #G23: an admin
+// triggering the digest on-demand (dashboard/admin-jobs endpoints) must be
+// attributed by UserID in the audit trail — previously this was always
+// hardcoded to actor_type=system with a nil UserID, indistinguishable from
+// the unattended scheduled run.
+func TestSendComplianceDigest_AttributesOnDemandSendToActor(t *testing.T) {
+	c, db, _ := newEvidenceExportCore(t) // real store, empty deployment
+	sink := &fakeSink{}
+	c.SetNotificationSink(sink)
+
+	const actorID = 42
+	sent, err := c.SendComplianceDigest(context.Background(), actorID)
+	require.NoError(t, err)
+	assert.True(t, sent)
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", "compliance.digest_sent").Find(&events).Error)
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].UserID)
+	assert.Equal(t, uint(actorID), *events[0].UserID)
 }
 
 // TestSendComplianceDigest_NoChannelAcceptsIt is a regression test for #221: an
@@ -84,7 +107,7 @@ func TestSendComplianceDigest_NoChannelAcceptsIt(t *testing.T) {
 	var sent bool
 	var err error
 	logged := captureLog(t, func() {
-		sent, err = c.SendComplianceDigest(context.Background())
+		sent, err = c.SendComplianceDigest(context.Background(), 0)
 	})
 	require.NoError(t, err)
 	assert.False(t, sent, "no channel accepted the broadcast — the caller must be told delivery did not happen")

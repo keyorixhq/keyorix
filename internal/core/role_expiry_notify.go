@@ -65,6 +65,11 @@ func (k *KeyorixCore) CheckRoleExpiry(ctx context.Context) (*RoleExpiryCheckResu
 		roleName := k.roleName(ctx, g.RoleID)
 		title, msg := roleExpiryMessage(roleName, g.ExpiresAt)
 
+		// #G21: no DB backstop for this check-then-act — see read_quota_alerts.go's
+		// CheckReadQuotas for why the existing #488 reminder-dedup index can't
+		// simply be extended to cover this type (per-role dedup via message
+		// content, not a structured column). Deferred; worst case is a duplicate
+		// notification, not a security/data-integrity issue.
 		existing := k.unreadRoleExpiryReminder(ctx, g.UserID, g.RoleID)
 		if existing != nil {
 			if severity <= existing.Severity {
