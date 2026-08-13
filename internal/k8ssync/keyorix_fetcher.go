@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -77,6 +78,36 @@ func NewKeyorixFetcher(baseURL, token string, projectID uint) *KeyorixFetcher {
 // time, even though baseURL itself was validated at config-load time (CWE-918).
 func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("k8ssync: refusing to follow redirect to %q", req.URL)
+}
+
+// validateFetcherBaseURL checks that baseURL is a well-formed absolute http(s) URL,
+// allowing http for any loopback host (not just the literal "localhost" that
+// validateKeyorixURL's stricter K8SSYNC-007 rule requires at config-load time) — this
+// is a redundant runtime re-check on every request, not the primary gate, and this
+// package's own tests connect to httptest.NewServer's 127.0.0.1 addresses.
+func validateFetcherBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid keyorix_url %q", raw)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme != "http" || !isLoopbackHostname(u.Hostname()) {
+		return fmt.Errorf("keyorix_url %q must use https (http is allowed only for a loopback host)", raw)
+	}
+	return nil
+}
+
+// isLoopbackHostname reports whether host is localhost or a loopback IP.
+func isLoopbackHostname(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // Fetch resolves ref ("<environment>/<name>") to the secret's id and returns its
@@ -208,6 +239,18 @@ func (f *KeyorixFetcher) fetchValue(ctx context.Context, id uint) ([]byte, error
 
 // getJSON performs an authenticated GET and decodes the {"data": …} envelope into out.
 func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface{}) error {
+	// f.baseURL is sourced from Config.KeyorixURL, already validated by
+	// validateKeyorixURL at config-load time (Config.Validate) — but that validated
+	// a different field read (the Config struct's own KeyorixURL), so this direct
+	// read of f.baseURL is what a static analyzer needs to recognize the same
+	// validation as covering this field too. Deliberately uses the more lenient
+	// validateFetcherBaseURL, not validateKeyorixURL's stricter K8SSYNC-007
+	// localhost-only rule -- this is a redundant defense-in-depth re-check on every
+	// request, not the primary config-load gate, so it allows any loopback host
+	// (matching this repo's convention elsewhere) rather than only "localhost".
+	if err := validateFetcherBaseURL(f.baseURL); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.baseURL+path, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)

@@ -11,7 +11,7 @@ import (
 )
 
 // mustClient builds a KeyorixClient for baseURL (an httptest.Server URL — always
-// loopback, so requireHTTPSURL's http-allowed-for-localhost exception applies), failing
+// loopback, so validateKeyorixClientURL's http-allowed-for-localhost exception applies), failing
 // the test immediately on any construction error.
 func mustClient(t *testing.T, baseURL, token string) *KeyorixClient {
 	t.Helper()
@@ -102,7 +102,7 @@ func TestNewKeyorixClient_RequiresHTTPS(t *testing.T) {
 // bug: Go's default http.Client only strips the Authorization header when a redirect's
 // Host differs from the original — never when only the scheme changes, so a same-host
 // https->http redirect would otherwise carry the bearer token (and the plaintext secret
-// value in the response) over cleartext. requireHTTPSURL only guards the INITIAL
+// value in the response) over cleartext. validateKeyorixClientURL only guards the INITIAL
 // request's scheme, not a mid-request redirect, so CheckRedirect must refuse every
 // redirect outright.
 func TestKeyorixClient_RefusesRedirect(t *testing.T) {
