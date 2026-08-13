@@ -20,6 +20,15 @@ type constraintTestModel struct {
 	Slug string `gorm:"unique"`
 }
 
+// likeEscapeTestModel's constraint name deliberately contains no '_' — the adversarial
+// query in TestMigrator_HasConstraint_EscapesLikeWildcards below supplies '_' characters
+// instead, in the exact positions this model's real 'X's sit, to prove they're no longer
+// treated as SQL LIKE wildcards.
+type likeEscapeTestModel struct {
+	ID    uint `gorm:"primaryKey"`
+	Score int  `gorm:"check:chkXaXscore,score >= 0"`
+}
+
 func TestMigrator_HasTable(t *testing.T) {
 	db := openTestDB(t)
 	require.NoError(t, db.AutoMigrate(&migratorTestModel{}))
@@ -82,6 +91,23 @@ func TestMigrator_HasConstraint(t *testing.T) {
 
 	require.NoError(t, m.CreateConstraint(&migratorTestModel{}, "chk_migrator_score"))
 	assert.True(t, m.HasConstraint(&migratorTestModel{}, "chk_migrator_score"))
+}
+
+// TestMigrator_HasConstraint_EscapesLikeWildcards is #G46: HasConstraint spliced the
+// queried constraint name unescaped into a SQL LIKE pattern, so '_' (which is EXTREMELY
+// common in real constraint names — GORM's own default FK-naming convention is
+// "fk_<table>_<column>") was interpreted as a single-character wildcard instead of a
+// literal underscore. A query for "chk_a_score" must not incorrectly match a
+// differently-named constraint like "chkXaXscore" just because '_' happens to wildcard
+// onto 'X' in that position.
+func TestMigrator_HasConstraint_EscapesLikeWildcards(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&likeEscapeTestModel{}))
+	m := db.Migrator()
+
+	assert.True(t, m.HasConstraint(&likeEscapeTestModel{}, "chkXaXscore"), "the real constraint name must still match itself")
+	assert.False(t, m.HasConstraint(&likeEscapeTestModel{}, "chk_a_score"),
+		"a queried name containing '_' must be matched literally, not as a LIKE wildcard — chk_a_score must not incorrectly match chkXaXscore")
 }
 
 func TestMigrator_ConstraintLifecycle(t *testing.T) {

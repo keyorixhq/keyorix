@@ -82,15 +82,24 @@ func (c *KeyorixCore) SetMembershipDomainAllowlist(domains []string) {
 // domainAllowed reports whether email's domain passes the configured
 // allowlist. An empty allowlist means no restriction (default, backward
 // compatible).
+//
+// #G46: this used to extract the domain via strings.LastIndex(email, "@"),
+// which silently accepts a malformed multi-'@' address like
+// "attacker@evil.com@allowed.com" and reports its trailing segment as the
+// domain — a parser-differential risk if any downstream mail/identity
+// consumer of the same raw email string parses '@' differently (e.g. takes
+// the FIRST '@' as the local-part boundary). Requiring exactly one '@' closes
+// that gap: a malformed address is rejected outright instead of having its
+// domain guessed.
 func (c *KeyorixCore) domainAllowed(email string) bool {
 	if len(c.membershipDomainAllowlist) == 0 {
 		return true
 	}
-	at := strings.LastIndex(email, "@")
-	if at < 0 {
+	local, domain, ok := strings.Cut(email, "@")
+	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") {
 		return false
 	}
-	domain := strings.ToLower(email[at+1:])
+	domain = strings.ToLower(domain)
 	for _, d := range c.membershipDomainAllowlist {
 		if strings.ToLower(d) == domain {
 			return true
