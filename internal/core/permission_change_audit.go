@@ -51,6 +51,11 @@ type PermissionChangeReport struct {
 	Until   time.Time               `json:"until"`
 	Changes []PermissionChangeEvent `json:"changes"`
 	Total   int                     `json:"total"`
+	// Truncated is true when more matching events exist than the bounded limit
+	// returned — Changes/len(Changes) then reflect only the first page, not the
+	// true total (#G24: previously Total silently reported len(Changes), the
+	// truncated sample size, as if it were the real total).
+	Truncated bool `json:"truncated"`
 }
 
 // normPermChangeWindow normalises the since/until/limit parameters, filling in defaults.
@@ -146,7 +151,7 @@ func (k *KeyorixCore) GetPermissionChangeAudit(ctx context.Context, since, until
 		Page:      1,
 	}
 
-	events, _, err := k.storage.GetAuditLogs(ctx, filter)
+	events, total, err := k.storage.GetAuditLogs(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("permission_change_audit: query failed: %w", err)
 	}
@@ -157,9 +162,10 @@ func (k *KeyorixCore) GetPermissionChangeAudit(ctx context.Context, since, until
 	}
 
 	return &PermissionChangeReport{
-		Since:   since,
-		Until:   until,
-		Changes: changes,
-		Total:   len(changes),
+		Since:     since,
+		Until:     until,
+		Changes:   changes,
+		Total:     int(total),
+		Truncated: int64(len(changes)) < total,
 	}, nil
 }

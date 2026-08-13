@@ -239,6 +239,31 @@ func TestGetProjectHealthSummary_LimitClamping(t *testing.T) {
 	assert.LessOrEqual(t, len(summary.TopRiskSecrets), 20, "limit=200 should clamp to defaultHealthLimit=20")
 }
 
+// TestGetProjectHealthSummary_Truncated is the #G24 regression: before the fix,
+// TotalSecrets silently reported len(secrets) (the fetched, possibly-capped
+// sample) as if it were the project's true secret count. ListSecrets' own real
+// total (its second return value) was discarded. Uses MockStorage to simulate a
+// project with more secrets (1500) than the fetch returns (0, so
+// ComputeSecretRiskScoresBatch short-circuits on empty input) — TotalSecrets
+// must reflect the TRUE total and Truncated must be set.
+func TestGetProjectHealthSummary_Truncated(t *testing.T) {
+	const proj = uint(9)
+	ctx := context.Background()
+
+	ms := &MockStorage{}
+	ms.On("ListSecrets", ctx, mock.MatchedBy(func(f *storage.SecretFilter) bool {
+		return f.ProjectID != nil && *f.ProjectID == proj
+	})).Return([]*models.SecretNode{}, int64(1500), nil)
+
+	c := &KeyorixCore{storage: ms, now: time.Now}
+	summary, err := c.GetProjectHealthSummary(ctx, proj, 20)
+	require.NoError(t, err)
+	assert.Equal(t, 1500, summary.TotalSecrets, "TotalSecrets must be the real total, not the fetched sample size")
+	assert.True(t, summary.Truncated)
+
+	ms.AssertExpectations(t)
+}
+
 // TestGetProjectHealthSummary_ListSecretsError verifies that a storage failure
 // on ListSecrets propagates as an error rather than producing a partial result.
 func TestGetProjectHealthSummary_ListSecretsError(t *testing.T) {

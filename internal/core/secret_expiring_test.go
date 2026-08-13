@@ -55,27 +55,30 @@ func TestListExpiringSecrets(t *testing.T) {
 	_ = mk("other", p2.ID, e2.ID, &soon) // different project
 
 	t.Run("lists expiring/expired within the window, soonest-first, project-scoped", func(t *testing.T) {
-		got, err := c.ListExpiringSecrets(ctx, p.ID, 30)
+		got, truncated, err := c.ListExpiringSecrets(ctx, p.ID, 30)
 		require.NoError(t, err)
 		require.Len(t, got, 2, "expired + soon; far/never/other-project excluded")
 		assert.Equal(t, expiredID, got[0].ID, "already-expired leads")
 		assert.Equal(t, soonID, got[1].ID)
+		assert.False(t, truncated)
 	})
 
 	t.Run("a wider window includes the far one", func(t *testing.T) {
-		got, err := c.ListExpiringSecrets(ctx, p.ID, 200)
+		got, truncated, err := c.ListExpiringSecrets(ctx, p.ID, 200)
 		require.NoError(t, err)
 		assert.Len(t, got, 3)
+		assert.False(t, truncated)
 	})
 
 	t.Run("a project ID of zero is rejected", func(t *testing.T) {
-		_, err := c.ListExpiringSecrets(ctx, 0, 30)
+		_, _, err := c.ListExpiringSecrets(ctx, 0, 30)
 		require.Error(t, err)
 	})
 
 	t.Run("non-positive window falls back to the default (30d)", func(t *testing.T) {
-		got, err := c.ListExpiringSecrets(ctx, p.ID, 0)
+		got, truncated, err := c.ListExpiringSecrets(ctx, p.ID, 0)
 		require.NoError(t, err)
 		assert.Len(t, got, 2)
+		assert.False(t, truncated)
 	})
 }

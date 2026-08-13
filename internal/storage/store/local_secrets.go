@@ -649,6 +649,13 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	}
 	if filter.ExpiresBefore != nil {
 		query = query.Where("secret_nodes.expiration IS NOT NULL AND secret_nodes.expiration < ?", *filter.ExpiresBefore)
+		// #G24: order soonest-expiring first so a capped PageSize returns the
+		// TRUE most-urgent rows, not an arbitrary unordered slice truncated to
+		// whatever page happened to be returned — callers filtering by expiry
+		// (ListExpiringSecrets) need the returned page to be exactly "the N
+		// secrets closest to expiring", not "N secrets that happen to expire
+		// before the cutoff" in no particular order.
+		query = query.Order("secret_nodes.expiration ASC")
 	}
 	if filter.Classification != nil {
 		if *filter.Classification == "unclassified" {
