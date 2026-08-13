@@ -167,6 +167,26 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		if d.PrincipalID == 0 || d.RoleID == 0 {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to attest a role grant")
 		}
+		// #G51: machine-identity role grants live in a separate table from
+		// user/group grants (local_rbac.go's MachineIdentityRole vs
+		// UserRole/GroupRole) — ListProjectRoleAssignments never queries it,
+		// so every machine-identity attestation spuriously "not found" before
+		// this branch. RevokeAccessReviewGrant's revokeRoleByPrincipalType
+		// already dispatches machine grants separately (RemoveMachineRole);
+		// mirror that split here.
+		if d.PrincipalType == "machine" {
+			machineAssignments, err := c.storage.ListProjectMachineRoleAssignments(ctx, projectID)
+			if err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			}
+			for _, a := range machineAssignments {
+				if a.PrincipalID == d.PrincipalID && a.RoleID == d.RoleID && a.EnvironmentID == d.EnvironmentID {
+					return nil
+				}
+			}
+			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+				"the role grant being attested no longer exists — the review is stale, re-sync and try again")
+		}
 		assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 		if err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -183,6 +203,17 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 	case "direct_share", "group_share":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest a share")
+		}
+		// #G51: verify the secret actually belongs to projectID BEFORE
+		// looking at its shares — otherwise a reviewer authorized on project A
+		// could pass any SecretID and attest a share belonging to a secret in
+		// a DIFFERENT project (cross-tenant IDOR), certifying compliance
+		// evidence for a grant they have no authority over. Mirrors
+		// revokeReviewShare's identical guard (#99).
+		secret, err := c.storage.GetSecret(ctx, d.SecretID)
+		if err != nil || secret == nil || secret.ProjectID != projectID {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+				"the share being attested no longer exists — the review is stale, re-sync and try again")
 		}
 		isGroup := d.Source == "group_share"
 		shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID)
@@ -201,7 +232,10 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest ownership")
 		}
 		secret, err := c.storage.GetSecret(ctx, d.SecretID)
-		if err != nil || secret == nil {
+		if err != nil || secret == nil || secret.ProjectID != projectID {
+			// #G51: same cross-tenant guard as the share branch above — a
+			// secret in a DIFFERENT project must read as "not found" here,
+			// not leak whether it exists or who owns it.
 			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
 				"the secret being attested no longer exists — the review is stale, re-sync and try again")
 		}

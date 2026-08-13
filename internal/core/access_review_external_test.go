@@ -367,3 +367,94 @@ func TestAttestAccessReviewGrant_Share(t *testing.T) {
 		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
 	assert.Equal(t, int64(1), count, "exactly the one live attestation was recorded")
 }
+
+// TestAttestAccessReviewGrant_MachineRole is #G51's machine-identity gap: a
+// machine identity's role grant lives in a separate table from user/group
+// grants, so verifyAccessReviewGrantExists must check it too, mirroring
+// TestGenerateProjectAccessReview_IncludesMachineIdentities and
+// TestRevokeAccessReviewGrant_MachineRole (#91) — before the fix, this
+// attestation spuriously failed "no longer exists" for a grant that was very
+// much live.
+func TestAttestAccessReviewGrant_MachineRole(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+
+	const proj = uint(2)
+	require.NoError(t, h.DB.Create(&models.MachineIdentity{
+		ID: 50, ProjectID: proj, Name: "ci-runner", IdentityType: "ci", State: "active",
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{
+		MachineIdentityID: 50, RoleID: 3, ProjectID: proj,
+	}).Error)
+
+	err := h.CoreService.AttestAccessReviewGrant(context.Background(), 1, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "machine", PrincipalID: 50, RoleID: 3,
+	})
+	require.NoError(t, err, "a live machine-identity role grant must attest cleanly")
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+// TestAttestAccessReviewGrant_RefusesCrossProjectShare is #G51's cross-tenant
+// IDOR: a reviewer authorized on project 2 must not be able to certify (as
+// compliance evidence) a share belonging to a secret in a DIFFERENT project,
+// by passing that secret's ID alongside a recipient who happens to hold SOME
+// share on it. Mirrors revokeReviewShare's identical guard (#99).
+func TestAttestAccessReviewGrant_RefusesCrossProjectShare(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}, &models.AuditEvent{}))
+
+	const reviewedProject = uint(2)
+	const otherProject = uint(3)
+	h.CreateTestUser(t, "alice", 10) // owner, other project
+	h.CreateTestUser(t, "bob", 11)   // direct-share recipient, other project
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 30, ProjectID: otherProject, Name: "prod"}).Error)
+	require.NoError(t, h.DB.Create(&models.SecretNode{
+		ID: 501, ProjectID: otherProject, EnvironmentID: 30, OwnerID: 10, Name: "other-project-secret", Type: "password", Status: "active", IsSecret: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 501, RecipientID: 11, IsGroup: false, Permission: "read"}).Error)
+
+	// A reviewer scoped to reviewedProject attests a share on a secret that
+	// actually lives in otherProject — must be refused as "not found", not
+	// silently certified.
+	err := h.CoreService.AttestAccessReviewGrant(context.Background(), 1, reviewedProject, core.AccessReviewDecision{
+		Source: "direct_share", PrincipalID: 11, SecretID: 501,
+	})
+	require.Error(t, err, "a share on a secret outside the reviewed project must be refused")
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
+	assert.Equal(t, int64(0), count, "no cross-project attestation evidence must be recorded")
+}
+
+// TestAttestAccessReviewGrant_RefusesCrossProjectOwnership is the "owner"
+// source analogue of the share IDOR above.
+func TestAttestAccessReviewGrant_RefusesCrossProjectOwnership(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.AuditEvent{}))
+
+	const reviewedProject = uint(2)
+	const otherProject = uint(3)
+	h.CreateTestUser(t, "alice", 10)
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 30, ProjectID: otherProject, Name: "prod"}).Error)
+	require.NoError(t, h.DB.Create(&models.SecretNode{
+		ID: 502, ProjectID: otherProject, EnvironmentID: 30, OwnerID: 10, Name: "other-project-secret", Type: "password", Status: "active", IsSecret: true,
+	}).Error)
+
+	err := h.CoreService.AttestAccessReviewGrant(context.Background(), 1, reviewedProject, core.AccessReviewDecision{
+		Source: "owner", PrincipalID: 10, SecretID: 502,
+	})
+	require.Error(t, err, "ownership of a secret outside the reviewed project must be refused")
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
+	assert.Equal(t, int64(0), count, "no cross-project attestation evidence must be recorded")
+}
