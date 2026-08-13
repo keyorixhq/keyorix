@@ -26,11 +26,19 @@ func (c *KeyorixCore) RevokeUserSessions(ctx context.Context, adminID, userID ui
 		return 0, fmt.Errorf("user not found: %w", err)
 	}
 
-	sessions, err := c.storage.ListSessionsByUser(ctx, userID)
+	// #G06: the eviction list must be built from the SAME (user_id=? OR
+	// impersonated_by=?) predicate DeleteSessionsForUserExcept below actually
+	// deletes with — ListSessionsByUser only matches user_id, so a session this
+	// user STARTED as an impersonator (impersonated_by = userID) was deleted from
+	// the DB but never evicted from the auth cache, leaving it live until the
+	// positive-cache TTL expired. ListSessionTokenHashesForUser already unions
+	// both predicates (it backs the same eviction need on other state-change
+	// paths) and returns the exact session_token hashes invalidateTokenCache needs.
+	tokens, err := c.storage.ListSessionTokenHashesForUser(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to list sessions: %w", err)
 	}
-	n := len(sessions)
+	n := len(tokens)
 	// exceptID 0 matches no session, so this drops them all.
 	if err := c.storage.DeleteSessionsForUserExcept(ctx, userID, 0); err != nil {
 		return 0, fmt.Errorf("failed to revoke sessions: %w", err)
@@ -39,9 +47,7 @@ func (c *KeyorixCore) RevokeUserSessions(ctx context.Context, adminID, userID ui
 	// authenticating on the NEXT request instead of lingering for the positive-cache TTL
 	// — this is the incident-response control, so the residual window matters. The stored
 	// session_token IS the SHA-256 cache key.
-	for _, s := range sessions {
-		c.invalidateTokenCache(s.SessionToken)
-	}
+	c.invalidateTokenCache(tokens...)
 
 	aid := adminID
 	c.writeAuditEventFull(ctx, EventUserSessionsRevoked, &aid, nil, nil, "",
