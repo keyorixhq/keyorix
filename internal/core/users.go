@@ -448,6 +448,14 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
+	// #G03: guardLastAdminDeactivation's read is serialized against every other
+	// accountStateMu-guarded admin-deactivation path (UpdateSCIMUser,
+	// DeprovisionSCIMUser, SuspendUser) — see UpdateSCIMUser's identical comment in
+	// scim.go. Previously this function held no lock at all, so two concurrent
+	// DeleteUser calls for two different admins could each observe "not the last
+	// admin" and both proceed, jointly stranding the install with zero admins.
+	c.accountStateMu.Lock()
+	defer c.accountStateMu.Unlock()
 	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
 		return err
 	}

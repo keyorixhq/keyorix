@@ -515,6 +515,15 @@ func groupHoldsGlobalAdminRole(assignments []storage.RoleAssignment, adminIDs ma
 // Any storage error is returned, never swallowed: silently under-counting here
 // only makes the guard MORE likely to refuse (fail closed), but silently mis-
 // resolving a group's membership on a real error could do the opposite.
+//
+// #G03: a role/group ASSIGNMENT row surviving is not the same as the holder
+// actually being usable as a fallback admin — deactivating (SCIM/DeleteUser/
+// SuspendUser) never removes the UserRole/GroupRole grant, only the user's
+// IsActive flag or deleted_at. Without filtering by current active status, this
+// function could report a just-deactivated (or already-deleted) user as "another
+// admin survives" purely because their stale grant row is still there —
+// letting the LAST two admins each be deactivated one after another (or
+// concurrently), not just the intended "one may go, one must remain."
 func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs map[uint]bool, assignments []storage.RoleAssignment, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) (map[uint]bool, error) {
 	holders := make(map[uint]bool)
 	for _, a := range assignments {
@@ -531,6 +540,28 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 			if err := c.resolveGroupAdminMembers(ctx, a.PrincipalID, excludeMember, holders); err != nil {
 				return nil, err
 			}
+		}
+	}
+	return c.filterActiveHolders(ctx, holders)
+}
+
+// filterActiveHolders drops every holder whose account is no longer usable as a
+// fallback admin (soft-deleted, or IsActive=false) — see resolveGlobalAdminHolders'
+// #G03 doc comment above for why a surviving grant ROW is not sufficient on its own.
+func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]bool) (map[uint]bool, error) {
+	for id := range holders {
+		user, err := c.storage.GetUser(ctx, id)
+		if err != nil {
+			if isNotFound(err) {
+				// Soft-deleted: GetUser's default scope excludes it — this holder no
+				// longer counts, but is not itself an error.
+				delete(holders, id)
+				continue
+			}
+			return nil, err
+		}
+		if !user.IsActive {
+			delete(holders, id)
 		}
 	}
 	return holders, nil
