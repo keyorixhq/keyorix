@@ -255,14 +255,21 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 	if err := c.checkSCIMEmailCollision(ctx, id, email); err != nil {
 		return nil, err
 	}
+	// #G03: guardLastAdminDeactivation's read and this function's write must be
+	// serialized under the SAME lock acquisition — checked BEFORE accountStateMu.Lock()
+	// (as it used to be), two concurrent deactivations of two different admins could
+	// each observe "not the last admin" (the other hasn't been deactivated yet) and
+	// both proceed, jointly stranding the install with zero admins. Locking first
+	// makes the check-then-act atomic against every other accountStateMu-guarded path
+	// (SuspendUser, DeleteUser, DeprovisionSCIMUser).
+	c.accountStateMu.Lock()
+	defer c.accountStateMu.Unlock()
 	if active != nil && !*active {
 		// Don't let a routine (or hostile) SCIM sync deactivate the only admin.
 		if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
 			return nil, err
 		}
 	}
-	c.accountStateMu.Lock()
-	defer c.accountStateMu.Unlock()
 	deactivated := false
 	var updated *models.User
 	// A fresh, lock-guarded read inside the transaction: never reuse a struct fetched
@@ -453,6 +460,13 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	if !scimManaged(user) {
 		return fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
 	}
+	// #G03: guardLastAdminDeactivation's read is serialized against every other
+	// accountStateMu-guarded admin-deactivation path (UpdateSCIMUser, DeleteUser,
+	// SuspendUser) — see UpdateSCIMUser's identical comment above. Previously this
+	// function held no lock at all, so it raced not just with itself but with every
+	// sibling path too.
+	c.accountStateMu.Lock()
+	defer c.accountStateMu.Unlock()
 	// Don't let a SCIM DELETE deprovision the only admin and lock the install out.
 	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
 		return err

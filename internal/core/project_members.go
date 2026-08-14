@@ -62,6 +62,11 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	// Refuse a demotion that would leave the project with no roles.assign holder
 	// (#236): after this call the user's only project-scope role is roleName, so
 	// check whether THAT role still carries roles.assign before touching anything.
+	// #G03: the guard's read and the role changes below are serialized under
+	// projectAdminGuardMu, held for the whole check-then-act sequence — see its
+	// doc comment in service.go for the race this closes.
+	c.projectAdminGuardMu.Lock()
+	defer c.projectAdminGuardMu.Unlock()
 	if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, []uint{role.ID}); err != nil {
 		return err
 	}
@@ -105,6 +110,9 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 	// admins. Not a permanent lockout — a GLOBAL admin can always re-add one via
 	// GetUserRoleIDsAt's project_id = 0 OR project_id = ? matching — but still an
 	// availability risk worth refusing outright rather than requiring recovery.
+	// #G03: see SetProjectMemberRole's identical projectAdminGuardMu comment above.
+	c.projectAdminGuardMu.Lock()
+	defer c.projectAdminGuardMu.Unlock()
 	if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, nil); err != nil {
 		return err
 	}
