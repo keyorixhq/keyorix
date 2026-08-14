@@ -501,7 +501,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Break-glass emergency access: activation is self-service (un-gated — the
 		// point is access the caller lacks; controlled by config + justification +
 		// audit + auto-expiry). Listing/revoking are review actions (roles.read/assign).
-		r.Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
+		// #G07: blocked while impersonating, same as IssueMachineToken below — it
+		// mints a durable, time-bound role grant attributed to the impersonated
+		// TARGET that outlives the bounded, audited impersonation session.
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
 		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
 		// Machine identities (ADR-023): non-human members, segmented from humans.

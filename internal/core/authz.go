@@ -129,6 +129,34 @@ func patRestrictionFromContext(ctx context.Context) *PATRestriction {
 	return r
 }
 
+// sessionAuthCtxKey is the unexported context key carrying whether the request
+// authenticated via a genuine interactive session token.
+type sessionAuthCtxKey struct{}
+
+// WithSessionAuth tags ctx with whether the request authenticated via a real
+// interactive session token — true only for a session; false for a PAT
+// (restricted or not) or a machine token, which are non-interactive
+// credentials. #G07: StartImpersonation reads this back, because
+// patRestrictionFromContext alone can't distinguish "no restriction" from "no
+// PAT at all" — an UNRESTRICTED PAT carries a nil restriction identical to a
+// session's, so a check gated only on PATRestriction != nil misses it.
+func WithSessionAuth(ctx context.Context, sessionAuth bool) context.Context {
+	return context.WithValue(ctx, sessionAuthCtxKey{}, sessionAuth)
+}
+
+// sessionAuthFromContext reports whether ctx was tagged as a genuine
+// interactive session. Defaults to true when untagged (e.g. a test or an
+// internal/CLI call with no HTTP/gRPC auth layer in front of it) so this
+// check only ever narrows a request the auth layer explicitly marked
+// non-interactive, never a caller the auth layer never touched.
+func sessionAuthFromContext(ctx context.Context) bool {
+	v, ok := ctx.Value(sessionAuthCtxKey{}).(bool)
+	if !ok {
+		return true
+	}
+	return v
+}
+
 // Scope identifies the project/environment an authorization check or a role
 // assignment applies to. It aliases storage.Scope so the same 0 = global
 // sentinel flows from the HTTP layer through to the queries unchanged.

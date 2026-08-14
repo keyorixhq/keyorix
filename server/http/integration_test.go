@@ -1261,3 +1261,67 @@ func TestImpersonationRoundTrip_CookieSwapAndRestore(t *testing.T) {
 	assert.Equal(t, originalAdminCookie, restoredCookie, "must restore the SAME original session, not a fresh one")
 	assert.Equal(t, "testadmin", getProfileUsername(), "admin's own identity and permissions are back with no re-login")
 }
+
+// TestImpersonation_BreakGlassBlocked is the #G07 regression for the HTTP half
+// of the ActivateBreakGlass gap: activation mints a durable, time-bound role
+// grant attributed to whoever the session currently acts as — during
+// impersonation that's the TARGET, not the admin — so it must be blocked the
+// same way IssueMachineToken already is (POST /projects/{id}/machine-identities/{id}/tokens).
+// Before this fix the route carried no BlockWhenImpersonating guard at all.
+func TestImpersonation_BreakGlassBlocked(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	_ = createTestToken(t, testCore) // seeds testadmin (admin role) /TestPassword123!
+
+	ctx := context.Background()
+	targetUser, err := testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "bg-target", Email: "bg-target@example.com", Password: "CorrectHorseBattery9!",
+	})
+	require.NoError(t, err)
+	project, err := testCore.CreateProject(ctx, "bg-project", "")
+	require.NoError(t, err)
+
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := newCookieClient(t)
+	loginResp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+	_ = loginResp.Body.Close()
+	require.Equal(t, http.StatusOK, loginResp.StatusCode)
+
+	startBody, _ := json.Marshal(map[string]uint{"user_id": targetUser.ID})
+	startReq, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/admin/impersonate", bytes.NewReader(startBody))
+	require.NoError(t, err)
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	startResp, err := client.Do(startReq)
+	require.NoError(t, err)
+	defer func() { _ = startResp.Body.Close() }()
+	require.Equal(t, http.StatusOK, startResp.StatusCode)
+
+	bgBody, _ := json.Marshal(map[string]string{"justification": "incident response"})
+	bgReq, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/api/v1/projects/%d/break-glass", server.URL, project.ID), bytes.NewReader(bgBody))
+	require.NoError(t, err)
+	bgReq.Header.Set("Content-Type", "application/json")
+	bgReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	bgResp, err := client.Do(bgReq)
+	require.NoError(t, err)
+	defer func() { _ = bgResp.Body.Close() }()
+	require.Equal(t, http.StatusForbidden, bgResp.StatusCode,
+		"break-glass activation must be refused while impersonating, minting no grant attributed to the target")
+	// Break-glass is disabled by default in this test's config too, which ALSO
+	// returns 403 (a permission-denied from ActivateBreakGlass itself) — assert
+	// on the specific message so this test can't pass for that unrelated reason
+	// instead of the BlockWhenImpersonating guard actually under test.
+	var bgErrBody struct {
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.NewDecoder(bgResp.Body).Decode(&bgErrBody))
+	assert.Contains(t, bgErrBody.Message, "not permitted while impersonating")
+}

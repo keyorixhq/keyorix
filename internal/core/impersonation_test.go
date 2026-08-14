@@ -69,6 +69,36 @@ func TestStartImpersonation_RejectsRestrictedPAT(t *testing.T) {
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 
+// #G07: an UNRESTRICTED PAT (or any other non-interactive credential) must not
+// be able to start impersonation either — patRestrictionFromContext alone
+// can't tell an unrestricted PAT apart from a session (both carry nil), so
+// the restricted-PAT check above misses this case entirely.
+func TestStartImpersonation_RejectsNonSessionAuth(t *testing.T) {
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := WithSessionAuth(context.Background(), false)
+	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
+	if err == nil || !strings.Contains(err.Error(), "interactive session") {
+		t.Fatalf("expected a non-session-auth rejection, got %v", err)
+	}
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// A genuine interactive session (the untagged/default case, and the explicit
+// true case) is unaffected by the #G07 check.
+func TestStartImpersonation_AllowsSessionAuth(t *testing.T) {
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := WithSessionAuth(context.Background(), true)
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin"}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: true}, nil)
+	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+	store.On("CreateSession", ctx, mock.Anything).Return(&models.Session{ID: 1, UserID: 2, SessionToken: "tok"}, nil)
+	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
+	require.NoError(t, err)
+}
+
 // A suspended/inactive target cannot be impersonated (the session would be dead on
 // arrival and only emit a misleading audit event).
 func TestStartImpersonation_RejectsInactiveTarget(t *testing.T) {

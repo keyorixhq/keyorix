@@ -45,6 +45,15 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if patRestrictionFromContext(ctx) != nil {
 		return nil, nil, fmt.Errorf("a restricted access token may not start impersonation")
 	}
+	// #G07: the check above only catches a RESTRICTED PAT — patRestrictionFromContext
+	// returns nil for BOTH a session and an UNRESTRICTED PAT (or a machine token),
+	// which look identical from that helper's perspective (see its own doc comment:
+	// "or nil for sessions / unrestricted PATs"). Impersonation is an interactive
+	// admin action, not something an API credential should ever be able to trigger,
+	// restricted or not — sessionAuthFromContext distinguishes the two.
+	if !sessionAuthFromContext(ctx) {
+		return nil, nil, fmt.Errorf("impersonation requires an interactive session, not an API credential")
+	}
 	admin, err := c.storage.GetUser(ctx, adminID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("admin not found")

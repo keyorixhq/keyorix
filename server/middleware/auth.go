@@ -832,6 +832,12 @@ func buildRequestContext(parent context.Context, userCtx *UserContext, coreServi
 	if userCtx != nil && userCtx.PATRestriction != nil {
 		ctx = core.WithPATRestriction(ctx, userCtx.PATRestriction)
 	}
+	// #G07: tag whether this is a genuine interactive session — StartImpersonation
+	// needs this distinction directly, since an unrestricted PAT is indistinguishable
+	// from a session by PATRestriction alone (both carry nil).
+	if userCtx != nil {
+		ctx = core.WithSessionAuth(ctx, userCtx.SessionAuth)
+	}
 	return ctx
 }
 

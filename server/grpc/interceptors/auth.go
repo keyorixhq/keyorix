@@ -108,6 +108,10 @@ func AuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.UnaryS
 		if restriction != nil {
 			newCtx = core.WithPATRestriction(newCtx, restriction)
 		}
+		// #G07: tag whether this is a genuine interactive session — see the HTTP
+		// buildRequestContext's identical tag for why PATRestriction alone can't
+		// distinguish an unrestricted PAT from a session.
+		newCtx = core.WithSessionAuth(newCtx, userCtx.SessionAuth)
 		return handler(newCtx, req)
 	}
 }
@@ -138,6 +142,8 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.
 		if restriction != nil {
 			streamCtx = core.WithPATRestriction(streamCtx, restriction)
 		}
+		// #G07: see AuthInterceptor's identical tag.
+		streamCtx = core.WithSessionAuth(streamCtx, userCtx.SessionAuth)
 		wrappedStream := &wrappedServerStream{
 			ServerStream: stream,
 			ctx:          streamCtx,
@@ -154,6 +160,13 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.
 // BlockWhenImpersonating. (Service-account token issuance has no gRPC surface today.)
 var credentialMintingMethods = map[string]bool{
 	pb.MachineIdentityService_IssueMachineToken_FullMethodName: true,
+	// #G07: ActivateBreakGlass mints a durable, time-bound role grant
+	// attributed to the impersonated TARGET that outlives the bounded,
+	// audited impersonation session — the same class of credential-minting
+	// action IssueMachineToken is blocked for; the HTTP route
+	// (POST /projects/{id}/break-glass) gets the identical BlockWhenImpersonating
+	// guard.
+	pb.BreakGlassService_ActivateBreakGlass_FullMethodName: true,
 }
 
 // blockedUnderImpersonation reports whether fullMethod mints a durable credential that
