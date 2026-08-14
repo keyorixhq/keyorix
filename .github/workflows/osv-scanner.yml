@@ -14,7 +14,7 @@ permissions: {}
 
 jobs:
   scan:
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9fd1bcce27f67e3bd819a0a7620e332803dc43bc" # v1.9.1
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@f4cfcc01edc9c8b756a9b873b7a623ca674da51e" # v1.9.1
     permissions:
       contents: read
       security-events: write
