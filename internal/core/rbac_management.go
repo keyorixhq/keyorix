@@ -137,6 +137,9 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
 		return err
 	}
+	// #G04: see AssignUserRole's identical sodGrantMu use.
+	c.sodGrantMu.Lock()
+	defer c.sodGrantMu.Unlock()
 	if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
 		return err
 	}
@@ -288,6 +291,11 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope); err != nil {
 		return err
 	}
+	// #G04: sodGrantMu holds across the check AND the write — see its doc
+	// comment in service.go for why a separate, unsynchronized write lets two
+	// concurrent grants each pass a stale pre-grant SoD check.
+	c.sodGrantMu.Lock()
+	defer c.sodGrantMu.Unlock()
 	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 		return err
 	}
@@ -325,6 +333,9 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 // (IdP group membership can change on every login, which is at least as fast a
 // grant/revoke cycle as an explicit JIT grant).
 func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
+	// #G04: see AssignUserRole's identical sodGrantMu use.
+	c.sodGrantMu.Lock()
+	defer c.sodGrantMu.Unlock()
 	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 		return err
 	}

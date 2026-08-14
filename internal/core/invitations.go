@@ -572,6 +572,12 @@ func (c *KeyorixCore) requiredApprovals() int {
 // threshold the request stays pending and the returned request carries the M-of-K
 // progress. When K is 1 (the default) the first approval grants immediately.
 func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projectID, requestID, approverID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
+	// #G04: dualControlApprovalMu holds for the whole read-approvals-decide-
+	// grant sequence below — see its doc comment in service.go for why two
+	// approvers racing at the exact threshold boundary can otherwise both
+	// read a below-threshold count and both finalize the grant.
+	c.dualControlApprovalMu.Lock()
+	defer c.dualControlApprovalMu.Unlock()
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("access request not found")

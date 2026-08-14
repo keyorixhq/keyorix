@@ -266,6 +266,13 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if campaign.State != CampaignStateOpen {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
 	}
+	// #G04: accessReviewDecisionMu holds from the pending-decision read through
+	// the actual attest/revoke side effect and its persisted stamp — see its
+	// doc comment in service.go for why persistItemDecision's conditional
+	// UPDATE alone isn't enough (it stops a second STAMP from persisting, not
+	// a second ACTION from executing).
+	c.accessReviewDecisionMu.Lock()
+	defer c.accessReviewDecisionMu.Unlock()
 	item, err := c.storage.GetAccessReviewItem(ctx, itemID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
