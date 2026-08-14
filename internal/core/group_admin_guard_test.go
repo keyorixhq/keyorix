@@ -43,7 +43,7 @@ func TestRemoveRoleFromGroup_AllowsWhenAnotherAdminExists(t *testing.T) {
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "other-admin", IsActive: true}).Error) // #G03: must exist and be active to count as a surviving admin
-	require.NoError(t, db.Create(&models.UserRole{UserID: 42, RoleID: 1}).Error) // another global admin
+	require.NoError(t, db.Create(&models.UserRole{UserID: 42, RoleID: 1}).Error)                       // another global admin
 
 	require.NoError(t, c.RemoveRoleFromGroup(ctx, 0, 1, 1, Scope{}))
 }
@@ -157,7 +157,7 @@ func TestRemoveUserFromGroup_AllowsWhenDirectAdminExists(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "sole-member", Email: "sm@example.com"}).Error)
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 42, GroupID: 1}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 99, Username: "other-admin", IsActive: true}).Error) // #G03: must exist and be active to count as a surviving admin
-	require.NoError(t, db.Create(&models.UserRole{UserID: 99, RoleID: 1}).Error) // direct global admin
+	require.NoError(t, db.Create(&models.UserRole{UserID: 99, RoleID: 1}).Error)                       // direct global admin
 
 	require.NoError(t, c.RemoveUserFromGroup(ctx, 0, 42, 1, 0)) // projectID=0: global membership
 }
