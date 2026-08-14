@@ -45,7 +45,7 @@ func TestRemoteStorageLoginRateLimit_ThrottlesAcrossRealServer(t *testing.T) {
 	// deliberately the SAME broad credential a RemoteStorage client already needs
 	// for every OTHER proxied call (full user CRUD via /api/v1/users), so using it
 	// here introduces no new privilege class.
-	upstreamToken := createTestToken(t, upstreamCore)
+	upstreamToken := createNodeToken(t, upstreamCore)
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{

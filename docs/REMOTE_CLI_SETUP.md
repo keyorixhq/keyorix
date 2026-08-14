@@ -69,6 +69,33 @@ storage:
     tls_verify: true
 ```
 
+> **`storage.remote.api_key` should be an admin-tier user credential (a PAT or
+> session token)** — the SAME kind of credential `keyorix connect <server>` uses,
+> just held by whatever principal you dedicate to running the sync. `storage:
+> {type: "remote"}` makes the CLI (or a full downstream Keyorix server) delegate
+> its ENTIRE storage backend to the target server over HTTP, including several
+> administrative primitives (invitations, access requests, dynamic-secret configs,
+> groups, machine identities, and more) that have no ordinary REST route and are
+> served only by the target server's `/api/v1/system/*` proxy tree, plus a large
+> set of ordinary RBAC-gated routes (role/user/secret lookups, notifications,
+> login/MFA proxying, legal holds, RBAC catalogs, ...) that RemoteStorage also
+> calls through their normal routes. Most of that surface requires the caller to
+> actually hold RBAC permissions at global scope — something only a real user
+> credential can do (a machine identity can never be granted a role at global
+> scope, only per-project), so a bare machine token is NOT sufficient on its own.
+>
+> `/api/v1/system/*` specifically (#G79) additionally accepts a node-type
+> machine-identity credential as an alternative to holding `system.write` — useful
+> if you want the proxy tree itself reachable by a credential with no other RBAC
+> permissions at all:
+> ```
+> keyorix machine create --project <project-name> --name "my-node" --type node
+> keyorix machine token issue "my-node" --project <project-name> --name "my-node-token"
+> ```
+> but that node token by itself will fail every route outside `/system` (403), so
+> for full `storage.type: remote` functionality use an admin-tier user credential
+> as `api_key`/`KEYORIX_REMOTE_API_KEY`, not the node token alone.
+
 Supported environment variables:
 - `KEYORIX_API_KEY`
 - `KEYORIX_TOKEN`

@@ -35,7 +35,7 @@ func newUpstreamDownstreamForBreakGlass(t *testing.T) (upstream *core.KeyorixCor
 	t.Cleanup(i18n.ResetForTesting)
 
 	upstream = newTestCore(t)
-	upstreamToken := createTestToken(t, upstream)
+	upstreamToken := createNodeToken(t, upstream)
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
