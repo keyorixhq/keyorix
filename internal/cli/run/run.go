@@ -112,6 +112,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fetchErr
 	}
 
+	envVars = dropDangerousEnvKeys(envVars)
+
 	return execChild(args, envVars, runCleanEnv)
 }
 
@@ -344,6 +346,45 @@ func toEnvKey(name string) string {
 		}
 	}
 	return b.String()
+}
+
+// dangerousEnvVarNames names environment variables that affect dynamic-linker,
+// interpreter, or shell behavior for the CHILD PROCESS `keyorix run` launches — not
+// Keyorix's own credentials (see sensitiveEnvSuffixes below, a separate concern).
+// #G39: toEnvKey derives the child's env var keys directly from a project secret's
+// NAME (uppercased, non-alphanumeric → '_'), with no filtering at all — a secret
+// named "path" or "ld_preload" becomes an env key that collides with (and, since
+// buildChildEnv appends the injected secrets LAST, overrides) one of these,
+// letting a project-level secret WRITER hijack or control code execution in
+// whatever `keyorix run` launches, without ever needing direct system access
+// themselves. Matches the detection_idea's own required-coverage list exactly.
+var dangerousEnvVarNames = map[string]bool{
+	"LD_PRELOAD":      true,
+	"BASH_ENV":        true,
+	"NODE_OPTIONS":    true,
+	"PATH":            true,
+	"PERL5OPT":        true,
+	"RUBYOPT":         true,
+	"GIT_SSH_COMMAND": true,
+}
+
+// dropDangerousEnvKeys removes any entry keyed on a dynamic-linker/interpreter/
+// shell control variable name (dangerousEnvVarNames) — envVars is already keyed by
+// the DERIVED env var key (toEnvKey(secret.Name)), not the raw secret name; see
+// fetchSecretsEmbedded/fetchSecretsRemote. Warns on stderr for each one dropped so
+// the operator can see why a secret they expected didn't reach the child process
+// (rather than either silently letting it override PATH/LD_PRELOAD/etc., or
+// aborting the whole run over one secret name).
+func dropDangerousEnvKeys(envVars map[string]string) map[string]string {
+	out := make(map[string]string, len(envVars))
+	for key, value := range envVars {
+		if dangerousEnvVarNames[key] {
+			fmt.Fprintf(os.Stderr, "⚠️  a secret maps to the reserved environment variable %q — refusing to inject it (would override %s in the launched process)\n", key, key)
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 // sensitiveEnvSuffixes mark a KEYORIX_-prefixed env var as this CLI invocation's own

@@ -181,12 +181,24 @@ install_cli() {
 # happily write it to $GITHUB_ENV, and every subsequent bash-shell step in
 # the same job sources that script before running its own commands — code
 # execution in a more-privileged step. PATH lets an attacker substitute
-# arbitrary binaries; LD_PRELOAD/LD_LIBRARY_PATH inject native code into any
-# process exec'd afterward; the rest are the equivalent hooks for other
-# interpreters commonly present in CI runners (Node, Python, Perl, Ruby).
+# arbitrary binaries; LD_PRELOAD/LD_LIBRARY_PATH (and DYLD_INSERT_LIBRARIES,
+# the macOS-runner equivalent) inject native code into any process exec'd
+# afterward; the interpreter-hook names are the equivalent for other
+# languages commonly present in CI runners (Node, Python, Perl, Ruby).
+#
+# #G39: the second half of this list closes a DIFFERENT gap — CI-credential
+# env vars, not shell/interpreter hooks. GITHUB_TOKEN and the other
+# ACTIONS_*_TOKEN/_URL vars are populated by the runner itself for every job
+# and are the job's OWN ambient credentials (repo write access, OIDC/cache
+# endpoints); a secret literally named "GITHUB_TOKEN" would silently
+# overwrite the runner's real token in $GITHUB_ENV for every later step —
+# not code execution, but a direct privilege/credential-confusion path a
+# project-scoped secrets.write principal has no business reaching.
 DANGEROUS_ENV_NAMES=(
-  PATH LD_PRELOAD LD_LIBRARY_PATH BASH_ENV ENV IFS SHELLOPTS PS4
-  NODE_OPTIONS NODE_PATH PYTHONPATH PYTHONSTARTUP PERL5LIB RUBYOPT GEM_PATH
+  PATH LD_PRELOAD LD_LIBRARY_PATH DYLD_INSERT_LIBRARIES BASH_ENV ENV IFS SHELLOPTS PS4
+  NODE_OPTIONS NODE_PATH PYTHONPATH PYTHONSTARTUP PERL5LIB PERL5OPT RUBYOPT GEM_PATH GIT_SSH_COMMAND
+  GITHUB_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN
+  ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_RUNTIME_URL ACTIONS_CACHE_URL
 )
 
 validate_secret_name() {
