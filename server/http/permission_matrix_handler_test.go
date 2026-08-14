@@ -26,7 +26,7 @@ func TestGetPermissionMatrix_JSON(t *testing.T) {
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	req, err := http.NewRequest("GET", srv.URL+"/api/v1/system/rbac/permission-matrix", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/api/v1/rbac/permission-matrix", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -56,7 +56,7 @@ func TestGetPermissionMatrix_CSV(t *testing.T) {
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	req, err := http.NewRequest("GET", srv.URL+"/api/v1/system/rbac/permission-matrix?format=csv", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/api/v1/rbac/permission-matrix?format=csv", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -90,7 +90,7 @@ func TestGetPermissionMatrix_Unauthenticated(t *testing.T) {
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	req, err := http.NewRequest("GET", srv.URL+"/api/v1/system/rbac/permission-matrix", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/api/v1/rbac/permission-matrix", nil)
 	require.NoError(t, err)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -112,7 +112,7 @@ func TestGetPermissionMatrix_ProjectFilter(t *testing.T) {
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	req, err := http.NewRequest("GET", srv.URL+"/api/v1/system/rbac/permission-matrix?project_id=1", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/api/v1/rbac/permission-matrix?project_id=1", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 

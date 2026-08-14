@@ -28,7 +28,7 @@ func newUpstreamDownstreamForGroups(t *testing.T) (upstream *core.KeyorixCore, d
 	t.Cleanup(i18n.ResetForTesting)
 
 	upstream = newTestCore(t)
-	upstreamToken := createTestToken(t, upstream)
+	upstreamToken := createNodeToken(t, upstream)
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{

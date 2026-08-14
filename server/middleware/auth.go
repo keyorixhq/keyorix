@@ -69,6 +69,12 @@ type UserContext struct {
 	// requests and "user" otherwise.
 	MachineIdentityID *uint  `json:"machine_identity_id,omitempty"`
 	ActorType         string `json:"actor_type,omitempty"`
+	// MachineIdentityType is the machine identity's IdentityType (ci|k8s|service|
+	// automation|other|node), empty for a non-machine principal. #G79: RequireNodeCredential
+	// (node_credential.go) checks this equals core.MachineTypeNode to gate the
+	// RemoteStorage-sync proxy tree — a credential class, not an RBAC permission, so a
+	// principal can never be granted node status via a role.
+	MachineIdentityType string `json:"-"`
 	// MFAEnabled is true when the user has any second factor enabled (TOTP or a
 	// passkey); SessionAuth is true only for an interactive session token (false for
 	// PAT / machine / OIDC). Together they drive EnforceMFAEnrollment, which must not
@@ -848,6 +854,7 @@ func machineUserContext(m *models.MachineIdentity, roleNames []string, restricti
 		UserID:                  0,
 		MachineIdentityID:       &mid,
 		ActorType:               core.ActorTypeMachine,
+		MachineIdentityType:     m.IdentityType,
 		Username:                m.Name,
 		Roles:                   roleNames,
 		AccountState:            core.AccountActive,

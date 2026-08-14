@@ -962,6 +962,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permRolesWrite)).Delete("/{id}/permissions/{permissionId}", rbacHandler.RemovePermissionFromRole)
 		})
 
+		// #G79: relocated out of the /system group (a human admin, not a node, wants
+		// this) when that group's gate became RequireNodeCredential — also fixes the
+		// CLI's export-matrix consumer, which already requested this exact path
+		// (/api/v1/rbac/permission-matrix, no /system prefix) and was 404ing.
+		r.With(customMiddleware.RequirePermission(permRolesRead)).Get("/rbac/permission-matrix", rbacHandler.GetPermissionMatrix)
+
 		// Permissions endpoints
 		r.Route("/permissions", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission(permRolesRead))
@@ -1023,22 +1029,44 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})
 
+		// Per-scheduler last-run/last-success timestamps (Prometheus exposition format),
+		// deliberately kept off the public, unauthenticated /metrics endpoint — see
+		// server/middleware/scheduler_metrics.go — since an exact tick timestamp would
+		// let an anonymous caller predict a security-relevant job's next execution to
+		// sub-second precision. #G79: relocated out of the /system group (a human admin,
+		// not a node, wants this) when that group's gate became RequireNodeCredential.
+		r.With(customMiddleware.RequirePermission(permSystemWrite)).Get("/admin/scheduler-metrics", customMiddleware.SchedulerMetricsHandler().ServeHTTP)
+
 		// System endpoints — server-to-server proxy API for RemoteStorage followers
-		// (ADR-049). All routes require system.write: only service credentials issued
-		// to downstream Keyorix nodes should reach these endpoints, never regular user
-		// sessions. Prior gate (system.read) was held by every user via system_viewer,
-		// exposing TOTP seed ciphertexts, WebAuthn credentials, machine token hashes,
-		// global admin roster, and setup-token data to all authenticated users (#r124).
+		// (ADR-049). #G79: this used to be gated by RequirePermission(system.write) — a
+		// plain RBAC permission string, not a check that the caller is actually a
+		// trusted downstream node. system.write is intentionally grantable to a narrow,
+		// documented custom role (audit checkpoints, legal holds, risk exceptions, SoD
+		// policies, admin job triggers — see internal/core/auth_bootstrap.go); granting
+		// that role for its documented purpose unknowingly also handed the grantee the
+		// ability to act as a node.
+		//
+		// Now gated by RequireNodeCredentialOrPermission(permSystemWrite)
+		// (server/middleware/node_credential.go): a node-type machine credential
+		// (core.MachineTypeNode) OR the existing system.write permission. A pure
+		// node-credential-only gate was tried and reverted — several routes nested here
+		// (legal-hold, risk-exceptions, ...) are system.write's OWN documented footprint,
+		// not RemoteStorage-sync routes, and their internal/core functions self-check for
+		// an admin-tier RBAC principal (Wave 1, PR #1397) — a bare node credential, which
+		// deliberately carries zero RBAC permissions, can never satisfy that check, so a
+		// sole node gate would have made those legitimate admin features unreachable via
+		// storage.type: remote. This does not fully close the original over-broad-grant
+		// concern on its own: adminRoleNames (authz.go) unconditionally bypass every
+		// permission check, so any admin-tier role holder still reaches this whole surface
+		// via the permission arm regardless of what's explicitly bundled into their role.
+		// Every inner route's former per-route system.write re-check has been removed as
+		// redundant now that the group itself enforces the same permission (plus the
+		// node-credential alternative).
+		// Prior gate (system.read) was held by every user via system_viewer, exposing
+		// TOTP seed ciphertexts, WebAuthn credentials, machine token hashes, global admin
+		// roster, and setup-token data to all authenticated users (#r124).
 		r.Route("/system", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission(permSystemWrite))
-			// Per-scheduler last-run/last-success timestamps (Prometheus exposition
-			// format), deliberately kept off the public, unauthenticated /metrics
-			// endpoint — see server/middleware/scheduler_metrics.go — since an exact
-			// tick timestamp would let an anonymous caller predict a security-relevant
-			// job's next execution to sub-second precision. Gated behind system.write,
-			// like every other route in this group (there is no system.read tier
-			// here — see the group header comment above).
-			r.Get("/scheduler-metrics", customMiddleware.SchedulerMetricsHandler().ServeHTTP)
+			r.Use(customMiddleware.RequireNodeCredentialOrPermission(permSystemWrite))
 
 			// Login/password-reset rate-limit counter proxy (#452 follow-up). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) — a
@@ -1055,8 +1083,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// there is no separate system.read tier in this group (see the group
 			// header comment above).
 			r.Get("/login-attempts/count", authHandler.CountLoginAttemptsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/login-attempts", authHandler.RecordLoginAttemptProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/login-attempts/prune", authHandler.PruneLoginAttemptsProxy)
+			r.Post("/login-attempts", authHandler.RecordLoginAttemptProxy)
+			r.Post("/login-attempts/prune", authHandler.PruneLoginAttemptsProxy)
 
 			// Project-invitation storage-primitive proxy (#507). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1079,8 +1107,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// system.read tier in this group.
 			r.Get("/invitations/{id}", catalogHandler.GetInvitationProxy)
 			r.Get(pathInvitations, catalogHandler.ListInvitationsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathInvitations, catalogHandler.CreateInvitationProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
+			r.Post(pathInvitations, catalogHandler.CreateInvitationProxy)
+			r.Put("/invitations/{id}", catalogHandler.UpdateInvitationProxy)
 
 			// Self-service access-request storage-primitive proxy (#523). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1117,10 +1145,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// there is no separate system.read tier in this group.
 			r.Get("/access-requests/{id}", catalogHandler.GetAccessRequestProxy)
 			r.Get("/access-requests", catalogHandler.ListAccessRequestsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-requests", catalogHandler.CreateAccessRequestProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/access-requests/{id}", catalogHandler.UpdateAccessRequestProxy)
+			r.Post("/access-requests", catalogHandler.CreateAccessRequestProxy)
+			r.Put("/access-requests/{id}", catalogHandler.UpdateAccessRequestProxy)
 			r.Get("/access-requests/{id}/approvals", catalogHandler.ListAccessRequestApprovalsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-requests/{id}/approvals", catalogHandler.CreateAccessRequestApprovalProxy)
+			r.Post("/access-requests/{id}/approvals", catalogHandler.CreateAccessRequestApprovalProxy)
 
 			// Dynamic-secrets storage-primitive proxy (round-116 finding). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1150,19 +1178,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/dynamic-secrets/configs/classification-counts", dynamicSecretHandler.CountDynamicSecretConfigsByClassificationProxy)
 			r.Get("/dynamic-secrets/configs/{id}", dynamicSecretHandler.GetDynamicSecretConfigProxy)
 			r.Get("/dynamic-secrets/configs", dynamicSecretHandler.ListDynamicSecretConfigsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/dynamic-secrets/configs/{id}", dynamicSecretHandler.UpdateDynamicSecretConfigProxy)
+			r.Post("/dynamic-secrets/configs", dynamicSecretHandler.CreateDynamicSecretConfigProxy)
+			r.Put("/dynamic-secrets/configs/{id}", dynamicSecretHandler.UpdateDynamicSecretConfigProxy)
 			// TransitionDynamicSecretConfigDisabled is a dedicated conditional-write
 			// route (NOT a generic Update), closing the StateTransitionMissingCAS
 			// TOCTOU on DynamicSecretConfig.Disabled across this HTTP hop — see
 			// dynamic_secrets_proxy.go's TransitionDynamicSecretConfigDisabledProxy doc.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/dynamic-secrets/configs/{id}/transition", dynamicSecretHandler.TransitionDynamicSecretConfigDisabledProxy)
+			r.Put("/dynamic-secrets/configs/{id}/transition", dynamicSecretHandler.TransitionDynamicSecretConfigDisabledProxy)
 			r.Get("/dynamic-secrets/leases/active-count", dynamicSecretHandler.CountActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/expired", dynamicSecretHandler.ListExpiredActiveLeasesProxy)
 			r.Get("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.GetDynamicSecretLeaseProxy)
 			r.Get("/dynamic-secrets/leases", dynamicSecretHandler.ListDynamicSecretLeasesProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/dynamic-secrets/leases", dynamicSecretHandler.CreateDynamicSecretLeaseProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.UpdateDynamicSecretLeaseProxy)
+			r.Post("/dynamic-secrets/leases", dynamicSecretHandler.CreateDynamicSecretLeaseProxy)
+			r.Put("/dynamic-secrets/leases/{leaseID}", dynamicSecretHandler.UpdateDynamicSecretLeaseProxy)
 
 			// Group CRUD/membership storage-primitive proxy (finding filed round 116).
 			// Lets a downstream Keyorix server booted with storage.type: remote
@@ -1194,14 +1222,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/groups/page", groupHandler.ListGroupsPageProxy)
 			r.Get("/groups/members-by-ids", groupHandler.ListGroupMembersByIDsProxy)
 			r.Get(pathGroups, groupHandler.ListGroupsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathGroups, groupHandler.CreateGroupProxy)
+			r.Post(pathGroups, groupHandler.CreateGroupProxy)
 			r.Get(pathGroupsID, groupHandler.GetGroupProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathGroupsID, groupHandler.UpdateGroupProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathGroupsID, groupHandler.DeleteGroupProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/groups/{id}/restore", groupHandler.RestoreGroupProxy)
+			r.Put(pathGroupsID, groupHandler.UpdateGroupProxy)
+			r.Delete(pathGroupsID, groupHandler.DeleteGroupProxy)
+			r.Post("/groups/{id}/restore", groupHandler.RestoreGroupProxy)
 			r.Get("/groups/{id}/members", groupHandler.ListGroupMembersProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/groups/{id}/members", groupHandler.AddGroupMemberProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
+			r.Post("/groups/{id}/members", groupHandler.AddGroupMemberProxy)
+			r.Delete("/groups/{id}/members/{userId}", groupHandler.RemoveGroupMemberProxy)
 			r.Get("/users/{id}/groups", groupHandler.GetUserGroupsProxy)
 
 			// Machine-identity storage-primitive proxy (finding #518). Lets a
@@ -1250,30 +1278,30 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/machine-identities/classification-counts", catalogHandler.CountMachineIdentitiesByClassificationProxy)
 			r.Get("/machine-identities/all", catalogHandler.ListAllMachineIdentitiesProxy)
 			r.Get("/machine-identities", catalogHandler.ListMachineIdentitiesProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-identities", catalogHandler.CreateMachineIdentityProxy)
+			r.Post("/machine-identities", catalogHandler.CreateMachineIdentityProxy)
 			r.Get("/machine-identities/{id}", catalogHandler.GetMachineIdentityProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/machine-identities/{id}", catalogHandler.UpdateMachineIdentityProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/machine-identities/{id}/transition", catalogHandler.TransitionMachineIdentityStateProxy)
+			r.Put("/machine-identities/{id}", catalogHandler.UpdateMachineIdentityProxy)
+			r.Put("/machine-identities/{id}/transition", catalogHandler.TransitionMachineIdentityStateProxy)
 			r.Get("/machine-identities/{id}/credentials", catalogHandler.ListMachineIdentityCredentialsProxy)
 			r.Get("/machine-identities/{id}/roles/ids", catalogHandler.GetMachineRoleIDsAtProxy)
 			r.Get("/machine-identities/{id}/roles", catalogHandler.GetMachineRolesProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-identities/{id}/roles/{roleId}", catalogHandler.AssignMachineRoleProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/machine-identities/{id}/roles/{roleId}", catalogHandler.RemoveMachineRoleProxy)
+			r.Post("/machine-identities/{id}/roles/{roleId}", catalogHandler.AssignMachineRoleProxy)
+			r.Delete("/machine-identities/{id}/roles/{roleId}", catalogHandler.RemoveMachineRoleProxy)
 			r.Get("/machine-identities/{id}/oidc-bindings", catalogHandler.ListOIDCBindingsProxy)
 
 			r.Get("/machine-credentials/classification-counts", catalogHandler.CountMachineIdentityCredentialsByClassificationProxy)
 			r.Get("/machine-credentials/active", catalogHandler.ListActiveMachineIdentityCredentialsProxy)
 			r.Get("/machine-credentials/by-hash/{hash}", catalogHandler.GetMachineIdentityCredentialByHashProxy)
 			r.Get("/machine-credentials/{id}", catalogHandler.GetMachineIdentityCredentialByIDProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-credentials", catalogHandler.CreateMachineIdentityCredentialProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/machine-credentials/{id}", catalogHandler.UpdateMachineIdentityCredentialProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-credentials/{id}/revoke", catalogHandler.RevokeMachineIdentityCredentialProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-credentials/{id}/touch", catalogHandler.TouchMachineIdentityCredentialProxy)
+			r.Post("/machine-credentials", catalogHandler.CreateMachineIdentityCredentialProxy)
+			r.Put("/machine-credentials/{id}", catalogHandler.UpdateMachineIdentityCredentialProxy)
+			r.Post("/machine-credentials/{id}/revoke", catalogHandler.RevokeMachineIdentityCredentialProxy)
+			r.Post("/machine-credentials/{id}/touch", catalogHandler.TouchMachineIdentityCredentialProxy)
 
 			r.Get("/machine-oidc-bindings/by-subject", catalogHandler.GetMachineByOIDCSubjectProxy)
 			r.Get("/machine-oidc-bindings/{id}", catalogHandler.GetOIDCBindingByIDProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/machine-oidc-bindings", catalogHandler.CreateOIDCBindingProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/machine-oidc-bindings/{id}", catalogHandler.DeleteOIDCBindingProxy)
+			r.Post("/machine-oidc-bindings", catalogHandler.CreateOIDCBindingProxy)
+			r.Delete("/machine-oidc-bindings/{id}", catalogHandler.DeleteOIDCBindingProxy)
 
 			// Setup-token storage-primitive proxy (#510). Lets a downstream Keyorix
 			// server booted with storage.type: remote (ADR-049) proxy
@@ -1293,10 +1321,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// separate system.read tier in this group.
 			r.Get("/setup-tokens/by-hash/{hash}", authHandler.GetSetupTokenByHashProxy)
 			r.Get("/setup-tokens/count", authHandler.CountSetupTokensSinceProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens/supersede", authHandler.SupersedeSetupTokensProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
+			r.Post("/setup-tokens", authHandler.CreateSetupTokenProxy)
+			r.Post("/setup-tokens/supersede", authHandler.SupersedeSetupTokensProxy)
+			r.Post("/setup-tokens/{id}/consume", authHandler.ConsumeSetupTokenProxy)
+			r.Post("/setup-tokens/{id}/expire", authHandler.ExpireSetupTokenProxy)
 
 			// Keyorix Connect per-reference-grant storage-primitive proxy (ADR-045;
 			// backlog #527). Lets a downstream Keyorix server booted with
@@ -1318,8 +1346,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// system.read tier in this group.
 			r.Get("/connect-grants/by-connector/{connector}", authHandler.ListConnectRefGrantsByConnectorProxy)
 			r.Get("/connect-grants", authHandler.ListConnectRefGrantsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
+			r.Post("/connect-grants", authHandler.CreateConnectRefGrantProxy)
+			r.Delete("/connect-grants/{id}", authHandler.DeleteConnectRefGrantProxy)
 
 			// SSO login-state storage-primitive proxy (#521). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1335,8 +1363,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// system.write tier — see the group header comment above) — no new
 			// privilege class. Both create and the single-use consume are
 			// mutations and require system.write.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
+			r.Post("/sso-state", authHandler.CreateSSOLoginStateProxy)
+			r.Post("/sso-state/consume", authHandler.ConsumeSSOLoginStateProxy)
 
 			// Project-membership storage-primitive proxy (#511). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1367,8 +1395,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/project-memberships/by-user/{userID}", catalogHandler.ListUserMembershipsProxy)
 			r.Get("/project-memberships/{id}", catalogHandler.GetMembershipProxy)
 			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
+			r.Post("/project-memberships", catalogHandler.CreateMembershipProxy)
+			r.Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
 
 			// Secret-dependency storage-primitive proxy (finding #519). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1399,9 +1427,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/secret-dependencies/for-update", secretHandler.ListSecretDependenciesForProjectForUpdateProxy)
 			r.Get("/secret-dependencies/{id}", secretHandler.GetSecretDependencyProxy)
 			r.Get("/secret-dependencies", secretHandler.ListSecretDependenciesForProjectProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/secret-dependencies/{id}", secretHandler.DeleteSecretDependencyProxy)
+			r.Post("/secret-dependencies", secretHandler.CreateSecretDependencyProxy)
+			r.Post("/secret-dependencies/exclusive", secretHandler.CreateSecretDependencyExclusiveProxy)
+			r.Delete("/secret-dependencies/{id}", secretHandler.DeleteSecretDependencyProxy)
 
 			// WebAuthn / passkey storage-primitive proxy (finding #517). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1432,13 +1460,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/webauthn/credentials/lookup", authHandler.GetWebAuthnCredentialByCredIDProxy)
 			r.Get("/webauthn/credentials/count", authHandler.CountWebAuthnCredentialsProxy)
 			r.Get("/webauthn/credentials", authHandler.ListWebAuthnCredentialsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/webauthn/credentials", authHandler.CreateWebAuthnCredentialProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/webauthn/credentials/{id}", authHandler.UpdateWebAuthnCredentialProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Patch("/webauthn/credentials/advance-counter", authHandler.AdvanceWebAuthnCredentialCounterProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/webauthn/users/{userId}/credentials/{id}", authHandler.DeleteWebAuthnCredentialProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
+			r.Post("/webauthn/credentials", authHandler.CreateWebAuthnCredentialProxy)
+			r.Put("/webauthn/credentials/{id}", authHandler.UpdateWebAuthnCredentialProxy)
+			r.Patch("/webauthn/credentials/advance-counter", authHandler.AdvanceWebAuthnCredentialCounterProxy)
+			r.Delete("/webauthn/users/{userId}/credentials/{id}", authHandler.DeleteWebAuthnCredentialProxy)
+			r.Put("/webauthn/users/{userId}/webauthn-enabled", authHandler.SetUserWebAuthnEnabledProxy)
+			r.Post("/webauthn/sessions", authHandler.CreateWebAuthnSessionProxy)
+			r.Post("/webauthn/sessions/consume", authHandler.ConsumeWebAuthnSessionProxy)
 
 			// Login-lockout accounting storage-primitive proxy (backlog #529). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1464,7 +1492,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// one proxied round trip preserves LocalStorage's own semantics unchanged —
 			// unlike AdvanceWebAuthnCredentialCounterProxy just above, no new atomic
 			// primitive is needed.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
+			r.Put("/users/{id}/login-lockout", authHandler.UpdateLoginLockoutStateProxy)
 
 			// User active-state CAS storage-primitive proxy. Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1485,7 +1513,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// no new privilege class. See users_active_transition_proxy.go's
 			// package doc for why this is a dedicated route rather than a proxy
 			// onto the human-facing PUT /api/v1/users/{id} route.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/users/{id}/active-transition", userHandler.UpdateUserIfActiveStateMatchesProxy)
+			r.Put("/users/{id}/active-transition", userHandler.UpdateUserIfActiveStateMatchesProxy)
 
 			// Legal-hold storage-primitive proxy (finding #519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1509,8 +1537,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// only ever one active row, looked up by "active" rather than by ID), so
 			// route registration order here is purely cosmetic.
 			r.Get("/legal-hold/active", dashboardHandler.GetActiveLegalHoldProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathLegalHold, dashboardHandler.CreateLegalHoldProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/legal-hold/{id}", dashboardHandler.UpdateLegalHoldProxy)
+			r.Post(pathLegalHold, dashboardHandler.CreateLegalHoldProxy)
+			r.Put("/legal-hold/{id}", dashboardHandler.UpdateLegalHoldProxy)
 
 			// Access-review-campaign storage-primitive proxy (ISO 27001 A.5.18,
 			// finding #519). Lets a downstream Keyorix server booted with
@@ -1550,14 +1578,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/access-review-campaigns/open", catalogHandler.GetOpenAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/latest-closed", catalogHandler.GetLatestClosedAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/items/{itemID}", catalogHandler.GetAccessReviewItemProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/access-review-campaigns/items/{itemID}", catalogHandler.UpdateAccessReviewItemProxy)
+			r.Put("/access-review-campaigns/items/{itemID}", catalogHandler.UpdateAccessReviewItemProxy)
 			r.Get("/access-review-campaigns", catalogHandler.ListAccessReviewCampaignsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-review-campaigns", catalogHandler.CreateAccessReviewCampaignProxy)
+			r.Post("/access-review-campaigns", catalogHandler.CreateAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/{id}", catalogHandler.GetAccessReviewCampaignProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/access-review-campaigns/{id}", catalogHandler.UpdateAccessReviewCampaignProxy)
+			r.Put("/access-review-campaigns/{id}", catalogHandler.UpdateAccessReviewCampaignProxy)
 			r.Get("/access-review-campaigns/{id}/items/pending-count", catalogHandler.CountPendingAccessReviewItemsProxy)
 			r.Get("/access-review-campaigns/{id}/items", catalogHandler.ListAccessReviewItemsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/access-review-campaigns/{id}/items", catalogHandler.CreateAccessReviewItemsProxy)
+			r.Post("/access-review-campaigns/{id}/items", catalogHandler.CreateAccessReviewItemsProxy)
 
 			// Break-glass activation storage-primitive proxy (#519). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)
@@ -1584,9 +1612,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// separate system.read tier in this group.
 			r.Get("/break-glass/{id}", catalogHandler.GetBreakGlassActivationProxy)
 			r.Get("/break-glass", catalogHandler.ListBreakGlassActivationsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
+			r.Post("/break-glass", catalogHandler.CreateBreakGlassActivationProxy)
+			r.Put("/break-glass/{id}", catalogHandler.UpdateBreakGlassActivationProxy)
+			r.Post("/break-glass/{id}/revoke", catalogHandler.RevokeBreakGlassActivationProxy)
 
 			// Risk-exception storage-primitive proxy (#519). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1610,7 +1638,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// project-memberships proxy above — no new privilege class.
 			r.Get(pathRiskExceptionsID, dashboardHandler.GetRiskExceptionProxy)
 			r.Get(pathRiskExceptions, dashboardHandler.ListRiskExceptionsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskExceptionProxy)
+			r.Post(pathRiskExceptions, dashboardHandler.CreateRiskExceptionProxy)
 			// PUT pathRiskExceptionsID (UpdateRiskExceptionProxy) is deliberately NOT
 			// registered (#G79): it accepted a client-supplied full row with no
 			// auth/business-logic decision — the dual-control invariant and every
@@ -1624,8 +1652,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// dual-control check (approver != creator) and the already-revoked/
 			// already-expired preconditions apply on every call, and the request
 			// body carries no fields that matter anymore.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID+"/revoke", dashboardHandler.RevokeRiskExceptionProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathRiskExceptionsID+"/approve", dashboardHandler.ApproveRiskExceptionProxy)
+			r.Put(pathRiskExceptionsID+"/revoke", dashboardHandler.RevokeRiskExceptionProxy)
+			r.Put(pathRiskExceptionsID+"/approve", dashboardHandler.ApproveRiskExceptionProxy)
 
 			// Separation-of-duties (SoD) policy storage-primitive proxy (finding
 			// #519). Lets a downstream Keyorix server booted with storage.type:
@@ -1649,8 +1677,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// tier in this group.
 			r.Get("/sod-policies/{id}", catalogHandler.GetSoDPolicyProxy)
 			r.Get("/sod-policies", catalogHandler.ListSoDPoliciesProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/sod-policies/{id}", catalogHandler.DeleteSoDPolicyProxy)
+			r.Post("/sod-policies", catalogHandler.CreateSoDPolicyProxy)
+			r.Delete("/sod-policies/{id}", catalogHandler.DeleteSoDPolicyProxy)
 
 			// Data-retention/purge-sweep storage-primitive proxy (finding #520). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1682,16 +1710,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// (there is no separate system.read tier in this group) — every
 			// mutating route requires it too.
 			r.Get("/retention/users/stale", userHandler.ListUsersInStateBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/anomaly-alerts/purge", auditHandler.DeleteAnomalyAlertsBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/access-reviews/purge-closed", catalogHandler.DeleteClosedAccessReviewsBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/break-glass/purge-expired", catalogHandler.DeleteExpiredBreakGlassBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/access-requests/purge-resolved", catalogHandler.DeleteResolvedAccessRequestsBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/role-grants/purge-expired", rbacHandler.DeleteExpiredRoleGrantsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/share-records/purge-expired", shareHandler.DeleteExpiredShareRecordsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
+			r.Post("/retention/secrets/purge", secretHandler.PurgeDeletedSecretsBeforeProxy)
+			r.Post("/retention/anomaly-alerts/purge", auditHandler.DeleteAnomalyAlertsBeforeProxy)
+			r.Post("/retention/access-reviews/purge-closed", catalogHandler.DeleteClosedAccessReviewsBeforeProxy)
+			r.Post("/retention/break-glass/purge-expired", catalogHandler.DeleteExpiredBreakGlassBeforeProxy)
+			r.Post("/retention/access-requests/purge-resolved", catalogHandler.DeleteResolvedAccessRequestsBeforeProxy)
+			r.Post("/retention/role-grants/purge-expired", rbacHandler.DeleteExpiredRoleGrantsProxy)
+			r.Post("/retention/share-records/purge-expired", shareHandler.DeleteExpiredShareRecordsProxy)
+			r.Post("/retention/users/purge", userHandler.PurgeDeletedUsersBeforeProxy)
+			r.Post("/retention/projects/purge", catalogHandler.PurgeDeletedProjectsBeforeProxy)
+			r.Post("/retention/environments/purge", catalogHandler.PurgeDeletedEnvironmentsBeforeProxy)
 
 			// Misc storage-primitive proxies (finding #531 — four independent,
 			// unrelated small gaps grouped by similar low-to-moderate severity;
@@ -1741,7 +1769,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// racing a resume on the same secret could silently clobber each other.
 			// Gated system.write like every other route in this group (there is no
 			// separate system.read tier here).
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/secrets/{id}/transition-status", secretHandler.TransitionSecretStatusProxy)
+			r.Put("/secrets/{id}/transition-status", secretHandler.TransitionSecretStatusProxy)
 
 			// ListSharesByOwner: lets a downstream server proxy the "shares I
 			// created" query to THIS server's real storage backend. Before this
@@ -1770,7 +1798,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// (atomic create-user+role-grants, backing POST /api/v1/users and
 			// gRPC CreateUser whenever role grants are included) hard-failed on
 			// this stub. A mutation, gated system.write.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/users/with-role-grants", userHandler.CreateUserWithRoleGrantsProxy)
+			r.Post("/users/with-role-grants", userHandler.CreateUserWithRoleGrantsProxy)
 
 			// RBAC role-grant primitive proxy (finding #525). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1813,12 +1841,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/rbac/project-role-assignments", rbacHandler.ListProjectRoleAssignmentsProxy)
 			r.Get("/rbac/project-machine-role-assignments", rbacHandler.ListProjectMachineRoleAssignmentsProxy)
 			r.Get("/rbac/global-admin-assignments", rbacHandler.ListGlobalAdminAssignmentsForUpdateProxy)
-			r.With(customMiddleware.RequirePermission(permRolesRead)).Get("/rbac/permission-matrix", rbacHandler.GetPermissionMatrix)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/clear-project-secret-ownership", rbacHandler.ClearProjectSecretOwnershipProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/rbac/global-admin-role/remove-guarded", rbacHandler.RemoveGlobalAdminRoleGuardedProxy)
+			r.Post("/rbac/assign-role-with-expiry", rbacHandler.AssignRoleWithExpiryProxy)
+			r.Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
+			r.Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
+			r.Post("/rbac/clear-project-secret-ownership", rbacHandler.ClearProjectSecretOwnershipProxy)
+			r.Post("/rbac/global-admin-role/remove-guarded", rbacHandler.RemoveGlobalAdminRoleGuardedProxy)
 
 			// MFA enrolment/management storage-primitive proxy (finding #524). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1847,23 +1874,23 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// above. Static sub-paths ("secrets", "recovery-codes/count") are registered
 			// before their sibling {userId} routes.
 			r.Get("/mfa/secrets", authHandler.GetMFASecretProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/secrets", authHandler.UpsertMFASecretProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/secrets/{userId}/activate", authHandler.ActivateMFASecretProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/users/{userId}", authHandler.DeleteMFAForUserProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/mfa/users/{userId}/mfa-enabled", authHandler.SetUserMFAEnabledProxy)
+			r.Post("/mfa/secrets", authHandler.UpsertMFASecretProxy)
+			r.Post("/mfa/secrets/{userId}/activate", authHandler.ActivateMFASecretProxy)
+			r.Delete("/mfa/users/{userId}", authHandler.DeleteMFAForUserProxy)
+			r.Put("/mfa/users/{userId}/mfa-enabled", authHandler.SetUserMFAEnabledProxy)
 			r.Get("/mfa/recovery-codes/count", authHandler.CountUnusedMFARecoveryCodesProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/recovery-codes", authHandler.CreateMFARecoveryCodesProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/totp-step-used", authHandler.MarkTOTPStepUsedProxy)
+			r.Post("/mfa/recovery-codes", authHandler.CreateMFARecoveryCodesProxy)
+			r.Delete("/mfa/recovery-codes/{userId}", authHandler.DeleteMFARecoveryCodesProxy)
+			r.Post("/mfa/totp-step-used", authHandler.MarkTOTPStepUsedProxy)
 
 			// MFAStepUpGrant proxy — lets a RemoteStorage spoke node persist and
 			// query step-up grants against this server's real storage backend, so
 			// the classification gate works correctly under storage.type: remote.
 			// Static sub-path ("stepup-grants/active") is registered before the
 			// {userId} wildcard to avoid route shadowing.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/mfa/stepup-grants", authHandler.CreateMFAStepUpGrantProxy)
+			r.Post("/mfa/stepup-grants", authHandler.CreateMFAStepUpGrantProxy)
 			r.Post("/mfa/stepup-grants/active", authHandler.GetActiveMFAStepUpGrantProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete("/mfa/stepup-grants/{userId}", authHandler.DeleteMFAStepUpGrantsForProxy)
+			r.Delete("/mfa/stepup-grants/{userId}", authHandler.DeleteMFAStepUpGrantsForProxy)
 
 			// Project/environment catalog CRUD storage-primitive proxy (finding #528).
 			// Lets a downstream Keyorix server booted with storage.type: remote
@@ -1920,16 +1947,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/projects/with-counts", catalogHandler.ListProjectsWithCountsProxy)
 			r.Get(pathProjects, catalogHandler.ListProjectsProxy)
 			r.Get(pathProjectsID, catalogHandler.GetProjectProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put(pathProjectsID, catalogHandler.UpdateProjectProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/projects/{id}/restore", catalogHandler.RestoreProjectProxy)
+			r.Put(pathProjectsID, catalogHandler.UpdateProjectProxy)
+			r.Delete(pathProjectsID, catalogHandler.DeleteProjectProxy)
+			r.Post("/projects/{id}/delete-if-empty", catalogHandler.DeleteProjectIfEmptyProxy)
+			r.Post("/projects/{id}/restore", catalogHandler.RestoreProjectProxy)
 			r.Get(pathProjectMembers, catalogHandler.ListProjectMembersProxy)
 			r.Get(pathProjectEnvs, catalogHandler.ListEnvironmentsByProjectProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironmentProxy)
+			r.Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironmentProxy)
 			r.Get("/environments", catalogHandler.ListEnvironmentsProxy)
 			r.Get(pathEnvironmentsID, catalogHandler.GetEnvironmentProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironmentProxy)
+			r.Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironmentProxy)
 
 			// Scheduler-lock storage-primitive proxy (#530). Lets a downstream
 			// Keyorix server booted with storage.type: remote (ADR-049) proxy
@@ -1955,8 +1982,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// storage.Storage call, so no naive "check, then write" pair is ever
 			// exposed over this HTTP hop to reopen the exclusivity race the lock
 			// exists to prevent.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/scheduler-lock/acquire", authHandler.AcquireSchedulerLockProxy)
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/scheduler-lock/release", authHandler.ReleaseSchedulerLockProxy)
+			r.Post("/scheduler-lock/acquire", authHandler.AcquireSchedulerLockProxy)
+			r.Post("/scheduler-lock/release", authHandler.ReleaseSchedulerLockProxy)
 
 			// Audit-event ingest proxy (#r122-A). Lets a downstream Keyorix server
 			// booted with storage.type: remote persist its emitAudit-emitted events
@@ -1966,7 +1993,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// the full analysis. system.write: raw storage write, same tier as every
 			// other mutating proxy in this group; no audit POLICY decision is made
 			// here.
-			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/audit/event", auditHandler.IngestAuditEventProxy)
+			r.Post("/audit/event", auditHandler.IngestAuditEventProxy)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
