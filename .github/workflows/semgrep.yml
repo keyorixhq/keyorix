@@ -12,6 +12,13 @@ on:
 
 permissions: {}
 
+# Cancel superseded runs on the same ref (matches web-ci.yml's own convention):
+# a later push/merge on the same branch makes an in-flight run's result moot
+# before it even finishes.
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
     runs-on: ubuntu-latest

@@ -16,6 +16,15 @@ on:
 # flags a blanket workflow-level grant even when it's already read-only.
 permissions: {}
 
+# Cancel superseded runs on the same ref (matches web-ci.yml's own convention):
+# a later push/merge on the same branch makes an in-flight run's result moot
+# before it even finishes, and this is by far the most expensive workflow here
+# (8 parallel test-suite shards among ~20 jobs) -- letting a superseded run
+# burn its full runtime is pure wasted Actions-minute spend.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
   # the tools that gate our security checks are themselves a supply-chain

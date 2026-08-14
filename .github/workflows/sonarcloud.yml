@@ -10,6 +10,13 @@ on:
 
 permissions: {}
 
+# Cancel superseded runs on the same ref (matches web-ci.yml's own convention):
+# a later push/merge on the same branch makes an in-flight run's result moot
+# before it even finishes.
+concurrency:
+  group: sonarcloud-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Sonar's "New Code Coverage" gate only evaluates lines this PR actually
   # changed (ADR-070's blended-percentage tradeoff is about the overall

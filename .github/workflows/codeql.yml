@@ -16,6 +16,15 @@ on:
 permissions:
   contents: read # NOSONAR githubactions:S8264 -- workflow-level read is intentional; job-level permissions further restrict (security-events:write only for the upload step)
 
+# Cancel superseded runs on the same ref (matches web-ci.yml's own convention):
+# a later push/merge on the same branch makes an in-flight run's result moot
+# before it even finishes. Also covers the weekly schedule trigger -- if it
+# happens to overlap a push-triggered run, that push-run already scans the
+# current code, making the concurrent scheduled one redundant.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GO_VERSION: '1.26.6'
 

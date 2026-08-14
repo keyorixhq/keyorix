@@ -12,6 +12,13 @@ on:
 
 permissions: {}
 
+# Cancel superseded runs on the same ref (matches web-ci.yml's own convention):
+# a later push/merge on the same branch makes an in-flight run's result moot
+# before it even finishes.
+concurrency:
+  group: osv-scanner-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
     uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@f4cfcc01edc9c8b756a9b873b7a623ca674da51e" # v1.9.1
