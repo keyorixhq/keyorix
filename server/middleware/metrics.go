@@ -43,22 +43,44 @@ func PrometheusMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
-		next.ServeHTTP(ww, r)
 
-		// RoutePattern is populated once chi has matched the route, so it is read
-		// after the handler runs. Unmatched requests (404s) share one label to
-		// avoid unbounded cardinality from arbitrary paths.
-		route := chi.RouteContext(r.Context()).RoutePattern()
-		if route == "" {
-			route = "unmatched"
-		}
-		status := ww.Status()
-		if status == 0 {
-			status = http.StatusOK // handler returned without an explicit WriteHeader
-		}
-		method := normalizeMethod(r.Method)
-		httpRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
-		httpRequestDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
+		// #G55: previously the metric-recording logic below ran only on normal
+		// return — a panicking handler skipped straight past it (this function's own
+		// stack frame unwinds without ever reaching the code after next.ServeHTTP),
+		// making panicking requests invisible in metrics entirely. A defer runs
+		// regardless of panic vs. normal return; recover()+re-panic here records the
+		// request (as the 500 Recovery, further up the chain, will produce) without
+		// swallowing the panic — Recovery still needs to see it to respond.
+		defer func() {
+			// RoutePattern is populated once chi has matched the route, so it is read
+			// after the handler runs. Unmatched requests (404s) share one label to
+			// avoid unbounded cardinality from arbitrary paths.
+			route := chi.RouteContext(r.Context()).RoutePattern()
+			if route == "" {
+				route = "unmatched"
+			}
+			panicVal := recover()
+			var status int
+			switch {
+			case panicVal != nil:
+				// ww.Status() is still 0 here — nothing has been written through ww at
+				// this point in the panic unwind (Recovery's own write happens later,
+				// further up the stack). Record the status Recovery will actually send.
+				status = http.StatusInternalServerError
+			case ww.Status() == 0:
+				status = http.StatusOK // handler returned without an explicit WriteHeader
+			default:
+				status = ww.Status()
+			}
+			method := normalizeMethod(r.Method)
+			httpRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+			httpRequestDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
+			if panicVal != nil {
+				panic(panicVal)
+			}
+		}()
+
+		next.ServeHTTP(ww, r)
 	})
 }
 
