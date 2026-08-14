@@ -104,7 +104,21 @@ func Logger() func(next http.Handler) http.Handler {
 
 			t1 := time.Now()
 			defer func() {
-				entry.Write(ww.Status(), ww.BytesWritten(), ww.Header(), time.Since(t1), nil)
+				// #G55: without recover() here, a panicking handler still reaches this
+				// defer (defers always run), but ww.Status() reads 0 at this point in the
+				// unwind (Recovery's write happens later, further up the stack) — logging
+				// a misleading status 0 instead of the 500 the client actually receives.
+				// Recover, log the TRUE eventual status, then re-panic so Recovery (outer)
+				// still gets to handle it.
+				panicVal := recover()
+				status := ww.Status()
+				if panicVal != nil {
+					status = http.StatusInternalServerError
+				}
+				entry.Write(status, ww.BytesWritten(), ww.Header(), time.Since(t1), nil)
+				if panicVal != nil {
+					panic(panicVal)
+				}
 			}()
 
 			next.ServeHTTP(ww, middleware.WithLogEntry(r, entry))
