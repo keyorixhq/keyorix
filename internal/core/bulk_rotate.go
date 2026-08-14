@@ -160,7 +160,10 @@ func (c *KeyorixCore) bulkRotateExplicit(ctx context.Context, req BulkRotateRequ
 	for _, s := range secrets {
 		result.Total++
 		if s.ProjectID != req.ProjectID {
-			result.Failed = append(result.Failed, BulkRotateError{SecretID: s.ID, Name: s.Name, Error: "secret does not belong to this project"})
+			// #G31: a secret from another project is reported identically to a
+			// nonexistent one — the caller has no right to learn that another
+			// tenant's secret exists at all, let alone its name.
+			result.Failed = append(result.Failed, BulkRotateError{SecretID: s.ID, Error: "secret not found"})
 			continue
 		}
 		if !s.IsSecret {
