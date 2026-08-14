@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 const (
@@ -48,7 +49,11 @@ type SecretReadSummary struct {
 //   - Limit → 10, capped at 50
 //
 // Returns ErrInvalidInput when Since >= Until after defaults are applied.
-func (c *KeyorixCore) GetSecretReadSummary(ctx context.Context, req SecretReadSummaryRequest) (*SecretReadSummary, error) {
+//
+// #G10: this used to perform zero authorization of its own, trusting the HTTP router's
+// RequireScopedSecretPermission(permSecretsManage, "id") gate to have already run. It now
+// checks the same permission itself, so it's safe to call from any transport.
+func (c *KeyorixCore) GetSecretReadSummary(ctx context.Context, actorKind string, actorID uint, req SecretReadSummaryRequest) (*SecretReadSummary, error) {
 	now := c.now()
 
 	since := req.Since
@@ -63,6 +68,12 @@ func (c *KeyorixCore) GetSecretReadSummary(ctx context.Context, req SecretReadSu
 
 	if !since.Before(until) {
 		return nil, fmt.Errorf("since must be before until: %w", ErrInvalidInput)
+	}
+
+	if allowed, err := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, req.SecretID, permSecretsManage); err != nil {
+		return nil, fmt.Errorf("GetSecretReadSummary: %w", err)
+	} else if !allowed {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
 	}
 
 	limit := req.Limit

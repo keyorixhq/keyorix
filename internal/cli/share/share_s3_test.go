@@ -337,6 +337,11 @@ func TestRunGroupShares_PrintsTable(t *testing.T) {
 	defer func() { groupSharesGroupID = orig }()
 	groupSharesGroupID = grp.ID
 
+	// #G10: ListGroupShares now self-authorizes (secrets.read); the embedded/local CLI
+	// has no authenticated session, so it self-asserts an actor via KEYORIX_CLI_ACTOR
+	// (common.ResolveActorID, #150) — here, the bootstrap admin.
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID))
+
 	require.NoError(t, runGroupShares(nil, nil))
 }
 

@@ -17,9 +17,19 @@ import (
 )
 
 // GetSecretSharingStatus returns the sharing status of a secret.
-func (c *KeyorixCore) GetSecretSharingStatus(ctx context.Context, secretID uint) (*models.SharingStatus, error) {
+//
+// #G10: this had no authorization check at all (and no actor param to check with) — any
+// caller could learn a secret's share count and every recipient's name/ID. It now
+// requires secrets.read on the secret, matching its sibling
+// GetSecretSharingStatusWithIndicators's implicit owner-or-active-share gate.
+func (c *KeyorixCore) GetSecretSharingStatus(ctx context.Context, actorKind string, actorID, secretID uint) (*models.SharingStatus, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+	}
+	if allowed, err := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, secretID, permSecretsRead); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	} else if !allowed {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
 	}
 
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID)

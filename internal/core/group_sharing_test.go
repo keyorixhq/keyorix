@@ -194,10 +194,11 @@ func TestKeyorixCore_ListGroupShares(t *testing.T) {
 	}
 
 	// Mock expectations
+	stubAuthorizedPrincipal(mockStorage, 1, Scope{}, permSecretsRead)
 	mockStorage.On("ListSharesByGroup", ctx, uint(2)).Return(shares, nil)
 
 	// Execute
-	result, err := core.ListGroupShares(ctx, 2)
+	result, err := core.ListGroupShares(ctx, ActorTypeUser, 1, 2)
 
 	// Assert
 	require.NoError(t, err)
@@ -224,7 +225,7 @@ func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
 	ctx := context.Background()
 
 	// Execute
-	_, err = core.ListGroupShares(ctx, 0)
+	_, err = core.ListGroupShares(ctx, ActorTypeUser, 1, 0)
 
 	// Assert
 	assert.Error(t, err)
@@ -248,12 +249,13 @@ func TestKeyorixCore_ListGroupSharedSecrets(t *testing.T) {
 		{ID: 4, SecretID: 3, RecipientID: 2, IsGroup: true, Permission: "read", ExpiresAt: &future}, // live time-bound
 		{ID: 5, SecretID: 4, RecipientID: 2, IsGroup: true, Permission: "read"},                     // secret gone → skipped
 	}
+	stubAuthorizedPrincipal(ms, 1, Scope{}, permSecretsRead)
 	ms.On("ListSharesByGroup", ctx, uint(2)).Return(shares, nil)
 	ms.On("GetSecret", ctx, uint(1)).Return(&models.SecretNode{ID: 1, Name: "alpha"}, nil)
 	ms.On("GetSecret", ctx, uint(3)).Return(&models.SecretNode{ID: 3, Name: "gamma"}, nil)
 	ms.On("GetSecret", ctx, uint(4)).Return((*models.SecretNode)(nil), errors.New("not found"))
 
-	result, err := c.ListGroupSharedSecrets(ctx, 2)
+	result, err := c.ListGroupSharedSecrets(ctx, ActorTypeUser, 1, 2)
 	require.NoError(t, err)
 
 	ids := make([]uint, 0, len(result))
@@ -267,7 +269,7 @@ func TestKeyorixCore_ListGroupSharedSecrets(t *testing.T) {
 
 func TestKeyorixCore_ListGroupSharedSecrets_ValidationError(t *testing.T) {
 	c := &KeyorixCore{storage: new(MockStorage), now: time.Now}
-	_, err := c.ListGroupSharedSecrets(context.Background(), 0)
+	_, err := c.ListGroupSharedSecrets(context.Background(), ActorTypeUser, 1, 0)
 	assert.Error(t, err)
 }
 

@@ -39,12 +39,11 @@ type AccessLogExportRow struct {
 // Returns the encoded bytes and the MIME content-type.
 // An unrecognised format or a non-existent secret returns an error.
 //
-// Authorization contract: callers must verify that the requesting user holds
-// secrets.read permission for this secret before calling this function.
-// The HTTP handler enforces this via RequireScopedPermission; other transports
-// (gRPC, CLI) must enforce it independently. This function does NOT check
-// per-user read permission itself.
-func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, secretID uint, format string) ([]byte, string, error) {
+// #G10: this used to trust the caller for authorization ("callers must verify that the
+// requesting user holds secrets.read permission... this function does NOT check per-user
+// read permission itself"). It now checks secrets.read itself, matching the HTTP router's
+// own gate for this route, so it's safe to call from any transport.
+func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind string, actorID, secretID uint, format string) ([]byte, string, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format != ExportFormatCSV && format != ExportFormatJSON {
 		return nil, "", fmt.Errorf("unsupported export format %q: must be csv or json", format)
@@ -53,6 +52,11 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, secretID uint, 
 	// Verify the secret exists before querying audit events.
 	if _, err := k.storage.GetSecret(ctx, secretID); err != nil {
 		return nil, "", fmt.Errorf("secret not found")
+	}
+	if allowed, err := k.AuthorizeSecretPrincipal(ctx, actorKind, actorID, secretID, permSecretsRead); err != nil {
+		return nil, "", fmt.Errorf("ExportSecretAccessLog: %w", err)
+	} else if !allowed {
+		return nil, "", fmt.Errorf("not authorized: insufficient permissions")
 	}
 
 	action := exportAccessAction

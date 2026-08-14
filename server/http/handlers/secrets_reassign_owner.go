@@ -36,11 +36,14 @@ func (h *SecretHandler) ReassignOwner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	n, err := h.coreService.ReassignOwnedSecrets(r.Context(), uint(id), reqBody.FromOwnerID, reqBody.ToOwnerID, userCtx.UserID)
+	n, err := h.coreService.ReassignOwnedSecrets(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), reqBody.FromOwnerID, reqBody.ToOwnerID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must differ") || strings.Contains(err.Error(), "not found") {
+		switch {
+		case strings.Contains(err.Error(), "required"), strings.Contains(err.Error(), "must differ"), strings.Contains(err.Error(), "not found"):
 			status = http.StatusBadRequest
+		case strings.Contains(err.Error(), "permission"), strings.Contains(err.Error(), "not authorized"):
+			status = http.StatusForbidden
 		}
 		h.sendError(w, "Error", err.Error(), status, nil)
 		return
