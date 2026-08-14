@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       # `make release` has depended on `populate-webui-dist` (pnpm install +
       # build of web/) since ADR-070 merged the frontend into this repo, but
