@@ -87,10 +87,26 @@ assert_invalid "IFS"
 assert_invalid "ENV"
 assert_invalid "SHELLOPTS"
 assert_invalid "PS4"
+# #G39: dynamic-linker/interpreter-hook names the denylist was still missing.
+assert_invalid "DYLD_INSERT_LIBRARIES"
+assert_invalid "PERL5OPT"
+assert_invalid "GIT_SSH_COMMAND"
+# #G39: CI-credential env vars — the runner's OWN ambient job credentials, a
+# DIFFERENT hazard class from the shell/interpreter hooks above (credential
+# confusion, not code execution), but a project-scoped secrets.write
+# principal has no more business overwriting these than PATH/BASH_ENV.
+assert_invalid "GITHUB_TOKEN"
+assert_invalid "github_token"
+assert_invalid "ACTIONS_RUNTIME_TOKEN"
+assert_invalid "ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+assert_invalid "ACTIONS_ID_TOKEN_REQUEST_URL"
+assert_invalid "ACTIONS_RUNTIME_URL"
+assert_invalid "ACTIONS_CACHE_URL"
 # A denylisted name as a substring, not an exact match, must still be
 # accepted — only the exact reserved name is unsafe.
 assert_valid "PATH_TO_CONFIG"
 assert_valid "MY_BASH_ENV_VAR"
+assert_valid "GITHUB_TOKEN_BACKUP"
 
 if [[ "$fail" -ne 0 ]]; then
   echo
