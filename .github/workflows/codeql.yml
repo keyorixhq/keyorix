@@ -17,7 +17,7 @@ permissions:
   contents: read # NOSONAR githubactions:S8264 -- workflow-level read is intentional; job-level permissions further restrict (security-events:write only for the upload step)
 
 env:
-  GO_VERSION: '1.26.5'
+  GO_VERSION: '1.26.6'
 
 jobs:
   # Detects PR changes that touch nothing but *.md/docs/** -- mirrors

@@ -9,6 +9,7 @@ const (
 	permRolesAssign      = "roles.assign"
 	permRolesRead        = "roles.read"
 	permSecretsDelete    = "secrets.delete"
+	permSecretsManage    = "secrets.manage"
 	permSecretsRead      = "secrets.read"
 	permSecretsWrite     = "secrets.write"
 	permSystemRead       = "system.read"

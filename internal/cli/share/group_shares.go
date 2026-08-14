@@ -33,13 +33,11 @@ func runGroupShares(cmd *cobra.Command, args []string) error {
 	// KNOWN GAP (tracked, not fixed here): unlike every other command in this
 	// package, this has no `if rc, ok := common.NewRemoteClient(); ok { ... }`
 	// branch — it always reads local embedded storage, silently ignoring a
-	// connected server (#G66). Not fixed alongside the rest of #G66 because the
-	// only way to serve this from a real server today is to expose
-	// core.KeyorixCore.ListGroupShares over HTTP, and that function itself has
-	// no caller-scoping of its own (#G10 — "core-layer function performs zero
-	// authorization") — any principal could list any group's shares. Adding a
-	// remote endpoint for it now would ship a new unauthenticated-scope
-	// disclosure surface before #G10's fix lands. Sequence this with #G10.
+	// connected server (#G66). #G10 (below) closed the OTHER half of this: the
+	// core function now self-authorizes, so a future remote endpoint can safely
+	// expose it without shipping a new unauthenticated-scope disclosure surface.
+	// Adding that endpoint (and this command's remote-client branch) is still
+	// out of scope here — it's #G66's fix, not #G10's.
 	//
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
 	st, err := common.InitializeStorage()
@@ -48,9 +46,13 @@ func runGroupShares(cmd *cobra.Command, args []string) error {
 	}
 	service := core.NewKeyorixCore(st)
 
-	// Call service
+	// #G10: ListGroupShares now requires an authorized actor. Embedded/local mode has no
+	// authenticated session — the operator asserts their own Keyorix user ID via
+	// KEYORIX_CLI_ACTOR (common.ResolveActorID, #150) for accountability; it must also
+	// hold secrets.read (globally or at this group's shares' scope) or the call is denied,
+	// same as every other transport.
 	ctx := context.Background()
-	shares, err := service.ListGroupShares(ctx, groupSharesGroupID)
+	shares, err := service.ListGroupShares(ctx, core.ActorTypeUser, common.ResolveActorID(), groupSharesGroupID)
 	if err != nil {
 		return fmt.Errorf("failed to list group shares: %w", err)
 	}
