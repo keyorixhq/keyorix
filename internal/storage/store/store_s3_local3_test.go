@@ -995,6 +995,22 @@ func TestStats_GetStatsAndHealthCheck(t *testing.T) {
 	require.NoError(t, ls.HealthCheck(ctx))
 }
 
+// TestStats_GetStats_PropagatesCountError is #G54: a failed Count query for
+// any one of the four entity types must fail the whole call, not leave that
+// field at its Go zero value while GetStats still reports success — which
+// would fabricate a "0 secrets" result indistinguishable from a genuinely
+// empty deployment.
+func TestStats_GetStats_PropagatesCountError(t *testing.T) {
+	ctx := context.Background()
+	ls := newStoreS3(t, "stats_err_"+t.Name(),
+		&models.SecretNode{}, &models.User{}, &models.Role{}, &models.Session{})
+
+	require.NoError(t, ls.db.Migrator().DropTable(&models.SecretNode{}))
+
+	_, err := ls.GetStats(ctx)
+	require.Error(t, err, "a Count failure on any one entity type must fail the whole call")
+}
+
 func TestStats_SaveAndGetPreviousSnapshot(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "stats_snap_"+t.Name(), &models.StatsSnapshot{})

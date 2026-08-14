@@ -45,6 +45,12 @@ func TestReassignOwnedSecrets(t *testing.T) {
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: p1.ID}).Error)
+	// #G10: the actor (admin) must independently hold secrets.write at the project's
+	// scope — ReassignOwnedSecrets now checks this itself instead of trusting the caller.
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "writer"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2, ProjectID: p1.ID}).Error)
 
 	mk := func(name string, projectID, envID, ownerID uint) uint {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{
@@ -64,7 +70,7 @@ func TestReassignOwnedSecrets(t *testing.T) {
 	require.NoError(t, c.storage.DeleteUser(ctx, 2))
 
 	t.Run("reassigns only the leaver's secrets in the project", func(t *testing.T) {
-		n, err := c.ReassignOwnedSecrets(ctx, p1.ID, 2, 3, 1)
+		n, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 1, p1.ID, 2, 3)
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
 
@@ -79,23 +85,23 @@ func TestReassignOwnedSecrets(t *testing.T) {
 	})
 
 	t.Run("a second run is a no-op (nothing left owned by the leaver)", func(t *testing.T) {
-		n, err := c.ReassignOwnedSecrets(ctx, p1.ID, 2, 3, 1)
+		n, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 1, p1.ID, 2, 3)
 		require.NoError(t, err)
 		assert.Equal(t, 0, n)
 	})
 
 	t.Run("from == to is rejected", func(t *testing.T) {
-		_, err := c.ReassignOwnedSecrets(ctx, p1.ID, 3, 3, 1)
+		_, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 1, p1.ID, 3, 3)
 		require.Error(t, err)
 	})
 
 	t.Run("a non-existent new owner is rejected", func(t *testing.T) {
-		_, err := c.ReassignOwnedSecrets(ctx, p1.ID, 2, 999, 1)
+		_, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 1, p1.ID, 2, 999)
 		require.Error(t, err)
 	})
 
 	t.Run("zero IDs are rejected", func(t *testing.T) {
-		_, err := c.ReassignOwnedSecrets(ctx, 0, 2, 3, 1)
+		_, err := c.ReassignOwnedSecrets(ctx, ActorTypeUser, 1, 0, 2, 3)
 		require.Error(t, err)
 	})
 }

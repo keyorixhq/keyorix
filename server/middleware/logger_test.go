@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestLogger_RedactsSetupToken is the security invariant for #291: the setup/
@@ -122,4 +123,71 @@ func TestRedactSensitiveURI(t *testing.T) {
 			assert.Equal(t, tc.want, redactSensitiveURI(tc.in))
 		})
 	}
+}
+
+// TestLogger_RedactsSSOCallbackQuery is #G29 (high): the OAuth/OIDC SSO
+// callback route was never added to sensitiveQueryPattern, so every SSO login
+// wrote its single-use authorization code (redeemable for a session on its
+// own) and CSRF state nonce to the access log in plaintext.
+func TestLogger_RedactsSSOCallbackQuery(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	const code = "aVeryLongOAuthAuthorizationCodeDoNotLeak123"
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/sso/okta/callback?code="+code+"&state=xyz", nil)
+	rec := httptest.NewRecorder()
+	Logger()(ok).ServeHTTP(rec, req)
+
+	logged := buf.String()
+	assert.NotContains(t, logged, code, "the OAuth authorization code must never be written to the log stream")
+	assert.Contains(t, logged, "[redacted]")
+}
+
+// TestLogger_RedactsPercentEncodedSetupToken is #G29 (medium): a percent-
+// encoded route character (here %2F standing in for the literal '/' before
+// "setup") still routes to the same handler via the decoded path, but the old
+// implementation matched sensitiveURIPattern against the RAW, still-encoded
+// r.RequestURI — so this exact request bypassed redaction while chi routed it
+// correctly.
+func TestLogger_RedactsPercentEncodedSetupToken(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	const token = "percentEncodedBypassMustNotLeakThisToken789"
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/auth%2Fsetup/"+token, nil)
+	require.Equal(t, "/auth/setup/"+token, req.URL.Path, "sanity: net/url decodes %2F into the Path field")
+	rec := httptest.NewRecorder()
+	Logger()(ok).ServeHTTP(rec, req)
+
+	logged := buf.String()
+	assert.NotContains(t, logged, token, "a percent-encoded route character must not bypass redaction")
+	assert.Contains(t, logged, "[REDACTED]")
+}
+
+// TestLogger_NoColor pins #G29 (low): server access logs are captured non-
+// interactively — chi's formatter must never emit ANSI color escape bytes.
+func TestLogger_NoColor(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	Logger()(ok).ServeHTTP(rec, req)
+
+	assert.NotContains(t, buf.String(), "\x1b[", "the access log must not contain ANSI color escape sequences")
 }

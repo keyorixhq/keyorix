@@ -188,3 +188,48 @@ func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
 	require.NoError(t, db.Model(&models.SecretVersion{}).Where("secret_node_id = ?", 2).Count(&liveVersions).Error)
 	assert.Equal(t, int64(1), liveVersions)
 }
+
+// TestPurgeDeletedSecretsBefore_RespectsRetentionOverride is #G43:
+// SetSecretRetentionOverride's per-secret window was never actually consulted
+// by the purge sweep — every secret purged strictly on the deployment-wide
+// cutoff. This proves both directions: a secret with a LONGER override must
+// survive a global cutoff that would otherwise purge it, and a secret with a
+// SHORTER override must be purged even though the global cutoff alone would
+// still keep it.
+func TestPurgeDeletedSecretsBefore_RespectsRetentionOverride(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Global cutoff is 30 days: without an override, anything soft-deleted before
+	// this point is purged.
+	globalCutoff := now.AddDate(0, 0, -30)
+
+	// Deleted 40 days ago (past the global cutoff) but overridden to 90 days —
+	// must survive.
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "long-retention", RetentionOverrideDays: 90}).Error)
+	require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).Where("id = ?", 1).
+		Update("deleted_at", now.AddDate(0, 0, -40)).Error)
+
+	// Deleted 10 days ago (within the global cutoff) but overridden to 7 days —
+	// must be purged despite being "recent" by the global window.
+	require.NoError(t, db.Create(&models.SecretNode{ID: 2, Name: "short-retention", RetentionOverrideDays: 7}).Error)
+	require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).Where("id = ?", 2).
+		Update("deleted_at", now.AddDate(0, 0, -10)).Error)
+
+	// Deleted 40 days ago with no override — purged by the global cutoff as before.
+	require.NoError(t, db.Create(&models.SecretNode{ID: 3, Name: "no-override"}).Error)
+	require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).Where("id = ?", 3).
+		Update("deleted_at", now.AddDate(0, 0, -40)).Error)
+
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, globalCutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), n, "short-retention and no-override secrets are purged; long-retention survives")
+
+	var remaining []uint
+	require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).Pluck("id", &remaining).Error)
+	assert.Equal(t, []uint{1}, remaining, "only the long-retention override secret survives")
+}

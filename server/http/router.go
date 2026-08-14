@@ -1369,6 +1369,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/project-memberships", catalogHandler.ListMembershipsProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/project-memberships", catalogHandler.CreateMembershipProxy)
 			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/project-memberships/{id}", catalogHandler.UpdateMembershipProxy)
+			r.With(customMiddleware.RequirePermission(permSystemWrite)).Put("/project-memberships/{id}/transition", catalogHandler.TransitionMembershipProxy)
 
 			// Secret-dependency storage-primitive proxy (finding #519). Lets a
 			// downstream Keyorix server booted with storage.type: remote (ADR-049)

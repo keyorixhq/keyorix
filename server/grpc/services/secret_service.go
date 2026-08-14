@@ -111,7 +111,7 @@ func (s *SecretGRPCService) ListSecretDependencies(ctx context.Context, req *pb.
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
-	deps, err := s.core.ListSecretDependencies(ctx, uint(req.GetId()))
+	deps, err := s.core.ListSecretDependencies(ctx, user.ActorKind(), user.PrincipalID(), uint(req.GetId()))
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
@@ -128,7 +128,7 @@ func (s *SecretGRPCService) GetSecretImpact(ctx context.Context, req *pb.GetSecr
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsRead); err != nil {
 		return nil, err
 	}
-	impact, err := s.core.GetSecretImpact(ctx, uint(req.GetId()))
+	impact, err := s.core.GetSecretImpact(ctx, user.ActorKind(), user.PrincipalID(), uint(req.GetId()))
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
@@ -488,17 +488,22 @@ func mapSecretACLError(err error) error {
 // authorizeSecretScoped resolves a secret's project/environment and checks the
 // permission AT that scope — mirroring the HTTP RequireScopedPermission gate, so
 // gRPC enforces the same scoped-RBAC model as HTTP rather than the flat, global
-// permission set. A missing secret yields NotFound (not PermissionDenied) to
-// avoid leaking existence; the downstream *WithPermissionCheck core calls still
-// enforce ownership/share on top of this.
+// permission set. Both a missing secret AND a found-but-unauthorized one yield
+// the SAME NotFound response (#G14) — returning PermissionDenied only for the
+// found-but-unauthorized branch would let a caller distinguish "this ID doesn't
+// exist" from "this ID exists but you can't touch it" purely from the response
+// shape, an existence oracle across every project/tenant boundary. The
+// downstream *WithPermissionCheck core calls still enforce ownership/share on
+// top of this.
 func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string) error {
+	notFound := status.Error(codes.NotFound, "secret not found")
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
-		return status.Error(codes.NotFound, "secret not found")
+		return notFound
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
 	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
-		return status.Error(codes.PermissionDenied, "insufficient permissions for this secret")
+		return notFound
 	}
 	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
 }

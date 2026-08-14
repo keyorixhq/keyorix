@@ -31,25 +31,42 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source secret ID and target environment ID are required")
 	}
 
+	// #G14: authorize read access to the source BEFORE the cross-project
+	// existence/collision check below. GetSecret itself does no authorization
+	// (see its own doc comment), so checking "is targetEnv in the same project
+	// as source" first would let a caller with a valid target environment in
+	// project A probe an arbitrary sourceID and learn — from "target
+	// environment must be in the same project" vs "secret not found" — whether
+	// that ID exists in some OTHER project, without ever needing read access to
+	// it. Reading the value now (rather than after the project check) means an
+	// unauthorized caller gets the SAME "secret not found" a nonexistent ID
+	// would, regardless of which project the real secret is actually in. Only
+	// the specific "doesn't exist" / "insufficient permissions" outcomes are
+	// collapsed — a genuine, unrelated storage failure (DB down, read-only,
+	// etc.) still propagates as-is so it isn't misreported and mishandled
+	// upstream as a plain not-found.
+	notFound := fmt.Errorf("%s: %s", i18n.T("ErrorSecretNotFound", nil), "not found")
 	source, err := c.GetSecret(ctx, sourceID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+		return nil, notFound
+	}
+	value, err := c.GetSecretValueWithPermissionCheck(ctx, sourceID, actorID)
+	if err != nil {
+		if strings.Contains(err.Error(), "insufficient permissions") {
+			return nil, notFound
+		}
+		return nil, err
 	}
 
 	// Same-project guard: the target environment must live in the source's project,
-	// so a copy can never move a value across a project boundary.
+	// so a copy can never move a value across a project boundary. The caller has
+	// already proven read access to source above, so this reveals nothing new.
 	targetEnv, err := c.storage.GetEnvironment(ctx, targetEnvID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 	if targetEnv.ProjectID != source.ProjectID {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "target environment must be in the same project as the source")
-	}
-
-	// Read the source value — permission-checked (the actor must be able to read it).
-	value, err := c.GetSecretValueWithPermissionCheck(ctx, sourceID, actorID)
-	if err != nil {
-		return nil, err
 	}
 	c.LogSecretReadWithProject(ctx, actorID, source.ID, source.ProjectID, actorUsername, source.Name, ip, ua)
 

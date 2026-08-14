@@ -28,7 +28,15 @@ type ImpactPreviewResult struct {
 //
 // The result is a flat count/summary, not the annotated node graph that
 // GetSecretImpact returns.
-func (c *KeyorixCore) GetSecretImpactPreview(ctx context.Context, secretID uint) (*ImpactPreviewResult, error) {
+//
+// #G32: DirectDependents/TransitiveDependents/MaxDepth are computed over the FULL
+// graph — an operator deciding whether to delete secretID needs the true cascade size,
+// even if some affected secrets are outside their own visibility, and a bare count
+// discloses no peer identity. AffectedSecretIDs is the identifying part, though, so it
+// is filtered to only the peers the caller is independently authorized to read (same
+// reasoning as ListSecretDependencies/GetSecretImpact: same-environment membership
+// alone does not prove authorization on a peer).
+func (c *KeyorixCore) GetSecretImpactPreview(ctx context.Context, actorKind string, actorID, secretID uint) (*ImpactPreviewResult, error) {
 	secret, err := c.requireSecret(ctx, secretID)
 	if err != nil {
 		return nil, err
@@ -55,13 +63,15 @@ func (c *KeyorixCore) GetSecretImpactPreview(ctx context.Context, secretID uint)
 	}
 
 	for _, a := range affected {
-		result.AffectedSecretIDs = append(result.AffectedSecretIDs, a.id)
 		result.TransitiveDependents++
 		if a.depth == 1 {
 			result.DirectDependents++
 		}
 		if a.depth > result.MaxDepth {
 			result.MaxDepth = a.depth
+		}
+		if c.canReadSecret(ctx, actorKind, actorID, a.id) {
+			result.AffectedSecretIDs = append(result.AffectedSecretIDs, a.id)
 		}
 	}
 

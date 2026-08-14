@@ -122,6 +122,30 @@ func TestRunAudit_ConfigFlagBeatsEnvVar(t *testing.T) {
 	assert.NotContains(t, out, envCfg)
 }
 
+// TestRunAudit_RefusesPathTraversalInDEKPath is #G59 (sibling gap): audit.go fed
+// SaltPath/DEKPath straight to FixFilePerms with no containment validation,
+// unlike internal/startup/validation.go's SafeFilePermPath (now reused here) —
+// a RELATIVE traversal must be refused rather than silently stat/opened.
+func TestRunAudit_RefusesPathTraversalInDEKPath(t *testing.T) {
+	resetAuditConfigFile(t)
+	dir := t.TempDir()
+	saltPath := filepath.Join(dir, "salt.bin")
+	require.NoError(t, os.WriteFile(saltPath, []byte("salt"), 0600))
+
+	const traversalDEKPath = "sub/../../outside/dek.key"
+	cfgPath := filepath.Join(dir, "audit-config.yaml")
+	yaml := fmt.Sprintf("storage:\n  encryption:\n    enabled: true\n    salt_path: %s\n    dek_path: %s\n", saltPath, traversalDEKPath)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(yaml), 0600))
+
+	auditConfigFile = cfgPath
+
+	var failed bool
+	out := captureStdout(t, func() { failed = runAuditNoExit() })
+
+	assert.True(t, failed, "a '..'-traversal dek_path must be refused, not silently stat'd")
+	assert.Contains(t, out, "unsafe")
+}
+
 // A --config pointing at a nonexistent path must fail loudly, not silently
 // report success against nothing (the exact failure mode #228 warned about).
 func TestRunAudit_MissingConfigFails(t *testing.T) {

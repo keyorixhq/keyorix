@@ -514,6 +514,62 @@ func TestReconcile_RetargetWipeFailureKeepsOldLastTargetNameAndWarns(t *testing.
 		"a blocked orphan wipe must be visible in the Ready message, not just logged")
 }
 
+// TestReconcile_OrphanWipeFailureSurfacedAlongsideLaterSyncFailure is #G54:
+// before the fix, orphanWipeErr was captured but then silently dropped
+// whenever the SAME reconcile also failed later (buildDesired or
+// applySecret) — fail() had no way to carry it. An operator reading .status
+// after a reconcile that hit BOTH failures would see only the later one,
+// with no indication a stale Secret is still sitting in the cluster under
+// the old target name.
+func TestReconcile_OrphanWipeFailureSurfacedAlongsideLaterSyncFailure(t *testing.T) {
+	ks := ksFixture()
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	s := testScheme(t)
+	inner := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&secretsv1alpha1.KeyorixSecret{}).
+		WithObjects(ks, tokenSecret()).
+		Build()
+	blocked := &deleteBlockingClient{Client: inner, blockDeleteName: "db-creds"}
+	r := &KeyorixSecretReconciler{
+		Client:         blocked,
+		Scheme:         s,
+		AllowedServers: []string{"https://keyorix.internal"},
+		newClient:      func(_, _ string) valueFetcher { return fetcher },
+		hashKey:        []byte("test-fixture-hmac-key"),
+	}
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var got secretsv1alpha1.KeyorixSecret
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	require.Equal(t, "db-creds", got.Status.LastTargetName)
+
+	// Retarget AND make the new target's own fetch fail transiently (NOT
+	// ErrSecretGone) — buildDesired hits the default branch in Reconcile,
+	// which used to drop orphanWipeErr entirely.
+	got.Spec.Target.Name = "db-creds-v2"
+	require.NoError(t, blocked.Update(context.Background(), &got))
+	fetcher.failRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err, "the transient fetch failure must still fail this reconcile")
+
+	require.NoError(t, blocked.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	assert.Equal(t, "db-creds", got.Status.LastTargetName,
+		"LastTargetName must stay at the OLD name so the next reconcile retries the orphan wipe")
+	require.Len(t, got.Status.Conditions, 1)
+	cond := got.Status.Conditions[0]
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, "SyncErrorOrphanWipeFailed", cond.Reason)
+	assert.Contains(t, cond.Message, "boom", "the fetch failure that actually failed this reconcile must still be visible")
+	assert.Contains(t, cond.Message, "wiping the Secret orphaned",
+		"the SEPARATE orphan-wipe failure must not be silently dropped just because this reconcile also failed later")
+}
+
 // A target Secret this operator does NOT manage (no ManagedByLabel — applySecret
 // already refuses to adopt it) must never be deleted, even when the upstream secret is
 // confirmed gone: it isn't ours to touch, and it may belong to an unrelated workload

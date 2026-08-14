@@ -11,10 +11,19 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ExportAccessLog handles GET /api/v1/secrets/{id}/access-log/export
 func (h *SecretHandler) ExportAccessLog(w http.ResponseWriter, r *http.Request) {
+	// #G10: this handler used to have no identity check at all — the export ran with
+	// zero authorization, correctness depending entirely on router wiring elsewhere.
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -25,7 +34,7 @@ func (h *SecretHandler) ExportAccessLog(w http.ResponseWriter, r *http.Request) 
 		format = "json"
 	}
 
-	data, contentType, err := h.coreService.ExportSecretAccessLog(r.Context(), id, format)
+	data, contentType, err := h.coreService.ExportSecretAccessLog(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), id, format)
 	if err != nil {
 		msg := err.Error()
 		switch {
@@ -33,6 +42,8 @@ func (h *SecretHandler) ExportAccessLog(w http.ResponseWriter, r *http.Request) 
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 		case strings.Contains(msg, "unsupported export format"):
 			h.sendError(w, "InvalidParameter", msg, http.StatusBadRequest, nil)
+		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+			h.sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
 		default:
 			log.Printf("Error exporting access log for secret %d: %v", id, err)
 			h.sendError(w, "InternalError", "Failed to export access log", http.StatusInternalServerError, nil)

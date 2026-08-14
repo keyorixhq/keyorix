@@ -214,8 +214,16 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 }
 
 // ListBreakGlassActivations returns the project's activations, newest first. An
-// active record whose expiry has passed is reported as expired (the grant is gone
-// by then, swept or filtered out — the record's stored state is reconciled lazily).
+// active record whose expiry has passed is reported as expired and, since this
+// is the most frequently-invoked read path for break-glass state (dashboards,
+// compliance posture snapshots), the transition is also persisted here —
+// best-effort, since the list result above is already correct regardless of
+// whether the write lands. #G43: previously the state was flipped ONLY on the
+// in-memory copy returned to this call's caller — the stored row stayed
+// 'active' in the database indefinitely (until the separate, much-longer-window
+// data-retention purge eventually hard-deletes it), so any consumer reading the
+// row directly (a proxy endpoint under storage.type: remote, a report querying
+// the table directly) saw a stale 'active' state.
 func (c *KeyorixCore) ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error) {
 	if projectID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
@@ -228,6 +236,9 @@ func (c *KeyorixCore) ListBreakGlassActivations(ctx context.Context, projectID u
 	for _, a := range rows {
 		if a.State == BreakGlassActive && a.ExpiresAt != nil && a.ExpiresAt.Before(now) {
 			a.State = BreakGlassExpired
+			if uerr := c.storage.UpdateBreakGlassActivation(ctx, a); uerr != nil {
+				log.Printf("break-glass: activation %d: failed to persist TTL-lapse state transition to %q: %v", a.ID, BreakGlassExpired, uerr)
+			}
 		}
 	}
 	return rows, nil

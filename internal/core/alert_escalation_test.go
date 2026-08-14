@@ -657,6 +657,36 @@ func TestSplitChannelIDs(t *testing.T) {
 	assert.Nil(t, splitChannelIDs(",,,"))
 }
 
+// TestDispatchToChannel_WebhookRedactsPIIEmbeddedInDescription is #G30: several
+// alert types (new_ip, new_user, ml_outlier, principal_breadth) embed the
+// alert's own AccessedBy/IPAddress as free text inside Description — which
+// used to bypass the accessed_by/ip_address structured-field redaction this
+// path already applies. The outbound JSON payload must not contain either
+// value anywhere, including inside "description".
+func TestDispatchToChannel_WebhookRedactsPIIEmbeddedInDescription(t *testing.T) {
+	var body []byte
+	tr := &fakeWebhookTransport{capture: func(b []byte) { body = b }}
+
+	c := NewKeyorixCore(new(MockStorage))
+	c.httpClient = &http.Client{Transport: tr}
+
+	alert := makeAlert(1, "high", 60)
+	alert.AccessedBy = "alice"
+	alert.IPAddress = "203.0.113.7"
+	alert.Description = fmt.Sprintf("ML detected an anomalous access pattern (score 0.92): %s from %s at 14:00 UTC differs from this secret's learned baseline",
+		alert.AccessedBy, alert.IPAddress)
+
+	ch := &models.NotificationChannel{ID: 7, Name: "test-webhook", Type: "webhook", URL: "http://fake-webhook.test/hook", Enabled: true}
+	policy := makePolicy(1, "p1", "medium", 30)
+
+	require.NoError(t, c.dispatchToChannel(context.Background(), ch, &alert, &policy))
+	require.NotNil(t, body)
+	assert.NotContains(t, string(body), "alice", "accessed_by embedded in Description must be redacted")
+	assert.NotContains(t, string(body), "203.0.113.7", "ip_address embedded in Description must be redacted")
+	assert.Contains(t, string(body), "[redacted]")
+	assert.Contains(t, string(body), "ML detected an anomalous access pattern", "the rest of the description must survive")
+}
+
 // ---- dispatchToChannel (teams type) ----
 
 func TestDispatchToChannel_TeamsType_LogOnly(t *testing.T) {

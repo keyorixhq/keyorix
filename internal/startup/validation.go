@@ -85,7 +85,7 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 	return result, nil
 }
 
-// safeFilePermPath cleans path and rejects it if the cleaned form still
+// SafeFilePermPath cleans path and rejects it if the cleaned form still
 // contains a ".." segment. Unlike validateEncryption/validateDatabase (whose
 // paths come from a small, fixed set of config fields dedicated to a single
 // key/db file), the paths collected here span several independently-authored
@@ -93,7 +93,7 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 // FixFilePerms below will Lstat/Chmod/Chown — so every one of them is
 // sanitized the same way before it is ever added to that list, closing off a
 // config-driven path-traversal into chmod/chown of an unintended file.
-func safeFilePermPath(label, path string) (string, error) {
+func SafeFilePermPath(label, path string) (string, error) {
 	clean := filepath.Clean(path)
 	if strings.Contains(clean, "..") {
 		return "", fmt.Errorf("%s path is unsafe (contains '..'): %s", label, path)
@@ -108,7 +108,7 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 	// the loader resolves KEYORIX_CONFIG_PATH / an absolute path, so a fixed relative
 	// name would silently stat a non-existent file and pass. Skip only when truly unknown.
 	if cfgFile := strings.TrimSpace(configPath); cfgFile != "" {
-		clean, err := safeFilePermPath("config file", cfgFile)
+		clean, err := SafeFilePermPath("config file", cfgFile)
 		if err != nil {
 			return err
 		}
@@ -118,11 +118,11 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 	if cfg.Storage.Encryption.Enabled {
 		// The KEK is passphrase-derived and never on disk (ADR-004); the salt and
 		// the wrapped DEK are the only key files to lock down.
-		saltPath, err := safeFilePermPath("KEK salt", cfg.Storage.Encryption.SaltPath)
+		saltPath, err := SafeFilePermPath("KEK salt", cfg.Storage.Encryption.SaltPath)
 		if err != nil {
 			return err
 		}
-		dekPath, err := safeFilePermPath("DEK", cfg.Storage.Encryption.DEKPath)
+		dekPath, err := SafeFilePermPath("DEK", cfg.Storage.Encryption.DEKPath)
 		if err != nil {
 			return err
 		}
@@ -142,7 +142,7 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		// no local database file to check
 	default: // "local", ""
 		if cfg.Storage.Database.Path != "" {
-			dbPath, err := safeFilePermPath("database", cfg.Storage.Database.Path)
+			dbPath, err := SafeFilePermPath("database", cfg.Storage.Database.Path)
 			if err != nil {
 				return err
 			}
@@ -154,11 +154,11 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 	}
 
 	if cfg.Server.HTTP.TLS.Enabled {
-		certPath, err := safeFilePermPath("HTTP TLS cert", cfg.Server.HTTP.TLS.CertFile)
+		certPath, err := SafeFilePermPath("HTTP TLS cert", cfg.Server.HTTP.TLS.CertFile)
 		if err != nil {
 			return err
 		}
-		keyPath, err := safeFilePermPath("HTTP TLS key", cfg.Server.HTTP.TLS.KeyFile)
+		keyPath, err := SafeFilePermPath("HTTP TLS key", cfg.Server.HTTP.TLS.KeyFile)
 		if err != nil {
 			return err
 		}
@@ -168,11 +168,11 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		)
 	}
 	if cfg.Server.GRPC.TLS.Enabled {
-		certPath, err := safeFilePermPath("gRPC TLS cert", cfg.Server.GRPC.TLS.CertFile)
+		certPath, err := SafeFilePermPath("gRPC TLS cert", cfg.Server.GRPC.TLS.CertFile)
 		if err != nil {
 			return err
 		}
-		keyPath, err := safeFilePermPath("gRPC TLS key", cfg.Server.GRPC.TLS.KeyFile)
+		keyPath, err := SafeFilePermPath("gRPC TLS key", cfg.Server.GRPC.TLS.KeyFile)
 		if err != nil {
 			return err
 		}

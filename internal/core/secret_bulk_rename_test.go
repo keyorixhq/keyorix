@@ -76,12 +76,16 @@ func TestBulkRenameSecrets(t *testing.T) {
 		mine := mk("non-conf-x", p.ID, true) // owned by user 1
 		// User 2 holds no ownership/share on it — even with project secrets.write it must
 		// not be renamable via the bulk op (parity with the single-secret PUT gate).
+		// #G14: the denial is the SAME generic "secret not found" a nonexistent ID gets —
+		// a distinct "not authorized" message would let a caller confirm the secret
+		// exists (and that they lack access to it) purely from the response shape.
 		rep, err := c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: mine, NewName: "MINE_X"}}, false, "intruder", 2, "", "")
 		require.NoError(t, err)
 		assert.Equal(t, 0, rep.Renamed)
 		require.Len(t, rep.Outcomes, 1)
 		assert.Equal(t, renameStatusSkipped, rep.Outcomes[0].Status)
-		assert.Contains(t, rep.Outcomes[0].Reason, "not authorized")
+		assert.Contains(t, rep.Outcomes[0].Reason, "not found")
+		assert.Empty(t, rep.Outcomes[0].OldName, "the secret's real name must not leak to an unauthorized caller")
 	})
 
 	t.Run("dry run validates but changes nothing", func(t *testing.T) {
@@ -139,10 +143,15 @@ func TestBulkRenameSecrets(t *testing.T) {
 	})
 
 	t.Run("cross-project guard: cannot rename another project's secret", func(t *testing.T) {
+		// #G14: same uniform "secret not found" denial as a nonexistent ID — a
+		// distinct "does not belong to this project" message would let a
+		// project-scoped caller enumerate secret IDs that exist in OTHER
+		// projects, just by observing which IDs get this message vs plain
+		// "not found".
 		rep, err := c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: foreign, NewName: "OTHER_SECRET"}}, false, "alice", 1, "", "")
 		require.NoError(t, err)
 		assert.Equal(t, 0, rep.Renamed)
-		assert.Contains(t, rep.Outcomes[0].Reason, "does not belong")
+		assert.Contains(t, rep.Outcomes[0].Reason, "not found")
 		// Untouched in its own project.
 		s, err := c.storage.GetSecret(ctx, foreign)
 		require.NoError(t, err)

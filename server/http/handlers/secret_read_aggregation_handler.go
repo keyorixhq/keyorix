@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -23,7 +24,8 @@ import (
 //	until  — RFC3339 end of the window (default: now)
 //	limit  — max actors to return (default: 10, max: 50)
 func (h *SecretHandler) GetSecretReadSummary(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -54,10 +56,14 @@ func (h *SecretHandler) GetSecretReadSummary(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	summary, err := h.coreService.GetSecretReadSummary(r.Context(), req)
+	summary, err := h.coreService.GetSecretReadSummary(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), req)
 	if err != nil {
 		if errors.Is(err, core.ErrInvalidInput) {
 			h.sendError(w, "InvalidParameter", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
+		if strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized") {
+			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
 		h.sendError(w, "InternalServerError", "failed to retrieve read summary", http.StatusInternalServerError, nil)

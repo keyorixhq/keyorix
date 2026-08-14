@@ -265,7 +265,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// status reason so it's clear from .status which of the two happened.
 			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamAccessRevoked", err)
 		default:
-			return r.fail(ctx, &ks, err)
+			return r.fail(ctx, &ks, err, orphanWipeErr)
 		}
 	}
 
@@ -273,7 +273,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.applySecret(ctx, &ks, secretName, desired); err != nil {
 		logger.Error(err, "failed to apply target Secret")
-		return r.fail(ctx, &ks, err)
+		return r.fail(ctx, &ks, err, orphanWipeErr)
 	}
 
 	if err := r.succeed(ctx, &ks, hash, secretName, orphanWipeErr); err != nil {
@@ -412,8 +412,22 @@ const (
 )
 
 // fail records a SyncError on the Ready condition and requeues with backoff.
-func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
-	r.setReady(ks, metav1.ConditionFalse, "SyncError", cause.Error())
+// fail records an ordinary sync failure. orphanWipeErr, when non-nil, means
+// this SAME reconcile also detected a spec.target.name change and failed to
+// wipe the Secret orphaned under the old name (see Reconcile's orphanWipeErr
+// doc) — #G54: before this, that failure was silently dropped whenever the
+// reconcile ALSO failed later (buildDesired/applySecret), so .status would
+// show only the later failure with no indication a stale, possibly
+// revoked/rotated Secret is still sitting in the cluster under the old name,
+// mountable by any workload with ordinary Secret-read RBAC. Mirrors
+// failGone's identical "WipeFailed" reason/message augmentation.
+func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause, orphanWipeErr error) (ctrl.Result, error) {
+	reason, msg := "SyncError", cause.Error()
+	if orphanWipeErr != nil {
+		reason += "OrphanWipeFailed"
+		msg = fmt.Sprintf("%s — additionally, wiping the Secret orphaned by a spec.target.name change failed, it may still contain stale/rotated data under the old name: %v", cause.Error(), orphanWipeErr)
+	}
+	r.setReady(ks, metav1.ConditionFalse, reason, msg)
 	if err := r.Status().Update(ctx, ks); err != nil {
 		return ctrl.Result{}, err
 	}

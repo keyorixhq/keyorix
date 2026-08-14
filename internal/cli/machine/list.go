@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 )
@@ -46,6 +47,7 @@ func printMachineTable(identities []*models.MachineIdentity, projectName string)
 		if len(desc) > 40 {
 			desc = desc[:37] + "..."
 		}
-		fmt.Printf("%-5d %-24s %-12s %-10s %s\n", m.ID, m.Name, m.IdentityType, m.State, desc)
+		// #G69: Name/Description are attacker-controlled free text.
+		fmt.Printf("%-5d %-24s %-12s %-10s %s\n", m.ID, common.SanitizeForTerminal(m.Name), m.IdentityType, m.State, common.SanitizeForTerminal(desc))
 	}
 }

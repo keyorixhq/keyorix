@@ -227,10 +227,22 @@ func (c *KeyorixCore) ClassifyMachineIdentity(ctx context.Context, projectID, id
 		return m, nil // no-op
 	}
 	old := m.Classification
+	fromState := m.State
 	m.Classification = level
 	m.UpdatedAt = c.now()
-	if err := c.storage.UpdateMachineIdentity(ctx, m); err != nil {
+	// #G42: a blind c.storage.UpdateMachineIdentity (full-row Save) here would
+	// race TransitionMachineIdentity — m was read above via machineInProject,
+	// so a concurrent suspend/revoke landing between that read and this write
+	// would be silently reverted (or, if this write lands first, silently
+	// clobbered), resurrecting a just-revoked identity. Route through the
+	// same conditional write TransitionMachineIdentity itself uses, gated on
+	// the state this call actually observed.
+	matched, err := c.storage.TransitionMachineIdentityState(ctx, m, fromState)
+	if err != nil {
 		return nil, fmt.Errorf("failed to update machine identity: %w", err)
+	}
+	if !matched {
+		return nil, fmt.Errorf("machine identity %d: %w", m.ID, ErrMachineStateConflict)
 	}
 	aid, pid := actorID, m.ProjectID
 	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)

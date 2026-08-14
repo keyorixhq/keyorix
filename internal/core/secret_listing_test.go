@@ -254,9 +254,11 @@ func TestKeyorixCore_GetSecretSharingStatus(t *testing.T) {
 	mockStorage.On("ListSharesBySecret", ctx, secretID).Return(shares, nil)
 	mockStorage.On("GetUser", ctx, uint(2)).Return(user, nil)
 	// GetGroup is NOT called — production code uses fmt.Sprintf("Group %d", id) for groups
+	mockStorage.On("GetSecret", mock.Anything, secretID).Return(&models.SecretNode{ID: secretID}, nil)
+	stubAuthorizedSecretPrincipal(mockStorage, 1, secretID, Scope{}, permSecretsRead)
 
 	// Execute
-	status, err := core.GetSecretSharingStatus(ctx, secretID)
+	status, err := core.GetSecretSharingStatus(ctx, ActorTypeUser, 1, secretID)
 
 	// Assert
 	require.NoError(t, err)

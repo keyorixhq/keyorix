@@ -17,13 +17,26 @@ import (
 	"gorm.io/gorm"
 )
 
-// GetStats aggregates row counts for the key entity types.
+// GetStats aggregates row counts for the key entity types. #G54: each Count's
+// error is checked and propagated — previously a failed query silently left
+// its field at Go's zero value, so a genuine storage error (a missing table,
+// a connectivity blip) was indistinguishable from an honestly-empty
+// deployment, fabricating a "0 secrets, 0 users" success result for any
+// dashboard/health consumer of this call.
 func (ls *LocalStorage) GetStats(ctx context.Context) (*storage.StorageStats, error) {
 	stats := &storage.StorageStats{}
-	ls.db.WithContext(ctx).Model(&models.SecretNode{}).Count(&stats.TotalSecrets)
-	ls.db.WithContext(ctx).Model(&models.User{}).Count(&stats.TotalUsers)
-	ls.db.WithContext(ctx).Model(&models.Role{}).Count(&stats.TotalRoles)
-	ls.db.WithContext(ctx).Model(&models.Session{}).Count(&stats.TotalSessions)
+	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).Count(&stats.TotalSecrets).Error; err != nil {
+		return nil, err
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.User{}).Count(&stats.TotalUsers).Error; err != nil {
+		return nil, err
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.Role{}).Count(&stats.TotalRoles).Error; err != nil {
+		return nil, err
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.Session{}).Count(&stats.TotalSessions).Error; err != nil {
+		return nil, err
+	}
 	return stats, nil
 }
 

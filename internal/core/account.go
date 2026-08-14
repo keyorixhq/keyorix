@@ -167,7 +167,7 @@ func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User
 // (hash persisted but the state clear lost, or vice versa) can't happen on backends
 // that support real transactions.
 func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, newPassword string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), int(bcryptCost.Load()))
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

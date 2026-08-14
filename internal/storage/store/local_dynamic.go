@@ -60,9 +60,15 @@ func (ls *LocalStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models
 // UpdatedAt, ...) is persisted in the same statement, not just a hardcoded
 // column subset.
 func (ls *LocalStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
+	// #G42: the guard only checks `disabled`, so a concurrent DSN rotation or
+	// classification change (UpdateDynamicSecretConfig, an unconditional Save
+	// that doesn't touch `disabled`) still matches this WHERE clause. A
+	// Select("*") here would silently revert that concurrent edit back to
+	// this call's stale copy even though the enable/disable toggle itself is
+	// legitimate. Whitelist only the columns this transition actually owns.
 	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).
 		Where("id = ? AND disabled = ?", c.ID, fromDisabled).
-		Select("*").
+		Select("Disabled", "UpdatedAt").
 		Updates(c)
 	if res.Error != nil {
 		return false, res.Error

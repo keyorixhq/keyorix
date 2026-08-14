@@ -136,3 +136,48 @@ func TestShamirKeyProvider_ForgedShareRejectedWithCommitment(t *testing.T) {
 	_, err = NewShamirKeyProvider([]string{f1, f2, f3}, nil, commitmentHex).KEK()
 	require.Error(t, err, "forged share must be rejected once shamir_commitment is configured")
 }
+
+// TestShamirKeyProvider_NoCommitmentConfiguredDoesNotExit is #G61: KEK() used to
+// log.Fatalf (os.Exit) when shamir_commitment was unset, unlike every other
+// KeyProvider implementation, which returns an error. This proves the process
+// survives — reconstruction proceeds with the weaker magic-byte-only check
+// (#429) instead of killing the whole server. If this test were run against
+// the pre-fix code, the log.Fatalf would tear down the test binary itself
+// (not just fail this test), which is exactly the bug.
+func TestShamirKeyProvider_NoCommitmentConfiguredDoesNotExit(t *testing.T) {
+	dir := t.TempDir()
+	kek := testKEK()
+	shares, err := SplitKEK(kek, 5, 3)
+	require.NoError(t, err)
+
+	f1 := filepath.Join(dir, "s1")
+	f2 := filepath.Join(dir, "s2")
+	f3 := filepath.Join(dir, "s3")
+	require.NoError(t, os.WriteFile(f1, []byte(hex.EncodeToString(shares[0])), 0600))
+	require.NoError(t, os.WriteFile(f2, []byte(hex.EncodeToString(shares[1])), 0600))
+	require.NoError(t, os.WriteFile(f3, []byte(hex.EncodeToString(shares[2])), 0600))
+
+	got, err := NewShamirKeyProvider([]string{f1, f2, f3}, nil, "").KEK()
+	require.NoError(t, err, "no shamir_commitment configured must reduce verification strength, not kill the process")
+	assert.Equal(t, kek, got)
+}
+
+// TestMultiKeyProvider_FallsBackWhenShamirKEKErrors is #G61's fallback half:
+// a ShamirKeyProvider that returns an error (too few shares, here) must let
+// MultiKeyProvider move on to the next configured provider — the whole reason
+// KEK() must return an error instead of calling log.Fatalf, which would have
+// killed the process before MultiKeyProvider ever got a chance to fall back.
+func TestMultiKeyProvider_FallsBackWhenShamirKEKErrors(t *testing.T) {
+	failingShamir := NewShamirKeyProvider(nil, nil, "") // 0 shares < threshold 2 → KEK() errors
+	kek := testKEK()
+	kekPath := filepath.Join(t.TempDir(), "kek.bin")
+	require.NoError(t, os.WriteFile(kekPath, kek, 0600))
+	fallback := NewFileKeyProvider(kekPath)
+
+	m, err := NewMultiKeyProvider([]KeyProvider{failingShamir, fallback})
+	require.NoError(t, err)
+
+	got, err := m.KEK()
+	require.NoError(t, err, "MultiKeyProvider must fall back to the next provider when shamir errors")
+	assert.Equal(t, kek, got)
+}

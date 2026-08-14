@@ -251,10 +251,12 @@ func TestGetSecretImpact_PermissionDenied_S23(t *testing.T) {
 	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
 	sec := r.createSecret(t, ctx, "impact-sec", "v")
 
+	// #G14: authorizeSecretScoped returns the same NotFound a nonexistent secret
+	// ID would, not PermissionDenied.
 	nobody := authCtx(999, "nobody")
 	_, err := r.svc.GetSecretImpact(nobody, &pb.GetSecretRequest{Id: sec.GetId()})
 	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 // ---------------------------------------------------------------------------

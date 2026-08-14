@@ -190,7 +190,14 @@ func (p *ShamirKeyProvider) KEK() ([]byte, error) { // NOSONAR -- cognitive comp
 		// Not a hard failure — existing key material split before shamir_commitment
 		// existed has no commitment to check — but this is a real reduction in
 		// verification strength that every startup should surface loudly.
-		log.Fatalf("shamir key provider: no shamir_commitment configured — reconstruction relies solely on the forgeable magic-byte framing check, NOT a cryptographic integrity check (see issue #429); run `keyorix encryption shamir-split` again and set shamir_commitment to close this gap")
+		//
+		// #G61: this used to log.Fatalf (os.Exit) here, unlike every other
+		// KeyProvider implementation, which returns an error and lets the caller
+		// (MultiKeyProvider) fall back to another configured provider. A missing
+		// shamir_commitment is a WEAKER verification posture, not an unrecoverable
+		// condition — killing the whole process denied that fallback a chance to
+		// run at all.
+		log.Printf("WARNING: shamir key provider: no shamir_commitment configured — reconstruction relies solely on the forgeable magic-byte framing check, NOT a cryptographic integrity check (see issue #429); run `keyorix encryption shamir-split` again and set shamir_commitment to close this gap")
 	}
 	// combineKEK enforces the embedded threshold and verifies the framing magic, so
 	// a sub-threshold or wrong set of shares fails closed here — including on a fresh

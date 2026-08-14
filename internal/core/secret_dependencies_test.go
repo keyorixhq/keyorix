@@ -70,6 +70,16 @@ func TestTopologicalRotationOrderDetectsCycle(t *testing.T) {
 
 // --- integration tests against a real in-memory store ---
 
+// depTestActors are the caller identities used throughout this file's real-SQLite
+// tests; newDepCore grants each one global admin. #G32: every G32 member now
+// independently authorizes each peer secret it discloses/mutates, so a caller with no
+// RBAC grant at all would fail on any two-secret operation — these tests are about the
+// dependency-graph shape (cycles, environment scoping, soft-delete cascade), not
+// authorization, so the fixture actors are granted global admin to keep that
+// orthogonal. The peer-authorization-gap regression tests live in
+// secret_dependencies_authz_test.go, with a deliberately unprivileged actor.
+var depTestActors = []uint{1, 10}
+
 func newDepCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -78,12 +88,20 @@ func newDepCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	// secret's own soft-delete, so ShareRecord must be migrated even though these
 	// tests never create a share directly.
 	// SecretACL is included because DeleteSecret also revokes ACL rows in the same tx.
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}, &models.ShareRecord{}, &models.SecretACL{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}, &models.ShareRecord{}, &models.SecretACL{},
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.MachineIdentityRole{},
+	))
 	// Live parent projects (1, 2) + environment (1): RestoreSecret refuses to restore a
 	// secret into a soft-deleted parent, so the dependency-cascade tests need them present.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "p2"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
+	role := &models.Role{Name: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	for _, actor := range depTestActors {
+		require.NoError(t, db.Create(&models.UserRole{UserID: actor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
+	}
 	now := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db
@@ -110,7 +128,7 @@ func TestAddSecretDependency_Validation(t *testing.T) {
 	otherProj := mkSecret(t, db, 2, "other-secret")
 
 	t.Run("happy path", func(t *testing.T) {
-		got, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "app token derives from db password")
+		got, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "app token derives from db password")
 		require.NoError(t, err)
 		assert.Equal(t, appTok, got.DependentSecretID)
 		assert.Equal(t, dbPass, got.DependsOnSecretID)
@@ -118,32 +136,32 @@ func TestAddSecretDependency_Validation(t *testing.T) {
 	})
 
 	t.Run("self-dependency rejected", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, 10, dbPass, dbPass, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, dbPass, dbPass, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "itself")
 	})
 
 	t.Run("cross-project rejected", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, 10, appTok, otherProj, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, otherProj, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "same project")
 	})
 
 	t.Run("duplicate rejected", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, 10, appTok, dbPass, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, dbPass, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
 	})
 
 	t.Run("cycle rejected", func(t *testing.T) {
 		// appTok already depends on dbPass; making dbPass depend on appTok is a cycle.
-		_, err := c.AddSecretDependency(ctx, 10, dbPass, appTok, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, dbPass, appTok, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cycle")
 	})
 
 	t.Run("missing dependency target rejected with an opaque error (no existence oracle)", func(t *testing.T) {
-		_, err := c.AddSecretDependency(ctx, 10, appTok, 9999, "")
+		_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, appTok, 9999, "")
 		require.Error(t, err)
 		// Must NOT reveal whether 9999 exists / what it is — same message as a cross-scope
 		// target, so the caller can't enumerate secret IDs across scopes.
@@ -160,7 +178,7 @@ func TestAddSecretDependency_CrossEnvironmentRejected(t *testing.T) {
 	c, db := newDepCore(t)
 	staging := mkSecretEnv(t, db, 1, 1, "app-token")     // project 1, env 1
 	prod := mkSecretEnv(t, db, 1, 2, "prod-db-password") // project 1, env 2
-	_, err := c.AddSecretDependency(ctx, 10, staging, prod, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 10, staging, prod, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "environment")
 }
@@ -173,16 +191,16 @@ func TestRemoveSecretDependency_RequiresFocalReference(t *testing.T) {
 	a := mkSecret(t, db, 1, "a")
 	b := mkSecret(t, db, 1, "b")
 	other := mkSecret(t, db, 1, "other")
-	e, err := c.AddSecretDependency(ctx, 1, a, b, "")
+	e, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, a, b, "")
 	require.NoError(t, err)
 
 	// 'other' is not part of edge a→b → removal scoped to 'other' is rejected.
-	err = c.RemoveSecretDependency(ctx, 1, other, e.ID)
+	err = c.RemoveSecretDependency(ctx, ActorTypeUser, 1, other, e.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not reference")
 
 	// Scoped to the dependent secret 'a' → allowed.
-	require.NoError(t, c.RemoveSecretDependency(ctx, 1, a, e.ID))
+	require.NoError(t, c.RemoveSecretDependency(ctx, ActorTypeUser, 1, a, e.ID))
 }
 
 // Defence-in-depth: even if a cross-environment edge is somehow present (here inserted
@@ -199,11 +217,11 @@ func TestSecretDependencyReadsFilterByEnvironment(t *testing.T) {
 		ProjectID: 1, DependentSecretID: envA, DependsOnSecretID: envB,
 	}).Error)
 
-	deps, err := c.ListSecretDependencies(ctx, envA)
+	deps, err := c.ListSecretDependencies(ctx, ActorTypeUser, 1, envA)
 	require.NoError(t, err)
 	assert.Empty(t, deps.DependsOn, "a cross-environment edge must not appear in env-A's view")
 
-	impact, err := c.GetSecretImpact(ctx, envB)
+	impact, err := c.GetSecretImpact(ctx, ActorTypeUser, 1, envB)
 	require.NoError(t, err)
 	assert.Empty(t, impact.Affected, "impact from env-B must not cross into env-A via a forged edge")
 }
@@ -216,13 +234,13 @@ func TestSecretDependencyImpactAndOrderAndRemove(t *testing.T) {
 	leaf := mkSecret(t, db, 1, "service-cert")
 
 	// service-cert depends on intermediate depends on root-ca.
-	_, err := c.AddSecretDependency(ctx, 1, mid, root, "")
+	_, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, mid, root, "")
 	require.NoError(t, err)
-	e2, err := c.AddSecretDependency(ctx, 1, leaf, mid, "")
+	e2, err := c.AddSecretDependency(ctx, ActorTypeUser, 1, leaf, mid, "")
 	require.NoError(t, err)
 
 	// Impact of rotating root-ca: intermediate (depth1) then service-cert (depth2).
-	impact, err := c.GetSecretImpact(ctx, root)
+	impact, err := c.GetSecretImpact(ctx, ActorTypeUser, 1, root)
 	require.NoError(t, err)
 	require.Len(t, impact.Affected, 2)
 	assert.Equal(t, "intermediate", impact.Affected[0].SecretName)
@@ -238,7 +256,7 @@ func TestSecretDependencyImpactAndOrderAndRemove(t *testing.T) {
 		[]string{order.Order[0].SecretName, order.Order[1].SecretName, order.Order[2].SecretName})
 
 	// List from the middle secret: depends on root, depended on by leaf.
-	view, err := c.ListSecretDependencies(ctx, mid)
+	view, err := c.ListSecretDependencies(ctx, ActorTypeUser, 1, mid)
 	require.NoError(t, err)
 	require.Len(t, view.DependsOn, 1)
 	assert.Equal(t, "root-ca", view.DependsOn[0].SecretName)
@@ -246,8 +264,8 @@ func TestSecretDependencyImpactAndOrderAndRemove(t *testing.T) {
 	assert.Equal(t, "service-cert", view.Dependents[0].SecretName)
 
 	// Remove the leaf→mid edge; impact of root shrinks to just intermediate.
-	require.NoError(t, c.RemoveSecretDependency(ctx, 1, leaf, e2.ID))
-	impact, err = c.GetSecretImpact(ctx, root)
+	require.NoError(t, c.RemoveSecretDependency(ctx, ActorTypeUser, 1, leaf, e2.ID))
+	impact, err = c.GetSecretImpact(ctx, ActorTypeUser, 1, root)
 	require.NoError(t, err)
 	require.Len(t, impact.Affected, 1)
 	assert.Equal(t, "intermediate", impact.Affected[0].SecretName)
@@ -283,12 +301,12 @@ func TestAddSecretDependency_ConcurrentRaceCannotPersistACycle(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, results[0] = c.AddSecretDependency(ctx, 1, a, b, "")
+			_, results[0] = c.AddSecretDependency(ctx, ActorTypeUser, 1, a, b, "")
 		}()
 		go func() {
 			defer wg.Done()
 			<-start
-			_, results[1] = c.AddSecretDependency(ctx, 1, b, a, "")
+			_, results[1] = c.AddSecretDependency(ctx, ActorTypeUser, 1, b, a, "")
 		}()
 		close(start)
 		wg.Wait()

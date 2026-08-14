@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -506,17 +508,26 @@ func (ls *LocalStorage) CreateAnomalyAlert(ctx context.Context, alert *models.An
 	}
 	cutoff = cutoff.Add(-anomalyDedupWindow)
 
-	var existing int64
-	if err := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).
-		Where("secret_node_id = ? AND alert_type = ? AND accessed_by = ? AND ip_address = ? AND detected_at > ?",
-			alert.SecretNodeID, alert.AlertType, alert.AccessedBy, alert.IPAddress, cutoff).
-		Count(&existing).Error; err != nil {
-		return err
-	}
-	if existing > 0 {
-		return nil
-	}
-	return ls.db.WithContext(ctx).Create(alert).Error
+	// #G21: the dedup check and the insert run inside ONE transaction — two
+	// concurrent detection runs processing the same access event could
+	// otherwise both observe existing==0 before either commits, producing
+	// duplicate alerts. SQLite's single-writer model holds this transaction's
+	// exclusive write lock for its whole duration, so a concurrent insert of
+	// the same (secret, type, actor, ip) tuple cannot land in between the
+	// count and this insert.
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing int64
+		if err := tx.Model(&models.AnomalyAlert{}).
+			Where("secret_node_id = ? AND alert_type = ? AND accessed_by = ? AND ip_address = ? AND detected_at > ?",
+				alert.SecretNodeID, alert.AlertType, alert.AccessedBy, alert.IPAddress, cutoff).
+			Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing > 0 {
+			return nil
+		}
+		return tx.Create(alert).Error
+	})
 }
 
 // ListAnomalyAlerts returns alerts newest-first. acknowledged filters by state:
