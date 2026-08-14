@@ -1,5 +1,12 @@
 # Keyorix Configuration with Web Dashboard
 # This configuration enables both the API server and web dashboard
+#
+# ============================================================================
+# FOR LOCAL DEV ONLY — DO NOT USE IN PRODUCTION AS-IS (#G36). swagger_enabled
+# and grpc.reflection_enabled are both on and TLS is off below — all fine for a
+# laptop, none of it for an internet-facing deployment. See
+# server/config/production.yaml for a production-oriented starting point.
+# ============================================================================
 
 environment: "development"  # development, staging, production
 
@@ -12,7 +19,7 @@ server:
     enabled: true
     port: "8080"
     protocol_versions: ["1.1", "2.0"]
-    swagger_enabled: true
+    swagger_enabled: true  # DEV-ONLY DEFAULT (#G36) — disable in production.
     # Web dashboard settings
     web_assets_path: "./web/dist"  # Path to built web assets
     domain: "localhost"            # Domain for production CORS
@@ -20,7 +27,8 @@ server:
       - "http://localhost:3000"    # React dev server
       - "http://localhost:5173"    # Vite dev server
     tls:
-      enabled: false
+      enabled: false  # DEV-ONLY DEFAULT (#G36) — enable (or front with a
+                       # TLS-terminating proxy) before production use.
       auto_cert: false
       cert_file: ""
       key_file: ""
@@ -32,9 +40,9 @@ server:
     enabled: true
     port: "9090"
     protocol_versions: ["2.0"]
-    reflection_enabled: true
+    reflection_enabled: true  # DEV-ONLY DEFAULT (#G36) — disable in production.
     tls:
-      enabled: false
+      enabled: false  # DEV-ONLY DEFAULT (#G36) — see server.http.tls.enabled above.
       cert_file: ""
       key_file: ""
     ratelimit:
