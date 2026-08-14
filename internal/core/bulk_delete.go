@@ -8,6 +8,8 @@ package core
 import (
 	"context"
 	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // BulkDeleteRequest carries the set of secret node IDs to delete.
@@ -83,7 +85,23 @@ func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteReque
 		// caller cannot read (wrong project, no ACL/ownership grant, or genuinely
 		// absent) is reported identically as "secret not found": its name must
 		// never leak to a caller who was never authorized to see it.
-		secret, err := c.GetSecretWithPermissionCheck(ctx, id, actorID)
+		//
+		// actorID == 0 is the embedded/local-CLI caller (bulk_delete.go's
+		// runBulkDeleteEmbedded) — single-user local mode has no RBAC concept at
+		// all, matching the singular CLI `secret delete` command's use of the
+		// bare, unguarded GetSecret/DeleteSecret (delete.go): physical access to
+		// the local DB file is the authorization boundary there, not a userID.
+		// Every authenticated HTTP/gRPC caller always supplies a real actorID
+		// (secrets_bulk_delete.go's handler uses userCtx.UserID), so this
+		// fallback never weakens the multi-tenant per-ID re-authorization #G31
+		// added for that path.
+		var secret *models.SecretNode
+		var err error
+		if actorID == 0 {
+			secret, err = c.GetSecret(ctx, id)
+		} else {
+			secret, err = c.GetSecretWithPermissionCheck(ctx, id, actorID)
+		}
 		if err != nil || secret == nil || secret.ProjectID != projectID {
 			result.Failed = append(result.Failed, BulkOpError{
 				SecretID: id,
@@ -95,7 +113,12 @@ func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteReque
 		secretName := secret.Name
 		secretProjectID := secret.ProjectID
 
-		if err := c.DeleteSecretWithPermissionCheck(ctx, id, actorID); err != nil {
+		if actorID == 0 {
+			err = c.DeleteSecret(ctx, id)
+		} else {
+			err = c.DeleteSecretWithPermissionCheck(ctx, id, actorID)
+		}
+		if err != nil {
 			result.Failed = append(result.Failed, BulkOpError{
 				SecretID: id,
 				Name:     secretName,
