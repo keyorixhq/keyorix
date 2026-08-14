@@ -211,11 +211,11 @@ type ConnectorConfig struct {
 // plain int: its safe default (0 = never expires, ADR-025) equals the Go zero
 // value, so there is no unset/explicit-off ambiguity to resolve.
 type PasswordPolicyConfig struct {
-	MinLength        *int  `yaml:"min_length"`
-	RequireUppercase *bool `yaml:"require_uppercase"`
-	RequireLowercase *bool `yaml:"require_lowercase"`
-	RequireDigit     *bool `yaml:"require_digit"`
-	RequireSpecial   *bool `yaml:"require_special"`
+	MinLength          *int  `yaml:"min_length"`
+	RequireUppercase   *bool `yaml:"require_uppercase"`
+	RequireLowercase   *bool `yaml:"require_lowercase"`
+	RequireDigit       *bool `yaml:"require_digit"`
+	RequireSpecial     *bool `yaml:"require_special"`
 	RejectPersonalInfo *bool `yaml:"reject_personal_info"`
 	// RejectCommonPasswords rejects passwords on the curated common-password list.
 	RejectCommonPasswords *bool `yaml:"reject_common_passwords"`
