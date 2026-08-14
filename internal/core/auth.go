@@ -463,20 +463,17 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	// or deactivating the admin would not stop their in-flight impersonation, since the
 	// session is keyed to the target's user_id and the gate above only checks the
 	// target. Self-checking backstop alongside the session purge on state change.
+	// MT-007/#G05: re-verify both the admin's active state and the ceiling (not
+	// just the target's, checked above) so neither an elevation of the target's
+	// roles NOR a demotion/suspension of the impersonating admin after
+	// impersonation started silently persists for the rest of the session.
+	// Cached (IMP-001) to avoid repeated DB queries on every session validation;
+	// cache TTL is 2× the auth-cache window. See ReauthorizeImpersonation's doc
+	// comment (impersonation.go) — StreamAuditLogs' dedicated re-auth ticker
+	// (#108) runs the identical check for long-lived gRPC streams.
 	if session.ImpersonatedBy != nil && *session.ImpersonatedBy != 0 {
-		admin, err := c.storage.GetUser(ctx, *session.ImpersonatedBy)
-		if err != nil {
-			return nil, nil, fmt.Errorf("impersonating account not found")
-		}
-		if !admin.IsActive || AccountLoginBlocked(admin.AccountState) {
-			return nil, nil, fmt.Errorf("impersonating account is not active")
-		}
-		// MT-007: re-check the impersonation ceiling so an elevation of the target's
-		// roles AFTER impersonation started does not silently extend the impersonator's
-		// reach beyond their current authority. Cached (IMP-001) to avoid repeated DB
-		// queries on every session validation; cache TTL is 2× the auth-cache window.
-		if err := c.cachedImpersonationCeiling(ctx, *session.ImpersonatedBy, session.UserID); err != nil {
-			return nil, nil, fmt.Errorf("impersonation ceiling exceeded — target's authority now exceeds impersonator's: %w", err)
+		if err := c.ReauthorizeImpersonation(ctx, *session.ImpersonatedBy, session.UserID); err != nil {
+			return nil, nil, err
 		}
 	}
 	// Best-effort, throttled last-seen stamp for the My Account sessions view.

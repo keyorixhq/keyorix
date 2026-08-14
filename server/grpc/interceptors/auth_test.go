@@ -69,6 +69,11 @@ func TestAuthInterceptor_BlocksMachineTokenIssuanceWhileImpersonating(t *testing
 	target := uint(7001)
 	h.CreateTestUser(t, "imp-admin", admin)
 	h.CreateTestUser(t, "imp-target", target)
+	// #G05: ValidateSessionToken now re-verifies the impersonation ceiling
+	// (users.impersonate + equal-or-greater authority than the target) on
+	// every request against an active impersonation session — a real admin
+	// holds this via the super_admin name-bypass, so grant it here too.
+	h.AssignUserRole(t, admin, 1, nil) // super_admin
 	expiry := time.Now().Add(time.Hour)
 	_, err := h.Storage.CreateSession(context.Background(), &models.Session{
 		UserID: target, SessionToken: "imp-token", ExpiresAt: &expiry, ImpersonatedBy: &admin,
@@ -461,10 +466,13 @@ func TestAuthInterceptor_ImpersonationSessionStampsAdminInAudit(t *testing.T) {
 
 	const adminID, targetID uint = 7001, 7002
 	h.CreateTestUser(t, "imp-target", targetID)
-	// The impersonating admin must exist and be active: ValidateSessionToken now
-	// re-checks the impersonator's account state on every impersonation-session request
-	// (so suspending the admin ends their impersonation immediately).
+	// The impersonating admin must exist, be active, and still hold the
+	// impersonation ceiling: ValidateSessionToken now re-checks BOTH the
+	// impersonator's account state AND the ceiling (#G05) on every
+	// impersonation-session request (so suspending or demoting the admin
+	// ends their impersonation immediately).
 	h.CreateTestUser(t, "imp-admin", adminID)
+	h.AssignUserRole(t, adminID, 1, nil) // super_admin
 	exp := time.Now().Add(time.Hour)
 	admin := adminID
 	_, err := h.Storage.CreateSession(context.Background(), &models.Session{

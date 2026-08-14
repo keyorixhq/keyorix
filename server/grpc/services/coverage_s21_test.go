@@ -114,3 +114,57 @@ func TestReauthorizeAuditStream_MachineGetError_S21(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
+
+// TestReauthorizeAuditStream_ImpersonatingAdminLosesAuthority_S21 is the #G05
+// regression for the gRPC half of MT-007: the pre-existing checks above all
+// validate the TARGET (actor.UserID, the identity the stream authenticated
+// with) and never the initiating admin, so an admin whose authority drops
+// below the target's mid-stream previously kept receiving the live audit feed
+// for the rest of the stream's life. The target here holds super_admin
+// (audit.read + the full admin-tier bundle) so every pre-existing check
+// passes; the impersonating admin holds no roles at all, so only the NEW
+// ReauthorizeImpersonation call added to reauthorizeAuditStream can catch it.
+func TestReauthorizeAuditStream_ImpersonatingAdminLosesAuthority_S21(t *testing.T) {
+	svc, h := newAuditServiceWithMachineUser(t)
+
+	require.NoError(t, h.DB.Create(&models.User{
+		ID: 5, Username: "victim-target", Email: "target@example.com", IsActive: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.UserRole{UserID: 5, RoleID: 1}).Error) // super_admin
+
+	require.NoError(t, h.DB.Create(&models.User{
+		ID: 6, Username: "weak-admin", Email: "weak@example.com", IsActive: true,
+	}).Error) // no roles at all
+
+	weakAdmin := uint(6)
+	actor := &interceptors.UserContext{
+		UserID: 5, Username: "victim-target", Permissions: []string{"audit.read"},
+		ImpersonatedBy: &weakAdmin,
+	}
+	ctx := context.WithValue(context.Background(), interceptors.GetUserContextKey(), actor)
+	err := svc.reauthorizeAuditStream(ctx, actor)
+	require.Error(t, err, "an impersonating admin who no longer outranks the target must be refused")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestReauthorizeAuditStream_ImpersonatingAdminStillAuthorized_S21 is the
+// companion positive case: an admin whose OWN authority still meets the
+// ceiling is not spuriously refused.
+func TestReauthorizeAuditStream_ImpersonatingAdminStillAuthorized_S21(t *testing.T) {
+	svc, h := newAuditServiceWithMachineUser(t)
+
+	require.NoError(t, h.DB.Create(&models.User{
+		ID: 5, Username: "victim-target", Email: "target@example.com", IsActive: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.UserRole{UserID: 5, RoleID: 1}).Error) // super_admin
+
+	// User 1 (from newAuditServiceWithMachineUser) already holds super_admin.
+	realAdmin := uint(1)
+	actor := &interceptors.UserContext{
+		UserID: 5, Username: "victim-target", Permissions: []string{"audit.read"},
+		ImpersonatedBy: &realAdmin,
+	}
+	ctx := context.WithValue(context.Background(), interceptors.GetUserContextKey(), actor)
+	err := svc.reauthorizeAuditStream(ctx, actor)
+	require.NoError(t, err, "an impersonating admin who still outranks the target must not be refused")
+}

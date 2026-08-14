@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -97,8 +98,11 @@ func TestStartImpersonation_RejectsAdminTargetForNonAdminCaller(t *testing.T) {
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
+	// #G05: the ceiling now compares the target's ACTUAL bundled permissions
+	// (not the "admin" role name itself) against what the caller can exercise.
+	store.On("GetRolePermissions", ctx, uint(7)).Return([]*models.Permission{{Name: "system.write"}}, nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
-	if err == nil || !strings.Contains(err.Error(), "administrative authority") {
+	if err == nil || !strings.Contains(err.Error(), "which you do not also hold") {
 		t.Fatalf("expected an admin-target rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
@@ -121,8 +125,9 @@ func TestStartImpersonation_RejectsProjectScopedAdminTargetForNonAdminCaller(t *
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), projScope).Return([]uint{}, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
+	store.On("GetRolePermissions", ctx, uint(8)).Return([]*models.Permission{{Name: "roles.assign"}}, nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
-	if err == nil || !strings.Contains(err.Error(), "administrative authority") {
+	if err == nil || !strings.Contains(err.Error(), "which you do not also hold") {
 		t.Fatalf("expected a project-scoped admin-target rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
@@ -145,6 +150,7 @@ func TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCalle
 	// Caller also holds project_admin at the SAME project scope.
 	store.On("GetUserRoleIDsAt", ctx, uint(1), projScope).Return([]uint{8}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
+	store.On("GetRolePermissions", ctx, uint(8)).Return([]*models.Permission{{Name: "roles.assign"}}, nil)
 	store.On("CreateSession", ctx, mock.MatchedBy(func(s *models.Session) bool {
 		return s.UserID == 2 && s.ImpersonatedBy != nil && *s.ImpersonatedBy == 1
 	})).Return(&models.Session{ID: 100, UserID: 2, SessionToken: "tok2"}, nil)
@@ -154,6 +160,90 @@ func TestStartImpersonation_AllowsProjectScopedAdminTargetForSameScopeAdminCalle
 	require.NoError(t, err)
 	require.Equal(t, "tok2", session.SessionToken)
 	require.Equal(t, "proj-admin", target.Username)
+}
+
+// A non-admin caller cannot impersonate a target whose admin-tier authority
+// comes from a CUSTOM role (not one of the fixed adminRoleNames) that bundles
+// an admin-tier permission — #G05's exact regression for the old role-NAME
+// check, which silently skipped the ceiling entirely for any role it didn't
+// recognize by name, no matter how privileged its actual permission bundle.
+func TestStartImpersonation_RejectsCustomAdminTierRoleTargetForNonAdminCaller(t *testing.T) {
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "helpdesk"}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "secops", IsActive: true}, nil)
+	// Target (id 2) holds a custom "secops" role (id 9) at global scope, bundling
+	// system.write — never named in adminRoleNames, so roleSetContainsAdmin(target)
+	// would have returned false and the old check would have skipped this scope.
+	store.On("GetRoleByName", ctx, mock.Anything).Return((*models.Role)(nil), fmt.Errorf("not found"))
+	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{{}}, nil)
+	store.On("GetUserRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{9}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), mock.Anything).Return([]uint{}, nil)
+	store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
+	store.On("GetRolePermissions", ctx, uint(9)).Return([]*models.Permission{{Name: "system.write"}}, nil)
+	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
+	if err == nil || !strings.Contains(err.Error(), "which you do not also hold") {
+		t.Fatalf("expected a custom-admin-tier-role rejection, got %v", err)
+	}
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// #G05 detection_idea: revoke the impersonator's users.impersonate mid-session
+// (the admin keeps every OTHER permission — this is deliberately NOT a rank
+// demotion, to isolate the missing check) — ReauthorizeImpersonation (the
+// function ValidateSessionToken calls on every request against an active
+// impersonation session, and StreamAuditLogs' re-auth ticker calls for gRPC)
+// must now refuse, so the session is terminated within one re-auth cycle
+// rather than remaining valid for the rest of its TTL.
+func TestReauthorizeImpersonation_RevokedImpersonatePermission(t *testing.T) {
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true}, nil)
+	// Admin (1) no longer holds users.impersonate: RoleSetHasPermission returns
+	// false for it, but the admin otherwise still outranks the target (2, no
+	// roles at all) — isolates the missing per-permission re-check from the
+	// pre-existing rank-ceiling re-check.
+	store.On("GetUserRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{5}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{}, nil)
+	store.On("GetRoleByName", ctx, mock.Anything).Return((*models.Role)(nil), fmt.Errorf("not found"))
+	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(false, nil)
+	err := c.ReauthorizeImpersonation(ctx, 1, 2)
+	if err == nil || !strings.Contains(err.Error(), "impersonation authority has been revoked") {
+		t.Fatalf("expected a revoked-impersonate-permission rejection, got %v", err)
+	}
+}
+
+// The companion positive case: an admin who still holds users.impersonate and
+// still outranks the target passes re-authorization.
+func TestReauthorizeImpersonation_StillAuthorized(t *testing.T) {
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: true}, nil)
+	store.On("GetUserRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{5}, nil)
+	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{}, nil)
+	store.On("GetRoleByName", ctx, mock.Anything).Return((*models.Role)(nil), fmt.Errorf("not found"))
+	store.On("RoleSetHasPermission", ctx, []uint{5}, "users.impersonate").Return(true, nil)
+	store.On("GetUserRoleScopes", ctx, uint(2)).Return([]Scope{}, nil)
+	err := c.ReauthorizeImpersonation(ctx, 1, 2)
+	require.NoError(t, err)
+}
+
+// A suspended/deactivated admin fails re-authorization even if their role
+// grants are otherwise untouched (the pre-existing account-state half of
+// MT-007, still exercised through the shared ReauthorizeImpersonation path).
+func TestReauthorizeImpersonation_SuspendedAdmin(t *testing.T) {
+	store := new(MockStorage)
+	c := newImpersonationCore(store)
+	ctx := context.Background()
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin", IsActive: false}, nil)
+	err := c.ReauthorizeImpersonation(ctx, 1, 2)
+	if err == nil || !strings.Contains(err.Error(), "not active") {
+		t.Fatalf("expected a suspended-admin rejection, got %v", err)
+	}
 }
 
 func TestEndImpersonation_LogsDurationAndActionCount(t *testing.T) {

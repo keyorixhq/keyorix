@@ -369,7 +369,7 @@ type ceilingCacheEntry struct {
 
 const ceilingCacheTTL = 60 * time.Second
 
-// cachedImpersonationCeiling wraps requireEqualOrGreaterAdminAuthority with a
+// cachedImpersonationCeiling wraps requireStillAuthorizedToImpersonate with a
 // short-lived cache (ceilingCacheTTL) so the expensive DB reads it issues are
 // not repeated on every ValidateSessionToken call (IMP-001). The cache TTL is
 // intentionally 2× the auth-cache window so a cache miss here never triggers
@@ -381,9 +381,31 @@ func (c *KeyorixCore) cachedImpersonationCeiling(ctx context.Context, actorID, t
 			return entry.err
 		}
 	}
-	err := c.requireEqualOrGreaterAdminAuthority(ctx, actorID, targetID, "impersonate")
+	err := c.requireStillAuthorizedToImpersonate(ctx, actorID, targetID)
 	c.impersonationCeilingCache.Store(key, ceilingCacheEntry{err: err, expiresAt: c.now().Add(ceilingCacheTTL)})
 	return err
+}
+
+// requireStillAuthorizedToImpersonate combines the two conditions that must
+// continue to hold for the DURATION of an active impersonation session, not
+// just at StartImpersonation's issuance-time check (#G05's detection_idea):
+// the admin must still be independently granted users.impersonate — revoking
+// it mid-session must end the session within one re-auth cycle, the same as
+// revoking any other permission does for an ordinary session, not just block
+// a NEW StartImpersonation call — and must still hold equal-or-greater
+// authority than the target (the pre-existing MT-007 ceiling re-check).
+// permUsersImpersonate is checked at global scope: impersonation authority is
+// deployment-wide by design (StartImpersonation's target lookup is unscoped),
+// mirroring the router's own RequirePermission("users.impersonate") gate.
+func (c *KeyorixCore) requireStillAuthorizedToImpersonate(ctx context.Context, actorID, targetID uint) error {
+	ok, err := c.Authorize(ctx, actorID, "users.impersonate", Scope{})
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("impersonation authority has been revoked")
+	}
+	return c.requireEqualOrGreaterAdminAuthority(ctx, actorID, targetID, "impersonate")
 }
 
 // requireMachinePrivilegeCeiling refuses to issue a token for machineID when the
@@ -413,14 +435,26 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorI
 	return nil
 }
 
-// requireEqualOrGreaterAdminAuthority refuses when targetID holds an admin-tier
-// role — global OR project-scoped, direct OR group-inherited — at any scope where
-// actorID does not ALSO hold admin-tier authority. Unlike the single-scope
+// requireEqualOrGreaterAdminAuthority refuses when targetID holds, at any scope
+// (global OR project-scoped, direct OR group-inherited), a permission actorID
+// does not ALSO effectively hold at that same scope. Unlike the single-scope
 // IsGlobalAdmin check, this discovers and checks EVERY scope the target actually
 // holds a grant at (via GetUserRoleScopes), so a target who is a project-scoped
 // project_admin — never itself flagged "global admin" — is still compared
-// correctly. Used by impersonation's admin-rank-ceiling check (#165): the action
-// string only customizes the error message (e.g. "impersonate").
+// correctly. Used by impersonation's admin-rank-ceiling check (#165/#G05): the
+// action string only customizes the error message (e.g. "impersonate").
+//
+// #G05: this compares the target's actual bundled PERMISSIONS against what the
+// actor can actually exercise (via c.Authorize, which resolves the admin-role-
+// name bypass and broader-scope grants exactly like every other authorization
+// decision) — not role-NAME membership in the fixed adminRoleNames list. The old
+// role-name check silently no-op'd for any target whose admin-tier role was
+// defined under a different name (a custom "SecOps" role bundling roles.assign +
+// system.write, say): roleSetContainsAdmin(target) would return false, skipping
+// the ceiling entirely, letting a lower-privileged actor impersonate a de-facto
+// admin uncontested. Comparing actual permissions closes that regardless of what
+// the role bundling them is named. This mirrors requireGranterHoldsRolePermissions'
+// established pattern (the role-GRANT ceiling) applied here to impersonation.
 func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, actorID, targetID uint, action string) error {
 	scopes, err := c.storage.GetUserRoleScopes(ctx, targetID)
 	if err != nil {
@@ -431,15 +465,24 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 		if err != nil {
 			return fmt.Errorf("failed to resolve target authority: %w", err)
 		}
-		if !c.roleSetContainsAdmin(ctx, targetRoleIDs) {
-			continue
+		targetPerms := make(map[string]bool)
+		for _, roleID := range targetRoleIDs {
+			perms, err := c.rolePermissionNameSet(ctx, roleID)
+			if err != nil {
+				return fmt.Errorf("failed to resolve target authority: %w", err)
+			}
+			for p := range perms {
+				targetPerms[p] = true
+			}
 		}
-		actorRoleIDs, err := c.scopedRoleIDs(ctx, actorID, scope)
-		if err != nil {
-			return fmt.Errorf("failed to resolve actor authority: %w", err)
-		}
-		if !c.roleSetContainsAdmin(ctx, actorRoleIDs) {
-			return fmt.Errorf("cannot %s a user holding administrative authority you do not also hold", action)
+		for permName := range targetPerms {
+			ok, aerr := c.Authorize(ctx, actorID, permName, scope)
+			if aerr != nil {
+				return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+			}
+			if !ok {
+				return fmt.Errorf("cannot %s a user holding permission %q, which you do not also hold", action, permName)
+			}
 		}
 	}
 	return nil
