@@ -286,10 +286,12 @@ func TestDynamic_IssueLease_NoUserCtx_S23(t *testing.T) {
 	require.NoError(t, db.Create(cfg).Error)
 
 	// IssueLease calls loadAuthorizedConfig first, which calls authorize();
-	// authorize() returns false when userCtx is nil, so the 403/401 guard fires
-	// before the core.IssueLease call. Because IssueLease's outer guard comes
-	// AFTER loadAuthorizedConfig (which has its own authorize inside), no user
-	// ctx means loadAuthorizedConfig returns false → 403 (not 401).
+	// authorize() returns false when userCtx is nil, so the guard fires before
+	// the core.IssueLease call. Because IssueLease's outer guard comes AFTER
+	// loadAuthorizedConfig (which has its own authorize inside), no user ctx
+	// means loadAuthorizedConfig returns false → NotFound (#G14: the
+	// found-but-unauthorized branch collapses to the same response a missing
+	// config ID would get, not a distinct Forbidden).
 	req := withChiParam(
 		httptest.NewRequest(http.MethodPost, "/api/v1/dynamic-secrets/configs/1/issue", nil),
 		"id", uintStr(cfg.ID),
@@ -297,8 +299,7 @@ func TestDynamic_IssueLease_NoUserCtx_S23(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.IssueLease(w, req)
 
-	// denyAuthz with mfaBlocked=false → 403 Forbidden
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestDynamic_IssueLease_BadConfigID_S23 verifies that a non-numeric config id

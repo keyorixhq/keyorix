@@ -91,9 +91,9 @@ func TestUpdateSCIMUser_NoStateChange_DoesNotConsultSetAccountState(t *testing.T
 
 	target := &models.User{ID: 2, Username: "bob", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}
 	store.On("GetUser", ctx, uint(2)).Return(target, nil)
-	store.On("UpdateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
+	store.On("UpdateUserIfActiveStateMatches", ctx, mock.MatchedBy(func(u *models.User) bool {
 		return u.DisplayName == "Bob Smith"
-	})).Return(&models.User{ID: 2, DisplayName: "Bob Smith"}, nil)
+	}), true).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
 	name := "Bob Smith"

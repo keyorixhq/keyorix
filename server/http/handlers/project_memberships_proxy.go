@@ -144,10 +144,11 @@ func (h *CatalogHandler) GetMembershipProxy(w http.ResponseWriter, r *http.Reque
 
 // UpdateMembershipProxy handles PUT /api/v1/system/project-memberships/{id}. This
 // is a raw passthrough onto storage.UpdateProjectMembership (local_memberships.go's
-// plain Save) — see remote_memberships.go's package doc for why, unlike
-// UpdateInvitationProxy, there is no conditional `WHERE state = ?` write to
-// preserve here: the state-machine legality check (canTransition) already runs in
-// the CALLING core.KeyorixCore before this is ever invoked.
+// plain Save). #G42: this must NEVER be used for a state-machine transition
+// (State/ActivatedAt/RevokedAt) — the calling core.KeyorixCore's canTransition
+// legality check running before this is invoked does NOT close the TOCTOU a
+// concurrent transition on the same membership races; see
+// TransitionMembershipProxy below, which exists specifically for that.
 func (h *CatalogHandler) UpdateMembershipProxy(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
@@ -166,6 +167,42 @@ func (h *CatalogHandler) UpdateMembershipProxy(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeRemoteAPISuccess(w, map[string]bool{"updated": true})
+}
+
+// TransitionMembershipProxy handles PUT
+// /api/v1/system/project-memberships/{id}/transition — the server-side
+// endpoint backing RemoteStorage.TransitionProjectMembershipState (#G42).
+// Persists the membership's full row via a single conditional UPDATE, gated
+// on the row's CURRENT state still matching the request's from_state, so a
+// concurrent transition on the same membership can't be silently reverted
+// (or silently revert this one) across the HTTP hop the way UpdateMembershipProxy
+// could.
+func (h *CatalogHandler) TransitionMembershipProxy(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_PARAMETER", "invalid membership ID")
+		return
+	}
+	var body struct {
+		Membership membershipProxyWire `json:"membership"`
+		FromState  string              `json:"from_state"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if body.FromState == "" {
+		writeRemoteAPIError(w, http.StatusBadRequest, "INVALID_BODY", "from_state is required")
+		return
+	}
+	body.Membership.ID = uint(id)
+	matched, err := h.coreService.Storage().TransitionProjectMembershipState(r.Context(), body.Membership.toModel(), body.FromState)
+	if err != nil {
+		log.Printf("project-memberships proxy: transition failed: %v", err)
+		writeRemoteAPIError(w, http.StatusInternalServerError, "STORAGE_ERROR", clientSafe(err))
+		return
+	}
+	writeRemoteAPISuccess(w, map[string]bool{"matched": matched})
 }
 
 // ListMembershipsProxy handles GET /api/v1/system/project-memberships?project_id=X.

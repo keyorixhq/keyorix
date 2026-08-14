@@ -22,6 +22,17 @@ func TestIsLoopbackHost(t *testing.T) {
 	}
 }
 
+// TestIsLoopbackHost_RejectsDNSNamePrefixedWith127 is #G46: an attacker-controlled DNS
+// name like "127.evil.com" must never be classified as loopback — a raw
+// strings.HasPrefix(host, "127.") used to match it, silently skipping the
+// cleartext-credential warning `keyorix connect` prints for every non-loopback host.
+func TestIsLoopbackHost_RejectsDNSNamePrefixedWith127(t *testing.T) {
+	adversarial := []string{"127.evil.com", "127.0.0.1.attacker.com", "127.attacker.net"}
+	for _, h := range adversarial {
+		assert.False(t, isLoopbackHost(h), "%s must NOT be classified as loopback", h)
+	}
+}
+
 func cmdWithFlags() *cobra.Command {
 	c := &cobra.Command{}
 	c.Flags().String("api-key", "", "")

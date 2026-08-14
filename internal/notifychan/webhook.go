@@ -73,7 +73,11 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*WebhookSink, err
 	}
 	transport := &http.Transport{}
 	if cfg.InsecureSkipVerify {
-		log.Printf("WARNING: notifychan webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
+		// #G30: the endpoint URL IS the bearer credential for this channel (the
+		// token lives in the path, not a header — see delivery.go's
+		// embeddedURLPattern doc) — log only scheme+host, matching this
+		// package's own redactURLHost/sanitizeDeliveryError policy elsewhere.
+		log.Printf("WARNING: notifychan webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", redactURLHost(cfg.Endpoint))
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- NOSONAR go:S4830 go:S5527: InsecureSkipVerify is an explicit operator opt-in, guarded by config flag and WARNING log
 	}
 	s := &WebhookSink{

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"syscall"
 	"time"
 
@@ -160,9 +159,11 @@ func isLoopbackHost(host string) bool {
 	if host == "localhost" {
 		return true
 	}
-	if strings.HasPrefix(host, "127.") || host == "::1" {
-		return true
-	}
+	// #G46: a raw strings.HasPrefix(host, "127.") also matched an attacker-controlled DNS
+	// name like "127.evil.com" — silently classifying a remote host as loopback and
+	// skipping the cleartext-credential warning entirely. net.ParseIP only succeeds on an
+	// actual IP literal, never a hostname, so it and IsLoopback() below are sufficient on
+	// their own for every real loopback address (127.0.0.0/8, ::1) without that gap.
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.IsLoopback()
 	}

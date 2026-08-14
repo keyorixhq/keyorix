@@ -55,6 +55,58 @@ type accessReviewAuditDetail struct {
 	SecretID      uint   `json:"secret_id,omitempty"`
 }
 
+// principalTypeForDecision normalizes d's principal type for the reviewer-
+// independence check, mirroring GenerateProjectAccessReview's own
+// PrincipalType assignment per source (access_review.go): "role" decisions
+// carry an explicit, caller-supplied PrincipalType (user/group/machine); the
+// other three sources don't (AccessReviewDecision's PrincipalType field is
+// documented "for role grants" only) but their principal kind is fixed by
+// the source itself — a direct_share/owner principal is always a user, a
+// group_share principal is always a group.
+func principalTypeForDecision(d AccessReviewDecision) string {
+	switch d.Source {
+	case "direct_share", "owner":
+		return "user"
+	case "group_share":
+		return "group"
+	default: // "role"
+		return d.PrincipalType
+	}
+}
+
+// enforceAccessReviewReviewerControls applies the SAME reviewer-independence
+// and human-reviewer controls DecideAccessReviewItem enforces for the
+// campaign flow (SOC2 CC6.2-6.3 / ISO A.5.18 / ARC-001) to the standalone
+// attest/revoke endpoints (#G52). Before this fix, RevokeAccessReviewGrant/
+// AttestAccessReviewGrant had NO such checks at all — DecideAccessReviewItem
+// only ever applied them BEFORE calling into these two functions, so a
+// caller reaching them directly (project_members.go's standalone HTTP
+// handlers) could self-certify their own access, certify access for a group
+// they belong to, or have a machine-identity token "review" (attest/revoke)
+// with no attributable human reviewer at all.
+func (c *KeyorixCore) enforceAccessReviewReviewerControls(ctx context.Context, actorID uint, d AccessReviewDecision) error {
+	if err := requireHumanReviewer(actorID); err != nil {
+		return err
+	}
+	principalType := principalTypeForDecision(d)
+	if err := c.checkReviewerIndependence(ctx, actorID, principalType, d.PrincipalID); err != nil {
+		return err
+	}
+	// ARC-001: a machine identity provisioned by the actor must not be
+	// self-certified by its creator — mirrors DecideAccessReviewItem's
+	// identical inline check. Fails closed on a lookup error.
+	if d.Source == "role" && principalType == "machine" {
+		machine, err := c.storage.GetMachineIdentity(ctx, d.PrincipalID)
+		if err != nil {
+			return fmt.Errorf("loading machine identity: %w", err)
+		}
+		if machine.CreatedBy == actorID {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
+		}
+	}
+	return nil
+}
+
 // RevokeAccessReviewGrant removes the grant identified by the decision: a project-
 // scoped role assignment (user or group) or a secret share (direct or group). The
 // underlying removal is itself audited (role.removed / role.group_removed for
@@ -63,6 +115,9 @@ type accessReviewAuditDetail struct {
 func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
 	if projectID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+	}
+	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
+		return err
 	}
 	switch d.Source {
 	case "role":
@@ -149,6 +204,9 @@ func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, proj
 	if d.Source == "" {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source is required")
 	}
+	if err := c.enforceAccessReviewReviewerControls(ctx, actorID, d); err != nil {
+		return err
+	}
 	if err := c.verifyAccessReviewGrantExists(ctx, projectID, d); err != nil {
 		return err
 	}
@@ -167,6 +225,26 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 		if d.PrincipalID == 0 || d.RoleID == 0 {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to attest a role grant")
 		}
+		// #G51: machine-identity role grants live in a separate table from
+		// user/group grants (local_rbac.go's MachineIdentityRole vs
+		// UserRole/GroupRole) — ListProjectRoleAssignments never queries it,
+		// so every machine-identity attestation spuriously "not found" before
+		// this branch. RevokeAccessReviewGrant's revokeRoleByPrincipalType
+		// already dispatches machine grants separately (RemoveMachineRole);
+		// mirror that split here.
+		if d.PrincipalType == "machine" {
+			machineAssignments, err := c.storage.ListProjectMachineRoleAssignments(ctx, projectID)
+			if err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			}
+			for _, a := range machineAssignments {
+				if a.PrincipalID == d.PrincipalID && a.RoleID == d.RoleID && a.EnvironmentID == d.EnvironmentID {
+					return nil
+				}
+			}
+			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+				"the role grant being attested no longer exists — the review is stale, re-sync and try again")
+		}
 		assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 		if err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -183,6 +261,17 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 	case "direct_share", "group_share":
 		if d.PrincipalID == 0 || d.SecretID == 0 {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest a share")
+		}
+		// #G51: verify the secret actually belongs to projectID BEFORE
+		// looking at its shares — otherwise a reviewer authorized on project A
+		// could pass any SecretID and attest a share belonging to a secret in
+		// a DIFFERENT project (cross-tenant IDOR), certifying compliance
+		// evidence for a grant they have no authority over. Mirrors
+		// revokeReviewShare's identical guard (#99).
+		secret, err := c.storage.GetSecret(ctx, d.SecretID)
+		if err != nil || secret == nil || secret.ProjectID != projectID {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+				"the share being attested no longer exists — the review is stale, re-sync and try again")
 		}
 		isGroup := d.Source == "group_share"
 		shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID)
@@ -201,7 +290,10 @@ func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, project
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest ownership")
 		}
 		secret, err := c.storage.GetSecret(ctx, d.SecretID)
-		if err != nil || secret == nil {
+		if err != nil || secret == nil || secret.ProjectID != projectID {
+			// #G51: same cross-tenant guard as the share branch above — a
+			// secret in a DIFFERENT project must read as "not found" here,
+			// not leak whether it exists or who owns it.
 			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
 				"the secret being attested no longer exists — the review is stale, re-sync and try again")
 		}

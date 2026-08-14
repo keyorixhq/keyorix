@@ -94,13 +94,14 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 			continue
 		}
 
+		// #G14: "not found", "belongs to another project", and "not authorized" are
+		// collapsed into one uniform denial below — a distinct message per case
+		// would let a caller enumerate secret IDs that exist in OTHER projects
+		// (or that they can't individually act on) from the shape of the failure
+		// alone, even though they're plainly a real, existing secret.
 		secret, err := c.storage.GetSecret(ctx, rn.ID)
-		if err != nil || secret == nil {
+		if err != nil || secret == nil || secret.ProjectID != projectID {
 			skip(rn.ID, "", newName, "secret not found")
-			continue
-		}
-		if secret.ProjectID != projectID {
-			skip(rn.ID, secret.Name, newName, "secret does not belong to this project")
 			continue
 		}
 		// Re-check per-secret write authorization (owner/share). The project-wide
@@ -108,7 +109,7 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		// path enforces this, so the bulk op must not let a caller rename a secret they
 		// can't update individually.
 		if _, perr := c.EnforceSecretWritePermission(ctx, secret.ID, actorID); perr != nil {
-			skip(rn.ID, secret.Name, newName, "not authorized to rename this secret")
+			skip(rn.ID, "", newName, "secret not found")
 			continue
 		}
 		if !secret.IsSecret {

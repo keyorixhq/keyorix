@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -18,6 +19,13 @@ func newAggCore(t *testing.T) (*KeyorixCore, *MockStorage) {
 	t.Helper()
 	ms := &MockStorage{}
 	return NewKeyorixCore(ms), ms
+}
+
+// stubAggAuthorized wires ms so actorID 1 is authorized (secrets.manage, global scope)
+// on secretID for GetSecretReadSummary's #G10 authz check.
+func stubAggAuthorized(ms *MockStorage, secretID uint) {
+	ms.On("GetSecret", mock.Anything, secretID).Return(&models.SecretNode{ID: secretID}, nil)
+	stubAuthorizedSecretPrincipal(ms, 1, secretID, Scope{}, permSecretsManage)
 }
 
 // ── happy path ────────────────────────────────────────────────────────────────
@@ -33,10 +41,11 @@ func TestGetSecretReadSummary_HappyPath(t *testing.T) {
 		{ActorID: "2", ActorUsername: "bob", ReadCount: 5, LastReadAt: now.Add(-2 * time.Hour)},
 		{ActorID: "3", ActorUsername: "carol", ReadCount: 3, LastReadAt: now.Add(-3 * time.Hour)},
 	}
+	stubAggAuthorized(ms, 42)
 	ms.On("GetSecretReadCounts", mock.Anything, uint(42), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 10).
 		Return(entries, nil)
 
-	summary, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{
+	summary, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{
 		SecretID: 42,
 		Since:    since,
 		Until:    until,
@@ -64,8 +73,9 @@ func TestGetSecretReadSummary_SinceDefaultIs30Days(t *testing.T) {
 		return diff < 2*time.Second
 	}), mock.AnythingOfType("time.Time"), 10).
 		Return([]storage.SecretReadEntry{}, nil)
+	stubAggAuthorized(ms, 1)
 
-	summary, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{
+	summary, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{
 		SecretID: 1,
 		// Since and Until are zero → defaults
 	})
@@ -85,8 +95,9 @@ func TestGetSecretReadSummary_UntilDefaultIsNow(t *testing.T) {
 		return diff < 2*time.Second
 	}), 10).
 		Return([]storage.SecretReadEntry{}, nil)
+	stubAggAuthorized(ms, 1)
 
-	_, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{SecretID: 1})
+	_, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{SecretID: 1})
 	require.NoError(t, err)
 	ms.AssertExpectations(t)
 }
@@ -96,8 +107,9 @@ func TestGetSecretReadSummary_LimitZeroDefaultsTo10(t *testing.T) {
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 10).
 		Return([]storage.SecretReadEntry{}, nil)
+	stubAggAuthorized(ms, 1)
 
-	_, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{SecretID: 1})
+	_, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{SecretID: 1})
 	require.NoError(t, err)
 	ms.AssertExpectations(t)
 }
@@ -107,8 +119,9 @@ func TestGetSecretReadSummary_LimitCappedAt50(t *testing.T) {
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 50).
 		Return([]storage.SecretReadEntry{}, nil)
+	stubAggAuthorized(ms, 1)
 
-	_, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{
+	_, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{
 		SecretID: 1,
 		Limit:    60, // over max → capped at 50
 	})
@@ -122,7 +135,7 @@ func TestGetSecretReadSummary_SinceEqualUntilReturnsError(t *testing.T) {
 	c, _ := newAggCore(t)
 
 	ts := time.Now()
-	_, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{
+	_, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{
 		SecretID: 1,
 		Since:    ts,
 		Until:    ts, // equal → invalid
@@ -135,7 +148,7 @@ func TestGetSecretReadSummary_SinceAfterUntilReturnsError(t *testing.T) {
 	c, _ := newAggCore(t)
 
 	ts := time.Now()
-	_, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{
+	_, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{
 		SecretID: 1,
 		Since:    ts.Add(time.Hour),
 		Until:    ts,
@@ -152,8 +165,9 @@ func TestGetSecretReadSummary_StorageErrorPropagated(t *testing.T) {
 	storageErr := errors.New("db is on fire")
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 10).
 		Return(nil, storageErr)
+	stubAggAuthorized(ms, 1)
 
-	_, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{SecretID: 1})
+	_, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{SecretID: 1})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db is on fire")
 }
@@ -165,8 +179,9 @@ func TestGetSecretReadSummary_NilEntriesBecomesEmpty(t *testing.T) {
 
 	ms.On("GetSecretReadCounts", mock.Anything, uint(1), mock.AnythingOfType("time.Time"), mock.AnythingOfType("time.Time"), 10).
 		Return([]storage.SecretReadEntry(nil), nil)
+	stubAggAuthorized(ms, 1)
 
-	summary, err := c.GetSecretReadSummary(context.Background(), SecretReadSummaryRequest{SecretID: 1})
+	summary, err := c.GetSecretReadSummary(context.Background(), ActorTypeUser, 1, SecretReadSummaryRequest{SecretID: 1})
 	require.NoError(t, err)
 	assert.NotNil(t, summary.Entries)
 	assert.Len(t, summary.Entries, 0)

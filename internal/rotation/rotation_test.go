@@ -30,3 +30,17 @@ func TestPrefixAllowed(t *testing.T) {
 	assert.False(t, prefixAllowed([]string{"app_"}, "root"))   // no match
 	assert.False(t, prefixAllowed([]string{""}, "x"))          // empty prefix never matches
 }
+
+// TestPrefixAllowed_RequiresBoundary is #G46: a raw strings.HasPrefix let an
+// allowed_refs entry of "myapp" also admit "myapp2"/"myappadmin" — an unintended
+// superset an operator who configured "myapp" (without a trailing delimiter) would not
+// expect. An exact match, or a match landing on an explicit segment boundary, must still
+// be required.
+func TestPrefixAllowed_RequiresBoundary(t *testing.T) {
+	allowed := []string{"myapp"}
+	assert.True(t, prefixAllowed(allowed, "myapp"), "exact match must still be allowed")
+	assert.True(t, prefixAllowed(allowed, "myapp-prod"), "a delimited child must still be allowed")
+	assert.True(t, prefixAllowed(allowed, "myapp/db"), "a delimited child must still be allowed")
+	assert.False(t, prefixAllowed(allowed, "myapp2"), "a bare numeric suffix must not be admitted")
+	assert.False(t, prefixAllowed(allowed, "myappadmin"), "a bare alpha suffix must not be admitted")
+}

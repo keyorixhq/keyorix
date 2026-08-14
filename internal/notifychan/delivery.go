@@ -71,8 +71,17 @@ type deliverer struct {
 	closing     chan struct{} // closed by close() to abort in-flight retry backoff
 	closeOnce   sync.Once
 	wg          sync.WaitGroup
-	mu          sync.Mutex
-	dropped     int
+	// mu guards both dropped and closed below — #G63: enqueue()'s non-blocking
+	// send on queue and close()'s close(queue) are otherwise unsynchronized, so
+	// a concurrent enqueue()/close() can send on an already-closed channel
+	// (a genuine Go runtime panic, not just a logical race). close() sets
+	// closed=true and enqueue() checks it under the SAME mutex as the send
+	// itself, so either enqueue() completes its send/drop entirely before
+	// close() can proceed to actually close the channel, or it observes
+	// closed=true and never touches the channel at all.
+	mu      sync.Mutex
+	closed  bool
+	dropped int
 }
 
 // newDeliverer starts the worker. channel is the Prometheus label; baseBackoff is
@@ -91,12 +100,20 @@ func newDeliverer(channel string, queueSize int, baseBackoff time.Duration, send
 }
 
 // enqueue offers the event to the queue without blocking; a full queue (a wedged
-// destination) drops and counts it rather than stalling the caller.
+// destination) drops and counts it rather than stalling the caller. A queue
+// that's being (or has been) closed also drops silently rather than sending —
+// see the deliverer.mu doc comment for why the closed check and the send share
+// one critical section.
 func (d *deliverer) enqueue(ev core.NotificationEvent) {
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return
+	}
 	select {
 	case d.queue <- ev:
+		d.mu.Unlock()
 	default:
-		d.mu.Lock()
 		d.dropped++
 		dropped := d.dropped
 		d.mu.Unlock()
@@ -144,6 +161,9 @@ func (d *deliverer) deliver(ev core.NotificationEvent) {
 // bounded. Idempotent.
 func (d *deliverer) close() {
 	d.closeOnce.Do(func() {
+		d.mu.Lock()
+		d.closed = true
+		d.mu.Unlock()
 		close(d.closing)
 		close(d.queue)
 	})

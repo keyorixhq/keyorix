@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -109,20 +108,21 @@ type secretEntry struct {
 // embed terminal escape sequences that overwrite or hide the CLI's own status
 // lines during the same run. This only affects what's printed — the value
 // actually stored in the vault is left untouched.
+//
+// #G69: promoted to common.SanitizeForTerminal so every CLI table/report
+// renderer shares one implementation; kept as a local alias here rather than
+// rewriting every call site in this file/package's own extensive test suite.
 func sanitizeForTerminal(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\t' {
-			return ' '
-		}
-		if unicode.IsControl(r) {
-			return -1 // drop
-		}
-		return r
-	}, s)
+	return common.SanitizeForTerminal(s)
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
+
+	// #G58: --vault-token carries a live Vault credential the same way
+	// --value/--admin-password carry secret material — warn the same way
+	// those flags already do (ps/proc visibility, shell history).
+	common.WarnInsecureFlag(cmd, "vault-token", "use the VAULT_TOKEN environment variable instead.")
 
 	entries, err := collectEntries(ctx)
 	if err != nil {
@@ -137,11 +137,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if importDryRun {
 		fmt.Printf("Dry run — would import %d secret(s):\n\n", len(entries))
 		for _, e := range entries {
-			preview := e.Value
-			if len(preview) > 20 {
-				preview = preview[:20] + "..."
-			}
-			fmt.Printf("  %-30s = %s\n", sanitizeForTerminal(e.Name), sanitizeForTerminal(preview))
+			// #G58: a dry run must never put real secret bytes on the
+			// operator's terminal (scrollback, tmux/screen logging, screen
+			// share) — show only the length, not a prefix of the value.
+			fmt.Printf("  %-30s = <%d bytes>\n", sanitizeForTerminal(e.Name), len(e.Value))
 		}
 		fmt.Printf("\nNo changes made (--dry-run).\n")
 		return nil

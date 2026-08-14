@@ -33,6 +33,18 @@ const (
 // memory via an unbounded json.Decode of resp.Body.
 const maxRemoteResponseBytes = 10 << 20 // 10MB
 
+// WarnUntrustedCWDConfigServerURL warns that a security-relevant server URL was
+// sourced from a keyorix.yaml file in the current working directory — a file an
+// attacker can plant to redirect this CLI command to a server they control
+// (config.Load resolves a CWD-relative ./keyorix.yaml regardless of
+// KEYORIX_CONFIG_PATH). #G73: every command that uses a CWD-config-sourced
+// remote URL for a security-relevant action (issuing/persisting real
+// credentials, an outbound connectivity probe) must carry this warning, not
+// just ResolveRemote's own callers.
+func WarnUntrustedCWDConfigServerURL() {
+	fmt.Fprintf(os.Stderr, "⚠️  Using a remote server config from ./keyorix.yaml in the current directory. If you did not place it here, a malicious file could be redirecting the CLI — prefer KEYORIX_SERVER/KEYORIX_TOKEN or 'keyorix connect'.\n")
+}
+
 // ResolveRemote returns the server endpoint and Bearer token from all config sources.
 //
 // Priority: env vars > ~/.keyorix/cli.yaml (written by 'keyorix connect')
@@ -81,7 +93,7 @@ func ResolveRemote() (endpoint, token string, ok bool) { // NOSONAR -- cognitive
 				fromMain = true
 			}
 			if fromMain {
-				fmt.Fprintf(os.Stderr, "⚠️  Using a remote server config from ./keyorix.yaml in the current directory. If you did not place it here, a malicious file could be redirecting the CLI — prefer KEYORIX_SERVER/KEYORIX_TOKEN or 'keyorix connect'.\n")
+				WarnUntrustedCWDConfigServerURL()
 			}
 		}
 	}

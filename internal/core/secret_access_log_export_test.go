@@ -45,7 +45,7 @@ func TestExportSecretAccessLog_InvalidFormat(t *testing.T) {
 	ms := new(MockStorage)
 	k := newExportCore(ms)
 
-	_, _, err := k.ExportSecretAccessLog(context.Background(), 1, "xlsx")
+	_, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 1, "xlsx")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported export format")
 }
@@ -56,7 +56,7 @@ func TestExportSecretAccessLog_SecretNotFound(t *testing.T) {
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(nil, errors.New("record not found"))
 	k := newExportCore(ms)
 
-	_, _, err := k.ExportSecretAccessLog(context.Background(), 42, "json")
+	_, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 42, "json")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
 }
@@ -65,11 +65,12 @@ func TestExportSecretAccessLog_SecretNotFound(t *testing.T) {
 func TestExportSecretAccessLog_AuditLogError(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 	ms.On("GetAuditLogs", mock.Anything, mock.AnythingOfType("*storage.AuditFilter")).
 		Return(nil, int64(0), errors.New("db timeout"))
 	k := newExportCore(ms)
 
-	_, _, err := k.ExportSecretAccessLog(context.Background(), 42, "json")
+	_, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 42, "json")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "db timeout")
 }
@@ -78,6 +79,7 @@ func TestExportSecretAccessLog_AuditLogError(t *testing.T) {
 func TestExportSecretAccessLog_JSONFormat(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 	uid := uint(7)
 	events := []*models.AuditEvent{
 		anEvent(101, &uid, ptrUint(42), ptrBool(true), "user"),
@@ -86,7 +88,7 @@ func TestExportSecretAccessLog_JSONFormat(t *testing.T) {
 		Return(events, int64(1), nil)
 	k := newExportCore(ms)
 
-	data, ct, err := k.ExportSecretAccessLog(context.Background(), 42, "json")
+	data, ct, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 42, "json")
 	require.NoError(t, err)
 	require.Contains(t, ct, "application/json")
 
@@ -104,6 +106,7 @@ func TestExportSecretAccessLog_JSONFormat(t *testing.T) {
 func TestExportSecretAccessLog_CSVFormat(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 	uid := uint(5)
 	events := []*models.AuditEvent{
 		anEvent(202, &uid, ptrUint(42), ptrBool(false), "machine_identity"),
@@ -112,7 +115,7 @@ func TestExportSecretAccessLog_CSVFormat(t *testing.T) {
 		Return(events, int64(1), nil)
 	k := newExportCore(ms)
 
-	data, ct, err := k.ExportSecretAccessLog(context.Background(), 42, ExportFormatCSV)
+	data, ct, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 42, ExportFormatCSV)
 	require.NoError(t, err)
 	require.Contains(t, ct, "text/csv")
 
@@ -130,6 +133,7 @@ func TestExportSecretAccessLog_CSVFormat(t *testing.T) {
 func TestExportSecretAccessLog_NilUserID(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 	events := []*models.AuditEvent{
 		anEvent(303, nil, ptrUint(42), ptrBool(true), "system"),
 	}
@@ -137,7 +141,7 @@ func TestExportSecretAccessLog_NilUserID(t *testing.T) {
 		Return(events, int64(1), nil)
 	k := newExportCore(ms)
 
-	data, _, err := k.ExportSecretAccessLog(context.Background(), 42, ExportFormatCSV)
+	data, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 42, ExportFormatCSV)
 	require.NoError(t, err)
 
 	r := csv.NewReader(strings.NewReader(string(data)))
@@ -149,6 +153,7 @@ func TestExportSecretAccessLog_NilUserID(t *testing.T) {
 func TestExportSecretAccessLog_NilSuccess(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(42)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 42, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 	events := []*models.AuditEvent{
 		anEvent(404, nil, ptrUint(42), nil /* nil Success */, "user"),
 	}
@@ -156,7 +161,7 @@ func TestExportSecretAccessLog_NilSuccess(t *testing.T) {
 		Return(events, int64(1), nil)
 	k := newExportCore(ms)
 
-	data, _, err := k.ExportSecretAccessLog(context.Background(), 42, ExportFormatJSON)
+	data, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 42, ExportFormatJSON)
 	require.NoError(t, err)
 
 	var rows []AccessLogExportRow
@@ -168,6 +173,7 @@ func TestExportSecretAccessLog_NilSuccess(t *testing.T) {
 func TestExportSecretAccessLog_NilSecretNodeID(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(99)).Return(&models.SecretNode{ID: 99}, nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 99, Scope{}, permSecretsRead)
 	events := []*models.AuditEvent{
 		anEvent(505, nil, nil /* nil SecretNodeID */, ptrBool(true), "user"),
 	}
@@ -175,7 +181,7 @@ func TestExportSecretAccessLog_NilSecretNodeID(t *testing.T) {
 		Return(events, int64(1), nil)
 	k := newExportCore(ms)
 
-	data, _, err := k.ExportSecretAccessLog(context.Background(), 99, ExportFormatJSON)
+	data, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 99, ExportFormatJSON)
 	require.NoError(t, err)
 
 	var rows []AccessLogExportRow
@@ -187,11 +193,12 @@ func TestExportSecretAccessLog_NilSecretNodeID(t *testing.T) {
 func TestExportSecretAccessLog_EmptyEvents(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(1)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 1, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 	ms.On("GetAuditLogs", mock.Anything, mock.AnythingOfType("*storage.AuditFilter")).
 		Return([]*models.AuditEvent{}, int64(0), nil)
 	k := newExportCore(ms)
 
-	data, ct, err := k.ExportSecretAccessLog(context.Background(), 1, ExportFormatJSON)
+	data, ct, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 1, ExportFormatJSON)
 	require.NoError(t, err)
 	require.Contains(t, ct, "application/json")
 	require.Equal(t, "[]", strings.TrimSpace(string(data)))
@@ -201,6 +208,7 @@ func TestExportSecretAccessLog_EmptyEvents(t *testing.T) {
 func TestExportSecretAccessLog_FilterParams(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetSecret", mock.Anything, uint(77)).Return(aSecret(), nil)
+	stubAuthorizedSecretPrincipal(ms, 1, 77, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 
 	var capturedFilter *storage.AuditFilter
 	ms.On("GetAuditLogs", mock.Anything, mock.MatchedBy(func(f *storage.AuditFilter) bool {
@@ -209,7 +217,7 @@ func TestExportSecretAccessLog_FilterParams(t *testing.T) {
 	})).Return([]*models.AuditEvent{}, int64(0), nil)
 
 	k := newExportCore(ms)
-	_, _, err := k.ExportSecretAccessLog(context.Background(), 77, ExportFormatJSON)
+	_, _, err := k.ExportSecretAccessLog(context.Background(), ActorTypeUser, 1, 77, ExportFormatJSON)
 	require.NoError(t, err)
 
 	require.NotNil(t, capturedFilter)

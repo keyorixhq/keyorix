@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
 )
 
@@ -30,13 +31,14 @@ func runDescribe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// #G69: Name/Description are attacker-controlled free text.
 	fmt.Printf("ID:          %d\n", m.ID)
-	fmt.Printf("Name:        %s\n", m.Name)
+	fmt.Printf("Name:        %s\n", common.SanitizeForTerminal(m.Name))
 	fmt.Printf("Type:        %s\n", m.IdentityType)
 	fmt.Printf("State:       %s\n", m.State)
 	fmt.Printf("Project ID:  %d\n", m.ProjectID)
 	if m.Description != "" {
-		fmt.Printf("Description: %s\n", m.Description)
+		fmt.Printf("Description: %s\n", common.SanitizeForTerminal(m.Description))
 	}
 	if m.LastSeenAt != nil {
 		fmt.Printf("Last seen:   %s\n", m.LastSeenAt.Format("2006-01-02 15:04:05 MST"))

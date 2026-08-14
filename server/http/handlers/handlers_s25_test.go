@@ -515,7 +515,9 @@ func TestListGroupSharedSecrets_BadID_S25(t *testing.T) {
 // TestListGroupSharedSecrets_HappyPath_S25 verifies 200 with an empty list for
 // an existing group.
 func TestListGroupSharedSecrets_HappyPath_S25(t *testing.T) {
-	cs := freshCoreS25(t)
+	// #G10: ListGroupSharedSecrets now self-authorizes (secrets.read, global scope);
+	// withUserCtx's UserID 1 needs a real grant, unlike freshCoreS25's bare fixture.
+	cs, _ := freshCoreS25WithAdmin(t)
 	h, err := NewShareHandler(cs)
 	require.NoError(t, err)
 	// group ID 1 may or may not exist; storage returns empty list on missing group

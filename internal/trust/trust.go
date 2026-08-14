@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Purpose scopes a key to one use, so an update-signing key can never validate a license
@@ -40,7 +41,15 @@ var (
 )
 
 // KeyRegistry holds trusted public keys keyed by purpose and key-id.
+//
+// #G63: mu guards keys. This package has no caller in the current live
+// request path (see the package doc above), but Add is an exported mutator
+// on a plain map with no synchronization of its own — a future runtime
+// key-rotation caller (ADR-062 Phases 1-2 build on this package) racing a
+// concurrent Verify/KeyIDs read would be a real, unsynchronized map access,
+// not just a theoretical one.
 type KeyRegistry struct {
+	mu   sync.RWMutex
 	keys map[Purpose]map[string]ed25519.PublicKey
 }
 
@@ -57,6 +66,8 @@ func (r *KeyRegistry) Add(purpose Purpose, keyID string, pub ed25519.PublicKey) 
 	if strings.TrimSpace(keyID) == "" {
 		return fmt.Errorf("trust: key-id is required")
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.keys[purpose] == nil {
 		r.keys[purpose] = make(map[string]ed25519.PublicKey)
 	}
@@ -68,11 +79,13 @@ func (r *KeyRegistry) Add(purpose Purpose, keyID string, pub ed25519.PublicKey) 
 // for (purpose, keyID). It fails closed: an unconfigured purpose, an unknown key-id, or a
 // bad signature all return an error.
 func (r *KeyRegistry) Verify(purpose Purpose, keyID string, message, sig []byte) error {
-	m := r.keys[purpose]
-	if len(m) == 0 {
+	r.mu.RLock()
+	pub, ok := r.keys[purpose][keyID]
+	noKeysForPurpose := len(r.keys[purpose]) == 0
+	r.mu.RUnlock()
+	if noKeysForPurpose {
 		return fmt.Errorf("%w (%s)", ErrNoKeys, purpose)
 	}
-	pub, ok := m[keyID]
 	if !ok {
 		return fmt.Errorf("%w (%s/%s)", ErrUnknownKey, purpose, keyID)
 	}
@@ -84,6 +97,8 @@ func (r *KeyRegistry) Verify(purpose Purpose, keyID string, message, sig []byte)
 
 // KeyIDs lists the trusted key-ids for a purpose, sorted (for logging/diagnostics).
 func (r *KeyRegistry) KeyIDs(purpose Purpose) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	ids := make([]string, 0, len(r.keys[purpose]))
 	for id := range r.keys[purpose] {
 		ids = append(ids, id)

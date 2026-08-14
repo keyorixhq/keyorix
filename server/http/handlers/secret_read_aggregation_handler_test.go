@@ -47,7 +47,14 @@ func newSecretReadAggCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		&models.Project{},
 		&models.Environment{},
 		&models.SecretNode{},
+		&models.SecretACL{},
 	))
+	// #G10: GetSecretReadSummary now self-authorizes (secrets.manage); withUserCtx's
+	// UserID 1 is granted global admin so these handler tests keep exercising the glue
+	// logic (param parsing, status-code mapping), not authorization.
+	role := &models.Role{Name: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
@@ -106,9 +113,13 @@ func TestGetSecretReadSummary_InvalidTimeRange(t *testing.T) {
 // ── 200 happy path — no reads ─────────────────────────────────────────────────
 
 func TestGetSecretReadSummary_NoReads(t *testing.T) {
-	c, _ := newSecretReadAggCore(t)
+	c, db := newSecretReadAggCore(t)
 	h, err := NewSecretHandler(c)
 	require.NoError(t, err)
+	// #G10: GetSecretReadSummary now resolves the secret to authorize against its scope,
+	// so it must exist — matching the router's own RequireScopedSecretPermission gate,
+	// which also requires the secret to exist before this handler is ever reached.
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "s1", IsSecret: true}).Error)
 
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
 	w := httptest.NewRecorder()
@@ -128,6 +139,7 @@ func TestGetSecretReadSummary_HappyPath(t *testing.T) {
 	secretID := uint(7)
 	userID := uint(1)
 	now := time.Now().UTC()
+	require.NoError(t, db.Create(&models.SecretNode{ID: secretID, Name: "s7", IsSecret: true}).Error)
 
 	// Seed 3 reads for user 1 in the last hour.
 	for i := 0; i < 3; i++ {
@@ -148,9 +160,10 @@ func TestGetSecretReadSummary_HappyPath(t *testing.T) {
 // ── limit=60 is silently capped at 50 by core ────────────────────────────────
 
 func TestGetSecretReadSummary_LimitCappedAt50(t *testing.T) {
-	c, _ := newSecretReadAggCore(t)
+	c, db := newSecretReadAggCore(t)
 	h, err := NewSecretHandler(c)
 	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "s1", IsSecret: true}).Error)
 
 	// limit=60 in URL; core caps it at 50 transparently — still 200.
 	req := withUserCtx(withChiParam(

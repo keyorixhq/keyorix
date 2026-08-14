@@ -477,6 +477,26 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("project %d not found: %w", projectID, err)
 	}
+	// #G82: refuse a second pending PROJECT-ROLE request for the SAME (user,
+	// project) pair — without this, any authenticated user could call this
+	// endpoint in a tight loop and flood the project with an unbounded number
+	// of pending AccessRequest rows, each firing its own admin notification
+	// (notifyAccessRequested below). Scoped to e.SecretID == nil: a
+	// SECRET-scoped request (RequestSecretAccess, classification_gate.go)
+	// shares the same (UserID, ProjectID) shape but is a semantically
+	// different request the user may legitimately have pending at the same
+	// time as a project-role request. ListAccessRequests lazily expires stale
+	// pending rows on read, so this check is never blocked by a request
+	// that's actually expired.
+	existing, err := c.storage.ListAccessRequests(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing access requests: %w", err)
+	}
+	for _, e := range existing {
+		if e.UserID == userID && e.State == AccessRequestPending && e.SecretID == nil {
+			return nil, fmt.Errorf("you already have a pending access request for this project")
+		}
+	}
 	now := c.now()
 	expires := now.Add(accessRequestTTL)
 	req := &models.AccessRequest{
@@ -792,13 +812,18 @@ func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, reques
 }
 
 // WithdrawAccessRequest lets the requester cancel their own pending request.
+// #G14: a nonexistent requestID and one that exists but belongs to another
+// user both yield the SAME "access request not found" error — a distinct "not
+// your access request" message would let a caller enumerate which request IDs
+// exist (and are owned by someone else) purely from the response shape.
 func (c *KeyorixCore) WithdrawAccessRequest(ctx context.Context, requestID, userID uint) error {
+	notFound := fmt.Errorf("access request not found")
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
-		return fmt.Errorf("access request not found")
+		return notFound
 	}
 	if req.UserID != userID {
-		return fmt.Errorf("not your access request")
+		return notFound
 	}
 	if req.State != AccessRequestPending {
 		return fmt.Errorf("only a pending request can be withdrawn (state is %s)", req.State)

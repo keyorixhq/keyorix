@@ -235,7 +235,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: Check for invalid UTF-8 (U+FFFD replacement characters)
         run: |
@@ -334,7 +334,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: go test (${{ matrix.leg }})
         run: |
@@ -485,7 +485,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: Cache govulncheck/gosec binaries
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -555,7 +555,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: Download coverage artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -592,7 +592,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       # The operator job below has always had its own gofmt step, scoped to
       # operator/ — the root module (internal/, server/, cmd/, ...) never
@@ -638,7 +638,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: go vet + build
         run: |
@@ -707,7 +707,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
       - name: Verify targets.conf matches the real FuzzXxx functions in the tree
         run: |
@@ -809,15 +809,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
 
+      # Keyed on the resolved Go version too (not just GO_LICENSES_VERSION): a
+      # go-licenses binary built under one Go toolchain and then reused as-is
+      # against a DIFFERENT one (a cache hit surviving a Go version bump) can
+      # fail to load stdlib package info at all ("does not have module info"
+      # for arbitrary stdlib packages -- crypto/ecdh, testing, os/signal, ...),
+      # since it invokes `go list`/`go/packages` against a GOROOT its own
+      # compiled-in assumptions no longer match. A version-scoped key forces a
+      # fresh `go install` (and therefore a binary built against the ACTIVE
+      # toolchain) on every Go bump, not just every go-licenses version bump.
       - name: Cache go-licenses binary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/bin/go-licenses
-          key: go-licenses-${{ env.GO_LICENSES_VERSION }}-${{ runner.os }}
+          key: go-licenses-${{ env.GO_LICENSES_VERSION }}-go${{ steps.setup-go.outputs.go-version }}-${{ runner.os }}
 
       - name: Install go-licenses
         run: |

@@ -6,7 +6,11 @@
 // rotate a project's secrets so each is rotated before anything that depends on it).
 // The graph is kept acyclic: self-edges, duplicates, and cycles are rejected at add.
 // Metadata only — secret values are never read. Authz is enforced at the HTTP layer
-// (secrets.read to view, secrets.write to mutate), scoped to the secret's project.
+// (secrets.read to view, secrets.write to mutate) for the FOCAL (path) secret; every
+// function below additionally checks each PEER secret's authorization independently
+// (see canReadSecret) before disclosing or acting on it — same project+environment
+// membership is not sufficient on its own, since a per-secret ACL grant on the focal
+// secret does not extend to a peer merely because they share an environment (#G32).
 package core
 
 import (
@@ -89,7 +93,7 @@ type RotationOrder struct {
 // row, on RemoteStorage) is what now also serializes across replicas/processes — the
 // same two-layer pattern login_lockout.go's recordFailedLogin and RemoveUserRole's
 // guardLastGlobalAdmin use.
-func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorID, dependentID, dependsOnID uint, note string) (*models.SecretDependency, error) {
+func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string, actorID, dependentID, dependsOnID uint, note string) (*models.SecretDependency, error) {
 	if dependentID == dependsOnID {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a secret cannot depend on itself")
 	}
@@ -101,12 +105,19 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorID, dependen
 	// "in another project or environment" — the caller is only authorized on the path
 	// (dependent) secret's scope, so a differentiated error here is a cross-scope
 	// existence-and-type oracle (probe arbitrary IDs by 404-vs-400). Collapse them into a
-	// single opaque error. Confining the edge to the same project AND environment is also
-	// what makes the path-secret authorization cover the dependency secret (authorization
-	// is environment-granular and the HTTP layer authorizes only the path secret's env).
+	// single opaque error.
 	dependsOn, derr := c.requireSecret(ctx, dependsOnID)
 	if derr != nil || dependsOn.ProjectID != dependent.ProjectID || dependsOn.EnvironmentID != dependent.EnvironmentID {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the dependency target must be a secret in the same project and environment")
+	}
+	// #G32: same project+environment is NOT the same as "the caller is authorized on
+	// it" — a per-secret ACL grant on the dependent (path) secret does not extend to
+	// dependsOn. Require the caller to be independently authorized to write the
+	// dependency target too, before linking it into the graph.
+	if allowed, aerr := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, dependsOnID, permSecretsWrite); aerr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), aerr)
+	} else if !allowed {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
 	}
 
 	c.secretDependencyMu.Lock()
@@ -161,7 +172,11 @@ func (c *KeyorixCore) LockedCreateSecretDependencyExclusive(ctx context.Context,
 // the edge. Matching on project alone would be too coarse — authorization is
 // environment-granular, and a caller could otherwise delete an edge between two secrets
 // in another environment of the same project. actorID is the acting principal.
-func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorID, focalSecretID, edgeID uint) error {
+//
+// #G32: focalSecretID is only ONE endpoint of the edge — the other endpoint (the peer)
+// gets independently authorized below before the edge can be removed, since a per-secret
+// ACL grant on focalSecretID does not extend to it.
+func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorKind string, actorID, focalSecretID, edgeID uint) error {
 	if _, err := c.requireSecret(ctx, focalSecretID); err != nil {
 		return err
 	}
@@ -171,6 +186,15 @@ func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorID, focal
 	}
 	if edge.DependentSecretID != focalSecretID && edge.DependsOnSecretID != focalSecretID {
 		return fmt.Errorf("%s: dependency %d does not reference secret %d", i18n.T("ErrorNotFound", nil), edgeID, focalSecretID)
+	}
+	peerID := edge.DependentSecretID
+	if peerID == focalSecretID {
+		peerID = edge.DependsOnSecretID
+	}
+	if allowed, aerr := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, peerID, permSecretsWrite); aerr != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), aerr)
+	} else if !allowed {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
 	}
 	if err := c.storage.DeleteSecretDependency(ctx, edgeID); err != nil {
 		return err
@@ -183,7 +207,7 @@ func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorID, focal
 
 // ListSecretDependencies returns a secret's direct dependencies and dependents, with
 // names resolved.
-func (c *KeyorixCore) ListSecretDependencies(ctx context.Context, secretID uint) (*SecretDependencies, error) {
+func (c *KeyorixCore) ListSecretDependencies(ctx context.Context, actorKind string, actorID, secretID uint) (*SecretDependencies, error) {
 	secret, err := c.requireSecret(ctx, secretID)
 	if err != nil {
 		return nil, err
@@ -202,8 +226,16 @@ func (c *KeyorixCore) ListSecretDependencies(ctx context.Context, secretID uint)
 	for _, e := range edges {
 		switch secretID {
 		case e.DependentSecretID:
+			// #G32: same environment is not the same as "independently authorized" —
+			// don't disclose a peer the caller has no grant on of their own.
+			if !c.canReadSecret(ctx, actorKind, actorID, e.DependsOnSecretID) {
+				continue
+			}
 			out.DependsOn = append(out.DependsOn, DependencyEdge{ID: e.ID, SecretID: e.DependsOnSecretID, SecretName: info[e.DependsOnSecretID].name, Note: e.Note})
 		case e.DependsOnSecretID:
+			if !c.canReadSecret(ctx, actorKind, actorID, e.DependentSecretID) {
+				continue
+			}
 			out.Dependents = append(out.Dependents, DependencyEdge{ID: e.ID, SecretID: e.DependentSecretID, SecretName: info[e.DependentSecretID].name, Note: e.Note})
 		}
 	}
@@ -212,7 +244,7 @@ func (c *KeyorixCore) ListSecretDependencies(ctx context.Context, secretID uint)
 
 // GetSecretImpact returns the blast radius of rotating/changing a secret: every
 // secret that transitively depends on it, with hop-distance, in breadth-first order.
-func (c *KeyorixCore) GetSecretImpact(ctx context.Context, secretID uint) (*SecretImpact, error) {
+func (c *KeyorixCore) GetSecretImpact(ctx context.Context, actorKind string, actorID, secretID uint) (*SecretImpact, error) {
 	secret, err := c.requireSecret(ctx, secretID)
 	if err != nil {
 		return nil, err
@@ -226,9 +258,29 @@ func (c *KeyorixCore) GetSecretImpact(ctx context.Context, secretID uint) (*Secr
 	affected := transitiveDependents(edges, secretID)
 	out := &SecretImpact{SecretID: secretID, SecretName: secret.Name, Affected: make([]ImpactedSecret, 0, len(affected))}
 	for _, a := range affected {
+		// #G32: the BFS traverses the full graph so a hop through an unauthorized peer
+		// still surfaces further, independently-authorized dependents — but a peer the
+		// caller has no grant of their own on is never disclosed in the output.
+		if !c.canReadSecret(ctx, actorKind, actorID, a.id) {
+			continue
+		}
 		out.Affected = append(out.Affected, ImpactedSecret{SecretID: a.id, SecretName: info[a.id].name, Depth: a.depth})
 	}
 	return out, nil
+}
+
+// canReadSecret reports whether actor is independently authorized to read secretID —
+// used to decide whether a peer secret's name/id may be disclosed to the caller in a
+// dependency/impact/blast-radius view. #G32: dependency edges are confined to the focal
+// secret's own project+environment, but authorization is per-secret (a SecretACL grant
+// on the focal secret does not extend to a peer merely because they share an
+// environment), so same-environment membership alone is not sufficient to disclose a
+// peer's identity — this calls the same actor-aware, ACL-inclusive primitive
+// server/middleware/auth.go's RequireScopedSecretPermission uses to authorize the path
+// secret at the HTTP layer.
+func (c *KeyorixCore) canReadSecret(ctx context.Context, actorKind string, actorID, secretID uint) bool {
+	allowed, err := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, secretID, permSecretsRead)
+	return err == nil && allowed
 }
 
 // GetProjectRotationOrder returns a safe rotation sequence for a project's dependency

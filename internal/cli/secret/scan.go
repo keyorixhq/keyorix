@@ -254,8 +254,19 @@ func runScan(cmd *cobra.Command, args []string) error { // NOSONAR -- cognitive 
 		if err != nil {
 			return fmt.Errorf("failed to marshal report: %w", err)
 		}
-		if err := os.WriteFile(scanReport, data, 0600); err != nil {
+		// #G26: os.WriteFile follows a symlink at scanReport and truncates whatever it
+		// points to — createSecureOutputFile (export.go) refuses that (O_EXCL+O_NOFOLLOW).
+		rf, err := createSecureOutputFile(scanReport)
+		if err != nil {
 			return fmt.Errorf("failed to save report: %w", err)
+		}
+		_, werr := rf.Write(data)
+		cerr := rf.Close()
+		if werr != nil {
+			return fmt.Errorf("failed to save report: %w", werr)
+		}
+		if cerr != nil {
+			return fmt.Errorf("failed to save report: %w", cerr)
 		}
 		fmt.Printf("\n📄 Report saved to %s\n", scanReport)
 	}

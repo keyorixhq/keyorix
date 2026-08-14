@@ -21,7 +21,17 @@ func TestListGroupSharedSecretsHandler(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.ShareRecord{}, &models.Group{}))
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.ShareRecord{}, &models.Group{},
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
+		&models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
+	))
+
+	// #G10: ListGroupSharedSecrets now self-authorizes (secrets.read, global scope);
+	// withUserCtx's UserID 1 needs a real grant.
+	role := &models.Role{Name: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 
 	// Two secrets, both shared with group 7 — one live, one via an expired share.
 	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "alpha", IsSecret: true, OwnerID: 1}).Error)

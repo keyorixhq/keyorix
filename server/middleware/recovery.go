@@ -47,8 +47,15 @@ func Recovery() func(next http.Handler) http.Handler { // NOSONAR -- cognitive c
 						userInfo = "anonymous"
 					}
 
+					// #G29: this used to log r.URL.Path raw, bypassing redaction
+					// entirely — a panic mid-request to e.g. GET /auth/setup/{token}
+					// or the SSO callback (?code=...) would write that credential
+					// straight to the panic log. logSafeRequestURI (logger.go) is
+					// the SAME canonicalizing redact+strip-control function the
+					// access log uses, so this can't independently drift out of
+					// sync with it.
 					log.Printf("PANIC CONTEXT: RequestID=%s, User=%s, Method=%s, Path=%s, RemoteAddr=%s",
-						requestID, userInfo, r.Method, r.URL.Path, r.RemoteAddr)
+						requestID, userInfo, r.Method, logSafeRequestURI(r), r.RemoteAddr)
 
 					// Send a generic error response. We deliberately NEVER return the
 					// panic value, stack trace, or other internals to the client — this

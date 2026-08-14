@@ -196,11 +196,17 @@ func (c *KeyorixCore) GetAccessReviewCampaign(ctx context.Context, projectID, ca
 // checkReviewerIndependence enforces ISO 27001 A.5.18: a reviewer must not certify
 // their own access, directly (user-scoped item) or via group membership. Fails closed:
 // a group-lookup error is treated as membership to block self-certification by error.
-func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uint, item *models.AccessReviewItem) error {
-	if item.PrincipalType == "user" && item.PrincipalID == actorID {
+// checkReviewerIndependence takes the normalized principal type/ID directly
+// (not an *models.AccessReviewItem) so the SAME check can gate both the
+// campaign flow (DecideAccessReviewItem, via item.PrincipalType/PrincipalID)
+// and the standalone attest/revoke endpoints (#G52, via
+// principalTypeForDecision's inference — AccessReviewDecision.PrincipalType
+// is only ever populated by the caller for "role" sources).
+func (c *KeyorixCore) checkReviewerIndependence(ctx context.Context, actorID uint, principalType string, principalID uint) error {
+	if principalType == "user" && principalID == actorID {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
 	}
-	if item.PrincipalType == "group" && c.userInGroup(ctx, actorID, item.PrincipalID) {
+	if principalType == "group" && c.userInGroup(ctx, actorID, principalID) {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
 	}
 	return nil
@@ -273,7 +279,7 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if item.Decision != ReviewItemPending {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
 	}
-	if err := c.checkReviewerIndependence(ctx, actorID, item); err != nil {
+	if err := c.checkReviewerIndependence(ctx, actorID, item.PrincipalType, item.PrincipalID); err != nil {
 		return err
 	}
 	// ARC-001: a machine identity provisioned by the actor must not be self-certified

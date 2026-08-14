@@ -1980,6 +1980,11 @@ func (m *MockStorage) UpdateProjectMembership(ctx context.Context, pm *models.Pr
 	return args.Error(0)
 }
 
+func (m *MockStorage) TransitionProjectMembershipState(ctx context.Context, pm *models.ProjectMembership, fromState string) (bool, error) {
+	args := m.Called(ctx, pm, fromState)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) ListProjectMemberships(ctx context.Context, projectID uint) ([]*models.ProjectMembership, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {

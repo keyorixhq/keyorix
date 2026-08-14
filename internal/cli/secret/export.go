@@ -25,15 +25,17 @@ var (
 	exportEncryptFor string
 )
 
-// createExportFile opens path for a fresh plaintext-secrets export. O_EXCL
-// refuses to write through a pre-existing path — including a symlink an
-// attacker (with write access to a shared directory, e.g. /tmp) planted at the
-// target ahead of time, which os.Create's default O_TRUNC would silently
-// follow, writing plaintext secrets to wherever the symlink points. O_NOFOLLOW
-// is a second layer against a dangling symlink placed in the instant between
-// the check and the open. 0600 keeps the export from being world/group-
-// readable on disk (#114).
-func createExportFile(path string) (*os.File, error) {
+// createSecureOutputFile opens path for a fresh output file (export, render
+// --output, scan --report). O_EXCL refuses to write through a pre-existing
+// path — including a symlink an attacker (with write access to a shared
+// directory, e.g. /tmp) planted at the target ahead of time, which
+// os.Create's/os.WriteFile's default O_TRUNC would silently follow, writing
+// plaintext secrets to wherever the symlink points. O_NOFOLLOW is a second
+// layer against a dangling symlink placed in the instant between the check
+// and the open. 0600 keeps the output from being world/group-readable on
+// disk (#114). #G26: this pattern was originally export-only; every
+// --output/--report-style file write in this package now goes through it.
+func createSecureOutputFile(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_EXCL|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- operator-supplied CLI output path, not attacker input
 }
 
@@ -118,7 +120,7 @@ func runExport(cmd *cobra.Command, args []string) (retErr error) {
 
 	var out io.Writer = os.Stdout
 	if exportOutput != "" {
-		f, err := createExportFile(exportOutput)
+		f, err := createSecureOutputFile(exportOutput)
 		if err != nil {
 			return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", exportOutput, err)
 		}
