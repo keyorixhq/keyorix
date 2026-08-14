@@ -570,17 +570,39 @@ func rebuildRolePKPostgres(db *gorm.DB, table, idCol, pkCols, oldConstraint stri
 // On a fresh DB, AutoMigrate creates all tables. On an existing DB,
 // it adds missing columns and indexes without dropping anything.
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR -- cognitive complexity 266, suppress go:S3776
+	// #G54: every additive column/index migration below is now checked and
+	// propagated (fail-closed) via this helper, instead of the bare
+	// db.Exec(...) each previously used — which discarded the result
+	// entirely. A silently-failed ALTER for a security-relevant column
+	// (account_state, mfa_enabled, failed_login_attempts, login_locked_until,
+	// ...) would let the app boot as if the migration succeeded, only to hard
+	// -fail (or silently no-op) the first time application code reads or
+	// writes that column, far from the actual root cause. Mirrors this same
+	// function's own AutoMigrate/Migrator.AddColumn calls below, which
+	// already check and wrap their errors.
+	exec := func(sql string) error {
+		if err := db.Exec(sql).Error; err != nil {
+			return fmt.Errorf("migration failed (%s): %w", sql, err)
+		}
+		return nil
+	}
 	// Additive column migration for existing databases (no-op on fresh DBs).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
-		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			return err
+		}
 	}
 	// ADR-033: secrets soft-delete. Additive deleted_at (nil = live).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "deleted_at") {
-		db.Exec("ALTER TABLE secret_nodes ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE")
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			return err
+		}
 	}
 	// Data classification (ISO A.5.12). Additive classification ("" = unclassified).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "classification") {
-		db.Exec("ALTER TABLE secret_nodes ADD COLUMN classification TEXT DEFAULT ''")
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
+			return err
+		}
 	}
 	// Companion index: models.SecretNode.Classification carries `gorm:"index"`, so a
 	// fresh AutoMigrate-created install already gets this index automatically, but an
@@ -593,35 +615,51 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	// running it unconditionally on every boot (matching the ensure*Index helpers below)
 	// is cheap once the index is in place.
 	if tableExists(db, "secret_nodes") {
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_classification ON secret_nodes (classification)")
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_classification ON secret_nodes (classification)"); err != nil {
+			return err
+		}
 	}
 	// ADR-046: automated rotation opt-in. Additive auto_rotate (false = off).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "auto_rotate") {
-		db.Exec("ALTER TABLE secret_nodes ADD COLUMN auto_rotate BOOLEAN NOT NULL DEFAULT false")
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN auto_rotate BOOLEAN NOT NULL DEFAULT false"); err != nil {
+			return err
+		}
 	}
 	// ADR-046: per-secret generated-value shape. Additive (0/'' = defaults).
 	if tableExists(db, "secret_nodes") {
 		if !columnExists(db, "secret_nodes", "rotation_length") {
-			db.Exec("ALTER TABLE secret_nodes ADD COLUMN rotation_length INTEGER NOT NULL DEFAULT 0")
+			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_length INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "secret_nodes", "rotation_charset") {
-			db.Exec("ALTER TABLE secret_nodes ADD COLUMN rotation_charset TEXT NOT NULL DEFAULT ''")
+			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_charset TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		// ADR-047: backend rotation wiring. Additive ('' = regenerate-in-Keyorix).
 		if !columnExists(db, "secret_nodes", "rotation_backend") {
-			db.Exec("ALTER TABLE secret_nodes ADD COLUMN rotation_backend TEXT NOT NULL DEFAULT ''")
+			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_backend TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "secret_nodes", "rotation_ref") {
-			db.Exec("ALTER TABLE secret_nodes ADD COLUMN rotation_ref TEXT NOT NULL DEFAULT ''")
+			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_ref TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		// ADR-056: cached certificate expiry. Additive (nil = not yet evaluated).
 		if !columnExists(db, "secret_nodes", "cert_not_after") {
-			db.Exec("ALTER TABLE secret_nodes ADD COLUMN cert_not_after TIMESTAMP WITH TIME ZONE")
+			if err := exec("ALTER TABLE secret_nodes ADD COLUMN cert_not_after TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
 		}
 		// Companion index (models.SecretNode.CertNotAfter is `gorm:"index"`); see the
 		// classification companion-index comment above for why this runs unconditionally
 		// (gated on the table only) rather than nested inside the ALTER guard above.
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_cert_not_after ON secret_nodes (cert_not_after)")
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_cert_not_after ON secret_nodes (cert_not_after)"); err != nil {
+			return err
+		}
 	}
 	// MT-006: partial unique index on (project_id, environment_id, name) WHERE
 	// deleted_at IS NULL — enforces at the DB layer the invariant the application
@@ -638,99 +676,143 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	}
 	// Anomaly alerting: additive `alerted` flag (false = not yet pushed out).
 	if tableExists(db, "anomaly_alerts") && !columnExists(db, "anomaly_alerts", "alerted") {
-		db.Exec("ALTER TABLE anomaly_alerts ADD COLUMN alerted BOOLEAN DEFAULT FALSE")
+		if err := exec("ALTER TABLE anomaly_alerts ADD COLUMN alerted BOOLEAN DEFAULT FALSE"); err != nil {
+			return err
+		}
 	}
 	// Companion index (models.AnomalyAlert.Alerted is `gorm:"default:false;index"`); see
 	// the secret_nodes.classification companion-index comment above for why this is
 	// gated on the table only, not on the ALTER above having just run.
 	if tableExists(db, "anomaly_alerts") {
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_alerted ON anomaly_alerts (alerted)")
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_alerted ON anomaly_alerts (alerted)"); err != nil {
+			return err
+		}
 	}
 
 	// Track last successful login per user (nil = never logged in).
 	if tableExists(db, "users") && !columnExists(db, "users", "last_login_at") {
-		db.Exec("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP WITH TIME ZONE")
+		if err := exec("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			return err
+		}
 	}
 
 	// Track when the current password was set, for max-age expiry (ADR-025).
 	if tableExists(db, "users") && !columnExists(db, "users", "password_changed_at") {
-		db.Exec("ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP WITH TIME ZONE")
+		if err := exec("ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			return err
+		}
 	}
 
 	// Account lifecycle state (ADR-025). Existing rows default to active.
 	if tableExists(db, "users") && !columnExists(db, "users", "account_state") {
-		db.Exec("ALTER TABLE users ADD COLUMN account_state TEXT NOT NULL DEFAULT 'active'")
+		if err := exec("ALTER TABLE users ADD COLUMN account_state TEXT NOT NULL DEFAULT 'active'"); err != nil {
+			return err
+		}
 	}
 
 	// MFA/TOTP opt-in flag. Existing rows default to false (MFA off).
 	if tableExists(db, "users") && !columnExists(db, "users", "mfa_enabled") {
-		db.Exec("ALTER TABLE users ADD COLUMN mfa_enabled BOOLEAN NOT NULL DEFAULT false")
+		if err := exec("ALTER TABLE users ADD COLUMN mfa_enabled BOOLEAN NOT NULL DEFAULT false"); err != nil {
+			return err
+		}
 	}
 
 	// SCIM external ID (RFC 7644). Additive; empty for locally-created users.
 	if tableExists(db, "users") && !columnExists(db, "users", "external_id") {
-		db.Exec("ALTER TABLE users ADD COLUMN external_id TEXT NOT NULL DEFAULT ''")
+		if err := exec("ALTER TABLE users ADD COLUMN external_id TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
 	}
 
 	// Per-account login lockout (brute-force protection). Additive; safe on existing DBs.
 	if tableExists(db, "users") {
 		if !columnExists(db, "users", "failed_login_attempts") {
-			db.Exec("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0")
+			if err := exec("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "users", "last_failed_login_at") {
-			db.Exec("ALTER TABLE users ADD COLUMN last_failed_login_at TIMESTAMP WITH TIME ZONE")
+			if err := exec("ALTER TABLE users ADD COLUMN last_failed_login_at TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "users", "login_locked_until") {
-			db.Exec("ALTER TABLE users ADD COLUMN login_locked_until TIMESTAMP WITH TIME ZONE")
+			if err := exec("ALTER TABLE users ADD COLUMN login_locked_until TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "users", "login_lockout_count") {
-			db.Exec("ALTER TABLE users ADD COLUMN login_lockout_count INTEGER NOT NULL DEFAULT 0")
+			if err := exec("ALTER TABLE users ADD COLUMN login_lockout_count INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "user_agent") {
-			db.Exec("ALTER TABLE sessions ADD COLUMN user_agent TEXT")
+			if err := exec("ALTER TABLE sessions ADD COLUMN user_agent TEXT"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "sessions", "ip_address") {
-			db.Exec("ALTER TABLE sessions ADD COLUMN ip_address TEXT")
+			if err := exec("ALTER TABLE sessions ADD COLUMN ip_address TEXT"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "sessions", "last_seen_at") {
-			db.Exec("ALTER TABLE sessions ADD COLUMN last_seen_at TIMESTAMP WITH TIME ZONE")
+			if err := exec("ALTER TABLE sessions ADD COLUMN last_seen_at TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
 		}
 		// Absolute session-lifetime ceiling (short-lived tokens): set at login,
 		// carried through refresh, never extended. nil on legacy rows = uncapped.
 		if !columnExists(db, "sessions", "absolute_expires_at") {
-			db.Exec("ALTER TABLE sessions ADD COLUMN absolute_expires_at TIMESTAMP WITH TIME ZONE")
+			if err := exec("ALTER TABLE sessions ADD COLUMN absolute_expires_at TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Audit-design block: diff payload + impersonation attribution on audit rows.
 	if tableExists(db, "audit_events") {
 		if !columnExists(db, "audit_events", "diff") {
-			db.Exec("ALTER TABLE audit_events ADD COLUMN diff TEXT")
+			if err := exec("ALTER TABLE audit_events ADD COLUMN diff TEXT"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "audit_events", "impersonated_by") {
-			db.Exec("ALTER TABLE audit_events ADD COLUMN impersonated_by INTEGER")
+			if err := exec("ALTER TABLE audit_events ADD COLUMN impersonated_by INTEGER"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "audit_events", "acting_as") {
-			db.Exec("ALTER TABLE audit_events ADD COLUMN acting_as INTEGER")
+			if err := exec("ALTER TABLE audit_events ADD COLUMN acting_as INTEGER"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "audit_events", "impersonation") {
-			db.Exec("ALTER TABLE audit_events ADD COLUMN impersonation BOOLEAN NOT NULL DEFAULT false")
+			if err := exec("ALTER TABLE audit_events ADD COLUMN impersonation BOOLEAN NOT NULL DEFAULT false"); err != nil {
+				return err
+			}
 		}
 		// ADR-023: actor kind (user vs machine_identity) on every event.
 		if !columnExists(db, "audit_events", "actor_type") {
-			db.Exec("ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'user'")
+			if err := exec("ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'user'"); err != nil {
+				return err
+			}
 		}
 		// ADR-029: tamper-evidence hash chain. Empty on legacy rows (the chain
 		// begins at the first event written after these columns exist).
 		if !columnExists(db, "audit_events", "prev_hash") {
-			db.Exec("ALTER TABLE audit_events ADD COLUMN prev_hash TEXT NOT NULL DEFAULT ''")
+			if err := exec("ALTER TABLE audit_events ADD COLUMN prev_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "audit_events", "entry_hash") {
-			db.Exec("ALTER TABLE audit_events ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''")
+			if err := exec("ALTER TABLE audit_events ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		// Companion indexes (models.AuditEvent.PrevHash/EntryHash are both
 		// `gorm:"index"`). VerifyAuditChain walks this hash chain as a security
@@ -739,17 +821,25 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// check being skipped operationally once it gets too slow to run regularly.
 		// Gated on the table only, not the ALTERs above — see the
 		// secret_nodes.classification companion-index comment for why.
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_prev_hash ON audit_events (prev_hash)")
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_entry_hash ON audit_events (entry_hash)")
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_audit_events_prev_hash ON audit_events (prev_hash)"); err != nil {
+			return err
+		}
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_audit_events_entry_hash ON audit_events (entry_hash)"); err != nil {
+			return err
+		}
 	}
 
 	// Impersonation sessions carry the initiating admin + start time.
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "impersonated_by") {
-			db.Exec("ALTER TABLE sessions ADD COLUMN impersonated_by INTEGER")
+			if err := exec("ALTER TABLE sessions ADD COLUMN impersonated_by INTEGER"); err != nil {
+				return err
+			}
 		}
 		if !columnExists(db, "sessions", "impersonation_started_at") {
-			db.Exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at TIMESTAMP WITH TIME ZONE")
+			if err := exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -764,10 +854,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			continue
 		}
 		if !columnExists(db, m.tbl, "environment_id") {
-			db.Exec(m.addEnvID)
+			if err := exec(m.addEnvID); err != nil {
+				return err
+			}
 		}
 		if columnExists(db, m.tbl, "project_id") {
-			db.Exec(m.nullPID)
+			if err := exec(m.nullPID); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -887,14 +981,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 		// Data classification (ISO A.5.12). Additive ("" = unclassified).
 		if tableExists(db, "dynamic_secret_configs") && !columnExists(db, "dynamic_secret_configs", "classification") {
-			db.Exec("ALTER TABLE dynamic_secret_configs ADD COLUMN classification TEXT DEFAULT ''")
+			if err := exec("ALTER TABLE dynamic_secret_configs ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		// Companion index (models.DynamicSecretConfig.Classification is `gorm:"index"`);
 		// this whole branch only runs when dynamic_secret_configs already existed (the
 		// upgrade path — a fresh install's AutoMigrate call below already creates the
 		// index), so it's safe to run unconditionally here rather than nesting inside
 		// the ALTER guard above — see the secret_nodes.classification comment for why.
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_dynamic_secret_configs_classification ON dynamic_secret_configs (classification)")
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_dynamic_secret_configs_classification ON dynamic_secret_configs (classification)"); err != nil {
+			return err
+		}
 		// Disabled (#369): refuses new leases once the owning project is soft-deleted.
 		// Additive (defaults false = every pre-existing config stays enabled).
 		if !m.HasColumn(&models.DynamicSecretConfig{}, "Disabled") {
@@ -1135,14 +1233,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	} else {
 		if !columnExists(db, "machine_identities", "classification") {
 			// Data classification (ISO A.5.12). Additive ("" = unclassified).
-			db.Exec("ALTER TABLE machine_identities ADD COLUMN classification TEXT DEFAULT ''")
+			if err := exec("ALTER TABLE machine_identities ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		// Companion index (models.MachineIdentity.Classification is `gorm:"index"`);
 		// this else branch only runs on the upgrade path (a fresh install's
 		// AutoMigrate call above already creates the index) — see the
 		// secret_nodes.classification comment for why this runs unconditionally
 		// rather than nested inside the ALTER guard.
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_machine_identities_classification ON machine_identities (classification)")
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_machine_identities_classification ON machine_identities (classification)"); err != nil {
+			return err
+		}
 	}
 
 	// Create machine-token tables if missing (ADR-030, additive, safe on existing DBs).
@@ -1152,12 +1254,16 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 	} else {
 		if !columnExists(db, "machine_identity_credentials", "classification") {
-			db.Exec("ALTER TABLE machine_identity_credentials ADD COLUMN classification TEXT DEFAULT ''")
+			if err := exec("ALTER TABLE machine_identity_credentials ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
+				return err
+			}
 		}
 		// Companion index (models.MachineIdentityCredential.Classification is
 		// `gorm:"index"`); see the machine_identities.classification comment above
 		// for why this runs unconditionally in this (upgrade-only) branch.
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_machine_identity_credentials_classification ON machine_identity_credentials (classification)")
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_machine_identity_credentials_classification ON machine_identity_credentials (classification)"); err != nil {
+			return err
+		}
 	}
 	if !machineRoleExists {
 		if err := db.AutoMigrate(&models.MachineIdentityRole{}); err != nil {
@@ -1245,7 +1351,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	// creation; upgraded installs get a best-effort column add so the application
 	// can at least insert new scoped rows without breaking on old global ones.
 	if tableExists(db, "user_groups") && !columnExists(db, "user_groups", "project_id") {
-		db.Exec("ALTER TABLE user_groups ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0")
+		if err := exec("ALTER TABLE user_groups ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
 	}
 
 	// Swap the plain unique index on users.username for a partial one (live rows only),

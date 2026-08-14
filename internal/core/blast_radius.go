@@ -108,7 +108,13 @@ func blastBFS(rootID uint, adj map[uint][]uint) (ordered []blastBFSNode, truncat
 // GetBlastRadius returns the full dependency tree downstream of secretID,
 // up to a maximum depth of 10 to prevent cycles causing infinite loops.
 // Each node carries OwnerID, ProjectID, and a RiskLevel assessment.
-func (k *KeyorixCore) GetBlastRadius(ctx context.Context, secretID uint) (*BlastRadiusReport, error) {
+//
+// #G32: the BFS traverses the full graph (a hop through a peer the caller isn't
+// independently authorized on still surfaces further, independently-authorized
+// dependents), but a node the caller has no grant of their own on is never disclosed
+// in the returned report — same-environment membership alone is not sufficient, since
+// a per-secret ACL grant on secretID does not extend to a peer.
+func (k *KeyorixCore) GetBlastRadius(ctx context.Context, actorKind string, actorID, secretID uint) (*BlastRadiusReport, error) {
 	source, err := k.requireSecret(ctx, secretID)
 	if err != nil {
 		return nil, err
@@ -130,6 +136,9 @@ func (k *KeyorixCore) GetBlastRadius(ctx context.Context, secretID uint) (*Blast
 	maxDepthSeen := 0
 	nodes := make([]BlastRadiusNode, 0, len(ordered))
 	for _, o := range ordered {
+		if !k.canReadSecret(ctx, actorKind, actorID, o.id) {
+			continue // #G32: don't disclose a peer the caller isn't independently authorized to see
+		}
 		dep, depErr := k.storage.GetSecret(ctx, o.id)
 		if depErr != nil {
 			// Dependent no longer exists (soft-deleted); skip it gracefully.

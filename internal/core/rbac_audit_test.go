@@ -61,6 +61,31 @@ func TestRBACAuditTrail_AssignAndRemove(t *testing.T) {
 	assert.Equal(t, uint(10), *removed.TargetUserID)
 }
 
+// TestRBACAuditTrail_EnvironmentIDRoundTrips is #G23: writeRBACAudit already
+// stamps EnvironmentID into the event's structured diff (rbacAuditDetail),
+// but ListRBACAuditLogs never read it back out into RBACAuditEntry — an
+// environment-scoped grant's audit row silently lost its EnvironmentID on
+// the read side even though it was captured at write time.
+func TestRBACAuditTrail_EnvironmentIDRoundTrips(t *testing.T) {
+	c := newRBACAuditCore(t)
+	ctx := context.Background()
+
+	require.NoError(t, c.AssignUserRole(ctx, 5, 10, 2, Scope{ProjectID: 3, EnvironmentID: 7}))
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+
+	var assigned *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned {
+			assigned = e
+		}
+	}
+	require.NotNil(t, assigned)
+	require.NotNil(t, assigned.EnvironmentID)
+	assert.Equal(t, uint(7), *assigned.EnvironmentID)
+}
+
 // A change made without an authenticated principal (actorID 0, e.g. local CLI)
 // records no actor.
 func TestRBACAuditTrail_SystemActor(t *testing.T) {

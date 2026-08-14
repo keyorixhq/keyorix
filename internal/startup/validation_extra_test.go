@@ -13,7 +13,7 @@ import (
 // TestSafeFilePermPath_CleanAbsolute validates that a safe absolute path is
 // returned unchanged (after Clean).
 func TestSafeFilePermPath_CleanAbsolute(t *testing.T) {
-	got, err := safeFilePermPath("label", "/app/keys/dek.key")
+	got, err := SafeFilePermPath("label", "/app/keys/dek.key")
 	require.NoError(t, err)
 	assert.Equal(t, "/app/keys/dek.key", got)
 }
@@ -21,7 +21,7 @@ func TestSafeFilePermPath_CleanAbsolute(t *testing.T) {
 // TestSafeFilePermPath_RejectsTraversal validates that paths with ".." are
 // rejected after filepath.Clean.
 func TestSafeFilePermPath_RejectsTraversal(t *testing.T) {
-	_, err := safeFilePermPath("test", "sub/../../outside")
+	_, err := SafeFilePermPath("test", "sub/../../outside")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "..")
 }
@@ -29,14 +29,14 @@ func TestSafeFilePermPath_RejectsTraversal(t *testing.T) {
 // TestSafeFilePermPath_RejectsParentDirOnly validates that ".." alone is
 // rejected.
 func TestSafeFilePermPath_RejectsParentDirOnly(t *testing.T) {
-	_, err := safeFilePermPath("label", "..")
+	_, err := SafeFilePermPath("label", "..")
 	require.Error(t, err)
 }
 
 // TestSafeFilePermPath_SafeRelative validates that a safe relative path without
 // traversal is allowed.
 func TestSafeFilePermPath_SafeRelative(t *testing.T) {
-	got, err := safeFilePermPath("label", "keys/dek.key")
+	got, err := SafeFilePermPath("label", "keys/dek.key")
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Clean("keys/dek.key"), got)
 }

@@ -77,10 +77,21 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 	return createdShare, nil
 }
 
-// ListGroupShares lists all shares for a group
-func (c *KeyorixCore) ListGroupShares(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
+// ListGroupShares lists all shares for a group.
+//
+// #G10: this used to have no caller-scoping of its own — any principal reaching it
+// (directly, or via a future transport this codebase hasn't wired yet) could list any
+// group's shares, trusting the HTTP router's own permSecretsRead gate to have already
+// run. It now checks that gate itself, mirroring the router's actual requirement
+// (server/http/router.go), so it's safe to call from any transport.
+func (c *KeyorixCore) ListGroupShares(ctx context.Context, actorKind string, actorID, groupID uint) ([]*models.ShareRecord, error) {
 	if groupID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+	}
+	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permSecretsRead, Scope{}); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	} else if !allowed {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to list this group's shares")
 	}
 
 	// Get shares from storage
@@ -97,9 +108,17 @@ func (c *KeyorixCore) ListGroupShares(ctx context.Context, groupID uint) ([]*mod
 // (ListSharesByGroup) with the secrets themselves, skipping expired time-bound shares
 // (which no longer authorize) and any share whose secret is gone, and de-duplicating
 // by secret. Never reads a value.
-func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, groupID uint) ([]*models.SecretNode, error) {
+//
+// #G10: this had no caller-scoping parameter at all — same gap as ListGroupShares
+// above, closed the same way.
+func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, actorKind string, actorID, groupID uint) ([]*models.SecretNode, error) {
 	if groupID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+	}
+	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permSecretsRead, Scope{}); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	} else if !allowed {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to list this group's shared secrets")
 	}
 
 	shares, err := c.storage.ListSharesByGroup(ctx, groupID)

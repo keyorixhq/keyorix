@@ -376,9 +376,22 @@ func detectPrincipalBreadth(ctx context.Context, s StorageInterface, now, window
 	var alerts []models.AnomalyAlert
 	for principal, secrets := range firstSeen {
 		newCount := 0
-		for _, t := range secrets {
+		// #G43: pick a deterministic representative secret (lowest ID) among the
+		// ones that triggered this alert. AlertNewAnomalies resolves the owning
+		// project — and therefore which admins to notify in-app — from
+		// AnomalyAlert.SecretNodeID; principal_breadth left it unset (there's no
+		// single natural owner across many secrets), so every principal_breadth
+		// alert silently skipped the in-app admin notification, even though the
+		// audit/SIEM event still fired. One representative secret is enough to
+		// resolve a real project and get admins notified — it does not need to
+		// be exhaustive across every project the principal touched.
+		var representativeID uint
+		for secretID, t := range secrets {
 			if !t.Before(windowStart) { // first ever access to this secret falls in the live window
 				newCount++
+				if representativeID == 0 || secretID < representativeID {
+					representativeID = secretID
+				}
 			}
 		}
 		if newCount < principalBreadthMinNewSecrets {
@@ -389,8 +402,9 @@ func detectPrincipalBreadth(ctx context.Context, s StorageInterface, now, window
 			severity = "high"
 		}
 		alerts = append(alerts, models.AnomalyAlert{
-			AlertType: "principal_breadth",
-			Severity:  severity,
+			SecretNodeID: representativeID,
+			AlertType:    "principal_breadth",
+			Severity:     severity,
 			Description: fmt.Sprintf(
 				"%s accessed %d distinct secrets with no prior access history in the last scan window — possible breadth exfiltration",
 				principal, newCount),

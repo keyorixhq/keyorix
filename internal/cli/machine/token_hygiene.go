@@ -48,7 +48,9 @@ window (non-human token sprawl). Requires global system.read. Never prints a sec
 			if last == "" {
 				last = "never"
 			}
-			fmt.Printf("%-5d %-22s %-16s %-8d %-8s %s\n", r.ID, r.Name, r.TokenPrefix+"…", r.MachineIdentityID, machineFlagLabel(r), last)
+			// #G69: Name is attacker-controlled free text (this report is
+			// admin-only and cross-tenant, so the risk spans every tenant).
+			fmt.Printf("%-5d %-22s %-16s %-8d %-8s %s\n", r.ID, common.SanitizeForTerminal(r.Name), r.TokenPrefix+"…", r.MachineIdentityID, machineFlagLabel(r), last)
 		}
 		return nil
 	},

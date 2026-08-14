@@ -616,8 +616,31 @@ func TestVerifyAccessReviewGrantExists_RoleSource_Found(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestVerifyAccessReviewGrantExists_RoleSource_Machine is #G51: a
+// machine-identity role grant is queried from ListProjectMachineRoleAssignments,
+// a separate storage call from the user/group path — and must NOT fall through
+// to ListProjectRoleAssignments at all (it would never match there).
+func TestVerifyAccessReviewGrantExists_RoleSource_Machine(t *testing.T) {
+	ms := new(MockStorage)
+	assignments := []storage.RoleAssignment{
+		{PrincipalType: "machine", PrincipalID: 50, RoleID: 3, EnvironmentID: 0},
+	}
+	ms.On("ListProjectMachineRoleAssignments", mock.Anything, uint(1)).Return(assignments, nil)
+	c := NewKeyorixCore(ms)
+	d := AccessReviewDecision{
+		Source:        "role",
+		PrincipalType: "machine",
+		PrincipalID:   50,
+		RoleID:        3,
+	}
+	err := c.verifyAccessReviewGrantExists(context.Background(), 1, d)
+	require.NoError(t, err)
+	ms.AssertNotCalled(t, "ListProjectRoleAssignments", mock.Anything, mock.Anything)
+}
+
 func TestVerifyAccessReviewGrantExists_DirectShare_Found(t *testing.T) {
 	ms := new(MockStorage)
+	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1}, nil)
 	shares := []*models.ShareRecord{
 		{ID: 1, SecretID: 10, RecipientID: 5, IsGroup: false},
 	}
@@ -632,8 +655,28 @@ func TestVerifyAccessReviewGrantExists_DirectShare_Found(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestVerifyAccessReviewGrantExists_DirectShare_CrossProjectRefused is #G51: a
+// share on a secret belonging to a DIFFERENT project must be refused even
+// though the recipient/isGroup match — the secret's own project must gate the
+// share lookup.
+func TestVerifyAccessReviewGrantExists_DirectShare_CrossProjectRefused(t *testing.T) {
+	ms := new(MockStorage)
+	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 2}, nil)
+	c := NewKeyorixCore(ms)
+	d := AccessReviewDecision{
+		Source:      "direct_share",
+		SecretID:    10,
+		PrincipalID: 5,
+	}
+	err := c.verifyAccessReviewGrantExists(context.Background(), 1, d)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer exists")
+	ms.AssertNotCalled(t, "ListSharesBySecret", mock.Anything, mock.Anything)
+}
+
 func TestVerifyAccessReviewGrantExists_DirectShare_NotFound(t *testing.T) {
 	ms := new(MockStorage)
+	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1}, nil)
 	ms.On("ListSharesBySecret", mock.Anything, uint(10)).Return([]*models.ShareRecord{}, nil)
 	c := NewKeyorixCore(ms)
 	d := AccessReviewDecision{
@@ -648,7 +691,7 @@ func TestVerifyAccessReviewGrantExists_DirectShare_NotFound(t *testing.T) {
 
 func TestVerifyAccessReviewGrantExists_Owner_Found(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, OwnerID: 5}, nil)
+	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1, OwnerID: 5}, nil)
 	c := NewKeyorixCore(ms)
 	d := AccessReviewDecision{
 		Source:      "owner",
@@ -661,12 +704,29 @@ func TestVerifyAccessReviewGrantExists_Owner_Found(t *testing.T) {
 
 func TestVerifyAccessReviewGrantExists_Owner_WrongOwner(t *testing.T) {
 	ms := new(MockStorage)
-	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, OwnerID: 99}, nil)
+	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 1, OwnerID: 99}, nil)
 	c := NewKeyorixCore(ms)
 	d := AccessReviewDecision{
 		Source:      "owner",
 		SecretID:    10,
 		PrincipalID: 5, // != 99
+	}
+	err := c.verifyAccessReviewGrantExists(context.Background(), 1, d)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer exists")
+}
+
+// TestVerifyAccessReviewGrantExists_Owner_CrossProjectRefused is #G51: a
+// secret's ownership grant in a DIFFERENT project must be refused even when
+// the owner ID matches, exactly mirroring the direct_share cross-project case.
+func TestVerifyAccessReviewGrantExists_Owner_CrossProjectRefused(t *testing.T) {
+	ms := new(MockStorage)
+	ms.On("GetSecret", mock.Anything, uint(10)).Return(&models.SecretNode{ID: 10, ProjectID: 2, OwnerID: 5}, nil)
+	c := NewKeyorixCore(ms)
+	d := AccessReviewDecision{
+		Source:      "owner",
+		SecretID:    10,
+		PrincipalID: 5,
 	}
 	err := c.verifyAccessReviewGrantExists(context.Background(), 1, d)
 	require.Error(t, err)

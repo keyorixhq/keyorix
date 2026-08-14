@@ -317,6 +317,7 @@ func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) 
 			"role_id":        e.RoleID,
 			"permission_id":  e.PermissionID,
 			"project_id":     e.ProjectID,
+			"environment_id": e.EnvironmentID,
 			"details":        e.Details,
 			"created_at":     e.CreatedAt.UTC().Format(time.RFC3339),
 		})

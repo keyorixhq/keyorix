@@ -37,6 +37,31 @@ var (
 	// dropped or silently clobber the winner.
 	ErrUserActiveStateConflict = errors.New("user's active state changed concurrently")
 
+	// ErrNotProjectMember is returned by RemoveProjectMember when the target
+	// user holds no role grant in the project — a benign no-op distinguishable
+	// (via errors.Is) from a real refusal such as guardLastProjectAdmin's,
+	// which callers must NOT treat the same way (#G54).
+	ErrNotProjectMember = errors.New("user is not a member of this project")
+
+	// ErrMembershipStateConflict is returned by TransitionMembership when it
+	// loses a race against a concurrent TransitionMembership call on the same
+	// project membership — the row's persisted state moved away from the
+	// value this call observed between its read and its conditional write
+	// (storage.Storage.TransitionProjectMembershipState). #G42: mirrors
+	// ErrUserActiveStateConflict/ErrMachineStateConflict — the caller must
+	// retry against the current state, not silently clobber (or be clobbered
+	// by) the transition.
+	ErrMembershipStateConflict = errors.New("project membership's state changed concurrently")
+
+	// ErrMachineStateConflict is returned by ClassifyMachineIdentity when it
+	// loses a race against a concurrent TransitionMachineIdentity call on the
+	// same machine identity — the row's persisted state moved away from the
+	// value this call observed between its read and its conditional write
+	// (storage.Storage.TransitionMachineIdentityState). #G42: mirrors
+	// ErrUserActiveStateConflict — the caller must retry against the current
+	// state, not silently clobber (or be clobbered by) the state transition.
+	ErrMachineStateConflict = errors.New("machine identity's state changed concurrently")
+
 	// ErrConnectDisabled is returned by the Keyorix Connect (ADR-043) methods when
 	// no external-store connector is configured.
 	ErrConnectDisabled = errors.New("keyorix connect is not enabled")

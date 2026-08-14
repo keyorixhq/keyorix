@@ -3,6 +3,8 @@ package notary
 import (
 	"context"
 	"crypto/x509"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -80,6 +82,38 @@ func TestRFC3161_Anchor_UnreachableHost(t *testing.T) {
 	_, err := r.Anchor(context.Background(), []byte("hello"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "post to")
+}
+
+// TestRFC3161_Anchor_MalformedTSAResponseNoPanic is #G61: Anchor() hands the
+// TSA's response bytes to timestamp.ParseResponse, the same digitorus parser
+// family VerifyReceipt was already hardened against (index out of range on
+// malformed BER, found by the continuous fuzz rig). A hostile or buggy TSA
+// endpoint must produce an error, never a process-killing panic — the same
+// property TestVerifyReceipt_MalformedToken_NoPanic pins for VerifyReceipt.
+func TestRFC3161_Anchor_MalformedTSAResponseNoPanic(t *testing.T) {
+	cases := [][]byte{
+		{},
+		[]byte("not DER at all"),
+		{0x30, 0x81},             // SEQUENCE + long-form length, no length byte follows
+		{0x30, 0x82},             // SEQUENCE + long-form length claiming 2 bytes, none follow
+		{0x30, 0x01},             // SEQUENCE claiming 1 content byte, none present
+		{0xff, 0x81},             // high-tag-number form, truncated
+		{0x30, 0x80, 0x00, 0x00}, // indefinite-length SEQUENCE
+	}
+	for _, body := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		}))
+		client := NewRFC3161(srv.URL, 5*time.Second)
+
+		var err error
+		require.NotPanics(t, func() {
+			_, err = client.Anchor(context.Background(), []byte("anchor message"))
+		})
+		assert.Error(t, err, "a malformed TSA response must be reported as an error, not silently accepted")
+		srv.Close()
+	}
 }
 
 // ---------------------------------------------------------------------------

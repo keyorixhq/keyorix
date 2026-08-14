@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -195,5 +196,20 @@ func applyFix(basePath string, plan fixPlan) error {
 		return fmt.Errorf("line %d out of range", plan.Line)
 	}
 	lines[plan.Line-1] = plan.NewLine
-	return os.WriteFile(fullPath, []byte(strings.Join(lines, "\n")), 0600) // #nosec G703 -- fullPath is basePath (operator-supplied --path) joined with a relative path from filepath.Walk rooted at that same basePath; path traversal not a realistic threat for this local CLI tool
+	// #G26: os.WriteFile follows a symlink at fullPath and writes through it — a scanned
+	// directory can contain attacker-planted content, so a symlink swapped in at a
+	// discovered path (between the scan and this apply) would let `secret fix` overwrite
+	// an arbitrary file the process can write to. O_NOFOLLOW refuses that; no O_CREATE/
+	// O_EXCL since the fix always targets a file findAndPlanFix already read via this
+	// same fullPath, so it must already exist.
+	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0600) // #nosec G304 -- fullPath is basePath (operator-supplied --path) joined with a relative path from filepath.Walk rooted at that same basePath
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write([]byte(strings.Join(lines, "\n")))
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }

@@ -140,7 +140,8 @@ func printBillingReport(report *storage.BillingReport) error {
 		return err
 	}
 	for _, p := range report.Projects {
-		name := p.ProjectName
+		// #G69: ProjectName is attacker-controlled free text.
+		name := common.SanitizeForTerminal(p.ProjectName)
 		if name == "" {
 			name = fmt.Sprintf("(project %d)", p.ProjectID)
 		}

@@ -189,6 +189,15 @@ func testRemoteConnection(cfg *config.Config) error {
 	if cfg.Storage.Remote.BaseURL == "" {
 		return fmt.Errorf("remote server URL not configured")
 	}
+	// #G73: this is about to issue an outbound HTTP request (SSRF exposure,
+	// including link-local/metadata addresses) to a server URL sourced from
+	// ./keyorix.yaml — an untrusted, CWD-relative, attacker-plantable file —
+	// with no user confirmation. Duplicated here (not imported) rather than
+	// calling internal/cli/common.WarnUntrustedCWDConfigServerURL: that
+	// package already imports internal/cli/config for the CLI-connect config,
+	// so importing it back here would cycle. Keep this message in sync with
+	// that one.
+	fmt.Fprintln(os.Stderr, "⚠️  Testing connection using a remote server config from ./keyorix.yaml in the current directory. If you did not place it here, a malicious file could be redirecting the CLI — prefer 'keyorix connect'.")
 	fmt.Printf("🌐 Remote server: %s\n", cfg.Storage.Remote.BaseURL)
 
 	timeout := time.Duration(cfg.Storage.Remote.TimeoutSeconds) * time.Second

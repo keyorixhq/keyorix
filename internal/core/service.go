@@ -335,6 +335,15 @@ func (c *KeyorixCore) SetAuditForwarder(f AuditForwarder) {
 	c.auditForwarder = f
 }
 
+// AuditForwarder returns the wired audit forwarder (nil if none configured).
+// #G56: the server needs this at shutdown to flush/close the concrete
+// forwarder (e.g. *siem.Forwarder) — SetAuditForwarder's caller previously had
+// no way to reach it again afterward, since the constructed value lived only
+// as a local variable inside server initialization.
+func (c *KeyorixCore) AuditForwarder() AuditForwarder {
+	return c.auditForwarder
+}
+
 // SetLicenseGate wires the offline-license feature gate built at startup from the
 // installed token. nil = no license (community baseline). Safe to leave unset.
 func (c *KeyorixCore) SetLicenseGate(g *license.Gate) {

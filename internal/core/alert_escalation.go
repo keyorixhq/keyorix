@@ -177,12 +177,17 @@ func (c *KeyorixCore) dispatchToChannel(ctx context.Context, ch *models.Notifica
 		// accessed_by and ip_address are intentionally omitted: PII must not be
 		// forwarded to an external webhook receiver. The server-side audit log
 		// already captures this data for incident investigation.
+		//
+		// #G30: several alert types (new_ip, new_user, ml_outlier,
+		// principal_breadth) embed the SAME accessed_by/IP values as free text
+		// in Description, which used to bypass the redaction above — scrub any
+		// occurrence of this alert's own accessed_by/IP before it leaves too.
 		return c.postJSONToURL(ctx, ch.URL, map[string]any{
 			"event":       "anomaly.escalated",
 			"alert_id":    alert.ID,
 			"severity":    alert.Severity,
 			"alert_type":  alert.AlertType,
-			"description": alert.Description,
+			"description": redactAlertDescription(alert),
 			"secret_name": alert.SecretName,
 			"detected_at": alert.DetectedAt.Format(time.RFC3339),
 			"policy_name": policy.Name,
@@ -193,6 +198,23 @@ func (c *KeyorixCore) dispatchToChannel(ctx context.Context, ch *models.Notifica
 		log.Printf("alert escalation: channel %q (type=%s): escalation for alert %d logged (full delivery via notification sink)", ch.Name, ch.Type, alert.ID)
 		return nil
 	}
+}
+
+// redactAlertDescription strips any occurrence of the alert's own AccessedBy/
+// IPAddress from its free-text Description before it leaves the deployment via
+// an external webhook/Slack payload. Several alert types (new_ip, new_user,
+// ml_outlier, principal_breadth) embed these exact values as free text, which
+// would otherwise carry the same PII the structured accessed_by/ip_address
+// fields are deliberately omitted for on this path.
+func redactAlertDescription(alert *models.AnomalyAlert) string {
+	desc := alert.Description
+	if alert.AccessedBy != "" {
+		desc = strings.ReplaceAll(desc, alert.AccessedBy, "[redacted]")
+	}
+	if alert.IPAddress != "" {
+		desc = strings.ReplaceAll(desc, alert.IPAddress, "[redacted]")
+	}
+	return desc
 }
 
 // noEscalationRedirect refuses all HTTP redirects from webhook endpoints. An

@@ -215,7 +215,10 @@ func TestWithdrawAccessRequest_WrongUser(t *testing.T) {
 	c := NewKeyorixCore(ms)
 	err := c.WithdrawAccessRequest(context.Background(), 1, 99)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not your access request")
+	// #G14: same generic "not found" a nonexistent request ID gets — a distinct
+	// "not your access request" message would let a caller enumerate request IDs
+	// that exist but belong to someone else.
+	assert.Contains(t, err.Error(), "access request not found")
 }
 
 func TestWithdrawAccessRequest_NotPending(t *testing.T) {

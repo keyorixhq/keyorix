@@ -38,6 +38,13 @@ func init() {
 }
 
 func runMFAStepUp(cmd *cobra.Command, _ []string) error {
+	// #G58: --code carries a live TOTP/recovery credential the same way
+	// --value/--admin-password carry secret material — warn the same way
+	// those flags already do (shell history, ps/proc visibility). The
+	// interactive prompt below has neither exposure, so this only fires
+	// when the flag itself was actually used.
+	common.WarnInsecureFlag(cmd, "code", "omit it and enter the code at the interactive prompt instead.")
+
 	rc, ok := common.NewRemoteClient()
 	if !ok {
 		return fmt.Errorf("MFA step-up requires remote mode — run 'keyorix auth login' first")

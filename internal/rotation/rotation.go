@@ -84,15 +84,40 @@ func (m *Manager) Names() []string {
 	return names
 }
 
+// isAlnumByte reports whether b is an ASCII letter or digit. Anything else — '_', '-',
+// '.', '/', ':', a quote, a space — counts as an explicit boundary between identifier
+// segments for prefixAllowed below.
+func isAlnumByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
 // prefixAllowed reports whether ref is permitted by an allowed-refs prefix allowlist: an
-// empty list places no restriction; otherwise ref must begin with one of the prefixes.
-// A guardrail on top of the backend admin identity's own privileges.
+// empty list places no restriction; otherwise ref must equal one of the entries, or
+// extend one at an explicit segment boundary — never merely share a prefix with one. A
+// guardrail on top of the backend admin identity's own privileges.
+//
+// #G46: a raw strings.HasPrefix let an allowed_refs entry of "myapp" also admit
+// "myapp2"/"myappadmin" — an unintended superset an operator who configured "myapp"
+// (without a trailing delimiter) would not expect. The match must now land on an
+// explicit boundary: either the configured prefix's own last character is already
+// non-alphanumeric (the pre-existing convention of e.g. "app_" already relies on this —
+// the operator's own choice already delimits it), or ref's very next character after the
+// prefix is.
 func prefixAllowed(allowed []string, ref string) bool {
 	if len(allowed) == 0 {
 		return true
 	}
 	for _, p := range allowed {
-		if p != "" && strings.HasPrefix(ref, p) {
+		if p == "" {
+			continue
+		}
+		if ref == p {
+			return true
+		}
+		if !strings.HasPrefix(ref, p) {
+			continue
+		}
+		if !isAlnumByte(p[len(p)-1]) || !isAlnumByte(ref[len(p)]) {
 			return true
 		}
 	}

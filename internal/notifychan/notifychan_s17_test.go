@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -233,6 +234,39 @@ func TestEnqueue_DropCountedWhenQueueFull(t *testing.T) {
 
 	close(release)
 	d.close()
+}
+
+// TestEnqueue_ConcurrentWithClose_NoPanic is #G63: enqueue()'s non-blocking
+// send on d.queue and close()'s close(d.queue) were unsynchronized — a
+// concurrent enqueue() landing mid-send while close() closes the channel is a
+// genuine Go runtime panic ("send on closed channel"), not just a logical
+// race. Run under `go test -race` this also catches the underlying data race
+// even on a run where the panic doesn't happen to trigger.
+func TestEnqueue_ConcurrentWithClose_NoPanic(t *testing.T) {
+	send := func(_ context.Context, _ core.NotificationEvent) (bool, error) {
+		return false, nil
+	}
+	d := newDeliverer("test-race", 4, time.Millisecond, send)
+	ev := core.NotificationEvent{UserID: 1}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			d.enqueue(ev)
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		d.close()
+	}()
+	close(start)
+	wg.Wait()
 }
 
 // TestDeliver_RetriesAbandonedOnShutdown exercises the closing-channel branch in

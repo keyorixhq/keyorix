@@ -26,7 +26,13 @@ var sensitiveURIPattern = regexp.MustCompile(`(?i)^(/(?:api/v1/)?auth/(?:setup|i
 // query param that is the secret reference or name. Logging these verbatim would
 // write secret names/references to the access log (container logs, log-aggregation
 // SaaS, on-call terminal), leaking the secret catalogue to log readers.
-var sensitiveQueryPattern = regexp.MustCompile(`(?i)/secrets/(?:value|by-name)\b`)
+//
+// #G29: the OAuth/OIDC SSO callback (GET .../auth/sso/{provider}/callback) was
+// never added here — its ?code=&state= query carries a single-use OAuth
+// authorization code (redeemable for a session on its own) and a CSRF state
+// nonce, so every SSO login used to write the authorization code to the log
+// stream in plaintext.
+var sensitiveQueryPattern = regexp.MustCompile(`(?i)/secrets/(?:value|by-name)\b|/auth/sso/[^/?]+/callback\b`)
 
 // redactSensitiveURI replaces the credential segment of a known-sensitive path
 // with a fixed placeholder, and strips the entire query string for paths that
@@ -44,6 +50,29 @@ func redactSensitiveURI(uri string) string {
 	return uri
 }
 
+// decodedRequestURI reconstructs r.URL.Path + its query string as a single
+// string, built from the already-percent-decoded .Path — NOT the raw
+// r.RequestURI wire form redactSensitiveURI used to be applied to directly.
+// #G29: a percent-encoded route character (e.g. %2F standing in for a literal
+// '/') still routes to the same handler via chi's decoded-path matching, but
+// left RequestURI's raw, still-encoded form unmatched by sensitiveURIPattern —
+// a redaction bypass. Matching against the decoded path closes it.
+func decodedRequestURI(r *http.Request) string {
+	if r.URL.RawQuery == "" {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + r.URL.RawQuery
+}
+
+// logSafeRequestURI is the single canonicalizing function fix_shape (#G29)
+// asks for: redact known-sensitive path/query content, then strip control
+// characters (CR/LF, ANSI/C1 escapes, NUL) from whatever remains — applied
+// uniformly here (the access log) and in recovery.go's panic-context log, so
+// neither can independently drift out of sync with the other's coverage.
+func logSafeRequestURI(r *http.Request) string {
+	return stripControl(redactSensitiveURI(decodedRequestURI(r)))
+}
+
 // Logger returns a middleware that logs HTTP requests. It behaves like chi's
 // middleware.RequestLogger(DefaultLogFormatter), except the request handed to the
 // formatter has any known-sensitive path segment redacted first (see
@@ -55,13 +84,17 @@ func redactSensitiveURI(uri string) string {
 // use it for account takeover.
 func Logger() func(next http.Handler) http.Handler {
 	formatter := &middleware.DefaultLogFormatter{
-		Logger:  log.Default(),
-		NoColor: false,
+		Logger: log.Default(),
+		// #G29: server access logs are captured non-interactively (container
+		// logs, a log-aggregation SaaS) where ANSI color codes are noise at
+		// best and an unnecessary terminal-control byte stream at worst if
+		// ever viewed raw — never emit them here.
+		NoColor: true,
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			logReq := r
-			if redacted := redactSensitiveURI(r.RequestURI); redacted != r.RequestURI {
+			if redacted := logSafeRequestURI(r); redacted != r.RequestURI {
 				clone := r.Clone(r.Context())
 				clone.RequestURI = redacted
 				logReq = clone

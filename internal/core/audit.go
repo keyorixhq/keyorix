@@ -219,6 +219,16 @@ func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType strin
 		EventTime:   time.Now(),
 		ActorType:   actorTypeFromContext(ctx),
 	}
+	// #G23: stamp impersonation attribution the same way the success-path
+	// writer (writeAuditEventDiff) does — a failed action taken inside an
+	// impersonation session must be attributable to the impersonating admin
+	// too, not just the userID it was attempted as.
+	if adminID, ok := impersonatorFromContext(ctx); ok {
+		a := adminID
+		event.ImpersonatedBy = &a
+		event.ActingAs = userID
+		event.Impersonation = true
+	}
 	c.emitAudit(ctx, event)
 }
 

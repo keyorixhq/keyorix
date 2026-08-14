@@ -19,12 +19,24 @@ import (
 // suspend), so a partial failure does not abort the rest. The actor must satisfy the
 // per-secret transfer rule for each (it does for the offboarding case: the old owner is
 // gone). Each reassignment is audited as secret.owner_transferred.
-func (c *KeyorixCore) ReassignOwnedSecrets(ctx context.Context, projectID, fromOwnerID, toOwnerID, actorID uint) (int, error) {
+//
+// #G10: this had no independent authorization of its own — for the offboarding case the
+// old owner is gone, so transferOwnership's per-secret rule ("actor is current owner, OR
+// the current owner is gone") passed for every secret with no check on the actor's own
+// relationship to the project at all, and the per-secret continue-on-error masked any
+// denial that DID occur. It now requires the actor hold secrets.write at the project's
+// scope up front, matching the HTTP router's own gate for this route.
+func (c *KeyorixCore) ReassignOwnedSecrets(ctx context.Context, actorKind string, actorID, projectID, fromOwnerID, toOwnerID uint) (int, error) {
 	if projectID == 0 || fromOwnerID == 0 || toOwnerID == 0 || actorID == 0 {
 		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID, from-owner, to-owner and actor ID are required")
 	}
 	if fromOwnerID == toOwnerID {
 		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "from-owner and to-owner must differ")
+	}
+	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permSecretsWrite, Scope{ProjectID: projectID}); err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	} else if !allowed {
+		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to reassign secrets in this project")
 	}
 	// The new owner must exist (fail fast — TransferSecretOwnership re-checks per secret).
 	if _, err := c.storage.GetUser(ctx, toOwnerID); err != nil {

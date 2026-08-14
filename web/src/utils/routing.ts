@@ -74,7 +74,8 @@ export const getPostLoginRedirect = (defaultPath: string = ROUTES.DASHBOARD): st
  * unrelated sibling paths that merely share a prefix (e.g. `/login-help`
  * against `/login`), so callers should use this instead.
  */
-const matchesRoutePrefix = (path: string, route: string): boolean => path === route || path.startsWith(`${route}/`);
+export const matchesRoutePrefix = (path: string, route: string): boolean =>
+    path === route || path.startsWith(`${route}/`);
 
 /**
  * Checks if a route requires authentication

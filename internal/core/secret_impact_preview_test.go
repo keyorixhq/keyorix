@@ -19,6 +19,11 @@ import (
 // newImpactPreviewCore builds a minimal in-memory core for impact-preview tests.
 // Each call gets a fresh in-memory DB via ":memory:" — no DSN collision because
 // each gorm.Open(":memory:") allocates its own SQLite database.
+// impactPreviewTestActor is granted global admin below so #G32's independent
+// peer-secret authorization check doesn't interfere with these tests, which are about
+// the cascade-impact count/shape, not authorization.
+const impactPreviewTestActor = uint(1)
+
 func newImpactPreviewCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -30,9 +35,14 @@ func newImpactPreviewCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.Project{},
 		&models.Environment{},
 		&models.ShareRecord{},
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.MachineIdentityRole{}, &models.SecretACL{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p-impact"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env-impact"}).Error)
+	role := &models.Role{Name: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: impactPreviewTestActor, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	now := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db
@@ -52,7 +62,7 @@ func TestGetSecretImpactPreview_NoDependents(t *testing.T) {
 	c, db := newImpactPreviewCore(t)
 	aID := mkIPSecret(t, db, "standalone")
 
-	got, err := c.GetSecretImpactPreview(context.Background(), aID)
+	got, err := c.GetSecretImpactPreview(context.Background(), ActorTypeUser, impactPreviewTestActor, aID)
 	require.NoError(t, err)
 	assert.Equal(t, aID, got.SecretID)
 	assert.Equal(t, 0, got.DirectDependents)
@@ -71,7 +81,7 @@ func TestGetSecretImpactPreview_TwoDirectDependents(t *testing.T) {
 	addImpactEdge(t, db, depA, rootID)
 	addImpactEdge(t, db, depB, rootID)
 
-	got, err := c.GetSecretImpactPreview(context.Background(), rootID)
+	got, err := c.GetSecretImpactPreview(context.Background(), ActorTypeUser, impactPreviewTestActor, rootID)
 	require.NoError(t, err)
 	assert.Equal(t, 2, got.DirectDependents)
 	assert.Equal(t, 2, got.TransitiveDependents)
@@ -90,7 +100,7 @@ func TestGetSecretImpactPreview_TransitiveChain(t *testing.T) {
 	addImpactEdge(t, db, bID, aID)
 	addImpactEdge(t, db, cID, bID)
 
-	got, err := c.GetSecretImpactPreview(context.Background(), aID)
+	got, err := c.GetSecretImpactPreview(context.Background(), ActorTypeUser, impactPreviewTestActor, aID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, got.DirectDependents, "only B directly depends on A")
 	assert.Equal(t, 2, got.TransitiveDependents, "B and C are both affected")
@@ -109,7 +119,7 @@ func TestGetSecretImpactPreview_CycleDetection(t *testing.T) {
 	addImpactEdge(t, db, bID, aID)
 
 	// Must not hang or panic; returns safely.
-	got, err := c.GetSecretImpactPreview(context.Background(), aID)
+	got, err := c.GetSecretImpactPreview(context.Background(), ActorTypeUser, impactPreviewTestActor, aID)
 	require.NoError(t, err)
 	// B is a direct dependent of A (depth 1); A is already in the visited set so
 	// the back-edge is cut — transitive total is 1.
@@ -124,7 +134,7 @@ func TestGetSecretImpactPreview_CycleDetection(t *testing.T) {
 func TestGetSecretImpactPreview_SecretNotFound(t *testing.T) {
 	c, db := newImpactPreviewCore(t)
 	_ = db
-	_, err := c.GetSecretImpactPreview(context.Background(), 999999)
+	_, err := c.GetSecretImpactPreview(context.Background(), ActorTypeUser, impactPreviewTestActor, 999999)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -144,7 +154,7 @@ func TestGetSecretImpactPreview_StorageError(t *testing.T) {
 	now := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: ms, now: func() time.Time { return now }}
 
-	_, err := c.GetSecretImpactPreview(context.Background(), 1)
+	_, err := c.GetSecretImpactPreview(context.Background(), ActorTypeUser, impactPreviewTestActor, 1)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, storageErr)
 

@@ -194,12 +194,41 @@ func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, befo
 // not just the ID list — so a row a restore raced out from under the purge is left alone.
 func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
 	var purged int64
+	// #G43: SetSecretRetentionOverride's per-secret window was never consulted here —
+	// every secret purged strictly on the deployment-wide cutoff regardless of a set
+	// override. The candidate set below is intentionally wider than sqlWhereDeletedBefore
+	// (every still-soft-deleted secret, not just ones past the global cutoff) so a
+	// SHORTER override (secret should be gone sooner than the global window) is caught
+	// too, not just a longer one; GetEffectiveRetentionDays (the same helper
+	// SetSecretRetentionOverride's own doc points callers to) then decides per row
+	// whether `before` (no override) or `now - override days` (override set) applies.
+	// now is a single wall-clock read for the whole sweep, not per-row, so every
+	// candidate in this run is judged against the same instant.
+	now := time.Now()
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var ids []uint
+		var candidates []struct {
+			ID                    uint
+			DeletedAt             gorm.DeletedAt
+			RetentionOverrideDays int
+		}
 		if e := tx.Unscoped().Model(&models.SecretNode{}).
-			Where(sqlWhereDeletedBefore, before).
-			Pluck("id", &ids).Error; e != nil {
+			Select("id, deleted_at, retention_override_days").
+			Where("deleted_at IS NOT NULL").
+			Find(&candidates).Error; e != nil {
 			return e
+		}
+		var ids []uint
+		for _, cand := range candidates {
+			if !cand.DeletedAt.Valid {
+				continue
+			}
+			cutoff := before
+			if cand.RetentionOverrideDays > 0 {
+				cutoff = now.AddDate(0, 0, -cand.RetentionOverrideDays)
+			}
+			if cand.DeletedAt.Time.Before(cutoff) {
+				ids = append(ids, cand.ID)
+			}
 		}
 		if len(ids) == 0 {
 			return nil
@@ -210,10 +239,15 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 		// than the stale `ids` list, so a secret restored after the SELECT above is
 		// excluded from every delete below it. A fresh subquery builder is used per
 		// reference since a *gorm.DB is stateful and must not be shared across clauses.
+		// #G43: this re-check only re-asserts "still soft-deleted" (id IN ids AND
+		// deleted_at IS NOT NULL), not the age predicate sqlWhereIDsDeletedBefore
+		// re-asserts elsewhere — ids above was already computed per-secret against
+		// GetEffectiveRetentionDays, which a blanket "< before" re-check would
+		// silently undo for any secret whose override differs from the global window.
 		stillEligible := func() *gorm.DB {
 			return tx.Unscoped().Model(&models.SecretNode{}).
 				Select("id").
-				Where(sqlWhereIDsDeletedBefore, ids, before)
+				Where("id IN ? AND deleted_at IS NOT NULL", ids)
 		}
 		if e := tx.Where("secret_node_id IN (?)", stillEligible()).Delete(&models.SecretVersion{}).Error; e != nil {
 			return e
@@ -223,7 +257,7 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 			return e
 		}
 		rn := tx.Unscoped().
-			Where(sqlWhereIDsDeletedBefore, ids, before).
+			Where("id IN ? AND deleted_at IS NOT NULL", ids).
 			Delete(&models.SecretNode{})
 		if rn.Error != nil {
 			return rn.Error
@@ -299,22 +333,27 @@ func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore
 // Open campaigns (closed_at IS NULL) are never touched.
 func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
 	var campaigns, items int64
+	eligible := "state = ? AND closed_at IS NOT NULL AND closed_at < ?"
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var ids []uint
-		if e := tx.Model(&models.AccessReviewCampaign{}).
-			Where("state = ? AND closed_at IS NOT NULL AND closed_at < ?", "closed", before).
-			Pluck("id", &ids).Error; e != nil {
-			return e
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		ri := tx.Where("campaign_id IN ?", ids).Delete(&models.AccessReviewItem{})
+		// #G21: both deletes re-evaluate the eligibility predicate LIVE, at the
+		// moment each DELETE statement executes, instead of deleting by a
+		// Pluck'd ID list captured earlier in the transaction. A campaign
+		// reopened between an initial Pluck and a later delete-by-ID would
+		// still be destroyed under the old pattern — under Postgres READ
+		// COMMITTED (unlike SQLite's single-writer exclusivity) a concurrent
+		// transaction's UPDATE can commit in that window without this one
+		// seeing it via a lock. Filtering the item-delete via a live subquery
+		// against the campaign table's CURRENT state, and the campaign-delete
+		// via the same live predicate directly, closes that gap for both
+		// backends.
+		ri := tx.Where("campaign_id IN (?)", tx.Model(&models.AccessReviewCampaign{}).
+			Select("id").Where(eligible, "closed", before)).
+			Delete(&models.AccessReviewItem{})
 		if ri.Error != nil {
 			return ri.Error
 		}
 		items = ri.RowsAffected
-		rc := tx.Where("id IN ?", ids).Delete(&models.AccessReviewCampaign{})
+		rc := tx.Where(eligible, "closed", before).Delete(&models.AccessReviewCampaign{})
 		if rc.Error != nil {
 			return rc.Error
 		}
@@ -344,22 +383,21 @@ func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, befor
 // transaction. Pending requests (resolved_at IS NULL) are never touched.
 func (ls *LocalStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
 	var requests, approvals int64
+	eligible := "resolved_at IS NOT NULL AND resolved_at < ?"
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var ids []uint
-		if e := tx.Model(&models.AccessRequest{}).
-			Where("resolved_at IS NOT NULL AND resolved_at < ?", before).
-			Pluck("id", &ids).Error; e != nil {
-			return e
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		ra := tx.Where("request_id IN ?", ids).Delete(&models.AccessRequestApproval{})
+		// #G21: same live-predicate-at-delete-time fix as
+		// DeleteClosedAccessReviewsBefore above — see its comment for why a
+		// Pluck'd ID list captured earlier in the transaction can go stale
+		// under Postgres READ COMMITTED if a request is un-resolved
+		// concurrently.
+		ra := tx.Where("request_id IN (?)", tx.Model(&models.AccessRequest{}).
+			Select("id").Where(eligible, before)).
+			Delete(&models.AccessRequestApproval{})
 		if ra.Error != nil {
 			return ra.Error
 		}
 		approvals = ra.RowsAffected
-		rr := tx.Where("id IN ?", ids).Delete(&models.AccessRequest{})
+		rr := tx.Where(eligible, before).Delete(&models.AccessRequest{})
 		if rr.Error != nil {
 			return rr.Error
 		}

@@ -44,7 +44,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), int(bcryptCost.Load()))
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

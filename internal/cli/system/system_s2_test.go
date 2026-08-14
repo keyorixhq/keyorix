@@ -270,7 +270,10 @@ func TestRunInit_SelectiveLogging(t *testing.T) {
 func TestRunInit_ServerFlagTriggersPOST(t *testing.T) {
 	restore := saveInitFlags(t)
 	defer restore()
+	origPW := initAdminPassword
+	defer func() { initAdminPassword = origPW }()
 	initServer = "http://127.0.0.1:1" // nothing listening
+	initAdminPassword = "not-admin"   // #G76: must be resolved before this test's actual target (unreachable server) is exercised
 
 	err := runInit(InitCmd, nil)
 	require.Error(t, err)

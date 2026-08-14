@@ -74,6 +74,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if server == "" {
 		if cfg.Storage.Remote != nil && cfg.Storage.Remote.BaseURL != "" {
 			server = cfg.Storage.Remote.BaseURL
+			// #G73: this is about to persist a freshly-entered real API key
+			// against whatever server ./keyorix.yaml (an untrusted, CWD-
+			// relative, attacker-plantable file) named — carry the same
+			// warning ResolveRemote's other CLI callers already get.
+			common.WarnUntrustedCWDConfigServerURL()
 		} else {
 			fmt.Print("Enter server URL: ")
 			_, _ = fmt.Scanln(&server) // #nosec G104

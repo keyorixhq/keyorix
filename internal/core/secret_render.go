@@ -28,6 +28,26 @@ func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string,
 	if userID == 0 {
 		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
+	// #G10 (partial — see note): the review flags that this enumerates projectID's full
+	// environment list with no membership/authorization check. A hard project-role gate
+	// here was evaluated and reverted: this codebase's RBAC role grant and its "read a
+	// specific secret" grant are the SAME permission (secrets.read) at overlapping scope,
+	// so any project-role check strong enough to gate environment enumeration would ALSO
+	// always satisfy the per-secret ValidateSecretAccess check below via its own RBAC
+	// fallback — making a share-only user (no project role, but a direct/group share or
+	// ACL grant on one specific secret) unable to ever pass the gate, even for a template
+	// referencing only secrets they ARE independently entitled to read. Regression-tested
+	// in secret_render_test.go's "non-reader cannot resolve" / UniformResponseForNotFound
+	// VsForbidden cases, which rely on exactly that share-only access pattern.
+	// What's ALREADY safe today: envByName is never returned to the caller — a reference
+	// to an unknown environment and a reference to an existing-but-forbidden secret both
+	// resolve to the identical ErrSecretRefNotFound sentinel (TMPL-002/#181), so an
+	// unrelated caller cannot use this to enumerate environment names or secret existence
+	// via a distinguishable error. The residual gap is narrower than the finding implies —
+	// an authenticated caller with zero relationship to projectID can still cause a real
+	// (masked-result) storage query against it — and needs a design that accounts for the
+	// share-only access path before it can close without a regression. Left as a documented
+	// gap rather than shipped with a silent access-narrowing side effect.
 
 	envs, err := c.storage.ListEnvironmentsByProject(ctx, projectID)
 	if err != nil {

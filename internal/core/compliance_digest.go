@@ -97,7 +97,13 @@ func plural(n int) string {
 // every wired channel was a no-op — e.g. an email-only deployment with no
 // email.broadcast_to destination configured, #221). Audited either way, but the
 // audit event only claims success when delivery was actually attempted.
-func (c *KeyorixCore) SendComplianceDigest(ctx context.Context) (bool, error) {
+//
+// actorID is the admin who triggered an on-demand send (dashboard/admin-jobs
+// endpoints); 0 for the background scheduler (server/main.go), which has no
+// authenticated principal. #G23: this used to always audit actor_type=system
+// with a nil UserID even for an admin-triggered on-demand send, so a manual
+// "send now" was indistinguishable from the scheduled run in the audit trail.
+func (c *KeyorixCore) SendComplianceDigest(ctx context.Context, actorID uint) (bool, error) {
 	if c.notificationSink == nil {
 		return false, nil // nowhere to deliver — no channel configured
 	}
@@ -111,12 +117,19 @@ func (c *KeyorixCore) SendComplianceDigest(ctx context.Context) (bool, error) {
 		Message: body,
 		Link:    "/compliance",
 	})
-	sysCtx := WithActorType(ctx, ActorTypeSystem)
+	auditCtx := ctx
+	var userID *uint
+	if actorID != 0 {
+		uid := actorID
+		userID = &uid
+	} else {
+		auditCtx = WithActorType(ctx, ActorTypeSystem)
+	}
 	if !attempted {
 		log.Printf("compliance digest: notification channel(s) configured but none accepted the broadcast (e.g. email-only with no broadcast destination) — digest was NOT delivered")
-		c.writeAuditEventFailed(sysCtx, EventComplianceDigestSent, nil, "", "compliance digest broadcast attempted but no configured channel could accept it")
+		c.writeAuditEventFailed(auditCtx, EventComplianceDigestSent, userID, "", "compliance digest broadcast attempted but no configured channel could accept it")
 		return false, nil
 	}
-	c.writeAuditEvent(sysCtx, EventComplianceDigestSent, nil, nil, "compliance digest broadcast to notification channels")
+	c.writeAuditEvent(auditCtx, EventComplianceDigestSent, userID, nil, "compliance digest broadcast to notification channels")
 	return true, nil
 }

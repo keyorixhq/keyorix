@@ -49,9 +49,13 @@ at the project scope.`,
 		fmt.Printf("Access review — project %d (%d grant(s)):\n\n", flagProject, len(out.Entries))
 		fmt.Printf("%-13s %-6s %-24s %-7s %-11s %s\n", "SOURCE", "TYPE", "PRINCIPAL", "ACCESS", "LAST-USED", "DETAIL")
 		for _, e := range out.Entries {
-			principal := e.PrincipalName
+			// #G69: principal name/email/role name/secret name are all
+			// attacker-controlled free text — a reviewed user must not be
+			// able to hide or spoof their own recertification row via a
+			// terminal escape sequence embedded in any of them.
+			principal := common.SanitizeForTerminal(e.PrincipalName)
 			if e.PrincipalType == "user" && e.Email != "" {
-				principal = fmt.Sprintf("%s <%s>", e.PrincipalName, e.Email)
+				principal = fmt.Sprintf("%s <%s>", principal, common.SanitizeForTerminal(e.Email))
 			}
 			detail := ""
 			switch e.Source {
@@ -60,9 +64,9 @@ at the project scope.`,
 				if e.EnvironmentID > 0 {
 					scope = fmt.Sprintf("env=%d", e.EnvironmentID)
 				}
-				detail = fmt.Sprintf("role=%s (%s)", e.RoleName, scope)
+				detail = fmt.Sprintf("role=%s (%s)", common.SanitizeForTerminal(e.RoleName), scope)
 			default: // owner / direct_share / group_share
-				detail = "secret=" + e.SecretName
+				detail = "secret=" + common.SanitizeForTerminal(e.SecretName)
 			}
 			fmt.Printf("%-13s %-6s %-24s %-7s %-11s %s\n", e.Source, e.PrincipalType, truncate(principal, 24), e.AccessLevel, lastUsedLabel(e.PrincipalType, e.LastUsedAt), detail)
 		}

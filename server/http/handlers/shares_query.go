@@ -163,7 +163,11 @@ func (h *ShareHandler) ListSharedSecrets(w http.ResponseWriter, r *http.Request)
 // ListGroupSharedSecrets handles GET /api/v1/groups/{id}/shared-secrets — the live
 // secrets currently shared with a group (the "what can this group reach" view).
 func (h *ShareHandler) ListGroupSharedSecrets(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	// #G10: this used to check only that the caller was authenticated and never passed
+	// the caller's identity into the core call — the identical gap the core layer itself
+	// had (ListGroupSharedSecrets), independently rediscovered here.
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
@@ -174,8 +178,12 @@ func (h *ShareHandler) ListGroupSharedSecrets(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	secrets, err := h.coreService.ListGroupSharedSecrets(r.Context(), uint(groupID))
+	secrets, err := h.coreService.ListGroupSharedSecrets(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(groupID))
 	if err != nil {
+		if strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized") {
+			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+			return
+		}
 		log.Printf("Error listing group shared secrets: %v", err)
 		h.sendError(w, "InternalError", "Failed to list group shared secrets", http.StatusInternalServerError, nil)
 		return

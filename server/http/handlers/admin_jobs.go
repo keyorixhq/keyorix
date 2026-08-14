@@ -82,11 +82,12 @@ func (h *AdminJobsHandler) RunExpiryReminders(w http.ResponseWriter, r *http.Req
 // RunComplianceDigest handles POST /api/v1/admin/jobs/compliance-digest — broadcast the
 // compliance digest now. Returns {sent} (false when there were no recipients/changes).
 func (h *AdminJobsHandler) RunComplianceDigest(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
 		return
 	}
-	sent, err := h.coreService.SendComplianceDigest(r.Context())
+	sent, err := h.coreService.SendComplianceDigest(r.Context(), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error running compliance digest job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)

@@ -40,7 +40,15 @@ func freshExportDB(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		&models.Environment{},
 		&models.SecretNode{},
 		&models.AuditEvent{},
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.MachineIdentityRole{}, &models.SecretACL{},
 	))
+	// #G10: ExportSecretAccessLog now self-authorizes; withUserCtx's UserID 1 is granted
+	// global admin so these handler tests keep exercising the glue logic (param parsing,
+	// status-code mapping), not authorization.
+	role := &models.Role{Name: "admin"}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: role.ID, ProjectID: 0, EnvironmentID: 0}).Error)
 	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
@@ -59,7 +67,7 @@ func doExportGet(t *testing.T, svc *core.KeyorixCore, secretID uint, queryParams
 	if queryParams != "" {
 		url += "?" + queryParams
 	}
-	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, url, nil))
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	return rr, req
@@ -102,10 +110,39 @@ func TestExportAccessLog_InvalidID(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/secrets/{id}/access-log/export", h.ExportAccessLog)
 
-	req := httptest.NewRequest(http.MethodGet, "/secrets/not-a-number/access-log/export", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/secrets/not-a-number/access-log/export", nil))
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+// TestExportAccessLog_Unauthenticated is #G10: this handler used to have no identity
+// check at all — the export ran with zero authorization, correctness depending entirely
+// on router wiring elsewhere.
+func TestExportAccessLog_Unauthenticated(t *testing.T) {
+	svc, db := freshExportDB(t)
+	secretID := seedSecretAndEvents(t, db)
+
+	rr, _ := doExportGetNoAuth(t, svc, secretID, "")
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func doExportGetNoAuth(t *testing.T, svc *core.KeyorixCore, secretID uint, queryParams string) (*httptest.ResponseRecorder, *http.Request) {
+	t.Helper()
+	h, err := NewSecretHandler(svc)
+	require.NoError(t, err)
+
+	r := chi.NewRouter()
+	r.Get("/api/v1/secrets/{id}/access-log/export", h.ExportAccessLog)
+
+	url := fmt.Sprintf("/api/v1/secrets/%d/access-log/export", secretID)
+	if queryParams != "" {
+		url += "?" + queryParams
+	}
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	return rr, req
 }
 
 func TestExportAccessLog_SecretNotFound(t *testing.T) {

@@ -103,6 +103,27 @@ func TestCopySecret(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	// TestCopySecret_CrossProjectExistenceOracle is the #G14 regression: an
+	// unauthorized caller probing a REAL secret in another project must get the
+	// exact same error a nonexistent source ID would — not a distinct "target
+	// environment must be in the same project" message that would confirm the
+	// probed ID exists somewhere, even without any read access to it.
+	t.Run("an unauthorized cross-project probe and a nonexistent ID give the identical error", func(t *testing.T) {
+		require.NoError(t, db.Create(&models.User{ID: 2, Username: "intruder", Email: "i@t.com"}).Error)
+		// Deliberately no UserRole/share for user 2 anywhere — a fully unauthorized caller.
+		intruderCtx := ctx
+
+		_, realErr := c.CopySecret(intruderCtx, src.ID, otherEnv.ID, "", "intruder", 2, "", "")
+		require.Error(t, realErr)
+		assert.NotContains(t, realErr.Error(), "same project",
+			"an unauthorized caller must not learn the source exists in a different project")
+
+		_, fakeErr := c.CopySecret(intruderCtx, 999999, otherEnv.ID, "", "intruder", 2, "", "")
+		require.Error(t, fakeErr)
+		assert.Equal(t, realErr.Error(), fakeErr.Error(),
+			"a real-but-unauthorized source and a nonexistent one must be indistinguishable")
+	})
+
 	t.Run("required IDs are validated", func(t *testing.T) {
 		_, err := c.CopySecret(ctx, 0, prod.ID, "", "owner", 1, "", "")
 		require.Error(t, err)

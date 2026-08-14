@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -202,35 +203,41 @@ func TestSpool_ConcurrentReplayCallsDoNotDoubleDeliver(t *testing.T) {
 	assert.ElementsMatch(t, []uint{1, 2}, d.delivered, "each event must be delivered exactly once despite concurrent replay() callers")
 }
 
-// A line past the scanner's max token size (bufio.ErrTooLong) makes bufio.Scanner stop
-// silently — replay() must not swallow this: it has to log a clear warning rather than
-// pretending nothing happened, even though (by design, see #338) it doesn't attempt to
-// recover the oversized line itself.
-func TestSpool_ReplayLogsOnScanError(t *testing.T) {
+// TestSpool_ReplaySkipsOnlyOversizedLine is #G56: a line past maxSpoolLineBytes used
+// to make bufio.Scanner stop entirely, silently dropping every legitimate event after
+// it in the file on the next rewrite. Now only the oversized line itself is skipped
+// (logged + counted) — a well-formed event AFTER it in the same file must still be
+// replayed.
+func TestSpool_ReplaySkipsOnlyOversizedLine(t *testing.T) {
 	dir := t.TempDir()
 	d := &fakeDelivery{}
 	s, err := newSpool(dir, time.Hour, d.deliver)
 	require.NoError(t, err)
 	s.close() // stop the background loop; drive replay() manually below
 
-	// A well-formed line, then one far larger than the 4 MiB scan buffer cap: the scanner
-	// hits bufio.ErrTooLong on the second line and stops, so neither it nor anything after
-	// it gets scanned.
+	// A well-formed line, an oversized line, then ANOTHER well-formed line — the
+	// oversized line sits in the middle so a "stops at first failure" bug would
+	// provably lose event 2 as well as the oversized one.
 	tr := true
 	s.add(&models.AuditEvent{ID: 1, EventType: "secret.read", Success: &tr})
-	oversized := bytes.Repeat([]byte("x"), 5<<20) // 5 MiB > 4 MiB scanner cap
+	oversized := bytes.Repeat([]byte("x"), 5<<20) // 5 MiB > 4 MiB cap
 	f, err := os.OpenFile(filepath.Join(dir, spoolFileName), os.O_APPEND|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
 	_, err = f.Write(append(oversized, '\n'))
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
+	s.add(&models.AuditEvent{ID: 2, EventType: "secret.read", Success: &tr})
 
 	var logBuf bytes.Buffer
 	prevOut := log.Writer()
 	log.SetOutput(&logBuf)
 	t.Cleanup(func() { log.SetOutput(prevOut) })
 
+	corruptBefore := testutil.ToFloat64(siemForwards.WithLabelValues(outcomeSpoolCorrupt))
+
 	s.replay()
 
-	assert.Contains(t, logBuf.String(), "scan stopped early", "a scan error must be logged loudly, not silently swallowed")
+	assert.Contains(t, logBuf.String(), "oversized spool line", "the oversized line must be logged loudly, not silently dropped")
+	assert.Equal(t, float64(1), testutil.ToFloat64(siemForwards.WithLabelValues(outcomeSpoolCorrupt))-corruptBefore)
+	assert.ElementsMatch(t, []uint{1, 2}, d.delivered, "both well-formed events must survive replay despite the oversized line between them")
 }
