@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -90,6 +91,22 @@ func MakeAuthConfigHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// #G37: report the EFFECTIVE (defaults-merged) password policy, matching
+		// server/main.go's resolvePasswordPolicy — a partial password_policy block
+		// must not be summarized as if it zeroed out every rule it didn't mention.
+		d := core.DefaultPasswordPolicy()
+		resolvedPP := cfg.PasswordPolicy.Resolve(config.PasswordPolicyValues{
+			MinLength:             d.MinLength,
+			RequireUppercase:      d.RequireUppercase,
+			RequireLowercase:      d.RequireLowercase,
+			RequireDigit:          d.RequireDigit,
+			RequireSpecial:        d.RequireSpecial,
+			RejectPersonalInfo:    d.RejectPersonalInfo,
+			RejectCommonPasswords: d.RejectCommonPasswords,
+			HistoryCount:          d.HistoryCount,
+			MaxAgeDays:            d.MaxAgeDays,
+		})
+
 		ll := cfg.Security.LoginLockout
 		providers := make([]SSOProviderSummary, 0, len(cfg.SSO.Providers))
 		for _, p := range cfg.SSO.Providers {
@@ -107,15 +124,15 @@ func MakeAuthConfigHandler(cfg *config.Config) http.HandlerFunc {
 				AbsoluteTTL: cfg.Session.GetAbsoluteTTL().String(),
 			},
 			PasswordPolicy: PasswordPolicySummary{
-				MinLength:             cfg.PasswordPolicy.MinLength,
-				RequireUppercase:      cfg.PasswordPolicy.RequireUppercase,
-				RequireLowercase:      cfg.PasswordPolicy.RequireLowercase,
-				RequireDigit:          cfg.PasswordPolicy.RequireDigit,
-				RequireSpecial:        cfg.PasswordPolicy.RequireSpecial,
-				RejectPersonalInfo:    cfg.PasswordPolicy.RejectPersonalInfo,
-				RejectCommonPasswords: cfg.PasswordPolicy.RejectCommonPasswords,
-				HistoryCount:          cfg.PasswordPolicy.HistoryCount,
-				MaxAgeDays:            cfg.PasswordPolicy.MaxAgeDays,
+				MinLength:             resolvedPP.MinLength,
+				RequireUppercase:      resolvedPP.RequireUppercase,
+				RequireLowercase:      resolvedPP.RequireLowercase,
+				RequireDigit:          resolvedPP.RequireDigit,
+				RequireSpecial:        resolvedPP.RequireSpecial,
+				RejectPersonalInfo:    resolvedPP.RejectPersonalInfo,
+				RejectCommonPasswords: resolvedPP.RejectCommonPasswords,
+				HistoryCount:          resolvedPP.HistoryCount,
+				MaxAgeDays:            resolvedPP.MaxAgeDays,
 			},
 			LoginLockout: LoginLockoutSummary{
 				Enabled:      !ll.Disabled,

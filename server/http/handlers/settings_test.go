@@ -47,8 +47,8 @@ func TestMakeAuthConfigHandler_Authenticated(t *testing.T) {
 
 func TestMakeAuthConfigHandler_ReflectsConfig(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.PasswordPolicy.MinLength = 16
-	cfg.PasswordPolicy.RequireUppercase = true
+	cfg.PasswordPolicy.MinLength = config.IntPtr(16)
+	cfg.PasswordPolicy.RequireUppercase = config.BoolPtr(true)
 	cfg.Security.RequireMFA = true
 	cfg.Security.LoginLockout.Disabled = true
 	cfg.Session.AccessTTL = "30m"

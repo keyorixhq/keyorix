@@ -66,6 +66,14 @@ security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
+  # #G37: this file's server.http/grpc.tls.enabled are false above because TLS is
+  # expected to be terminated by the reverse proxy in front (see comments there) —
+  # so require_transport_tls stays false here too; forcing it true would make the
+  # app refuse to start behind that exact, intended topology. If you are NOT
+  # terminating TLS at a proxy in front of this listener, set both tls.enabled AND
+  # this to true so an accidental cleartext-only deployment fails closed instead of
+  # only logging a startup warning.
+  require_transport_tls: false
 
 soft_delete:
   enabled: true

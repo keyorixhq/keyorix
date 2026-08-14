@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // TestLicenseGrace_Default validates that an unset GraceHours defaults to 14 days.
@@ -32,12 +33,64 @@ func TestLicenseGrace_Positive(t *testing.T) {
 	assert.Equal(t, 48*time.Hour, c.LicenseGrace())
 }
 
-// TestPasswordPolicyConfig_IsZero validates the IsZero helper.
-func TestPasswordPolicyConfig_IsZero(t *testing.T) {
-	assert.True(t, PasswordPolicyConfig{}.IsZero())
-	assert.False(t, PasswordPolicyConfig{MinLength: 8}.IsZero())
-	assert.False(t, PasswordPolicyConfig{RequireUppercase: true}.IsZero())
-	assert.False(t, PasswordPolicyConfig{RequireDigit: true}.IsZero())
+// TestPasswordPolicyConfig_Resolve_AbsentBlockKeepsDefaults is the #G37 detection_idea:
+// construct the struct with only required fields set and assert the SECURE default, not
+// the permissive Go zero value — an entirely-absent password_policy block must resolve to
+// 100% of the caller's defaults.
+func TestPasswordPolicyConfig_Resolve_AbsentBlockKeepsDefaults(t *testing.T) {
+	defaults := PasswordPolicyValues{
+		MinLength: 16, RequireUppercase: true, RequireLowercase: true, RequireDigit: true,
+		RequireSpecial: true, RejectPersonalInfo: true, RejectCommonPasswords: true, HistoryCount: 5,
+	}
+	assert.Equal(t, defaults, PasswordPolicyConfig{}.Resolve(defaults))
+}
+
+// TestPasswordPolicyConfig_Resolve_PartialBlockOverridesOnlyItsOwnFields is the #G37
+// regression: a partial password_policy block naming only ONE rule must not silently
+// zero out every other rule it didn't mention.
+func TestPasswordPolicyConfig_Resolve_PartialBlockOverridesOnlyItsOwnFields(t *testing.T) {
+	defaults := PasswordPolicyValues{
+		MinLength: 16, RequireUppercase: true, RequireLowercase: true, RequireDigit: true,
+		RequireSpecial: true, RejectPersonalInfo: true, RejectCommonPasswords: true, HistoryCount: 5,
+	}
+	partial := PasswordPolicyConfig{RejectCommonPasswords: BoolPtr(false)}
+	resolved := partial.Resolve(defaults)
+
+	assert.False(t, resolved.RejectCommonPasswords, "the explicitly-set field must be honored")
+	assert.Equal(t, defaults.MinLength, resolved.MinLength, "an unset field must keep the default, not collapse to 0")
+	assert.True(t, resolved.RequireUppercase, "an unset bool must keep the default, not collapse to false")
+	assert.True(t, resolved.RequireLowercase)
+	assert.True(t, resolved.RequireDigit)
+	assert.True(t, resolved.RequireSpecial)
+	assert.True(t, resolved.RejectPersonalInfo)
+	assert.Equal(t, defaults.HistoryCount, resolved.HistoryCount, "an unset int must keep the default, not collapse to 0")
+}
+
+// TestPasswordPolicyConfig_Resolve_RealYAMLPartialBlock is the #G37 detection_idea run
+// against actual YAML unmarshaling, not just hand-built structs: a real operator config
+// naming only ONE rule must not zero out the rest once parsed and resolved.
+func TestPasswordPolicyConfig_Resolve_RealYAMLPartialBlock(t *testing.T) {
+	var pp PasswordPolicyConfig
+	require.NoError(t, yaml.Unmarshal([]byte("reject_common_passwords: false\n"), &pp))
+
+	defaults := PasswordPolicyValues{
+		MinLength: 16, RequireUppercase: true, RequireLowercase: true, RequireDigit: true,
+		RequireSpecial: true, RejectPersonalInfo: true, RejectCommonPasswords: true, HistoryCount: 5,
+	}
+	resolved := pp.Resolve(defaults)
+	assert.False(t, resolved.RejectCommonPasswords, "the YAML-set field must be honored")
+	assert.Equal(t, 16, resolved.MinLength, "min_length, never mentioned in the YAML, must keep the default")
+	assert.True(t, resolved.RequireUppercase, "require_uppercase, never mentioned in the YAML, must keep the default")
+	assert.Equal(t, 5, resolved.HistoryCount, "history_count, never mentioned in the YAML, must keep the default")
+}
+
+// TestPasswordPolicyConfig_Resolve_ExplicitFalseIsHonored proves the *bool fields still
+// let an operator genuinely relax a rule (e.g. a lab install) by setting it to false —
+// the fix must not make explicit opt-out impossible.
+func TestPasswordPolicyConfig_Resolve_ExplicitFalseIsHonored(t *testing.T) {
+	defaults := PasswordPolicyValues{RequireSpecial: true}
+	explicit := PasswordPolicyConfig{RequireSpecial: BoolPtr(false)}
+	assert.False(t, explicit.Resolve(defaults).RequireSpecial)
 }
 
 // TestBuildPostgresDSN_DSNPassthrough validates that an explicit DSN is

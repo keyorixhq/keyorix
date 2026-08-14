@@ -1,6 +1,15 @@
 # keyorix_template.yaml
 # Default configuration template for Keyorix.
 #
+# ============================================================================
+# FOR LOCAL DEV / EVALUATION ONLY — DO NOT USE IN PRODUCTION AS-IS (#G36).
+# This template ships with TLS and rate limiting OFF so it runs unmodified on
+# a laptop with no certs configured. Every place that trades security for
+# convenience is marked "# DEV-ONLY DEFAULT" below — flip each one before any
+# production/internet-facing deployment. See server/config/production.yaml
+# for a production-oriented starting point instead.
+# ============================================================================
+#
 # IMPORTANT: Never store API keys or credentials directly in this file.
 # Use environment variables instead:
 #   KEYORIX_API_KEY        - API key for client authentication
@@ -23,7 +32,9 @@ server:
     protocol_versions: ["1.1"]
     tls:
       # Enable TLS on HTTP
-      enabled: false
+      enabled: false  # DEV-ONLY DEFAULT (#G36) — set true (or front with a TLS-
+                       # terminating proxy) before any production/internet-facing use;
+                       # see security.require_transport_tls below to fail closed on this.
       cert_file: "certs/server.crt"     # Path to TLS certificate
       key_file: "certs/server.key"      # Path to TLS key
       # Optional TLS 1.2 cipher suite allowlist, by name (e.g.
@@ -34,7 +45,7 @@ server:
       allowed_ciphers: []
     ratelimit:
       # Enable rate limiting
-      enabled: false
+      enabled: false  # DEV-ONLY DEFAULT (#G36) — set true before production use.
       requests_per_second: 10
       burst: 20
 
@@ -44,13 +55,13 @@ server:
     port: "9090"
     protocol_versions: ["1.0"]
     tls:
-      enabled: false
+      enabled: false  # DEV-ONLY DEFAULT (#G36) — see server.http.tls.enabled above.
       cert_file: "certs/server.crt"
       key_file: "certs/server.key"
       # See server.http.tls.allowed_ciphers above — same semantics for gRPC.
       allowed_ciphers: []
     ratelimit:
-      enabled: false
+      enabled: false  # DEV-ONLY DEFAULT (#G36) — set true before production use.
       requests_per_second: 10
       burst: 20
 
@@ -102,6 +113,12 @@ security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
+  # DEV-ONLY DEFAULT (#G36/#G37) — with server.http/grpc.tls.enabled false above, a
+  # cleartext listener normally only logs a loud startup WARNING. Set this true (and
+  # enable tls, or front the listener with a TLS-terminating proxy) to fail closed
+  # instead — refusing to start rather than silently serving credentials/secrets in
+  # cleartext. Required for any production/internet-facing deployment.
+  require_transport_tls: false
 
 password_policy:
   # Rules enforced when a user sets a new password (e.g. self-service change).
@@ -180,7 +197,8 @@ session:
   # and the user must re-authenticate. Empty or "0" = no ceiling. The login/refresh
   # responses return `absolute_expires_at` when a ceiling is set.
   #
-  # Recommended short-lived configuration:
+  # Recommended short-lived configuration (used by default here — #G37; set to ""
+  # to restore the old unbounded-refresh behaviour):
   #   access_ttl: "30m"
   #   absolute_ttl: "12h"
-  absolute_ttl: ""
+  absolute_ttl: "12h"

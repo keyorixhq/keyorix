@@ -353,21 +353,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 	}
 
-	// Apply a configured password policy, if any. An absent block leaves the
-	// core's conservative built-in defaults in place (ADR-025).
-	if pp := cfg.PasswordPolicy; !pp.IsZero() {
-		coreService.SetPasswordPolicy(core.PasswordPolicy{
-			MinLength:             pp.MinLength,
-			RequireUppercase:      pp.RequireUppercase,
-			RequireLowercase:      pp.RequireLowercase,
-			RequireDigit:          pp.RequireDigit,
-			RequireSpecial:        pp.RequireSpecial,
-			RejectPersonalInfo:    pp.RejectPersonalInfo,
-			RejectCommonPasswords: pp.RejectCommonPasswords,
-			HistoryCount:          pp.HistoryCount,
-			MaxAgeDays:            pp.MaxAgeDays,
-		})
-	}
+	// Apply the configured password policy, merging any rule the operator didn't
+	// explicitly set onto the core's conservative built-in defaults (ADR-025) —
+	// #G37: a PARTIAL password_policy block (e.g. just reject_common_passwords)
+	// must not silently zero out every other rule it didn't mention.
+	coreService.SetPasswordPolicy(resolvePasswordPolicy(cfg.PasswordPolicy))
 
 	// Apply the optional secret-value quality gate (reject weak/placeholder values).
 	if svp := cfg.SecretValuePolicy; svp.Enabled {
@@ -1440,6 +1430,37 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 	return server.Shutdown(shutdownCtx)
 }
 
+// resolvePasswordPolicy merges the configured password_policy block onto the core's
+// built-in defaults (ADR-025), so a rule the operator didn't explicitly set keeps its
+// safe default instead of collapsing to the Go zero value (#G37). config.PasswordPolicyConfig
+// can't return a core.PasswordPolicy directly (internal/config can't import internal/core —
+// it would cycle back through internal/encryption), so the conversion happens here instead.
+func resolvePasswordPolicy(pp config.PasswordPolicyConfig) core.PasswordPolicy {
+	d := core.DefaultPasswordPolicy()
+	resolved := pp.Resolve(config.PasswordPolicyValues{
+		MinLength:             d.MinLength,
+		RequireUppercase:      d.RequireUppercase,
+		RequireLowercase:      d.RequireLowercase,
+		RequireDigit:          d.RequireDigit,
+		RequireSpecial:        d.RequireSpecial,
+		RejectPersonalInfo:    d.RejectPersonalInfo,
+		RejectCommonPasswords: d.RejectCommonPasswords,
+		HistoryCount:          d.HistoryCount,
+		MaxAgeDays:            d.MaxAgeDays,
+	})
+	return core.PasswordPolicy{
+		MinLength:             resolved.MinLength,
+		RequireUppercase:      resolved.RequireUppercase,
+		RequireLowercase:      resolved.RequireLowercase,
+		RequireDigit:          resolved.RequireDigit,
+		RequireSpecial:        resolved.RequireSpecial,
+		RejectPersonalInfo:    resolved.RejectPersonalInfo,
+		RejectCommonPasswords: resolved.RejectCommonPasswords,
+		HistoryCount:          resolved.HistoryCount,
+		MaxAgeDays:            resolved.MaxAgeDays,
+	}
+}
+
 // checkTransportTLSPosture guards against silently serving credentials/secret values in
 // cleartext. For each enabled listener without TLS it either fails closed (when
 // security.require_transport_tls is set) or logs a prominent warning.
@@ -1506,6 +1527,12 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 // this being "the sole automated backstop for a world-readable master-key-material file."
 func runStartupValidation(cfg *config.Config) error {
 	if !cfg.Security.EnableFilePermissionCheck {
+		// #G37: unlike checkTransportTLSPosture's cleartext warning, this opt-out was
+		// previously silent — an operator relying on the docs' claim that these checks
+		// "run automatically" had no signal that they hadn't opted in. enforceKeyFilePermissions
+		// (called separately, right after this) still runs unconditionally as the lighter-weight
+		// backstop, so this is visibility only, not a behavior change.
+		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks (internal/startup.ValidateStartup) are SKIPPED. Set it true to enable them.")
 		return nil
 	}
 	configPath := config.ResolvedPath("")
