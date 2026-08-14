@@ -170,7 +170,7 @@ func buildCreateRequest() (*core.CreateSecretRequest, error) { // NOSONAR -- cog
 		ProjectID:     createProjectID,
 		EnvironmentID: createEnvironmentID,
 		Description:   createDescription,
-		CreatedBy:     "cli-user",
+		CreatedBy:     common.ResolveActorLabel(), // #G67: operator-asserted actor, not a hardcoded placeholder
 	}
 
 	if createMaxReads > 0 {
@@ -249,7 +249,7 @@ func interactiveCreate() (*core.CreateSecretRequest, error) { // NOSONAR -- cogn
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Value:         valueBytes,
-		CreatedBy:     "cli-user",
+		CreatedBy:     common.ResolveActorLabel(), // #G67: operator-asserted actor, not a hardcoded placeholder
 	}
 
 	maxReadsStr := ask("Max reads (0 for unlimited)", "0")

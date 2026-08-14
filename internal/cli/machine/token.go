@@ -92,7 +92,8 @@ func runTokenIssue(cmd *cobra.Command, args []string) error {
 		t := time.Now().AddDate(0, 0, tokenIssueExpiryDays)
 		expiresAt = &t
 	}
-	result, err := svc.IssueMachineToken(ctx, projectID, m.ID, 0, core.IssueMachineTokenParams{
+	// #G67: operator-asserted actor (KEYORIX_CLI_ACTOR), not a hardcoded placeholder.
+	result, err := svc.IssueMachineToken(ctx, projectID, m.ID, common.ResolveActorID(), core.IssueMachineTokenParams{
 		Name:           tokenIssueName,
 		ExpiresAt:      expiresAt,
 		Classification: tokenIssueClass,
@@ -268,7 +269,8 @@ func runTokenRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	if _, err := svc.RevokeMachineToken(ctx, projectID, m.ID, uint(tokenID), 0); err != nil {
+	// #G67: operator-asserted actor (KEYORIX_CLI_ACTOR), not a hardcoded placeholder.
+	if _, err := svc.RevokeMachineToken(ctx, projectID, m.ID, uint(tokenID), common.ResolveActorID()); err != nil {
 		return fmt.Errorf("failed to revoke machine token: %w", err)
 	}
 	fmt.Println("Machine token revoked.")

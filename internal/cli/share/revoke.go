@@ -38,7 +38,7 @@ func runRevoke(cmd *cobra.Command, args []string) error {
 
 	// Call service
 	ctx := context.Background()
-	err = service.RevokeShare(ctx, revokeShareID, 1) // CLI user ID
+	err = service.RevokeShare(ctx, revokeShareID, common.ResolveActorID()) // #G67: operator-asserted actor, not a hardcoded placeholder
 	if err != nil {
 		return fmt.Errorf("failed to revoke share: %w", err)
 	}
