@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -137,7 +138,7 @@ func validateWebhookURL(raw string) error {
 		}
 		return nil
 	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	addrs, err := channelLookupIPAddr(context.Background(), host)
 	if err != nil {
 		return fmt.Errorf("notification channel: could not resolve URL hostname to verify it is not private/internal: %w", err)
 	}
@@ -148,6 +149,15 @@ func validateWebhookURL(raw string) error {
 	}
 	return nil
 }
+
+// channelLookupIPAddr resolves a hostname to its IP addresses — a var (like
+// evidencesink/notifychan's identically-shaped lookupIPAddr) so tests can
+// substitute a fake resolver without a real DNS query, and so
+// escalationTransport (alert_escalation.go) can share the EXACT same
+// resolution seam this construction-time check uses, making a DNS-rebinding
+// scenario (a public answer here, a private one at actual escalation-dial
+// time) directly testable end-to-end.
+var channelLookupIPAddr netutil.Resolver = netutil.DefaultResolver
 
 // isChannelDisallowedIP reports whether ip is a private, link-local, or loopback
 // address — all of which are forbidden as outbound webhook destinations (SSRF guard).

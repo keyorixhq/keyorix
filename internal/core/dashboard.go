@@ -101,8 +101,25 @@ type ActivityFeed struct {
 	PageSize int            `json:"pageSize"`
 }
 
-// GetDashboardStats returns summary counts and recent activity for the authenticated user.
-func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, username string) (*DashboardStats, error) {
+// GetDashboardStats returns summary counts and recent activity for the authenticated
+// principal. userID/username are used for the human-oriented sub-checks below (owned
+// secrets, outgoing/incoming shares, per-user trend snapshot) and are 0/"" for a
+// machine-identity caller, exactly as before — those sub-checks remain human-only,
+// unchanged by this fix.
+//
+// principalID is the caller's actual RBAC identity: the machine identity ID for a
+// machine-token request, otherwise the same as userID (see UserContext.PrincipalID).
+// It exists ONLY to resolve the audit.read gate below correctly for a machine caller.
+//
+// G33: this used to call the user-only Authorize(ctx, userID, "audit.read", Scope{})
+// for the deployment-wide-aggregates gate. A machine identity always has userID==0
+// (see UserContext.PrincipalID's doc), so that call resolved zero roles regardless
+// of any audit.read role the machine actually holds via machine_identity_roles —
+// under-privileging a machine identity relative to an equivalent human user, the
+// same "helper written for humans, never updated for machines" shape as connect.go's
+// actorRoleIDs. AuthorizePrincipal (already the actor-aware entrypoint used by the
+// HTTP router's own RequirePermission gate on this endpoint) fixes it.
+func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, username string, principalID uint) (*DashboardStats, error) {
 	stats := &DashboardStats{}
 
 	_, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
@@ -141,7 +158,7 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	// same treatment, scoped to the caller's own events when they lack audit.read, so
 	// the dashboard never leaks secret names/actions from projects the caller can't
 	// read.
-	hasAuditRead, _ := c.Authorize(ctx, userID, "audit.read", Scope{})
+	hasAuditRead, _ := c.AuthorizePrincipal(ctx, actorTypeFromContext(ctx), principalID, "audit.read", Scope{})
 
 	var auditActor *uint
 	if !hasAuditRead {

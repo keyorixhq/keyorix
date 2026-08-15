@@ -6,24 +6,43 @@ package middleware
 
 import (
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"strings"
 )
 
 // SCIMToken gates the SCIM routes on a static bearer token. An empty configured
 // token denies every request (a misconfiguration fails closed).
+//
+// Every failed comparison is recorded against the caller's source IP via the
+// same recordTokenAuthFailure limiter the session/PAT/machine-token path uses
+// (see handleAuthRequest in auth.go) — SCIM is otherwise the only credential
+// guard in this middleware stack with no brute-force throttling at all, since
+// its static bearer token can be retried indefinitely without penalty.
 func SCIMToken(token string) func(http.Handler) http.Handler {
 	want := []byte(token)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			presented := []byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 			if len(want) == 0 || subtle.ConstantTimeCompare(presented, want) != 1 {
-				w.Header().Set("Content-Type", "application/scim+json")
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"invalid or missing SCIM bearer token"}`))
+				if !recordTokenAuthFailure(clientIP(r)) {
+					scimError(w, http.StatusTooManyRequests, "too many invalid SCIM token attempts")
+					return
+				}
+				scimError(w, http.StatusUnauthorized, "invalid or missing SCIM bearer token")
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// scimError writes a SCIM-format (RFC 7644 §3.12) error response.
+func scimError(w http.ResponseWriter, status int, detail string) {
+	w.Header().Set("Content-Type", "application/scim+json")
+	if status == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "60")
+	}
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintf(w, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"%d","detail":"%s"}`, status, detail)
 }

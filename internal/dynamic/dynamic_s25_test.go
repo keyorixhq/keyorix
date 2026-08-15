@@ -329,7 +329,10 @@ func startFakeMySQLServerFailOnNthQuery(t *testing.T, failAfter int) string {
 
 func TestMySQLEngine_Issue_Success_NoTemplate(t *testing.T) {
 	dsn := startFakeMySQLServer(t)
-	e := &MySQLEngine{}
+	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target, mirroring the allow_private_network_targets
+	// opt-in a real operator would set to target a local/private database.
+	e := &MySQLEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, dsn, "", time.Minute)
@@ -341,7 +344,10 @@ func TestMySQLEngine_Issue_Success_NoTemplate(t *testing.T) {
 
 func TestMySQLEngine_Issue_Success_WithTemplate(t *testing.T) {
 	dsn := startFakeMySQLServer(t)
-	e := &MySQLEngine{}
+	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target, mirroring the allow_private_network_targets
+	// opt-in a real operator would set to target a local/private database.
+	e := &MySQLEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, dsn, "GRANT SELECT ON app.* TO {{name}}", time.Minute)
@@ -352,7 +358,10 @@ func TestMySQLEngine_Issue_Success_WithTemplate(t *testing.T) {
 
 func TestMySQLEngine_Issue_WhitespaceTemplate_Success(t *testing.T) {
 	dsn := startFakeMySQLServer(t)
-	e := &MySQLEngine{}
+	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target, mirroring the allow_private_network_targets
+	// opt-in a real operator would set to target a local/private database.
+	e := &MySQLEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// Whitespace-only template is treated as empty → no GRANT executed.
@@ -367,7 +376,10 @@ func TestMySQLEngine_Issue_WhitespaceTemplate_Success(t *testing.T) {
 func TestMySQLEngine_Issue_CreateUserFails(t *testing.T) {
 	// failAfter=0: the very first COM_QUERY (CREATE USER) fails.
 	dsn := startFakeMySQLServerFailOnNthQuery(t, 0)
-	e := &MySQLEngine{}
+	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target, mirroring the allow_private_network_targets
+	// opt-in a real operator would set to target a local/private database.
+	e := &MySQLEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, dsn, "", time.Minute)
@@ -380,7 +392,10 @@ func TestMySQLEngine_Issue_CreateUserFails(t *testing.T) {
 func TestMySQLEngine_Issue_TemplateFails(t *testing.T) {
 	// failAfter=1: CREATE USER (query 1) succeeds, GRANT (query 2) fails.
 	dsn := startFakeMySQLServerFailOnNthQuery(t, 1)
-	e := &MySQLEngine{}
+	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target, mirroring the allow_private_network_targets
+	// opt-in a real operator would set to target a local/private database.
+	e := &MySQLEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, dsn, "GRANT SELECT ON app.* TO {{name}}", time.Minute)
@@ -392,7 +407,10 @@ func TestMySQLEngine_Issue_TemplateFails(t *testing.T) {
 
 func TestMySQLEngine_Revoke_Success(t *testing.T) {
 	dsn := startFakeMySQLServer(t)
-	e := &MySQLEngine{}
+	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target, mirroring the allow_private_network_targets
+	// opt-in a real operator would set to target a local/private database.
+	e := &MySQLEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, dsn, "kx_dyn_abc123xyz")
@@ -406,7 +424,10 @@ func TestMySQLEngine_Revoke_Success(t *testing.T) {
 func TestMySQLEngine_Revoke_DropUserFails(t *testing.T) {
 	// failAfter=1: processlist SELECT passes, DROP USER fails.
 	dsn := startFakeMySQLServerFailOnNthQuery(t, 1)
-	e := &MySQLEngine{}
+	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target, mirroring the allow_private_network_targets
+	// opt-in a real operator would set to target a local/private database.
+	e := &MySQLEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, dsn, "kx_dyn_abc123xyz")
@@ -676,7 +697,9 @@ func TestMongoEngine_Revoke_Success(t *testing.T) {
 
 func TestPostgresEngine_Issue_CreateRoleFails(t *testing.T) {
 	host, port := startFakePGServerFailOnNthQuery(t, 0)
-	e := &PostgresEngine{}
+	// G48: dials a fake PostgreSQL server on 127.0.0.1 — an explicit,
+	// intentional loopback target.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, fakePGDSN(host, port), "", time.Minute)

@@ -63,6 +63,54 @@ func TestRateLimit_EmptyIPNeverLimited(t *testing.T) {
 	assert.False(t, c.IsLoginRateLimited(ctx, ""), "an empty IP is never rate-limited")
 }
 
+// TestCanonicalIP is #G20's detection_idea: assert multiple textual
+// representations of the same source normalize to one canonical form.
+func TestCanonicalIP(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"bare IPv4", "203.0.113.9", "203.0.113.9"},
+		{"IPv4 with port", "203.0.113.9:5555", "203.0.113.9"},
+		{"bracketed IPv6 with port", "[2001:db8::1]:5555", "2001:db8::1"},
+		{"bare unbracketed IPv6, no port", "2001:db8::1", "2001:db8::1"},
+		{"expanded IPv6 form compresses to the same canonical address", "2001:0db8:0000:0000:0000:0000:0000:0001", "2001:db8::1"},
+		{"non-IP host is returned unchanged", "not-an-ip", "not-an-ip"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, CanonicalIP(tc.in))
+		})
+	}
+}
+
+// TestRateLimit_CanonicalizesIPBeforeKeying is #G20: IsLoginRateLimited/
+// RecordFailedLogin previously used the caller-supplied IP string as-is, so
+// trivially different textual representations of the SAME source (a
+// caller-supplied host:port vs. a bare IP, or two equivalent IPv6 forms) each
+// got their own independent budget instead of sharing one — defeating the
+// budget for any caller that varies its representation (or simply forgets to
+// strip the port, as several HTTP handlers previously did independently and
+// inconsistently).
+func TestRateLimit_CanonicalizesIPBeforeKeying(t *testing.T) {
+	c, _ := newRateLimitCore(t)
+	ctx := context.Background()
+
+	// Reach the budget using the host:port form...
+	for i := 0; i < LoginMaxAttempts; i++ {
+		c.RecordFailedLogin(ctx, "203.0.113.9:5555")
+	}
+	// ...a bare-IP request from the SAME source (identical once canonicalized)
+	// must already be blocked, not get a fresh budget under a different key.
+	assert.True(t, c.IsLoginRateLimited(ctx, "203.0.113.9"),
+		"a bare IP must share the same bucket as a host:port form of the identical address")
+
+	// Two equivalent IPv6 textual forms must also share one bucket.
+	c2, _ := newRateLimitCore(t)
+	for i := 0; i < LoginMaxAttempts; i++ {
+		c2.RecordFailedLogin(ctx, "2001:0db8:0000:0000:0000:0000:0000:0001")
+	}
+	assert.True(t, c2.IsLoginRateLimited(ctx, "2001:db8::1"),
+		"an alternate IPv6 textual form of the same address must share the same bucket")
+}
+
 // TestRateLimit_SSOBegin_BlocksAtBudgetAndExpiresWithWindow is #G82: BeginSSO/
 // BeginSAML previously had no rate limit at all, letting an unauthenticated
 // flood grow the SSOLoginState table without bound.

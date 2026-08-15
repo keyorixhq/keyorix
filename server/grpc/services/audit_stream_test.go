@@ -20,6 +20,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
@@ -178,6 +179,49 @@ func TestAuditService_StreamAuditLogs_SuspendedAccountTerminatesStream(t *testin
 			"the stream must end once the account is suspended, even with the role grant intact")
 	case <-time.After(time.Second):
 		t.Fatal("stream did not terminate after the account was suspended")
+	}
+}
+
+// TestAuditService_StreamAuditLogs_RevokedSessionTerminatesStream is #G18: the
+// account-level checks above (role, active/suspended state) can't see a SPECIFIC
+// session being individually revoked (e.g. "log out this device") while the
+// owning account stays fully active — the stream must still terminate, not keep
+// running on the strength of the account alone.
+func TestAuditService_StreamAuditLogs_RevokedSessionTerminatesStream(t *testing.T) {
+	old := auditStreamFallbackInterval
+	oldReauth := auditStreamReauthInterval
+	auditStreamFallbackInterval = 15 * time.Millisecond
+	auditStreamReauthInterval = 15 * time.Millisecond
+	defer func() { auditStreamFallbackInterval = old; auditStreamReauthInterval = oldReauth }()
+
+	svc, db := newStreamCore(t)
+	require.NoError(t, db.AutoMigrate(&models.Session{}))
+	sess := &models.Session{ID: 42, UserID: 1, SessionToken: "irrelevant-in-this-test-hash"}
+	require.NoError(t, db.Create(sess).Error)
+
+	sessionID := sess.ID
+	actor := &interceptors.UserContext{
+		UserID: 1, Username: "admin", Permissions: []string{"audit.read"},
+		SessionAuth: true, SessionID: &sessionID,
+	}
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), interceptors.GetUserContextKey(), actor))
+	defer cancel()
+	stream := &fakeAuditStream{ctx: ctx}
+
+	done := make(chan error, 1)
+	go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
+	time.Sleep(30 * time.Millisecond)
+
+	// "Log out this device": the session row is deleted, but user 1's account and
+	// role grant are both left fully intact.
+	require.NoError(t, db.Delete(&models.Session{}, sessionID).Error)
+
+	select {
+	case err := <-done:
+		assert.Equal(t, codes.PermissionDenied, status.Code(err),
+			"the stream must end once THIS session is revoked, even with the account and role grant intact")
+	case <-time.After(time.Second):
+		t.Fatal("stream did not terminate after its specific session was revoked")
 	}
 }
 

@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 const (
@@ -64,6 +66,26 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 		return nil, err
 	}
 	transport := &http.Transport{}
+	// G48: validateEndpoint above only checks the host ONCE, at construction —
+	// the http.Client built here is long-lived and reused for every scheduled
+	// evidence delivery, and the actual TCP dial performs its own, independent
+	// DNS resolution each time. A DNS-rebinding attacker (an answer that looks
+	// public at construction, then a private/link-local answer at dial time)
+	// would otherwise bypass validateEndpoint entirely. Pin the dial-time
+	// resolution to the same disallow policy (isDisallowedIP) and to the
+	// specific IP just validated, unless the operator explicitly opted out via
+	// AllowPrivateNetworkTarget.
+	if !cfg.AllowPrivateNetworkTarget {
+		transport.DialContext = (&netutil.Dialer{
+			Disallow: isDisallowedIP,
+			// Reuse the SAME overridable resolver validateEndpoint used above
+			// (lookupIPAddr — a var so tests can substitute a fake one) rather
+			// than netutil's real-DNS default, so dial-time resolution is
+			// exercised through the identical seam construction-time
+			// validation already uses.
+			Resolve: func(_ context.Context, host string) ([]net.IPAddr, error) { return lookupIPAddr(host) },
+		}).DialContext
+	}
 	if cfg.InsecureSkipVerify {
 		log.Printf("WARNING: evidencesink webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- NOSONAR go:S4830 go:S5527: InsecureSkipVerify is an explicit operator opt-in, guarded by config flag and WARNING log

@@ -39,6 +39,21 @@ export const queryClient = new QueryClient({
     defaultOptions,
 });
 
+// Sensitive-data convention (G28 — secret plaintext lingers client-side with no
+// auto-clear): any query or mutation whose response carries decrypted secret
+// plaintext (a secret value, a one-time dynamic-secret/machine-token credential,
+// a federated Connect read, an MFA recovery code, a personal access token, ...)
+// MUST override `gcTime: SENSITIVE_GC_TIME` in its `useQuery`/`useMutation` call.
+// Without it, react-query keeps the plaintext response in the QueryCache /
+// MutationCache for the default gcTime above (10 min for queries, 5 min for
+// mutations) after the last observer unmounts — long after the UI has hidden or
+// re-masked the value. `0` evicts it as soon as the last observer goes away.
+//
+// This is intentionally opt-in per call site (not a global default): most
+// queries/mutations return non-sensitive data, and lowering gcTime for all of
+// them would hurt normal caching for no security benefit.
+export const SENSITIVE_GC_TIME = 0;
+
 // Query keys factory for consistent key management
 export const queryKeys = {
     // Authentication

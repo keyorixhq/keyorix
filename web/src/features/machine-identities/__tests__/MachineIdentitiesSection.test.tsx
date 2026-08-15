@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '../../../test/test-utils';
 import { MachineIdentitiesSection } from '../MachineIdentitiesSection';
 
@@ -54,6 +54,13 @@ beforeEach(() => {
     transitionMutate.mockReset();
     classifyMutate.mockReset();
     isAdmin = true;
+    // Suspend/revoke are confirmation-gated (G27); default to confirmed so
+    // existing lifecycle-transition tests below don't have to opt in individually.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 describe('MachineIdentitiesSection', () => {
@@ -250,5 +257,55 @@ describe('MachineIdentitiesSection', () => {
         fireEvent.change(picker, { target: { value: 'confidential' } });
 
         expect(screen.getByText('nope')).toBeInTheDocument();
+    });
+
+    it('asks for confirmation before suspending, and does not suspend when declined', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        fireEvent.click(screen.getByRole('button', { name: /^suspend$/i }));
+
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/suspend machine identity "ci-runner"/i));
+        expect(transitionMutate).not.toHaveBeenCalled();
+    });
+
+    it('suspends once the confirmation is accepted', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        fireEvent.click(screen.getByRole('button', { name: /^suspend$/i }));
+
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(transitionMutate).toHaveBeenCalledWith({ machineId: 1, action: 'suspend' }, expect.anything());
+    });
+
+    it('asks for confirmation before revoking, and does not revoke when declined', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        fireEvent.click(screen.getAllByTitle('Revoke')[0]);
+
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/revoke machine identity "ci-runner"/i));
+        expect(transitionMutate).not.toHaveBeenCalled();
+    });
+
+    it('revokes once the confirmation is accepted', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        fireEvent.click(screen.getAllByTitle('Revoke')[0]);
+
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(transitionMutate).toHaveBeenCalledWith({ machineId: 1, action: 'revoke' }, expect.anything());
+    });
+
+    it('does not confirm before reactivating (activate is non-destructive)', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm');
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        fireEvent.click(screen.getByRole('button', { name: /reactivate/i }));
+
+        expect(confirmSpy).not.toHaveBeenCalled();
+        expect(transitionMutate).toHaveBeenCalledWith({ machineId: 2, action: 'activate' }, expect.anything());
     });
 });

@@ -266,3 +266,51 @@ func TestNewWebhook_RejectsHostnameResolvingToPrivateIP(t *testing.T) {
 	_, err = NewWebhook(WebhookConfig{Endpoint: "https://normal.example.com/hook"})
 	require.NoError(t, err, "a hostname resolving to a public address is unaffected")
 }
+
+// TestWebhookSink_DialTimeRefusesDNSRebind is the G48 regression: a hostname
+// that resolves to a PUBLIC address at construction (so NewWebhook succeeds)
+// but to a PRIVATE/link-local address by the time the webhook actually
+// delivers (simulating a DNS-rebinding attacker) must have its delivery
+// refused — the dial-time re-check, not just the one-time construction check,
+// must catch it.
+func TestWebhookSink_DialTimeRefusesDNSRebind(t *testing.T) {
+	orig := lookupIPAddr
+	defer func() { lookupIPAddr = orig }()
+
+	const rebindHost = "rebind.notify.example"
+	callCount := 0
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		require.Equal(t, rebindHost, host)
+		callCount++
+		if callCount == 1 {
+			// Construction-time validateEndpoint lookup: a public address.
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.7")}}, nil
+		}
+		// Every subsequent (dial-time) lookup: the attacker's DNS now answers
+		// with an RFC-1918 address.
+		return []net.IPAddr{{IP: net.ParseIP("10.1.2.3")}}, nil
+	}
+
+	failedBefore := testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeFailed))
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(origOut)
+
+	sink, err := newWebhook(WebhookConfig{Endpoint: "https://" + rebindHost + "/hook"}, time.Millisecond)
+	require.NoError(t, err, "construction sees a public address and must succeed")
+	require.GreaterOrEqual(t, callCount, 1)
+
+	sink.Deliver(core.NotificationEvent{UserID: 1, Type: "x"})
+	sink.Close()
+
+	assert.Equal(t, 1.0, testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeFailed))-failedBefore,
+		"delivery must be refused once dial-time resolution returns a private address, even though construction saw a public one")
+	// Assert on the SPECIFIC failure reason, not merely that it failed — a
+	// weaker assertion here would pass even without the dial-time guard,
+	// since "rebind.notify.example" isn't a real, resolvable domain (a plain
+	// DNS failure would also increment the failed counter for the wrong
+	// reason).
+	assert.Contains(t, buf.String(), "disallowed address", "the failure must come from the dial-time SSRF guard, not an unrelated DNS error")
+}

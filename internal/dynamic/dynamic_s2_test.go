@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -40,6 +41,61 @@ func TestPostgresEngine_Renew_ConnectError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestPostgresEngine_Issue_DialTimeRefusesDNSRebind is the G48 regression: the
+// admin_dsn's host is re-validated on every actual connection (Issue/
+// Revoke/Renew), not just once when the config was created — a DNS-rebinding
+// attacker whose hostname resolves to a private/link-local address AT DIAL
+// TIME must be refused, even though an earlier check (e.g.
+// validateAdminDSNHost at config-create time) might have seen a different
+// answer. allowPrivateNetwork defaults to false (the PostgresEngine{} zero
+// value), matching dynamic_secrets.allow_private_network_targets' default.
+func TestPostgresEngine_Issue_DialTimeRefusesDNSRebind(t *testing.T) {
+	origResolve := dialResolve
+	defer func() { dialResolve = origResolve }()
+	dialResolve = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		require.Equal(t, "rebind.postgres.example", host)
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	}
+
+	e := &PostgresEngine{} // allowPrivateNetwork: false (default / secure)
+	_, _, err := e.Issue(context.Background(), "postgres://admin:pass@rebind.postgres.example:5432/app?sslmode=disable", "", time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disallowed address")
+}
+
+// TestPostgresEngine_Revoke_DialTimeRefusesDNSRebind mirrors the Issue test
+// for the Revoke path.
+func TestPostgresEngine_Revoke_DialTimeRefusesDNSRebind(t *testing.T) {
+	origResolve := dialResolve
+	defer func() { dialResolve = origResolve }()
+	dialResolve = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("10.0.0.5")}}, nil
+	}
+
+	e := &PostgresEngine{}
+	err := e.Revoke(context.Background(), "postgres://admin:pass@rebind.postgres.example:5432/app?sslmode=disable", "kx_dyn_test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disallowed address")
+}
+
+// TestPostgresEngine_Issue_AllowPrivateNetworkOptsOut proves the explicit
+// operator opt-in (dynamic_secrets.allow_private_network_targets, mirrored
+// per-engine as allowPrivateNetwork) disables the dial-time guard, exactly
+// like it already disabled the config-create-time guard — a legitimately
+// on-prem/private-network target must still be reachable.
+func TestPostgresEngine_Issue_AllowPrivateNetworkOptsOut(t *testing.T) {
+	origResolve := dialResolve
+	defer func() { dialResolve = origResolve }()
+	dialResolve = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("10.0.0.5")}}, nil
+	}
+
+	e := &PostgresEngine{allowPrivateNetwork: true}
+	_, _, err := e.Issue(context.Background(), "postgres://admin:pass@rebind.postgres.example:5432/app?sslmode=disable&connect_timeout=1", "", time.Minute)
+	require.Error(t, err, "still fails — nothing is listening — but NOT via the SSRF guard")
+	assert.NotContains(t, err.Error(), "disallowed address")
+}
+
 // ──────────────────────────── MySQLEngine metadata ─────────────────────────
 
 func TestMySQLEngine_Metadata(t *testing.T) {
@@ -67,6 +123,43 @@ func TestMySQLEngine_Revoke_InvalidDSN(t *testing.T) {
 	// assertSafeUsername passes ("kx_dyn_abc"), then openMySQL fails on bad DSN.
 	err := e.Revoke(context.Background(), "not-a-valid-mysql-dsn!!!", "kx_dyn_abc")
 	require.Error(t, err)
+}
+
+// TestMySQLEngine_Issue_DialTimeRefusesDNSRebind is the G48 regression: the
+// admin_dsn's host is re-validated on every actual connection, not just once
+// when the config was created — a DNS-rebinding attacker whose hostname
+// resolves to a private/link-local address AT DIAL TIME must be refused,
+// even though an earlier check might have seen a different answer.
+// allowPrivateNetwork defaults to false (the MySQLEngine{} zero value),
+// matching dynamic_secrets.allow_private_network_targets' default.
+func TestMySQLEngine_Issue_DialTimeRefusesDNSRebind(t *testing.T) {
+	origResolve := dialResolve
+	defer func() { dialResolve = origResolve }()
+	dialResolve = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		require.Equal(t, "rebind.mysql.example", host)
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	}
+
+	e := &MySQLEngine{} // allowPrivateNetwork: false (default / secure)
+	_, _, err := e.Issue(context.Background(), "admin:pass@tcp(rebind.mysql.example:3306)/app", "", time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disallowed address")
+}
+
+// TestMySQLEngine_Issue_AllowPrivateNetworkOptsOut proves the explicit
+// operator opt-in disables the dial-time guard, mirroring
+// TestPostgresEngine_Issue_AllowPrivateNetworkOptsOut.
+func TestMySQLEngine_Issue_AllowPrivateNetworkOptsOut(t *testing.T) {
+	origResolve := dialResolve
+	defer func() { dialResolve = origResolve }()
+	dialResolve = func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("10.0.0.5")}}, nil
+	}
+
+	e := &MySQLEngine{allowPrivateNetwork: true}
+	_, _, err := e.Issue(context.Background(), "admin:pass@tcp(rebind.mysql.example:3306)/app?timeout=1s", "", time.Minute)
+	require.Error(t, err, "still fails — nothing is listening — but NOT via the SSRF guard")
+	assert.NotContains(t, err.Error(), "disallowed address")
 }
 
 // ──────────────────────────── MongoEngine metadata ─────────────────────────
@@ -175,7 +268,7 @@ func TestConnectMongo_UnreachableHost(t *testing.T) {
 
 func TestOpenMySQL_ValidDSNButUnreachable(t *testing.T) {
 	// A valid DSN format but non-existent host → PingContext fails.
-	_, err := openMySQL(context.Background(), "user:pass@tcp(localhost:13306)/db")
+	_, err := openMySQL(context.Background(), "user:pass@tcp(localhost:13306)/db", false)
 	require.Error(t, err)
 }
 

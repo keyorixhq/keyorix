@@ -82,6 +82,17 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
     };
 
     const act = (m: MachineIdentity, action: 'activate' | 'suspend' | 'revoke') => {
+        // Activating/reactivating is non-destructive; suspend and revoke break the
+        // identity's access (revoke permanently), so both are confirmed first.
+        if (action === 'suspend') {
+            if (!window.confirm(`Suspend machine identity "${m.name}"? It will lose access until reactivated.`)) {
+                return;
+            }
+        } else if (action === 'revoke') {
+            if (!window.confirm(`Revoke machine identity "${m.name}"? This cannot be undone.`)) {
+                return;
+            }
+        }
         setError('');
         transition.mutate(
             { machineId: m.id, action },

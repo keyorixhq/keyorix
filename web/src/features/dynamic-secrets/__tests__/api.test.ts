@@ -133,6 +133,24 @@ describe('useIssueLease', () => {
         expect(mock.issue).toHaveBeenCalledWith(3, 3600);
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: DYNAMIC_SECRET_KEYS.leases(3) });
     });
+
+    // G28: the response is a one-time credential (often a plaintext password).
+    // Without a short gcTime override, react-query's MutationCache would retain
+    // it for the default 5 minutes after the last observer unmounts.
+    it('does not retain the issued credential in the MutationCache once the component unmounts', async () => {
+        mock.issue.mockResolvedValueOnce({ leaseId: 'lease-1', password: 'idle-plaintext-password' });
+        const { wrapper, queryClient } = createWrapper();
+        const { result, unmount } = renderHook(() => useIssueLease(3), { wrapper });
+
+        act(() => {
+            result.current.mutate(undefined);
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+
+        unmount();
+        await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
+    });
 });
 
 describe('useRevokeLease', () => {

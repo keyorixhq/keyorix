@@ -63,6 +63,24 @@ func mkACLSecret(t *testing.T, db *gorm.DB, name string) uint {
 	return s.ID
 }
 
+// mkACLFolder inserts a folder node (IsSecret=false) under project 1 / environment 1,
+// optionally nested under parentID (nil for a root-level folder), and returns its ID.
+func mkACLFolder(t *testing.T, db *gorm.DB, name string, parentID *uint) uint {
+	t.Helper()
+	f := &models.SecretNode{ProjectID: 1, EnvironmentID: 1, Name: name, IsSecret: false, Type: "folder", Status: "active", ParentID: parentID}
+	require.NoError(t, db.Create(f).Error)
+	return f.ID
+}
+
+// mkACLSecretInFolder inserts a secret under project 1 / environment 1, parented to
+// parentID, and returns its ID.
+func mkACLSecretInFolder(t *testing.T, db *gorm.DB, name string, parentID uint) uint {
+	t.Helper()
+	s := &models.SecretNode{ProjectID: 1, EnvironmentID: 1, Name: name, IsSecret: true, Status: "active", ParentID: &parentID}
+	require.NoError(t, db.Create(s).Error)
+	return s.ID
+}
+
 // TestGrantSecretACL_CreatesACLRow verifies that GrantSecretACL stores a row.
 func TestGrantSecretACL_CreatesACLRow(t *testing.T) {
 	ctx := context.Background()
@@ -353,4 +371,62 @@ func TestGrantSecretACL_Upsert(t *testing.T) {
 	require.Len(t, acls, 1)
 	perms := DecodeSecretACLPerms(acls[0].Permissions)
 	assert.ElementsMatch(t, []string{"secrets.read", "secrets.write"}, perms)
+}
+
+// TestGrantSecretACL_OnFolder_ReachableAndInherited is the regression test for
+// G45: GrantSecretACL previously rejected any target whose IsSecret was false
+// (it called requireSecret, shared with callers like AddSecretDependency that
+// genuinely need a leaf secret), which made the folder-ACL inheritance walk in
+// HasSecretACL permanently unreachable — no SecretACL row keyed to a folder ID
+// could ever exist, because every ancestor GetSecretAncestors returns is
+// structurally a folder node (CreateSecret/CreateFolder both reject a parent
+// whose IsSecret is true). GrantSecretACL now uses requireSecretOrFolderNode
+// instead, so a folder can be a grant target. This test exercises the real
+// LocalStorage (SQLite) end to end — not a mock — to prove production code can
+// actually reach and use the inheritance walk: grant on a folder, then confirm
+// a child secret with NO direct grant of its own inherits access via the real
+// ancestor walk.
+func TestGrantSecretACL_OnFolder_ReachableAndInherited(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+
+	folderID := mkACLFolder(t, db, "prod-db-creds", nil)
+	// Granting an ACL on a folder must succeed — this used to fail with
+	// "... is not a secret".
+	require.NoError(t, c.GrantSecretACL(ctx, 1, folderID, 42, []string{"secrets.read"}))
+
+	childID := mkACLSecretInFolder(t, db, "password", folderID)
+
+	// The child has no direct ACL row of its own.
+	directACLs, err := c.ListSecretACLs(ctx, childID)
+	require.NoError(t, err)
+	assert.Empty(t, directACLs, "child secret must have no direct grant — access should come purely from folder inheritance")
+
+	got, err := c.HasSecretACL(ctx, 42, childID, "secrets.read")
+	require.NoError(t, err)
+	assert.True(t, got, "a grant on the parent folder must be inherited by the child secret via the real ancestor walk")
+
+	// A permission the folder grant does NOT cover must still be denied.
+	got, err = c.HasSecretACL(ctx, 42, childID, "secrets.write")
+	require.NoError(t, err)
+	assert.False(t, got, "folder grant must not confer permissions outside what was granted")
+}
+
+// TestGrantSecretACL_OnFolder_GrandchildInheritance exercises a nested folder
+// (grant on the grandparent folder, consumed by a grandchild secret) through
+// the real ancestor walk, mirroring TestHasSecretACL_GrandparentInheritance's
+// mocked scenario but end to end against real storage.
+func TestGrantSecretACL_OnFolder_GrandchildInheritance(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+
+	rootFolderID := mkACLFolder(t, db, "root", nil)
+	subFolderID := mkACLFolder(t, db, "sub", &rootFolderID)
+	secretID := mkACLSecretInFolder(t, db, "leaf-secret", subFolderID)
+
+	require.NoError(t, c.GrantSecretACL(ctx, 1, rootFolderID, 7, []string{"secrets.read"}))
+
+	got, err := c.HasSecretACL(ctx, 7, secretID, "secrets.read")
+	require.NoError(t, err)
+	assert.True(t, got, "grant on a grandparent folder must be inherited two levels down")
 }

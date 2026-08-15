@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -22,6 +23,15 @@ const (
 	machineTokenPrefix = "kx_machine_"
 	// machineTouchInterval throttles last_used_at writes on the auth hot path.
 	machineTouchInterval = 30 * time.Second
+)
+
+// ErrMachineTokenRevoked/ErrMachineTokenExpired are returned by
+// ValidateMachineToken/CurrentMachineTokenRestriction on the same two
+// conditions ErrPATRevoked/ErrPATExpired cover for PATs — the caller (auth
+// middleware) surfaces either as a 401.
+var (
+	ErrMachineTokenRevoked = errors.New("token revoked")
+	ErrMachineTokenExpired = errors.New("token expired")
 )
 
 // IssueMachineTokenResult carries the freshly minted token. PlainToken is shown
@@ -239,10 +249,10 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 		return nil, nil, nil, fmt.Errorf("invalid token")
 	}
 	if cred.Revoked {
-		return nil, nil, nil, fmt.Errorf("token revoked")
+		return nil, nil, nil, ErrMachineTokenRevoked
 	}
 	if cred.ExpiresAt != nil && c.now().After(*cred.ExpiresAt) {
-		return nil, nil, nil, fmt.Errorf("token expired")
+		return nil, nil, nil, ErrMachineTokenExpired
 	}
 	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)
 	if err != nil {
@@ -264,6 +274,38 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 		roleNames[i] = r.Name
 	}
 	return m, roleNames, machineRestrictionFrom(cred), nil
+}
+
+// CurrentMachineTokenRestriction re-fetches a machine token's network restriction
+// fresh from storage by its raw token, mirroring CurrentPATRestriction (#146) —
+// generalized to machine tokens as part of #G18. Before this, the auth
+// middleware's cache-hit path only ever refreshed a PAT's restriction, so a
+// machine token's AllowedCIDRs allowlist (and the credential's
+// revoked/expired/machine-inactive state) kept being served from the stale
+// cached UserContext snapshot for up to validTokenTTL. Returns
+// ErrMachineTokenRevoked/ErrMachineTokenExpired, or a plain error when the
+// machine identity itself is no longer active (mirroring ValidateMachineToken's
+// own checks) — the caller must treat all three as "deny the request", not a
+// transient lookup failure to degrade past.
+func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw string) (*MachineTokenRestriction, error) {
+	cred, err := c.storage.GetMachineIdentityCredentialByHash(ctx, sha256Hex(raw))
+	if err != nil {
+		return nil, err
+	}
+	if cred.Revoked {
+		return nil, ErrMachineTokenRevoked
+	}
+	if cred.ExpiresAt != nil && c.now().After(*cred.ExpiresAt) {
+		return nil, ErrMachineTokenExpired
+	}
+	m, err := c.storage.GetMachineIdentity(ctx, cred.MachineIdentityID)
+	if err != nil {
+		return nil, err
+	}
+	if m.State != MachineActive {
+		return nil, fmt.Errorf("machine identity is %s", m.State)
+	}
+	return machineRestrictionFrom(cred), nil
 }
 
 // machineTokenCIDRCorrupted is returned by machineRestrictionFrom when the stored

@@ -26,10 +26,39 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
+
+// CanonicalIP returns addr's IP address in canonical (net.IP.String()) form,
+// stripping any ":port" suffix first when present — via net.SplitHostPort,
+// which correctly handles bracketed IPv6 ("[::1]:8080") as well as plain
+// "host:port" forms, falling back to treating addr itself as a bare
+// host/IP when SplitHostPort finds no port (including a bare, unbracketed
+// IPv6 address, which SplitHostPort always rejects as ambiguous). If the
+// resulting host doesn't parse as an IP at all, it is returned unchanged.
+//
+// #G20: a rate-limit key built from an uncanonicalized source string lets
+// trivially different textual representations of the SAME source — an
+// alternate compressed/expanded IPv6 form, a bracketed vs. bare address, a
+// fresh ephemeral TCP port from simply reconnecting — land in different
+// buckets, defeating the shared budget entirely and growing the limiter map
+// without bound. Used as the single shared canonicalization point for every
+// per-source rate limiter in this codebase (HTTP login/password-reset/SSO
+// limiters here, the gRPC per-principal limiter's IP fallback, and the HTTP
+// handlers that derive a rate-limit key from r.RemoteAddr directly).
+func CanonicalIP(addr string) string {
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return host
+}
 
 const (
 	// LoginMaxAttempts is the failed-attempt budget per IP within LoginWindow.
@@ -69,6 +98,7 @@ func (c *KeyorixCore) IsLoginRateLimited(ctx context.Context, ip string) bool {
 	if ip == "" {
 		return false
 	}
+	ip = CanonicalIP(ip)
 	n, err := c.storage.CountRecentLoginAttempts(ctx, ip, c.now().Add(-LoginWindow))
 	if err != nil {
 		if isUnsupportedByBackend(err) {
@@ -85,7 +115,7 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 	if ip == "" {
 		return
 	}
-	_ = c.storage.RecordLoginAttempt(ctx, ip, c.now())
+	_ = c.storage.RecordLoginAttempt(ctx, CanonicalIP(ip), c.now())
 }
 
 // PruneLoginAttempts removes attempts older than the window; called by the
@@ -122,7 +152,7 @@ func (c *KeyorixCore) IsPasswordResetRateLimited(ctx context.Context, ip string)
 	if ip == "" {
 		return false
 	}
-	n, err := c.storage.CountRecentLoginAttempts(ctx, passwordResetRateLimitPrefix+ip, c.now().Add(-PasswordResetWindow))
+	n, err := c.storage.CountRecentLoginAttempts(ctx, passwordResetRateLimitPrefix+CanonicalIP(ip), c.now().Add(-PasswordResetWindow))
 	if err != nil {
 		if isUnsupportedByBackend(err) {
 			c.warnRateLimitUnsupportedOnce()
@@ -142,7 +172,7 @@ func (c *KeyorixCore) RecordPasswordResetAttempt(ctx context.Context, ip string)
 	if ip == "" {
 		return
 	}
-	_ = c.storage.RecordLoginAttempt(ctx, passwordResetRateLimitPrefix+ip, c.now())
+	_ = c.storage.RecordLoginAttempt(ctx, passwordResetRateLimitPrefix+CanonicalIP(ip), c.now())
 }
 
 // ssoRateLimitPrefix namespaces SSO/SAML login-initiation attempts within the
@@ -169,7 +199,7 @@ func (c *KeyorixCore) IsSSOBeginRateLimited(ctx context.Context, ip string) bool
 	if ip == "" {
 		return false
 	}
-	n, err := c.storage.CountRecentLoginAttempts(ctx, ssoRateLimitPrefix+ip, c.now().Add(-SSOBeginWindow))
+	n, err := c.storage.CountRecentLoginAttempts(ctx, ssoRateLimitPrefix+CanonicalIP(ip), c.now().Add(-SSOBeginWindow))
 	if err != nil {
 		if isUnsupportedByBackend(err) {
 			c.warnRateLimitUnsupportedOnce()
@@ -187,5 +217,5 @@ func (c *KeyorixCore) RecordSSOBeginAttempt(ctx context.Context, ip string) {
 	if ip == "" {
 		return
 	}
-	_ = c.storage.RecordLoginAttempt(ctx, ssoRateLimitPrefix+ip, c.now())
+	_ = c.storage.RecordLoginAttempt(ctx, ssoRateLimitPrefix+CanonicalIP(ip), c.now())
 }

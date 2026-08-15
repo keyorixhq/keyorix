@@ -503,6 +503,14 @@ type Storage interface {
 	RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
 	GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope Scope) ([]uint, error)
 	GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error)
+	// GetMachineRoleScopes returns the distinct (project, environment) scopes at
+	// which machineID holds ANY role grant (machine_identity_roles) — the
+	// machine-identity mirror of GetUserRoleScopes (G33): a helper that must
+	// enumerate every scope a principal holds a role at (e.g. actorRoleIDs's
+	// Connect ref-grant match, GetReadableScopes) needs this to discover
+	// project-scoped machine grants the same way it already discovers
+	// project-scoped user grants, rather than resolving only the global scope.
+	GetMachineRoleScopes(ctx context.Context, machineID uint) ([]Scope, error)
 
 	// Machine-identity OIDC bindings (ADR-031) — map an external token's
 	// (issuer, subject) to a machine identity for federated authentication.
@@ -1009,6 +1017,15 @@ type Storage interface {
 	// and the last-install-administrator invariant before removing one or deleting
 	// the group outright.
 	ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]RoleAssignment, error)
+	// ListAllGroupRoleGrants returns every group→role grant row in the deployment,
+	// including scoped (project/environment) and global (project_id=0) grants, and
+	// including already-expired time-bound grants — the group-grant counterpart to
+	// ListAllUserRoleGrants. Unlike GetGroupRoles/GetGroupRoleGrants (role only, no
+	// scope) or ListGroupRoleAssignments (scope, but silently drops expired rows),
+	// this is the one call that carries a group grant's role, scope, AND expiry
+	// together, unfiltered — what GetPermissionBaseline needs to report a
+	// group-inherited grant's real scope and flag (not hide) an expired one (#G25).
+	ListAllGroupRoleGrants(ctx context.Context) ([]*models.GroupRole, error)
 	AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
 	// AssignRoleWithExpiry.

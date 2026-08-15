@@ -629,6 +629,15 @@ func (rs *RemoteStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint
 	return result.RoleIDs, nil
 }
 
+// GetMachineRoleScopes is a server-internal authorization primitive (the
+// scope-DISCOVERY step behind actorRoleIDs / GetReadableScopes), mirroring
+// GetUserRoleScopes's own "not supported in remote storage" status — remote
+// clients do not enforce authorization decisions locally, so neither the
+// user nor the machine-identity scope-enumeration primitive is exposed here.
+func (rs *RemoteStorage) GetMachineRoleScopes(_ context.Context, _ uint) ([]storage.Scope, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
 // GetMachineRoles returns every role granted to machineID (any scope) via GET
 // /api/v1/system/machine-identities/{id}/roles.
 func (rs *RemoteStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error) {

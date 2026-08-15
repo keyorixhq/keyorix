@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountApi } from '../../services/account';
 import { personalTokensApi, type CreatePersonalTokenBody } from '../../services/personalTokens';
 import { mfaApi } from '../../services/mfa';
+import { SENSITIVE_GC_TIME } from '../../lib/queryClient';
 
 const SESSIONS_KEY = 'account-sessions';
 const TOKENS_KEY = 'account-tokens';
@@ -50,6 +51,9 @@ export const useCreatePersonalToken = () => {
     return useMutation({
         mutationFn: (body: CreatePersonalTokenBody) => personalTokensApi.createToken(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [TOKENS_KEY] }),
+        // G28: the response is a one-time bearer token — don't let react-query's
+        // MutationCache retain it for the default 5 minutes after unmount.
+        gcTime: SENSITIVE_GC_TIME,
     });
 };
 
@@ -72,13 +76,17 @@ export const useMfaRecoveryStatus = () =>
         staleTime: 30 * 1000,
     });
 
-export const useEnrollMfa = () => useMutation({ mutationFn: () => mfaApi.enroll() });
+// G28: enroll returns the TOTP setup secret, and activate returns the freshly
+// minted recovery codes — both plaintext. Don't let react-query's MutationCache
+// retain either for the default 5 minutes after unmount.
+export const useEnrollMfa = () => useMutation({ mutationFn: () => mfaApi.enroll(), gcTime: SENSITIVE_GC_TIME });
 
 export const useActivateMfa = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: (code: string) => mfaApi.activate(code),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [MFA_RECOVERY_KEY] }),
+        gcTime: SENSITIVE_GC_TIME,
     });
 };
 
@@ -95,5 +103,7 @@ export const useRegenerateRecoveryCodes = () => {
     return useMutation({
         mutationFn: (proof: { code?: string; password?: string }) => mfaApi.regenerateRecoveryCodes(proof),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [MFA_RECOVERY_KEY] }),
+        // G28: the response is the freshly minted recovery codes (plaintext).
+        gcTime: SENSITIVE_GC_TIME,
     });
 };

@@ -28,6 +28,7 @@ import {
 import type { AccountSession } from '../../services/account';
 import { buildCreateTokenBody, type PersonalAccessToken } from '../../services/personalTokens';
 import { useProjects, useProjectEnvironments } from '../../features/projects/api';
+import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 import { MfaSection } from '../../features/account/MfaSection';
 
 // Common preset permissions offered when scoping a token (ADR-042). The advanced
@@ -344,6 +345,14 @@ const TokensTab: React.FC = () => {
     // Environments to choose from once a project is selected (env confinement is
     // only meaningful within a project, ADR-042).
     const { data: scopeEnvironments } = useProjectEnvironments(projectScope);
+
+    // G28: the token otherwise stays rendered in the modal indefinitely until the
+    // user explicitly clicks Done — auto-clear (close the modal) on idle, tab
+    // backgrounding, or window blur too.
+    useAutoClearOnIdle(() => {
+        setNewToken(null);
+        setShowCreate(false);
+    }, newToken !== null);
 
     const togglePermission = (value: string) =>
         setPermissions((prev) => (prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value]));

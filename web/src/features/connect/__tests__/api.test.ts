@@ -58,6 +58,32 @@ describe('useReadFederatedSecret', () => {
         expect(mock.readSecret).toHaveBeenCalledWith('vault', 'db/password');
         expect(result.current.data).toEqual(secret);
     });
+
+    // G28: the response carries decrypted plaintext. Without a short gcTime
+    // override, react-query's MutationCache would retain it for the default 5
+    // minutes after the last observer unmounts.
+    it('does not retain the decrypted plaintext in the MutationCache once the component unmounts', async () => {
+        const secret = { connector: 'vault', ref: 'db/password', value: 'hunter2-plaintext' };
+        mock.readSecret.mockResolvedValueOnce(secret);
+        const { wrapper, queryClient } = createWrapper();
+        const { result, unmount } = renderHook(() => useReadFederatedSecret(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ connector: 'vault', ref: 'db/password' });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        // The mutation cache holds the plaintext response while there's still an
+        // observer — that alone is expected/necessary for the active request.
+        expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+        expect(queryClient.getMutationCache().getAll()[0]?.state.data).toEqual(secret);
+
+        // Once the component unmounts (no explicit close/dismiss beyond that),
+        // the short gcTime evicts the plaintext instead of it lingering for the
+        // default 5 minutes.
+        unmount();
+        await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
+    });
 });
 
 describe('useRefGrants', () => {

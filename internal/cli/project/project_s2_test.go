@@ -106,6 +106,10 @@ func TestRunEnvCreate_Remote(t *testing.T) {
 
 // TestRunEnvDelete_Remote verifies the remote-mode env delete path.
 func TestRunEnvDelete_Remote(t *testing.T) {
+	origConfirm := envDeleteConfirm
+	t.Cleanup(func() { envDeleteConfirm = origConfirm })
+	envDeleteConfirm = true // deletion requires explicit --confirm (G27)
+
 	var deleteCalled bool
 	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete && r.URL.Path == "/api/v1/environments/3" {

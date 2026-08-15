@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,10 +37,7 @@ func (h *AuthHandler) SAMLMetadata(w http.ResponseWriter, r *http.Request) {
 // BeginSAML handles GET /auth/saml/{provider}/login — redirects the browser to the IdP
 // SSO endpoint with a fresh AuthnRequest.
 func (h *AuthHandler) BeginSAML(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
+	ip := clientIP(r)
 	if h.coreService.IsSSOBeginRateLimited(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many login attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return

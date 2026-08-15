@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
 import { MfaSection } from '../MfaSection';
+import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
 
 let recoveryStatus: { remaining: number; total: number } | undefined;
 let statusLoading = false;
@@ -260,5 +261,56 @@ describe('MfaSection disable flow', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
 
         expect(await screen.findByText('Invalid code or password.')).toBeInTheDocument();
+    });
+});
+
+// G28: recovery codes must not linger indefinitely with no explicit Done/Cancel.
+describe('MfaSection auto-clear (G28)', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('auto-closes the enrolment modal after the idle timeout elapses, once recovery codes are shown', async () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/test' });
+        });
+        activateMutate.mockImplementation((_code, opts) => {
+            opts.onSuccess(['idle-code-1', 'idle-code-2']);
+        });
+        vi.useFakeTimers();
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+        expect(screen.getByText('idle-code-1')).toBeInTheDocument();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DEFAULT_SENSITIVE_IDLE_MS);
+        });
+
+        expect(screen.queryByText('idle-code-1')).not.toBeInTheDocument();
+        expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+    });
+
+    it('auto-closes the regenerate modal when the tab is backgrounded, once new codes are shown', async () => {
+        recoveryStatus = { remaining: 5, total: 10 };
+        regenerateMutate.mockResolvedValue(['bg-code-1', 'bg-code-2']);
+
+        render(<MfaSection />);
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate codes' }));
+        fireEvent.change(screen.getByLabelText('Authenticator code or password'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+        expect(await screen.findByText('bg-code-1')).toBeInTheDocument();
+
+        Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+        act(() => {
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+
+        expect(screen.queryByText('bg-code-1')).not.toBeInTheDocument();
+        expect(screen.queryByText('Regenerate recovery codes')).not.toBeInTheDocument();
+
+        Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
     });
 });

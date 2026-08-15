@@ -9,7 +9,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -64,13 +63,19 @@ func (k *KeyorixCore) CheckRoleExpiry(ctx context.Context) (*RoleExpiryCheckResu
 
 		roleName := k.roleName(ctx, g.RoleID)
 		title, msg := roleExpiryMessage(roleName, g.ExpiresAt)
+		link := roleExpiryLink(g.RoleID, g.ProjectID, g.EnvironmentID)
 
-		// #G21: no DB backstop for this check-then-act — see read_quota_alerts.go's
-		// CheckReadQuotas for why the existing #488 reminder-dedup index can't
-		// simply be extended to cover this type (per-role dedup via message
-		// content, not a structured column). Deferred; worst case is a duplicate
-		// notification, not a security/data-integrity issue.
-		existing := k.unreadRoleExpiryReminder(ctx, g.UserID, g.RoleID)
+		// #G21/#G22: no DB backstop for this check-then-act — see
+		// read_quota_alerts.go's CheckReadQuotas for why the existing #488
+		// reminder-dedup index can't simply be extended to cover this type.
+		// Deferred; worst case is a duplicate notification, not a
+		// security/data-integrity issue. Dedup itself is keyed on the grant's
+		// stable (role, project, environment) tuple (encoded in Link via
+		// roleExpiryLink), not the role's display name — two distinct roles
+		// (e.g. same-named roles scoped to different projects) can share a
+		// Name, and matching on name would let one grant's standing reminder
+		// silently mask a distinct grant's reminder (#G22).
+		existing := k.unreadRoleExpiryReminder(ctx, g.UserID, g.RoleID, g.ProjectID, g.EnvironmentID)
 		if existing != nil {
 			if severity <= existing.Severity {
 				continue // no worse than what's standing — don't pile up
@@ -80,7 +85,7 @@ func (k *KeyorixCore) CheckRoleExpiry(ctx context.Context) (*RoleExpiryCheckResu
 			}
 			continue
 		}
-		k.notifyWithSeverity(ctx, g.UserID, NotificationRoleExpiryReminder, title, msg, nil, "/profile/roles", severity)
+		k.notifyWithSeverity(ctx, g.UserID, NotificationRoleExpiryReminder, title, msg, nil, link, severity)
 		k.bumpRoleExpiryCount(result, severity)
 	}
 	return result, nil
@@ -122,21 +127,29 @@ func roleExpiryMessage(roleName string, expiresAt *time.Time) (string, string) {
 		fmt.Sprintf("Your %q role grant expires on %s.", roleName, date)
 }
 
+// roleExpiryLink builds the stable per-grant dedup key (and in-app navigation
+// target) for a role-expiry reminder, keyed on the grant's (role, project,
+// environment) tuple — the same tuple (together with user) that uniquely
+// identifies a UserRole row — rather than the role's display Name. Two
+// distinct grants (different RoleID/ProjectID/EnvironmentID) can resolve to
+// roles that share the same Name, so matching on name would incorrectly
+// collapse their reminders together (#G22).
+func roleExpiryLink(roleID, projectID, environmentID uint) string {
+	return fmt.Sprintf("/profile/roles?role=%d&project=%d&env=%d", roleID, projectID, environmentID)
+}
+
 // unreadRoleExpiryReminder returns the user's existing unread role-expiry
-// reminder for a specific role, or nil if none exists.
-func (k *KeyorixCore) unreadRoleExpiryReminder(ctx context.Context, userID, roleID uint) *models.Notification {
+// reminder for the specific (role, project, environment) grant tuple, or nil
+// if none exists.
+func (k *KeyorixCore) unreadRoleExpiryReminder(ctx context.Context, userID, roleID, projectID, environmentID uint) *models.Notification {
 	notes, err := k.storage.ListNotifications(ctx, userID, true, 200)
 	if err != nil {
 		return nil // on read error, prefer notifying over silently skipping
 	}
-	roleName := k.roleName(ctx, roleID)
-	needle := fmt.Sprintf("%q role grant", roleName)
+	link := roleExpiryLink(roleID, projectID, environmentID)
 	for _, n := range notes {
-		if n.Type == NotificationRoleExpiryReminder {
-			// Match by content: the role name is embedded in the message.
-			if strings.Contains(n.Message, needle) {
-				return n
-			}
+		if n.Type == NotificationRoleExpiryReminder && n.Link == link {
+			return n
 		}
 	}
 	return nil

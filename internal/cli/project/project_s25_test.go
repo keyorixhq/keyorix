@@ -130,6 +130,10 @@ func TestRunEnvCreate_Remote_PostError(t *testing.T) {
 // TestRunEnvDelete_Remote_DeleteError verifies the error path when the DELETE
 // for an environment fails in remote mode.
 func TestRunEnvDelete_Remote_DeleteError(t *testing.T) {
+	origConfirm := envDeleteConfirm
+	t.Cleanup(func() { envDeleteConfirm = origConfirm })
+	envDeleteConfirm = true // deletion requires explicit --confirm (G27)
+
 	setupRemote(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})

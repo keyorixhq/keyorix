@@ -142,6 +142,7 @@ const tokenAuthFailureBurst = 10
 type ipFailureLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*principalBucket
+	requests uint64
 }
 
 var globalTokenAuthFailureLimiter = &ipFailureLimiter{
@@ -155,16 +156,26 @@ func recordTokenAuthFailure(ip string) bool {
 	return globalTokenAuthFailureLimiter.allow(ip)
 }
 
+// #G19: allow() previously called sweepLocked() on EVERY invocation — a full O(n)
+// scan of the limiter map under the shared mutex on every single failed-auth
+// attempt, unlike principalRateLimiter.allow (above), which explicitly amortizes
+// the identical sweep to once every principalLimiterSweepEvery calls. Under a
+// sustained token-brute-forcing flood (the exact scenario this limiter exists to
+// bound) that made the O(n) sweep run at full request rate, scaling cost with the
+// number of distinct attacking IPs instead of bounding it.
 func (l *ipFailureLimiter) allow(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.requests++
+	if l.requests%principalLimiterSweepEvery == 0 {
+		l.sweepLocked()
+	}
 	b, ok := l.limiters[ip]
 	if !ok {
 		b = &principalBucket{limiter: rate.NewLimiter(rate.Limit(1), tokenAuthFailureBurst)}
 		l.limiters[ip] = b
 	}
 	b.lastSeen = time.Now()
-	l.sweepLocked()
 	return b.limiter.Allow()
 }
 

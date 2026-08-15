@@ -236,7 +236,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 	}
 
 	// Not a global reader — enumerate scopes and return the union.
-	scopes, serr := h.coreService.GetReadableScopes(r.Context(), userCtx.UserID, permSecretsRead)
+	scopes, serr := h.coreService.GetReadableScopes(r.Context(), userCtx.PrincipalID(), permSecretsRead)
 	if serr != nil {
 		log.Printf("Error enumerating readable scopes for user %d: %v", userCtx.UserID, serr)
 		h.sendError(w, "InternalError", errFailedToListSecrets, http.StatusInternalServerError, nil)

@@ -2,8 +2,11 @@
 package secret
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -173,23 +176,54 @@ func printFolderList(folders []*models.SecretNode) {
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 
-var folderDeleteID uint
+var (
+	folderDeleteID    uint
+	folderDeleteForce bool
+)
 
 var folderDeleteCmd = &cobra.Command{
 	Use:   "delete",
 	Short: "Delete a folder",
-	RunE:  runFolderDelete,
+	Long: `Delete a secret folder node permanently.
+
+Examples:
+  keyorix secret folder delete --id 123
+  keyorix secret folder delete --id 123 --force  # Skip confirmation`,
+	RunE: runFolderDelete,
 }
 
 func init() {
 	folderDeleteCmd.Flags().UintVar(&folderDeleteID, "id", 0, "Folder ID to delete (required)")
+	folderDeleteCmd.Flags().BoolVar(&folderDeleteForce, "force", false, "Skip confirmation prompt")
 
 	folderCmd.AddCommand(folderDeleteCmd)
+}
+
+// confirmFolderDeletion prompts on stdin and reports whether the operator typed "y"/"yes"
+// (case-insensitive). Anything else — including a blank line — is treated as "no", so an
+// accidental Enter never confirms a destructive action.
+func confirmFolderDeletion(prompt string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("%s (yes/no): ", prompt)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+	return input == "yes" || input == "y"
 }
 
 func runFolderDelete(cmd *cobra.Command, args []string) error {
 	if folderDeleteID == 0 {
 		return fmt.Errorf("folder ID is required (use --id)")
+	}
+
+	// Deleting a folder (and everything nested under it) is irreversible, so require
+	// an explicit confirmation unless the caller opted out with --force (e.g. for
+	// scripted/CI use) — mirrors `secret delete`/`user delete`.
+	if !folderDeleteForce {
+		prompt := fmt.Sprintf("Delete folder %d? This cannot be undone.", folderDeleteID)
+		if !confirmFolderDeletion(prompt) {
+			fmt.Println("❌ Deletion cancelled")
+			return nil
+		}
 	}
 
 	ctx := context.Background()

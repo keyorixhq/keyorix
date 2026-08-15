@@ -128,6 +128,27 @@ func TestGRPCRateLimitInterceptor_FallsBackToIPForUnauthenticated(t *testing.T) 
 	assert.NoError(t, err, "no UserContext and no peer must still resolve to a real key (\"ip:unknown\"), not panic")
 }
 
+// TestGRPCRateLimitInterceptor_IPFallbackIgnoresEphemeralPort is #G20:
+// grpcRateLimitKey previously keyed the unauthenticated IP-fallback bucket on
+// peer.Addr.String() directly, which INCLUDES the ephemeral client TCP port.
+// Reconnecting — a free, trivial action for any real caller — got a fresh
+// port and therefore a fresh bucket every time, defeating the fallback budget
+// entirely rather than merely being imprecise about it.
+func TestGRPCRateLimitInterceptor_IPFallbackIgnoresEphemeralPort(t *testing.T) {
+	interceptor := GRPCRateLimitInterceptor(config.RateLimitConfig{Enabled: true, RequestsPerSecond: 1, Burst: 1})
+
+	firstConn := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.5"), Port: 5555}})
+	_, err := interceptor(firstConn, nil, nil, rlHandler())
+	require.NoError(t, err, "the first connection's request must pass")
+
+	// A "reconnect" from the SAME IP but a DIFFERENT ephemeral port must share
+	// the same bucket, not get a fresh burst.
+	reconnected := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.5"), Port: 60001}})
+	_, err = interceptor(reconnected, nil, nil, rlHandler())
+	assert.Error(t, err, "a reconnect from the same IP on a new ephemeral port must still be limited")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+}
+
 // sweepLocked evicts only entries idle past grpcPrincipalLimiterIdleTTL (10
 // minutes), not everything and not nothing -- constructed directly against
 // the unexported type (white-box) since driving real 10-minute idleness
@@ -176,4 +197,103 @@ func TestGRPCRateLimiter_SweepsEveryNRequests(t *testing.T) {
 	_, presentAfterSweep := rl.limiters["stale"]
 	rl.mu.Unlock()
 	assert.False(t, presentAfterSweep, "the sweep must run on exactly the Nth request and evict the stale entry")
+}
+
+// ---------------------------------------------------------------------------
+// StreamRateLimitInterceptor — G41: the streaming counterpart to
+// GRPCRateLimitInterceptor above. Before G41, StreamAuditLogs (the server's
+// only streaming RPC) carried no rate limiting on stream OPEN at all: opening
+// streams as fast as the network allowed was entirely unthrottled, unlike the
+// unary surface. These tests are the detection idea from the G41 writeup —
+// "open N StreamAuditLogs connections... assert throttled like their
+// authenticated-unary counterparts" — applied directly at the interceptor
+// (the same level TestGRPCRateLimitInterceptor_* above tests the unary side).
+// ---------------------------------------------------------------------------
+
+func streamRLHandler() grpc.StreamHandler {
+	return func(_ interface{}, _ grpc.ServerStream) error { return nil }
+}
+
+// Mirrors TestGRPCRateLimitInterceptor_DisabledIsNoOp: disabled config is a
+// transparent no-op stream interceptor, not an infinite-budget limiter.
+func TestStreamRateLimitInterceptor_DisabledIsNoOp(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  config.RateLimitConfig
+	}{
+		{"zero value", config.RateLimitConfig{}},
+		{"explicitly disabled", config.RateLimitConfig{Enabled: false, RequestsPerSecond: 100}},
+		{"enabled but non-positive rps", config.RateLimitConfig{Enabled: true, RequestsPerSecond: 0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			interceptor := StreamRateLimitInterceptor(tc.cfg)
+			for i := 0; i < 50; i++ {
+				stream := &fakeStream{ctx: grpcCtxForUser(1, 0)}
+				err := interceptor(nil, stream, nil, streamRLHandler())
+				require.NoError(t, err, "stream open %d must pass through unlimited", i)
+			}
+		})
+	}
+}
+
+// Opening N StreamAuditLogs connections rapidly (as the G41 detection idea
+// describes) is throttled once a principal exceeds its burst, exactly like the
+// unary case in TestGRPCRateLimitInterceptor_EnforcesPerPrincipalBudget. A
+// different principal opening streams is unaffected — budgets are
+// per-principal, not global.
+func TestStreamRateLimitInterceptor_EnforcesPerPrincipalBudget(t *testing.T) {
+	interceptor := StreamRateLimitInterceptor(config.RateLimitConfig{Enabled: true, RequestsPerSecond: 1, Burst: 3})
+
+	for i := 0; i < 3; i++ {
+		stream := &fakeStream{ctx: grpcCtxForUser(1, 0)}
+		err := interceptor(nil, stream, nil, streamRLHandler())
+		require.NoError(t, err, "stream open %d within burst must pass", i)
+	}
+	blocked := &fakeStream{ctx: grpcCtxForUser(1, 0)}
+	err := interceptor(nil, blocked, nil, streamRLHandler())
+	require.Error(t, err, "the 4th stream open within the same instant must be limited")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	other := &fakeStream{ctx: grpcCtxForUser(2, 0)}
+	err = interceptor(nil, other, nil, streamRLHandler())
+	assert.NoError(t, err, "a different principal opening a stream must have an independent budget")
+}
+
+// An unauthenticated stream open (no UserContext — StreamAuthInterceptor
+// rejects those before this interceptor ever runs in the real chain, but the
+// interceptor itself must still behave sanely if reached) falls back to an
+// IP-keyed budget, mirroring the unary fallback.
+func TestStreamRateLimitInterceptor_FallsBackToIPForUnauthenticated(t *testing.T) {
+	interceptor := StreamRateLimitInterceptor(config.RateLimitConfig{Enabled: true, RequestsPerSecond: 1, Burst: 1})
+
+	ctx := grpcCtxForIP("203.0.113.77")
+	stream := &fakeStream{ctx: ctx}
+	err := interceptor(nil, stream, nil, streamRLHandler())
+	require.NoError(t, err)
+
+	stream2 := &fakeStream{ctx: ctx}
+	err = interceptor(nil, stream2, nil, streamRLHandler())
+	assert.Error(t, err, "a second stream open from the same IP within burst=1 must be limited")
+}
+
+// StreamRateLimitInterceptor and GRPCRateLimitInterceptor are built from
+// independent grpcRateLimiter instances (deliberately NOT a shared budget —
+// see the doc comment on StreamRateLimitInterceptor): exhausting one surface's
+// budget for a principal must not affect the other surface's budget for the
+// same principal.
+func TestStreamRateLimitInterceptor_IndependentBudgetFromUnary(t *testing.T) {
+	cfg := config.RateLimitConfig{Enabled: true, RequestsPerSecond: 1, Burst: 1}
+	unary := GRPCRateLimitInterceptor(cfg)
+	stream := StreamRateLimitInterceptor(cfg)
+
+	// Exhaust the unary budget for principal 5.
+	_, err := unary(grpcCtxForUser(5, 0), nil, nil, rlHandler())
+	require.NoError(t, err)
+	_, err = unary(grpcCtxForUser(5, 0), nil, nil, rlHandler())
+	require.Error(t, err, "unary budget for principal 5 must now be exhausted")
+
+	// The same principal's stream-open budget is untouched.
+	err = stream(nil, &fakeStream{ctx: grpcCtxForUser(5, 0)}, nil, streamRLHandler())
+	assert.NoError(t, err, "stream-open budget must be independent of the exhausted unary budget")
 }

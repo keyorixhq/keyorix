@@ -494,6 +494,54 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	return user, roleNames, nil
 }
 
+// SessionStillLive reports whether the session row sessionID is still the LIVE
+// credential it was when it authenticated a long-lived gRPC stream (#G18).
+// StreamAuditLogs' periodic reauthorizeAuditStream tick previously re-checked
+// only the owning account's state (GetUser/IsActive/AccountLoginBlocked), never
+// the SPECIFIC session that opened the stream — so an individually revoked
+// session (e.g. "log out this device", or DeleteSessionsForUserExcept from a
+// password change) kept receiving the live feed for the rest of the stream's
+// lifetime, since account-level checks alone can't see that. Deliberately keyed
+// by the session's numeric row id, not its raw token or hash: the token is
+// validated once at stream-open and is not retained afterward (security
+// hygiene — the gRPC auth interceptor tags UserContext.SessionID, a
+// non-sensitive identifier, instead). Mirrors ValidateSessionToken's own
+// liveness checks (row exists, not rotated away, within both the access-window
+// and absolute-lifetime ceilings) without repeating its account-state gate —
+// reauthorizeAuditStream already runs that check independently.
+func (c *KeyorixCore) SessionStillLive(ctx context.Context, sessionID uint) (bool, error) {
+	session, err := c.storage.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if session.RotatedAt != nil {
+		return false, nil
+	}
+	now := c.now()
+	if session.ExpiresAt != nil && now.After(*session.ExpiresAt) {
+		return false, nil
+	}
+	if session.AbsoluteExpiresAt != nil && now.After(*session.AbsoluteExpiresAt) {
+		return false, nil
+	}
+	return true, nil
+}
+
+// AccountStillUsable reports whether userID's account is still active and not
+// login-blocked (ADR-025) — the same account-state gate ValidateSessionToken's
+// slow path already applies, factored out so the auth middleware's cache-hit
+// path (#G18) can re-check it on every request instead of only once per
+// validTokenTTL. A user deactivated or suspended mid-window previously kept
+// authenticating via the positive session cache for up to 30s after the
+// slow-path re-validation would have rejected them outright.
+func (c *KeyorixCore) AccountStillUsable(ctx context.Context, userID uint) (bool, error) {
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return user.IsActive && !AccountLoginBlocked(user.AccountState), nil
+}
+
 // RequestPasswordReset issues a password-reset link for the given email and
 // delivers it via the configured credential-delivery channel (ADR-028). The
 // recipient consumes it at /auth/setup/{token} to set a new password

@@ -326,7 +326,12 @@ func fakePGDSN(host, port string) string {
 
 func TestPostgresEngine_Issue_Success(t *testing.T) {
 	host, port := startFakePGServer(t)
-	e := &PostgresEngine{}
+	// G48: these tests dial a fake PostgreSQL server on 127.0.0.1 — an
+	// explicit, intentional loopback target, mirroring the
+	// allow_private_network_targets opt-in a real operator would set to
+	// target a local/private database. The default (false) is exercised by
+	// the connect-error tests in dynamic_s2_test.go instead.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, fakePGDSN(host, port), "", time.Minute)
@@ -341,7 +346,12 @@ func TestPostgresEngine_Issue_Success(t *testing.T) {
 // branch of Issue (the `if tmpl != ""` path).
 func TestPostgresEngine_Issue_WithTemplate(t *testing.T) {
 	host, port := startFakePGServer(t)
-	e := &PostgresEngine{}
+	// G48: these tests dial a fake PostgreSQL server on 127.0.0.1 — an
+	// explicit, intentional loopback target, mirroring the
+	// allow_private_network_targets opt-in a real operator would set to
+	// target a local/private database. The default (false) is exercised by
+	// the connect-error tests in dynamic_s2_test.go instead.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, fakePGDSN(host, port), "GRANT CONNECT ON DATABASE app TO {{name}}", time.Minute)
@@ -474,7 +484,12 @@ func handleFakePGConnFailOnNth(conn net.Conn, failAfter int) {
 func TestPostgresEngine_Issue_TemplateFails(t *testing.T) {
 	// failAfter=1: the CREATE ROLE succeeds (query 1), then the GRANT fails (query 2).
 	host, port := startFakePGServerFailOnNthQuery(t, 1)
-	e := &PostgresEngine{}
+	// G48: these tests dial a fake PostgreSQL server on 127.0.0.1 — an
+	// explicit, intentional loopback target, mirroring the
+	// allow_private_network_targets opt-in a real operator would set to
+	// target a local/private database. The default (false) is exercised by
+	// the connect-error tests in dynamic_s2_test.go instead.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, fakePGDSN(host, port), "GRANT CONNECT ON DATABASE app TO {{name}}", time.Minute)
@@ -486,7 +501,12 @@ func TestPostgresEngine_Issue_TemplateFails(t *testing.T) {
 
 func TestPostgresEngine_Revoke_Success(t *testing.T) {
 	host, port := startFakePGServer(t)
-	e := &PostgresEngine{}
+	// G48: these tests dial a fake PostgreSQL server on 127.0.0.1 — an
+	// explicit, intentional loopback target, mirroring the
+	// allow_private_network_targets opt-in a real operator would set to
+	// target a local/private database. The default (false) is exercised by
+	// the connect-error tests in dynamic_s2_test.go instead.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4")
@@ -510,7 +530,12 @@ func TestPostgresEngine_Revoke_DropRoleFails(t *testing.T) {
 	// Queries 1,2,3 are simple (REASSIGN, DROP OWNED, DROP ROLE) after the
 	// parameterised one completes.  We fail after 2 simple queries.
 	host, port := startFakePGServerFailOnNthQuery(t, 2)
-	e := &PostgresEngine{}
+	// G48: these tests dial a fake PostgreSQL server on 127.0.0.1 — an
+	// explicit, intentional loopback target, mirroring the
+	// allow_private_network_targets opt-in a real operator would set to
+	// target a local/private database. The default (false) is exercised by
+	// the connect-error tests in dynamic_s2_test.go instead.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4")
@@ -522,7 +547,12 @@ func TestPostgresEngine_Revoke_DropRoleFails(t *testing.T) {
 
 func TestPostgresEngine_Renew_Success(t *testing.T) {
 	host, port := startFakePGServer(t)
-	e := &PostgresEngine{}
+	// G48: these tests dial a fake PostgreSQL server on 127.0.0.1 — an
+	// explicit, intentional loopback target, mirroring the
+	// allow_private_network_targets opt-in a real operator would set to
+	// target a local/private database. The default (false) is exercised by
+	// the connect-error tests in dynamic_s2_test.go instead.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Renew(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4", time.Now().Add(time.Hour))
@@ -533,7 +563,12 @@ func TestPostgresEngine_Renew_Success(t *testing.T) {
 // when ALTER ROLE fails.
 func TestPostgresEngine_Renew_AlterRoleFails(t *testing.T) {
 	host, port := startFakePGServerFailOnNthQuery(t, 0)
-	e := &PostgresEngine{}
+	// G48: these tests dial a fake PostgreSQL server on 127.0.0.1 — an
+	// explicit, intentional loopback target, mirroring the
+	// allow_private_network_targets opt-in a real operator would set to
+	// target a local/private database. The default (false) is exercised by
+	// the connect-error tests in dynamic_s2_test.go instead.
+	e := &PostgresEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Renew(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4", time.Now().Add(time.Hour))

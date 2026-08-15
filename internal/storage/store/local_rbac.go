@@ -664,6 +664,15 @@ func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID ui
 	return out, nil
 }
 
+// ListAllGroupRoleGrants returns every group→role grant row in the deployment,
+// including scoped (project/environment) and global (project_id=0) grants.
+// Includes time-bound (JIT) grants, expired or not — the group-grant
+// counterpart to ListAllUserRoleGrants; callers filter by ExpiresAt if needed.
+func (ls *LocalStorage) ListAllGroupRoleGrants(ctx context.Context) ([]*models.GroupRole, error) {
+	var grants []*models.GroupRole
+	return grants, ls.db.WithContext(ctx).Find(&grants).Error
+}
+
 // AssignRoleToGroup assigns a permanent role to a group at scope; errors if
 // already assigned there.
 func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {

@@ -164,11 +164,14 @@ func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, map[string]interface{}{"admin_session_restored": restored}, message)
 }
 
-// clientIP strips the port from RemoteAddr for audit attribution.
+// clientIP returns r.RemoteAddr's IP in canonical form, for audit attribution
+// and as the rate-limit key several handlers in this package share.
+//
+// #G20: the naive strings.LastIndex(":")-based port strip this replaced didn't
+// account for IPv6 at all — a bracketed "[::1]:8080" kept its brackets, and an
+// address with NO port (e.g. one already stripped elsewhere) had its LAST
+// colon truncated as if it were a port separator, corrupting the address
+// (e.g. "2001:db8::1" → "2001:db8:"). core.CanonicalIP handles both correctly.
 func clientIP(r *http.Request) string {
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
-	return ip
+	return core.CanonicalIP(r.RemoteAddr)
 }

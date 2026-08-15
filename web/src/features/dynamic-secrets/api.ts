@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { dynamicSecretsApi, CreateDynamicConfigPayload } from '../../services/dynamicSecrets';
+import { SENSITIVE_GC_TIME } from '../../lib/queryClient';
 
 // ADR-035 query keys. Configs are scoped per (project, environment); leases per config.
 export const DYNAMIC_SECRET_KEYS = {
@@ -50,6 +51,10 @@ export function useIssueLease(configId: number) {
     return useMutation({
         mutationFn: (ttlSeconds?: number) => dynamicSecretsApi.issue(configId, ttlSeconds),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: DYNAMIC_SECRET_KEYS.leases(configId) }),
+        // G28: the response is a one-time credential (often a password) — don't
+        // let react-query's MutationCache retain it for the default 5 minutes
+        // after unmount.
+        gcTime: SENSITIVE_GC_TIME,
     });
 }
 

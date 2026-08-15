@@ -1922,6 +1922,14 @@ func (m *MockStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]*m
 	return args.Get(0).([]*models.Role), args.Error(1)
 }
 
+func (m *MockStorage) GetMachineRoleScopes(ctx context.Context, machineID uint) ([]storage.Scope, error) {
+	args := m.Called(ctx, machineID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.Scope), args.Error(1)
+}
+
 func (m *MockStorage) CreateOIDCBinding(ctx context.Context, b *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error) {
 	args := m.Called(ctx, b)
 	if args.Get(0) == nil {
@@ -2188,6 +2196,19 @@ func (m *MockStorage) ListAllUserRoleGrants(ctx context.Context) ([]*models.User
 				return nil, args.Error(1)
 			}
 			return args.Get(0).([]*models.UserRole), args.Error(1)
+		}
+	}
+	return nil, nil
+}
+
+func (m *MockStorage) ListAllGroupRoleGrants(ctx context.Context) ([]*models.GroupRole, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "ListAllGroupRoleGrants" {
+			args := m.Called(ctx)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.GroupRole), args.Error(1)
 		}
 	}
 	return nil, nil
