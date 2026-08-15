@@ -120,9 +120,14 @@ describe('authService.logout', () => {
         await expect(authService.logout()).resolves.toBeUndefined();
     });
 
-    it('swallows server errors (never throws)', async () => {
-        mockPost.mockRejectedValueOnce(new Error('network error'));
-        await expect(authService.logout()).resolves.toBeUndefined();
+    it('rethrows on server error (G65: no longer silently swallowed — the caller must know a server-side logout failed)', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(500, { error: 'Session store unavailable' }));
+        await expect(authService.logout()).rejects.toThrow('Session store unavailable');
+    });
+
+    it('throws a generic message when the server sends no error text', async () => {
+        mockPost.mockRejectedValueOnce(axiosErr(500, {}));
+        await expect(authService.logout()).rejects.toThrow('Logout failed');
     });
 });
 

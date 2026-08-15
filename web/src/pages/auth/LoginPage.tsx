@@ -17,6 +17,12 @@ export const LoginPage: React.FC = () => {
     const [resetError, setResetError] = useState<string | null>(null);
     const [ssoProviders, setSsoProviders] = useState<string[]>([]);
     const ssoError = new URLSearchParams(location.search).get('sso_error');
+    // G65: authStore.logout() redirects here via window.location.href (a hard
+    // navigation, so no in-memory error state survives it) when the
+    // server-side session invalidation call itself failed. The client still
+    // clears its own local state as a fail-safe, but the user needs to know
+    // the server may still consider the old session valid.
+    const logoutError = new URLSearchParams(location.search).get('logout_error');
 
     useEffect(() => {
         let active = true;
@@ -99,6 +105,15 @@ export const LoginPage: React.FC = () => {
                 >
                     {mode === 'login' && (
                         <>
+                            {logoutError && (
+                                <div
+                                    className="mb-4 rounded-lg px-3 py-2 text-sm"
+                                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
+                                >
+                                    Sign-out could not be confirmed with the server. Your previous session may still be
+                                    active — for safety on a shared device, consider changing your password.
+                                </div>
+                            )}
                             {ssoError && (
                                 <div
                                     className="mb-4 rounded-lg px-3 py-2 text-sm"

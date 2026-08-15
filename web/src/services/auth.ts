@@ -65,11 +65,22 @@ export const authService = {
     },
 
     async logout(): Promise<void> {
+        // Deliberately does NOT swallow a failed server-side session
+        // invalidation (G65) — the caller (authStore.logout()) still clears
+        // all local client-side state as a fail-safe regardless of the
+        // outcome here, but it needs the rejection to know the server-side
+        // session may still be valid and surface that to the user, instead
+        // of silently reporting a clean logout. Mirrors the
+        // catch-and-rethrow-with-message shape used by login()/refreshToken()
+        // above.
         try {
             await authApi.post(API_ENDPOINTS.AUTH.LOGOUT);
         } catch (error) {
-            // Even if logout fails on server, we clear local state.
-            console.warn('Logout request failed:', error);
+            if (axios.isAxiosError(error)) {
+                const message = error.response?.data?.error || error.response?.data?.message || 'Logout failed';
+                throw new Error(message, { cause: error });
+            }
+            throw error;
         }
     },
 
