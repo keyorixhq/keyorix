@@ -112,6 +112,12 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                             <button
                                 type="button"
                                 onClick={() => {
+                                    if (
+                                        !window.confirm(
+                                            'Revoke this lease? The credential will stop working immediately.'
+                                        )
+                                    )
+                                        return;
                                     setError('');
                                     revoke.mutate(l.leaseId, {
                                         onError: (err) => surface(err, 'Failed to revoke lease.'),
@@ -145,6 +151,12 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                             size="sm"
                             variant="destructive"
                             onClick={() => {
+                                if (
+                                    !window.confirm(
+                                        `Revoke all ${activeCount} active lease(s)? Every issued credential will stop working immediately.`
+                                    )
+                                )
+                                    return;
                                 setError('');
                                 revokeAll.mutate(undefined, {
                                     onError: (err) => surface(err, 'Failed to revoke leases.'),

@@ -146,6 +146,10 @@ func TestRunEnv_CreateListDelete_Embedded(t *testing.T) {
 	}
 	require.NotZero(t, qaID)
 
+	origConfirm := envDeleteConfirm
+	t.Cleanup(func() { envDeleteConfirm = origConfirm })
+	envDeleteConfirm = true // deletion requires explicit --confirm (G27)
+
 	out = captureStdout(t, func() {
 		require.NoError(t, runEnvDelete(nil, []string{strconv.Itoa(int(qaID))}))
 	})
