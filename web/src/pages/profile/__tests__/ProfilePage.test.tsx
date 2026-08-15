@@ -1,9 +1,10 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, waitFor } from '../../../test/test-utils';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, within, waitFor, act } from '../../../test/test-utils';
 import { ProfilePage } from '../ProfilePage';
 import type { AccountSession } from '../../../services/account';
 import type { PersonalAccessToken } from '../../../services/personalTokens';
+import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
 
 // ── Hoisted mock state (referenced inside vi.mock factories below) ─────────────
 
@@ -413,6 +414,53 @@ describe('ProfilePage — API Tokens tab', () => {
         fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
         expect(screen.getByText('Could not create token')).toBeInTheDocument();
         expect(screen.getByText('Name already in use')).toBeInTheDocument();
+    });
+
+    // G28: the one-time token must not linger indefinitely with no explicit Done.
+    describe('auto-clear (G28)', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('auto-closes the token modal after the idle timeout elapses, without an explicit Done click', async () => {
+            mocks.createTokenMutate.mockImplementation((_body, opts) => opts.onSuccess({ token: 'kx_idle_secret' }));
+            vi.useFakeTimers();
+
+            render(<ProfilePage />);
+            goToTab('API Tokens');
+            fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+            fireEvent.change(screen.getByLabelText('Token name'), { target: { value: 'idle-test' } });
+            fireEvent.click(screen.getByRole('button', { name: 'Create Token' }));
+            expect(screen.getByText('kx_idle_secret')).toBeInTheDocument();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(DEFAULT_SENSITIVE_IDLE_MS);
+            });
+
+            expect(screen.queryByText('kx_idle_secret')).not.toBeInTheDocument();
+            expect(screen.queryByText('New Personal Access Token')).not.toBeInTheDocument();
+        });
+
+        it('auto-closes the token modal when the tab is backgrounded, without an explicit Done click', () => {
+            mocks.createTokenMutate.mockImplementation((_body, opts) => opts.onSuccess({ token: 'kx_bg_secret' }));
+
+            render(<ProfilePage />);
+            goToTab('API Tokens');
+            fireEvent.click(screen.getByRole('button', { name: /New Token/ }));
+            fireEvent.change(screen.getByLabelText('Token name'), { target: { value: 'bg-test' } });
+            fireEvent.click(screen.getByRole('button', { name: 'Create Token' }));
+            expect(screen.getByText('kx_bg_secret')).toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            act(() => {
+                document.dispatchEvent(new Event('visibilitychange'));
+            });
+
+            expect(screen.queryByText('kx_bg_secret')).not.toBeInTheDocument();
+            expect(screen.queryByText('New Personal Access Token')).not.toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+        });
     });
 });
 

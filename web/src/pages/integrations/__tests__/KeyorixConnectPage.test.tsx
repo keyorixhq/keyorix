@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
 import { KeyorixConnectPage } from '../KeyorixConnectPage';
+import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
 
 let connectorsData: string[];
 let connectorsState: { data: string[]; isLoading: boolean; isError: boolean };
@@ -308,5 +309,60 @@ describe('KeyorixConnectPage — federated read panel additional coverage', () =
         fireEvent.click(copyButton);
         await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('s3cr3t'));
         await waitFor(() => expect(copyButton.innerHTML).not.toBe(before));
+    });
+
+    // G28: the revealed value must not linger indefinitely with no explicit Hide.
+    describe('auto-clear (G28)', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('re-masks the revealed value after the idle timeout elapses, without an explicit Hide click', async () => {
+            readMutate.mockImplementation((_vars, opts) =>
+                opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 'idle-s3cr3t' })
+            );
+            // Fake timers must be active from mount so the idle timer the hook
+            // arms on mount is itself a fake timer (enabling fake timers *after*
+            // mount would leave that already-armed real setTimeout untouched).
+            vi.useFakeTimers();
+
+            render(<KeyorixConnectPage />);
+            fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+            fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
+            // The mock's onSuccess runs synchronously, so the reveal is already
+            // flushed here — assert directly rather than via waitFor (whose own
+            // polling uses real timers, which freeze once fake timers are active).
+            expect(screen.getByText('idle-s3cr3t')).toBeInTheDocument();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(DEFAULT_SENSITIVE_IDLE_MS);
+            });
+
+            expect(screen.queryByText('idle-s3cr3t')).not.toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /Reveal value/i })).toBeInTheDocument();
+        });
+
+        it('re-masks the revealed value when the tab is backgrounded, without an explicit Hide click', async () => {
+            readMutate.mockImplementation((_vars, opts) =>
+                opts.onSuccess({ connector: 'prod-aws', ref: 'prod/db', value: 'bg-s3cr3t' })
+            );
+
+            render(<KeyorixConnectPage />);
+            fireEvent.change(screen.getByLabelText('Reference'), { target: { value: 'prod/db' } });
+            fireEvent.click(screen.getByRole('button', { name: /Read secret/i }));
+            fireEvent.click(screen.getByRole('button', { name: /Reveal value/i }));
+            await waitFor(() => expect(screen.getByText('bg-s3cr3t')).toBeInTheDocument());
+
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            act(() => {
+                document.dispatchEvent(new Event('visibilitychange'));
+            });
+
+            expect(screen.queryByText('bg-s3cr3t')).not.toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /Reveal value/i })).toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+        });
     });
 });

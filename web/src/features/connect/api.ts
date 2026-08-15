@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { connectApi } from '../../services/connect';
+import { SENSITIVE_GC_TIME } from '../../lib/queryClient';
 
 // Keyorix Connect data hooks (ADR-043). Listing connectors is a cached query;
 // reading a federated secret is a mutation (an explicit, audited action — not
@@ -17,6 +18,9 @@ export const useConnectors = () =>
 export const useReadFederatedSecret = () =>
     useMutation({
         mutationFn: ({ connector, ref }: { connector: string; ref: string }) => connectApi.readSecret(connector, ref),
+        // G28: the response carries decrypted plaintext — don't let react-query's
+        // MutationCache retain it for the default 5 minutes after unmount.
+        gcTime: SENSITIVE_GC_TIME,
     });
 
 // Per-reference RBAC grants (ADR-045). The list is gated server-side by roles.read;

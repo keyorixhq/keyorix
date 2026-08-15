@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
+import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
 import { MachineTokensPanel } from '../MachineTokensPanel';
+import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
 
 const issueMutate = vi.fn();
 const revokeMutate = vi.fn();
@@ -180,5 +181,57 @@ describe('MachineTokensPanel', () => {
 
         expect(confirmSpy).toHaveBeenCalledTimes(1);
         expect(revokeMutate).toHaveBeenCalledWith(11, expect.anything());
+    });
+
+    // G28: the one-time token must not linger indefinitely with no explicit close.
+    describe('auto-clear (G28)', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('auto-closes the token modal after the idle timeout elapses, without an explicit close', async () => {
+            issueMutate.mockImplementation((_vars, opts) => {
+                opts.onSuccess({
+                    token: 'kx_machine_idle_secret',
+                    id: 100,
+                    prefix: 'kx_machine_idle',
+                    classification: '',
+                });
+            });
+            vi.useFakeTimers();
+
+            render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+            fireEvent.change(screen.getByPlaceholderText('Token name…'), { target: { value: 'idle-test' } });
+            fireEvent.click(screen.getByRole('button', { name: /issue token/i }));
+            expect(screen.getByText('kx_machine_idle_secret')).toBeInTheDocument();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(DEFAULT_SENSITIVE_IDLE_MS);
+            });
+
+            expect(screen.queryByText('kx_machine_idle_secret')).not.toBeInTheDocument();
+            expect(screen.queryByText('Machine token issued')).not.toBeInTheDocument();
+        });
+
+        it('auto-closes the token modal when the tab is backgrounded, without an explicit close', () => {
+            issueMutate.mockImplementation((_vars, opts) => {
+                opts.onSuccess({ token: 'kx_machine_bg_secret', id: 101, prefix: 'kx_machine_bg', classification: '' });
+            });
+
+            render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+            fireEvent.change(screen.getByPlaceholderText('Token name…'), { target: { value: 'bg-test' } });
+            fireEvent.click(screen.getByRole('button', { name: /issue token/i }));
+            expect(screen.getByText('kx_machine_bg_secret')).toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            act(() => {
+                document.dispatchEvent(new Event('visibilitychange'));
+            });
+
+            expect(screen.queryByText('kx_machine_bg_secret')).not.toBeInTheDocument();
+            expect(screen.queryByText('Machine token issued')).not.toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+        });
     });
 });

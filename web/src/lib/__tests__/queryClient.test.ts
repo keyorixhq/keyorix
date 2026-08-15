@@ -12,7 +12,7 @@ vi.mock('../../services/groups', () => ({
     groupsApi: { search: vi.fn() },
 }));
 
-import { queryClient, queryKeys, invalidateQueries, prefetchQueries } from '../queryClient';
+import { queryClient, queryKeys, invalidateQueries, prefetchQueries, SENSITIVE_GC_TIME } from '../queryClient';
 import { secretsApi } from '../../services/secrets';
 import { usersApi } from '../../services/users';
 import { groupsApi } from '../../services/groups';
@@ -63,6 +63,23 @@ describe('defaultOptions.mutations', () => {
         const mutationDefaults = queryClient.getDefaultOptions().mutations;
         expect(mutationDefaults?.retry).toBe(1);
         expect(mutationDefaults?.retryDelay).toBe(1000);
+    });
+});
+
+// G28: SENSITIVE_GC_TIME is the documented convention for queries/mutations whose
+// response carries decrypted secret plaintext to opt out of the normal 5-10 minute
+// cache retention (see connect/api.ts, dynamic-secrets/api.ts, etc. for call sites).
+describe('SENSITIVE_GC_TIME (G28)', () => {
+    it('is a short-lived override (0), evicting a sensitive entry as soon as it is unobserved', () => {
+        expect(SENSITIVE_GC_TIME).toBe(0);
+    });
+
+    it('does not lower the normal, non-sensitive query/mutation gcTime defaults', () => {
+        // The blanket default must stay generous for ordinary (non-sensitive)
+        // caching — only call sites that explicitly opt in via SENSITIVE_GC_TIME
+        // should be short-lived.
+        expect(queryClient.getDefaultOptions().queries?.gcTime).toBe(10 * 60 * 1000);
+        expect(queryClient.getDefaultOptions().queries?.gcTime).not.toBe(SENSITIVE_GC_TIME);
     });
 });
 
