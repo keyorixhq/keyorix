@@ -429,6 +429,211 @@ func TestRBACReal_GetUserPermissionsForUser(t *testing.T) {
 	assert.NotContains(t, names, "secrets.write", "an expired time-bound grant confers no permissions")
 }
 
+// --- G84: GetUserPermissionsForUser/GetUserMembershipsForUser must not disclose an
+// arbitrary OTHER user's RBAC state to a caller holding only the group-wide
+// users.read permission (held by nearly every seeded role). Require self, OR
+// roles.read — the same admin-tier gate GetUserRolesForUser already requires for
+// the sibling roles-list view (#141). ---
+
+// A caller holding ONLY users.read (no roles.read, not an admin role) must be
+// refused when requesting a DIFFERENT user's effective permission set.
+func TestRBACReal_GetUserPermissionsForUser_NonAdminCannotReadOtherUser(t *testing.T) {
+	db := openTestDB(t)
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	target := &models.User{Username: "g84-perm-target", Email: "g84-perm-target@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(target).Error)
+	actor := &models.User{Username: "g84-perm-actor", Email: "g84-perm-actor@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(actor).Error)
+
+	readOnlyRole := mustCreateRole(t, db, "g84-perm-users-read-only")
+	usersReadPerm := mustCreatePermission(t, db, "users.read", "users", "read")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: readOnlyRole.ID, PermissionID: usersReadPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actor.ID, RoleID: readOnlyRole.ID}).Error)
+
+	req := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/permissions", target.ID), nil),
+			"id", fmt.Sprintf("%d", target.ID)),
+		actor.ID, "g84-perm-actor")
+	w := httptest.NewRecorder()
+
+	handler.GetUserPermissionsForUser(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "users.read alone must not disclose another user's permission set")
+}
+
+// The SAME shape of actor (users.read only, not admin) reading THEIR OWN
+// permissions must still succeed — the legitimate self-read case must not regress.
+func TestRBACReal_GetUserPermissionsForUser_SelfReadAllowed(t *testing.T) {
+	db := openTestDB(t)
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	actor := &models.User{Username: "g84-perm-self", Email: "g84-perm-self@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(actor).Error)
+	readOnlyRole := mustCreateRole(t, db, "g84-perm-users-read-only-self")
+	usersReadPerm := mustCreatePermission(t, db, "users.read", "users", "read")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: readOnlyRole.ID, PermissionID: usersReadPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actor.ID, RoleID: readOnlyRole.ID}).Error)
+
+	req := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/permissions", actor.ID), nil),
+			"id", fmt.Sprintf("%d", actor.ID)),
+		actor.ID, "g84-perm-self")
+	w := httptest.NewRecorder()
+
+	handler.GetUserPermissionsForUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a user must still be able to read their own effective permissions")
+}
+
+// An actor holding roles.read (granted via an explicit role, NOT the global-admin
+// bypass) — the same tier GetUserRolesForUser requires (#141) — may read another
+// user's permission set. Exercises the permission-grant path distinctly from the
+// admin-role bypass covered below.
+func TestRBACReal_GetUserPermissionsForUser_RolesReadHolderCanReadOtherUser(t *testing.T) {
+	db := openTestDB(t)
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	target := &models.User{Username: "g84-perm-target2", Email: "g84-perm-target2@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(target).Error)
+	actor := &models.User{Username: "g84-perm-auditor", Email: "g84-perm-auditor@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(actor).Error)
+
+	auditorRole := mustCreateRole(t, db, "g84-perm-roles-read")
+	rolesReadPerm := mustCreatePermission(t, db, "roles.read", "roles", "read")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: auditorRole.ID, PermissionID: rolesReadPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actor.ID, RoleID: auditorRole.ID}).Error)
+
+	req := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/permissions", target.ID), nil),
+			"id", fmt.Sprintf("%d", target.ID)),
+		actor.ID, "g84-perm-auditor")
+	w := httptest.NewRecorder()
+
+	handler.GetUserPermissionsForUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a roles.read holder must still be able to inspect another user's effective permissions")
+}
+
+// A global admin (adminRoleNames bypass, same actor shape as openTestDB's seeded
+// UserID 1) may still read another user's permission set — the legitimate
+// admin-read case must not regress.
+func TestRBACReal_GetUserPermissionsForUser_GlobalAdminCanReadOtherUser(t *testing.T) {
+	db := openTestDB(t)
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	target := &models.User{Username: "g84-perm-target3", Email: "g84-perm-target3@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(target).Error)
+
+	req := withUserCtx( // UserID 1, seeded as system_admin by openTestDB
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/permissions", target.ID), nil),
+			"id", fmt.Sprintf("%d", target.ID)))
+	w := httptest.NewRecorder()
+
+	handler.GetUserPermissionsForUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a global admin must still be able to read another user's effective permissions")
+}
+
+// A caller holding ONLY users.read must be refused when requesting a DIFFERENT
+// user's project memberships (same disclosure class as permissions above).
+func TestRBACReal_GetUserMembershipsForUser_NonAdminCannotReadOtherUser(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.ProjectMembership{}))
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	target := &models.User{Username: "g84-mem-target", Email: "g84-mem-target@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(target).Error)
+	actor := &models.User{Username: "g84-mem-actor", Email: "g84-mem-actor@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(actor).Error)
+
+	readOnlyRole := mustCreateRole(t, db, "g84-mem-users-read-only")
+	usersReadPerm := mustCreatePermission(t, db, "users.read", "users", "read")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: readOnlyRole.ID, PermissionID: usersReadPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actor.ID, RoleID: readOnlyRole.ID}).Error)
+
+	req := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/memberships", target.ID), nil),
+			"id", fmt.Sprintf("%d", target.ID)),
+		actor.ID, "g84-mem-actor")
+	w := httptest.NewRecorder()
+
+	handler.GetUserMembershipsForUser(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "users.read alone must not disclose another user's project memberships")
+}
+
+// The SAME shape of actor reading THEIR OWN memberships must still succeed.
+func TestRBACReal_GetUserMembershipsForUser_SelfReadAllowed(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.ProjectMembership{}))
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	actor := &models.User{Username: "g84-mem-self", Email: "g84-mem-self@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(actor).Error)
+	readOnlyRole := mustCreateRole(t, db, "g84-mem-users-read-only-self")
+	usersReadPerm := mustCreatePermission(t, db, "users.read", "users", "read")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: readOnlyRole.ID, PermissionID: usersReadPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actor.ID, RoleID: readOnlyRole.ID}).Error)
+
+	req := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/memberships", actor.ID), nil),
+			"id", fmt.Sprintf("%d", actor.ID)),
+		actor.ID, "g84-mem-self")
+	w := httptest.NewRecorder()
+
+	handler.GetUserMembershipsForUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a user must still be able to read their own project memberships")
+}
+
+// An actor holding roles.read (explicit grant, not the admin-role bypass) may read
+// another user's project memberships.
+func TestRBACReal_GetUserMembershipsForUser_RolesReadHolderCanReadOtherUser(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.ProjectMembership{}))
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	target := &models.User{Username: "g84-mem-target2", Email: "g84-mem-target2@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(target).Error)
+	actor := &models.User{Username: "g84-mem-auditor", Email: "g84-mem-auditor@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(actor).Error)
+
+	auditorRole := mustCreateRole(t, db, "g84-mem-roles-read")
+	rolesReadPerm := mustCreatePermission(t, db, "roles.read", "roles", "read")
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: auditorRole.ID, PermissionID: rolesReadPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actor.ID, RoleID: auditorRole.ID}).Error)
+
+	req := withUserCtxID(
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/memberships", target.ID), nil),
+			"id", fmt.Sprintf("%d", target.ID)),
+		actor.ID, "g84-mem-auditor")
+	w := httptest.NewRecorder()
+
+	handler.GetUserMembershipsForUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a roles.read holder must still be able to inspect another user's project memberships")
+}
+
+// A global admin may still read another user's project memberships.
+func TestRBACReal_GetUserMembershipsForUser_GlobalAdminCanReadOtherUser(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.ProjectMembership{}))
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	target := &models.User{Username: "g84-mem-target3", Email: "g84-mem-target3@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(target).Error)
+
+	req := withUserCtx( // UserID 1, seeded as system_admin by openTestDB
+		withChiParam(httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/memberships", target.ID), nil),
+			"id", fmt.Sprintf("%d", target.ID)))
+	w := httptest.NewRecorder()
+
+	handler.GetUserMembershipsForUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "a global admin must still be able to read another user's project memberships")
+}
+
 func TestRBACReal_Unauthorized(t *testing.T) {
 	handler, _, _ := setupRBACTestWithDB(t)
 

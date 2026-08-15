@@ -521,8 +521,13 @@ func TestGetUserMembershipsForUser_BadID_S6(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// G84: reading a DIFFERENT user's memberships now requires self, admin, or
+// roles.read — use an admin-seeded core (isolated from the shared S4 core, which
+// has no RBAC tables seeded for UserID 1) so the "happy path" for an admin
+// inspecting another user's memberships is what's actually exercised here.
 func TestGetUserMembershipsForUser_HappyPath_S6(t *testing.T) {
-	h := newUsersRolesHandlerS6(t)
+	cs, _ := freshCoreS12WithAdmin(t)
+	h := NewUsersRolesHandler(cs)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.GetUserMembershipsForUser(w, req)

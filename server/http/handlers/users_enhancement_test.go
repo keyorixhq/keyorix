@@ -105,7 +105,12 @@ func TestGetUserMembershipsHandler(t *testing.T) {
 	require.NoError(t, db.Where("name = ?", "payments").First(&proj).Error)
 	require.NoError(t, db.Create(&models.ProjectMembership{ProjectID: proj.ID, UserID: 42, Role: "project_developer", State: "active"}).Error)
 
-	req := withChiParam(withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/users/42/memberships", nil)), "id", "42")
+	// G84: reading a DIFFERENT user's memberships now requires self, admin, or
+	// roles.read; this DB has no RBAC tables migrated (setupUserEnhancementTest
+	// only migrates User/ProjectMembership/Project), so exercise the self-read
+	// path — the caller IS user 42 — which is the case this test's data setup
+	// actually models (a user's own memberships, resolved with the project name).
+	req := withChiParam(withUserCtxID(httptest.NewRequest(http.MethodGet, "/api/v1/users/42/memberships", nil), 42, "g84-self-42"), "id", "42")
 	w := httptest.NewRecorder()
 	rh.GetUserMembershipsForUser(w, req)
 
