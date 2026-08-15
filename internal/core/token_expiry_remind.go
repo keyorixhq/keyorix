@@ -9,7 +9,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -76,13 +75,18 @@ func (k *KeyorixCore) checkPATExpiry(ctx context.Context, now time.Time, cutoff 
 		}
 		severity := tokenExpirySeverity(p.ExpiresAt, now)
 		title, msg := patExpiryMessage(p.Name, p.ExpiresAt)
+		link := patExpiryLink(p.ID)
 
-		// #G21: no DB backstop for this check-then-act — see read_quota_alerts.go's
-		// CheckReadQuotas for why the existing #488 reminder-dedup index can't
-		// simply be extended to cover this type (per-PAT-name dedup via message
-		// content, not a structured column). Deferred; worst case is a duplicate
-		// notification, not a security/data-integrity issue.
-		existing := k.unreadPATExpiryReminder(ctx, p.UserID, p.Name)
+		// #G21/#G22: no DB backstop for this check-then-act — see
+		// read_quota_alerts.go's CheckReadQuotas for why the existing #488
+		// reminder-dedup index can't simply be extended to cover this type.
+		// Deferred; worst case is a duplicate notification, not a
+		// security/data-integrity issue. Dedup itself is keyed on the token's
+		// stable ID (encoded in Link via patExpiryLink), not its display name —
+		// two PATs owned by the same user can share a Name, and matching on
+		// name would let one token's standing reminder silently mask a
+		// distinct token's reminder (#G22).
+		existing := k.unreadPATExpiryReminder(ctx, p.UserID, link)
 		if existing != nil {
 			if severity <= existing.Severity {
 				continue
@@ -92,7 +96,7 @@ func (k *KeyorixCore) checkPATExpiry(ctx context.Context, now time.Time, cutoff 
 			}
 			continue
 		}
-		k.notifyWithSeverity(ctx, p.UserID, NotificationPATExpiry, title, msg, nil, "/profile/tokens", severity)
+		k.notifyWithSeverity(ctx, p.UserID, NotificationPATExpiry, title, msg, nil, link, severity)
 		bumpTokenExpiryCount(result, severity, true)
 	}
 	return nil
@@ -100,11 +104,15 @@ func (k *KeyorixCore) checkPATExpiry(ctx context.Context, now time.Time, cutoff 
 
 // notifyMachineCredAdmins delivers or upgrades a machine-cred expiry notification
 // to each admin. It counts the credential only once per credential (not per admin).
+// Dedup is keyed on the credential's stable ID (encoded in link, see
+// machineCredExpiryLink), not its display name — two machine credentials can
+// share a Name, and matching on name would let one credential's standing
+// reminder silently mask a distinct credential's reminder (#G22).
 // Returns true when a bump was recorded for result.
-func (k *KeyorixCore) notifyMachineCredAdmins(ctx context.Context, credName string, title, msg string, severity models.NotificationSeverity, admins []uint, result *TokenExpiryCheckResult) {
+func (k *KeyorixCore) notifyMachineCredAdmins(ctx context.Context, link string, title, msg string, severity models.NotificationSeverity, admins []uint, result *TokenExpiryCheckResult) {
 	counted := false
 	for _, uid := range admins {
-		existing := k.unreadMachineCredExpiryReminder(ctx, uid, credName)
+		existing := k.unreadMachineCredExpiryReminder(ctx, uid, link)
 		if existing != nil {
 			if severity <= existing.Severity {
 				continue
@@ -115,7 +123,7 @@ func (k *KeyorixCore) notifyMachineCredAdmins(ctx context.Context, credName stri
 			}
 			continue
 		}
-		k.notifyWithSeverity(ctx, uid, NotificationMachineCredExpiry, title, msg, nil, "/system/machines", severity)
+		k.notifyWithSeverity(ctx, uid, NotificationMachineCredExpiry, title, msg, nil, link, severity)
 		if !counted {
 			bumpTokenExpiryCount(result, severity, false)
 			counted = true
@@ -145,7 +153,7 @@ func (k *KeyorixCore) checkMachineCredExpiry(ctx context.Context, now time.Time,
 		}
 		severity := tokenExpirySeverity(c.ExpiresAt, now)
 		title, msg := machineCredExpiryMessage(c.Name, c.ExpiresAt)
-		k.notifyMachineCredAdmins(ctx, c.Name, title, msg, severity, admins, result)
+		k.notifyMachineCredAdmins(ctx, machineCredExpiryLink(c.ID), title, msg, severity, admins, result)
 	}
 	return nil
 }
@@ -193,16 +201,32 @@ func machineCredExpiryMessage(credName string, expiresAt *time.Time) (string, st
 		fmt.Sprintf("Machine credential %q expires on %s.", credName, date)
 }
 
-// unreadPATExpiryReminder returns an existing unread PAT-expiry reminder for the
-// given user and token name, or nil if none exists.
-func (k *KeyorixCore) unreadPATExpiryReminder(ctx context.Context, userID uint, tokenName string) *models.Notification {
+// patExpiryLink builds the stable per-token dedup key (and in-app navigation
+// target) for a PAT expiry reminder. Keyed on the token's ID — not its
+// display Name — because two PATs belonging to the same user are not
+// required to have distinct names; matching on name would let one token's
+// standing reminder silently suppress a distinct token's reminder (#G22).
+func patExpiryLink(tokenID uint) string {
+	return fmt.Sprintf("/profile/tokens?token=%d", tokenID)
+}
+
+// machineCredExpiryLink builds the stable per-credential dedup key (and
+// in-app navigation target) for a machine-credential expiry reminder. Keyed
+// on the credential's ID — not its display Name — for the same reason as
+// patExpiryLink (#G22).
+func machineCredExpiryLink(credID uint) string {
+	return fmt.Sprintf("/system/machines?cred=%d", credID)
+}
+
+// unreadPATExpiryReminder returns an existing unread PAT-expiry reminder for
+// the given user matching link (see patExpiryLink), or nil if none exists.
+func (k *KeyorixCore) unreadPATExpiryReminder(ctx context.Context, userID uint, link string) *models.Notification {
 	notes, err := k.storage.ListNotifications(ctx, userID, true, 200)
 	if err != nil {
 		return nil
 	}
-	needle := fmt.Sprintf("%q", tokenName)
 	for _, n := range notes {
-		if n.Type == NotificationPATExpiry && strings.Contains(n.Message, needle) {
+		if n.Type == NotificationPATExpiry && n.Link == link {
 			return n
 		}
 	}
@@ -210,15 +234,15 @@ func (k *KeyorixCore) unreadPATExpiryReminder(ctx context.Context, userID uint, 
 }
 
 // unreadMachineCredExpiryReminder returns an existing unread machine-cred-expiry
-// reminder for the given admin user and credential name, or nil if none exists.
-func (k *KeyorixCore) unreadMachineCredExpiryReminder(ctx context.Context, userID uint, credName string) *models.Notification {
+// reminder for the given admin user matching link (see machineCredExpiryLink),
+// or nil if none exists.
+func (k *KeyorixCore) unreadMachineCredExpiryReminder(ctx context.Context, userID uint, link string) *models.Notification {
 	notes, err := k.storage.ListNotifications(ctx, userID, true, 200)
 	if err != nil {
 		return nil
 	}
-	needle := fmt.Sprintf("%q", credName)
 	for _, n := range notes {
-		if n.Type == NotificationMachineCredExpiry && strings.Contains(n.Message, needle) {
+		if n.Type == NotificationMachineCredExpiry && n.Link == link {
 			return n
 		}
 	}
