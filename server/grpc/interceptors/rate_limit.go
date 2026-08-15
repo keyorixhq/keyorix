@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 )
 
 // GRPCRateLimitInterceptor returns a unary server interceptor that enforces a
@@ -96,6 +97,14 @@ func (rl *grpcRateLimiter) sweepLocked() {
 
 // grpcRateLimitKey identifies the request's budget bucket, mirroring the HTTP
 // rateLimitKey: authenticated user or machine identity first, source IP as fallback.
+//
+// #G20: p.Addr.String() previously went straight into the key INCLUDING the
+// ephemeral client TCP port — every new connection from the same unauthenticated
+// caller (a trivial, free action for any real client) got a fresh port and
+// therefore a fresh bucket, defeating the fallback IP budget entirely instead
+// of merely being imprecise. core.CanonicalIP strips the port and normalizes
+// the remaining IP to one canonical textual form, matching the HTTP-side fix
+// in internal/core/rate_limit.go and server/http/handlers' clientIP.
 func grpcRateLimitKey(ctx context.Context) string {
 	if u := GetUserFromGRPCContext(ctx); u != nil {
 		if u.MachineIdentityID != 0 {
@@ -106,7 +115,7 @@ func grpcRateLimitKey(ctx context.Context) string {
 		}
 	}
 	if p, ok := peer.FromContext(ctx); ok {
-		return fmt.Sprintf("ip:%s", p.Addr.String())
+		return fmt.Sprintf("ip:%s", core.CanonicalIP(p.Addr.String()))
 	}
 	return "ip:unknown"
 }

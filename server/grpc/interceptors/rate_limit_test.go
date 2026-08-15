@@ -128,6 +128,27 @@ func TestGRPCRateLimitInterceptor_FallsBackToIPForUnauthenticated(t *testing.T) 
 	assert.NoError(t, err, "no UserContext and no peer must still resolve to a real key (\"ip:unknown\"), not panic")
 }
 
+// TestGRPCRateLimitInterceptor_IPFallbackIgnoresEphemeralPort is #G20:
+// grpcRateLimitKey previously keyed the unauthenticated IP-fallback bucket on
+// peer.Addr.String() directly, which INCLUDES the ephemeral client TCP port.
+// Reconnecting — a free, trivial action for any real caller — got a fresh
+// port and therefore a fresh bucket every time, defeating the fallback budget
+// entirely rather than merely being imprecise about it.
+func TestGRPCRateLimitInterceptor_IPFallbackIgnoresEphemeralPort(t *testing.T) {
+	interceptor := GRPCRateLimitInterceptor(config.RateLimitConfig{Enabled: true, RequestsPerSecond: 1, Burst: 1})
+
+	firstConn := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.5"), Port: 5555}})
+	_, err := interceptor(firstConn, nil, nil, rlHandler())
+	require.NoError(t, err, "the first connection's request must pass")
+
+	// A "reconnect" from the SAME IP but a DIFFERENT ephemeral port must share
+	// the same bucket, not get a fresh burst.
+	reconnected := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.5"), Port: 60001}})
+	_, err = interceptor(reconnected, nil, nil, rlHandler())
+	assert.Error(t, err, "a reconnect from the same IP on a new ephemeral port must still be limited")
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+}
+
 // sweepLocked evicts only entries idle past grpcPrincipalLimiterIdleTTL (10
 // minutes), not everything and not nothing -- constructed directly against
 // the unexported type (white-box) since driving real 10-minute idleness

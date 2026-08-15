@@ -105,10 +105,7 @@ type initSystemRequestBody struct {
 // Accepts username + password, returns a session token on success.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Rate limit by IP — max 10 failed attempts per 15 minutes
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
+	ip := clientIP(r)
 	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many login attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return
@@ -241,10 +238,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
+	ip := clientIP(r)
 	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many requests. Try again later.", http.StatusTooManyRequests, nil)
 		return
@@ -318,7 +312,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	middleware.ClearCSRFCookie(w, h.tlsEnabled)
 
 	// Audit log (non-blocking)
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	goSafe(func() { h.coreService.LogAuthLogout(context.Background(), logoutUserID, logoutUsername, ip, ua) }) // #nosec G118
 
 	sendSuccess(w, nil, "Logged out successfully")
@@ -327,10 +321,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // RefreshToken handles POST /auth/refresh.
 // Issues a new session token and invalidates the old one.
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
+	ip := clientIP(r)
 	// Rate-limit failed refresh attempts by IP, mirroring Login and VerifyMFA.
 	// /auth/refresh is unauthenticated so an attacker can flood it to brute-force
 	// session tokens or DoS the DB with unlimited queries (#r124).
@@ -606,10 +597,7 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 // many reset requests — and therefore how many outbound emails — a single
 // source can trigger, independent of which email(s) it targets (#249).
 func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
+	ip := clientIP(r)
 	if h.coreService.IsPasswordResetRateLimited(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many password reset requests. Try again later.", http.StatusTooManyRequests, nil)
 		return
