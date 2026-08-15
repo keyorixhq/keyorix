@@ -63,7 +63,18 @@ func NewAuditService(coreService *core.KeyorixCore) *AuditGRPCService {
 // concurrent StreamAuditLogs slots, refusing a new stream once the cap is reached.
 // The returned release func MUST be deferred by the caller to free the slot.
 func (s *AuditGRPCService) acquireStreamSlot(actor *interceptors.UserContext) (func(), error) {
-	key := fmt.Sprintf("%s:%d", actor.ActorKind(), actor.PrincipalID())
+	// #G05: during impersonation, actor.PrincipalID() resolves to the TARGET
+	// (the session this stream authenticated with), not the admin actually
+	// driving the client. Keying on the target lets an admin bypass their own
+	// per-principal cap by impersonating N different targets for 3 streams
+	// each, and cross-contaminates the cap with whatever streams the target
+	// separately holds open under their own, unrelated session. Key on the
+	// admin's own id instead so the cap bounds the real acting principal.
+	principalID := actor.PrincipalID()
+	if actor.ImpersonatedBy != nil {
+		principalID = *actor.ImpersonatedBy
+	}
+	key := fmt.Sprintf("%s:%d", actor.ActorKind(), principalID)
 	s.streamCountsMu.Lock()
 	defer s.streamCountsMu.Unlock()
 	if s.streamCounts[key] >= auditStreamMaxPerPrincipal {
@@ -91,6 +102,15 @@ func (s *AuditGRPCService) acquireStreamSlot(actor *interceptors.UserContext) (f
 // context does not retain — the account- and role-level checks close the practical
 // admin-action revocation paths (suspend, deprovision, delete, remove role) #108
 // describes.
+//
+// #G05: the checks above run against actor.UserID, which during impersonation is
+// the TARGET (the id the stream authenticated with) — never the initiating admin.
+// Without an explicit admin-side check here, MT-007's ceiling re-verification
+// (ValidateSessionToken, the ordinary per-request path) is never reached for a
+// gRPC stream's own dedicated re-auth cadence, so an admin demoted/suspended, or
+// whose authority drops below the target's, mid-stream keeps receiving the live
+// audit feed until the stream's natural end. ReauthorizeImpersonation runs the
+// identical MT-007 check this ticker's HTTP counterpart already applies.
 func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *interceptors.UserContext) error {
 	if err := authorizeGlobal(ctx, s.core, actor, permAuditRead); err != nil {
 		return err
@@ -105,6 +125,16 @@ func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *in
 	u, err := s.core.Storage().GetUser(ctx, actor.UserID)
 	if err != nil || !u.IsActive || core.AccountLoginBlocked(u.AccountState) {
 		return status.Error(codes.PermissionDenied, "account is no longer active")
+	}
+	if actor.ImpersonatedBy != nil {
+		if err := s.core.ReauthorizeImpersonation(ctx, *actor.ImpersonatedBy, actor.UserID); err != nil {
+			// Fixed safe string, not err.Error(): matches this function's own
+			// convention two lines above. ReauthorizeImpersonation's errors are
+			// themselves fixed strings today, but one wraps cachedImpersonationCeiling's
+			// error with %w — a raw passthrough here would let that wrapped detail
+			// change out from under this boundary without anyone noticing.
+			return status.Error(codes.PermissionDenied, "impersonation session no longer authorized")
+		}
 	}
 	return nil
 }

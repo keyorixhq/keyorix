@@ -30,7 +30,16 @@ func mockNoACL(ms *MockStorage, secretID, userID uint) {
 		Return((*models.SecretACL)(nil), fmt.Errorf("not found"))
 }
 
-// mockAllowACL registers a GetSecretACL expectation that returns an ACL with the given perms.
+// mockAllowLiveMember is the fixed project ID mockAllowACL stubs GetSecret /
+// IsProjectMember with — its value is arbitrary, these tests don't exercise
+// project-scoping itself, only that a live member's grant is honored.
+const mockAllowLiveMember = uint(1)
+
+// mockAllowACL registers a GetSecretACL expectation that returns an ACL with
+// the given perms, plus the #G13 live-membership-recheck stubs
+// (GetSecret/IsProjectMember, both returning "still a member") every
+// authorized-grant test needs now that aclGrantsPermission re-verifies
+// project membership before honoring a grant.
 func mockAllowACL(ms *MockStorage, secretID, userID uint, perms ...string) {
 	encoded, _ := EncodeSecretACLPerms(perms)
 	ms.On("GetSecretACL", mock.Anything, secretID, userID).
@@ -39,6 +48,10 @@ func mockAllowACL(ms *MockStorage, secretID, userID uint, perms ...string) {
 			UserID:      userID,
 			Permissions: encoded,
 		}, nil)
+	ms.On("GetSecret", mock.Anything, secretID).
+		Return(&models.SecretNode{ID: secretID, ProjectID: mockAllowLiveMember}, nil).Maybe()
+	ms.On("IsProjectMember", mock.Anything, userID, mockAllowLiveMember).
+		Return(true, nil).Maybe()
 }
 
 // --- HasSecretACL tests ---

@@ -385,6 +385,7 @@ func TestStreamAuthInterceptor_S22_BlocksImpersonatedCredentialMinting(t *testin
 	target := uint(8101)
 	h.CreateTestUser(t, "stream-imp-admin", admin)
 	h.CreateTestUser(t, "stream-imp-target", target)
+	h.AssignUserRole(t, admin, 1, nil) // super_admin — #G05 ceiling re-check
 	expiry := time.Now().Add(time.Hour)
 	_, err := h.Storage.CreateSession(context.Background(), &models.Session{
 		UserID: target, SessionToken: "stream-imp-token", ExpiresAt: &expiry, ImpersonatedBy: &admin,
@@ -412,6 +413,7 @@ func TestStreamAuthInterceptor_S22_NonCredentialMintingMethodAllowedWhileImperso
 	target := uint(8201)
 	h.CreateTestUser(t, "stream-imp-admin2", admin)
 	h.CreateTestUser(t, "stream-imp-target2", target)
+	h.AssignUserRole(t, admin, 1, nil) // super_admin — #G05 ceiling re-check
 	expiry := time.Now().Add(time.Hour)
 	_, err := h.Storage.CreateSession(context.Background(), &models.Session{
 		UserID: target, SessionToken: "stream-imp-ok-token", ExpiresAt: &expiry, ImpersonatedBy: &admin,

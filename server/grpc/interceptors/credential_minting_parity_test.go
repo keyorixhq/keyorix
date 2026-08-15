@@ -67,6 +67,18 @@ func TestCredentialMintingMethods_CoversNamingConvention(t *testing.T) {
 	assert.Contains(t, found, pb.MachineIdentityService_IssueMachineToken_FullMethodName)
 }
 
+// TestCredentialMintingMethods_IncludesActivateBreakGlass is the #G07 direct
+// regression: ActivateBreakGlass mints a durable, time-bound role grant
+// attributed to whoever the session currently acts as, but its method name
+// ("ActivateBreakGlass") doesn't match credentialMintingNamePattern (it
+// doesn't end in "Token"), so the naming-convention test above can't catch
+// this specific gap — it was missing from credentialMintingMethods despite
+// IssueMachineToken (the same class of action) already being blocked.
+func TestCredentialMintingMethods_IncludesActivateBreakGlass(t *testing.T) {
+	assert.True(t, credentialMintingMethods[pb.BreakGlassService_ActivateBreakGlass_FullMethodName],
+		"ActivateBreakGlass mints a durable role grant and must be blocked while impersonating, the same as IssueMachineToken")
+}
+
 // TestCredentialMintingMethods_NoUnknownEntries is the converse check: every entry
 // in credentialMintingMethods must correspond to an RPC that actually exists across
 // the registered services, so a stale/typo'd entry (e.g. after a method rename)

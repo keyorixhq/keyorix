@@ -919,13 +919,15 @@ func TestStartHTTPServer_CancelledContext(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 
 	// startHTTPServer blocks on <-ctx.Done() which returns immediately.
 	done := make(chan error, 1)
 	go func() {
-		done <- startHTTPServer(ctx, cfg)
+		done <- startHTTPServer(ctx, cfg, coreService)
 	}()
 
 	select {
@@ -992,12 +994,14 @@ func TestStartGRPCServer_CancelledContext(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 
 	done := make(chan error, 1)
 	go func() {
-		done <- startGRPCServer(ctx, cfg)
+		done <- startGRPCServer(ctx, cfg, coreService)
 	}()
 
 	select {
@@ -1008,31 +1012,21 @@ func TestStartGRPCServer_CancelledContext(t *testing.T) {
 	}
 }
 
-// ── startHTTPServer — with optional scheduler features ───────────────────────
+// ── startSchedulers — with optional scheduler features ───────────────────────
 
-func TestStartHTTPServer_WithSchedulers(t *testing.T) {
+// #G12: this used to run through startHTTPServer with a pre-cancelled context
+// (the schedulers wired up synchronously before the HTTP listener even bound);
+// scheduler wiring moved to startSchedulers, so it's exercised directly.
+func TestStartSchedulers_WithSchedulers(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest2.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		AnomalyAlerts: config.AnomalyAlertsConfig{
 			Enabled: true,
@@ -1093,47 +1087,26 @@ func TestStartHTTPServer_WithSchedulers(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with schedulers did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — anomaly BusinessHours bad timezone ─────────────────────
 
-func TestStartHTTPServer_AnomalyBadTimezone(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_AnomalyBadTimezone(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest3.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		AnomalyAlerts: config.AnomalyAlertsConfig{
 			BusinessHours: config.AnomalyBusinessHoursConfig{
@@ -1142,47 +1115,26 @@ func TestStartHTTPServer_AnomalyBadTimezone(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with bad timezone did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — license expiry scheduler ────────────────────────────────
 
-func TestStartHTTPServer_LicenseExpiryScheduler(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_LicenseExpiryScheduler(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest4.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		LicenseExpiry: config.LicenseExpiryConfig{
 			Enabled:  true,
@@ -1191,20 +1143,11 @@ func TestStartHTTPServer_LicenseExpiryScheduler(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with LicenseExpiry did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── initializeCoreService — SIEM audit forwarding ─────────────────────────────
@@ -1428,30 +1371,18 @@ func TestBuildSSOProviders_SAMLOnly(t *testing.T) {
 
 // ── startHTTPServer — data-retention enabled but unconfigured ─────────────────
 
-func TestStartHTTPServer_DataRetention_Unconfigured(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_DataRetention_Unconfigured(t *testing.T) {
 	// DataRetention.Enabled with no windows → logs a warning, no scheduler started.
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_dr.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		DataRetention: config.DataRetentionConfig{
 			Enabled: true,
@@ -1459,48 +1390,27 @@ func TestStartHTTPServer_DataRetention_Unconfigured(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with unconfigured DataRetention did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — evidence delivery (no target) ───────────────────────────
 
-func TestStartHTTPServer_EvidenceDelivery_NoTarget(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_EvidenceDelivery_NoTarget(t *testing.T) {
 	// EvidenceDelivery.Enabled but no target → logs a warning, no scheduler started.
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_ev.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		EvidenceDelivery: config.EvidenceDeliveryConfig{
 			Enabled: true,
@@ -1508,141 +1418,78 @@ func TestStartHTTPServer_EvidenceDelivery_NoTarget(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with EvidenceDelivery no-target did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — audit checkpoints disabled ──────────────────────────────
 
-func TestStartHTTPServer_AuditCheckpointsDisabled(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_AuditCheckpointsDisabled(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
 
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_ckpt.db"},
 		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
-		},
 		AuditCheckpoints: config.AuditCheckpointsConfig{
 			Disabled: true,
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with AuditCheckpoints.Disabled did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — anomaly alerts enabled ──────────────────────────────────
 
-func TestStartHTTPServer_AnomalyAlertsEnabled(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_AnomalyAlertsEnabled(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
 
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_anom.db"},
 		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
-		},
 		AnomalyAlerts: config.AnomalyAlertsConfig{
 			Enabled: true, // enables the alerting branch
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with AnomalyAlerts.Enabled did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — purge scheduler enabled ─────────────────────────────────
 
-func TestStartHTTPServer_PurgeScheduler(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_PurgeScheduler(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_purge.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		Purge: config.PurgeConfig{
 			Enabled:  true,
@@ -1650,47 +1497,26 @@ func TestStartHTTPServer_PurgeScheduler(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with Purge scheduler did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — data-retention configured scheduler ────────────────────
 
-func TestStartHTTPServer_DataRetention_Configured(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_DataRetention_Configured(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_dr2.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		DataRetention: config.DataRetentionConfig{
 			Enabled:           true,
@@ -1698,47 +1524,26 @@ func TestStartHTTPServer_DataRetention_Configured(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with configured DataRetention did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — JIT access expiry + dynamic secrets enabled ─────────────
 
-func TestStartHTTPServer_JITAndDynamicSecrets(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_JITAndDynamicSecrets(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_jit.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		JITAccessExpiry: config.JITAccessExpiryConfig{
 			Enabled:  true,
@@ -1749,20 +1554,11 @@ func TestStartHTTPServer_JITAndDynamicSecrets(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with JIT+DynamicSecrets did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── initializeCoreService — auto rotation enabled ─────────────────────────────
@@ -1783,29 +1579,17 @@ func TestInitializeCoreService_AutoRotation_Enabled(t *testing.T) {
 
 // ── startHTTPServer — auto rotation + recertification ────────────────────────
 
-func TestStartHTTPServer_AutoRotationAndRecertification(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_AutoRotationAndRecertification(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_rot.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		AutoRotation: config.AutoRotationConfig{
 			Enabled:  true,
@@ -1823,20 +1607,11 @@ func TestStartHTTPServer_AutoRotationAndRecertification(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with AutoRotation+Recertification did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── initializeCoreService — rotation backends no-allowed-refs for all types ──
@@ -2056,7 +1831,8 @@ func testSelfSignedCACert(t *testing.T) []byte {
 // schedule and execute their first closure invocation. This covers the closure
 // bodies inside the scheduler callbacks (anomaly detection, retention purge,
 // rotation reminders, etc.) that require the scheduler goroutine to actually run.
-func TestStartHTTPServer_ShortLive(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_ShortLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping live server test in short mode")
 	}
@@ -2066,31 +1842,18 @@ func TestStartHTTPServer_ShortLive(t *testing.T) {
 	t.Chdir(dir)
 
 	// The evidence-delivery scheduler fires at 1ms and may write a new file
-	// after startHTTPServer returns but before t.TempDir() cleanup runs,
-	// causing "directory not empty". Use a separate dir with ignored cleanup.
+	// after the test returns but before t.TempDir() cleanup runs, causing
+	// "directory not empty". Use a separate dir with ignored cleanup.
 	evidenceDir, errMkdir := os.MkdirTemp("", "kx-evidence-test-*")
 	if errMkdir != nil {
 		t.Fatalf("MkdirTemp: %v", errMkdir)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(evidenceDir) })
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_live.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		// Enable all schedulers so their closure bodies execute on the first tick.
 		AnomalyAlerts: config.AnomalyAlertsConfig{
@@ -2154,26 +1917,20 @@ func TestStartHTTPServer_ShortLive(t *testing.T) {
 		},
 	}
 
-	// Use a short timeout so goroutines execute and the server shuts down on its own.
+	coreService := mustInitCoreService(t, cfg)
+
+	// Use a short timeout so the scheduler goroutines' own <-ctx.Done() exits fire.
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
+	startSchedulers(ctx, cfg, coreService)
 
 	// 11 schedulers all fire on this 200ms window; under a loaded CI runner
-	// running the rest of the suite in parallel, waiting for all of them to
-	// settle and the server to shut down can take longer than a tight ceiling
-	// allows (observed flake: keyorixhq/keyorix#1257, #1258, #1263) even
-	// though the goroutine itself completes in well under 1s locally.
-	select {
-	case err := <-done:
-		_ = err
-	case <-time.After(10 * time.Second):
-		t.Fatal("startHTTPServer did not return within 10s")
-	}
+	// running the rest of the suite in parallel, their first ticks (each
+	// wrapped in a WithSchedulerLock DB round-trip) can take longer than a
+	// tight ceiling allows (observed flake: keyorixhq/keyorix#1257, #1258,
+	// #1263) even though each tick completes in well under 1s locally — give
+	// them a generous window to settle before the test (and its DB) tears down.
+	time.Sleep(2 * time.Second)
 }
 
 // ── loadCertPool — success path ───────────────────────────────────────────────
@@ -2270,29 +2027,17 @@ func TestEnforceKeyFilePermissions_GRPCTLSKey(t *testing.T) {
 // TestStartHTTPServer_CertExpiryAndRotationReminder covers the cert-expiry
 // (lines 1036–1053) and rotation-reminder (lines 993–1009) scheduler branches
 // within startHTTPServer.
-func TestStartHTTPServer_CertExpiryAndRotationReminder(t *testing.T) {
+// #G12: moved to startSchedulers.
+func TestStartSchedulers_CertExpiryAndRotationReminder(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_certrr.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		CertificateExpiry: config.CertificateExpiryConfig{
 			Enabled:  true,
@@ -2310,49 +2055,27 @@ func TestStartHTTPServer_CertExpiryAndRotationReminder(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with CertExpiry+RotationReminder did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — anomaly ML config enabled ───────────────────────────────
 
-// TestStartHTTPServer_AnomalyML covers the ML-config path inside the anomaly
-// scheduler block (lines 869–877) within startHTTPServer.
-func TestStartHTTPServer_AnomalyML(t *testing.T) {
+// TestStartSchedulers_AnomalyML covers the ML-config path inside the anomaly
+// scheduler block. #G12: moved to startSchedulers.
+func TestStartSchedulers_AnomalyML(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_aml.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		AnomalyAlerts: config.AnomalyAlertsConfig{
 			Enabled:  true,
@@ -2367,49 +2090,28 @@ func TestStartHTTPServer_AnomalyML(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with AnomalyML did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — evidence delivery with configured target ────────────────
 
-// TestStartHTTPServer_EvidenceDelivery_WithTarget covers the evidence-delivery
-// scheduler branch when a valid webhook target is configured (lines 1153–1180).
-func TestStartHTTPServer_EvidenceDelivery_WithTarget(t *testing.T) {
+// TestStartSchedulers_EvidenceDelivery_WithTarget covers the evidence-delivery
+// scheduler branch when a valid webhook target is configured. #G12: moved to
+// startSchedulers.
+func TestStartSchedulers_EvidenceDelivery_WithTarget(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_evtgt.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		EvidenceDelivery: config.EvidenceDeliveryConfig{
 			Enabled:  true,
@@ -2422,51 +2124,28 @@ func TestStartHTTPServer_EvidenceDelivery_WithTarget(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with EvidenceDelivery+target did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startHTTPServer — read-quota alert scheduler ──────────────────────────────
 
-// TestStartHTTPServer_ReadQuotaAlerts verifies that startHTTPServer wires the
+// TestStartSchedulers_ReadQuotaAlerts verifies that startSchedulers wires the
 // read-quota alert background scheduler when ReadQuotaAlerts.Enabled is true.
-// A pre-cancelled context makes the function return immediately after
-// registering the scheduler, keeping the test instant.
-func TestStartHTTPServer_ReadQuotaAlerts(t *testing.T) {
+// #G12: moved out of startHTTPServer.
+func TestStartSchedulers_ReadQuotaAlerts(t *testing.T) {
 	initI18n(t)
 
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_rqa.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		ReadQuotaAlerts: config.ReadQuotaAlertsConfig{
 			Enabled:  true,
@@ -2474,18 +2153,9 @@ func TestStartHTTPServer_ReadQuotaAlerts(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- startHTTPServer(ctx, cfg)
-	}()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with ReadQuotaAlerts did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }

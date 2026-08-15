@@ -64,6 +64,45 @@ func TestAcquireStreamSlot_ResourceExhausted_S21b(t *testing.T) {
 	}
 }
 
+// TestAcquireStreamSlot_ImpersonationCapsPerAdmin_S21b is the #G05 regression
+// (detection_idea: "concurrent impersonation of N different targets by one
+// admin is capped like N single-identity sessions"): an admin impersonating
+// auditStreamMaxPerPrincipal DIFFERENT targets must hit the SAME cap as if
+// they held all those streams under their own identity — the slot key must
+// resolve to the ADMIN's id, not each target's, during impersonation.
+func TestAcquireStreamSlot_ImpersonationCapsPerAdmin_S21b(t *testing.T) {
+	svc := newAuditService(t)
+	admin := uint(1)
+
+	var releases []func()
+	for i := 0; i < auditStreamMaxPerPrincipal; i++ {
+		target := uint(100 + i) // a DIFFERENT target each time
+		actor := &interceptors.UserContext{UserID: target, ImpersonatedBy: &admin}
+		release, err := svc.acquireStreamSlot(actor)
+		require.NoError(t, err, "slot %d (impersonating target %d) should be acquirable", i+1, target)
+		releases = append(releases, release)
+	}
+
+	// A (max+1)th target, still impersonated by the SAME admin, must be refused —
+	// proving the cap is keyed on the admin, not on each distinct target's id
+	// (which would never collide and so never trip the cap at all).
+	oneMoreTarget := uint(999)
+	actor := &interceptors.UserContext{UserID: oneMoreTarget, ImpersonatedBy: &admin}
+	_, err := svc.acquireStreamSlot(actor)
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	// The admin's own, non-impersonated identity shares the same key — also capped.
+	ownActor := &interceptors.UserContext{UserID: admin}
+	_, err = svc.acquireStreamSlot(ownActor)
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	for _, r := range releases {
+		r()
+	}
+}
+
 // TestAcquireStreamSlot_ReleasedSlotReacquirable_S21b confirms that after
 // releasing a slot the counter drops back and the next acquire succeeds.
 func TestAcquireStreamSlot_ReleasedSlotReacquirable_S21b(t *testing.T) {

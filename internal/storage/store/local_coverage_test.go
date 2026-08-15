@@ -406,6 +406,7 @@ func TestPurgeDeletedUsersBefore_Cov_PurgesWithImpersonation(t *testing.T) {
 		&models.ShareRecord{},
 		&models.PersonalAccessToken{},
 		&models.Session{},
+		&models.SecretACL{},
 	)
 	ctx := context.Background()
 	now := time.Now()

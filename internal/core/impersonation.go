@@ -45,6 +45,15 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if patRestrictionFromContext(ctx) != nil {
 		return nil, nil, fmt.Errorf("a restricted access token may not start impersonation")
 	}
+	// #G07: the check above only catches a RESTRICTED PAT — patRestrictionFromContext
+	// returns nil for BOTH a session and an UNRESTRICTED PAT (or a machine token),
+	// which look identical from that helper's perspective (see its own doc comment:
+	// "or nil for sessions / unrestricted PATs"). Impersonation is an interactive
+	// admin action, not something an API credential should ever be able to trigger,
+	// restricted or not — sessionAuthFromContext distinguishes the two.
+	if !sessionAuthFromContext(ctx) {
+		return nil, nil, fmt.Errorf("impersonation requires an interactive session, not an API credential")
+	}
 	admin, err := c.storage.GetUser(ctx, adminID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("admin not found")
@@ -75,12 +84,13 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if err := c.requireEqualOrGreaterAdminAuthority(ctx, adminID, targetID, "impersonate"); err != nil {
 		return nil, nil, err
 	}
-	// The ceiling check above runs once at impersonation start. If the target
-	// user's roles are elevated above the impersonator's DURING an active
-	// impersonation session (up to 1h TTL), the impersonator retains the
-	// already-issued session — the check is not re-evaluated per-request.
-	// The auth cache TTL (30s) bounds the propagation delay for role changes,
-	// but the ceiling is not continuously enforced.
+	// The ceiling check above runs once here at start, but is NOT only a
+	// point-in-time check (MT-007): ValidateSessionToken re-runs
+	// ReauthorizeImpersonation on every request against this session, and
+	// StreamAuditLogs' dedicated re-auth ticker (#108, audit_service.go) does
+	// the same for long-lived gRPC streams — both catch either side's authority
+	// changing (the target elevated, or the admin demoted/suspended) DURING an
+	// active session, cached at ceilingCacheTTL (60s) to bound the added cost.
 	token, err := generateSecureToken()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate session token: %w", err)
@@ -135,6 +145,31 @@ func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) error 
 	c.writeImpersonationEvent(ctx, EventImpersonationEnd, adminID, targetID, session.IPAddress, desc, diff)
 
 	return c.storage.DeleteSession(ctx, session.ID)
+}
+
+// ReauthorizeImpersonation re-verifies an ACTIVE impersonation session's admin
+// side: that adminID's account is still active, and that adminID still holds
+// equal-or-greater authority than targetID (MT-007/#G05) — the same ceiling
+// StartImpersonation checked at issuance, re-run for a long-lived credential
+// that authenticates once and is not re-validated by the ordinary per-request
+// path. ValidateSessionToken calls this on every request against an
+// impersonation session; StreamAuditLogs' dedicated re-auth ticker
+// (server/grpc/services/audit_service.go, #108) calls it too, since a gRPC
+// stream's own auth happens once at open. Cached via cachedImpersonationCeiling
+// (IMP-001, 60s) so neither caller repeats the underlying DB reads on every
+// invocation.
+func (c *KeyorixCore) ReauthorizeImpersonation(ctx context.Context, adminID, targetID uint) error {
+	admin, err := c.storage.GetUser(ctx, adminID)
+	if err != nil {
+		return fmt.Errorf("impersonating account not found")
+	}
+	if !admin.IsActive || AccountLoginBlocked(admin.AccountState) {
+		return fmt.Errorf("impersonating account is not active")
+	}
+	if err := c.cachedImpersonationCeiling(ctx, adminID, targetID); err != nil {
+		return fmt.Errorf("impersonation ceiling exceeded — target's authority now exceeds impersonator's: %w", err)
+	}
+	return nil
 }
 
 // SessionImpersonator returns the initiating admin ID if token belongs to an

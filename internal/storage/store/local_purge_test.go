@@ -19,7 +19,7 @@ func newPurgeTestStore(t *testing.T) *LocalStorage {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Project{}, &models.Environment{},
 		&models.UserRole{}, &models.GroupRole{}, &models.Group{}, &models.UserGroup{}, &models.ShareRecord{},
-		&models.PersonalAccessToken{}, &models.Session{}))
+		&models.PersonalAccessToken{}, &models.Session{}, &models.SecretACL{}))
 	return NewLocalStorage(db)
 }
 
@@ -87,6 +87,35 @@ func TestPurgeDeletedUsersBefore_CascadesDependentRows(t *testing.T) {
 	assert.Zero(t, count, "PersonalAccessToken must be purged with the user")
 	require.NoError(t, ls.db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&count).Error)
 	assert.Zero(t, count, "Session must be purged with the user")
+}
+
+// TestPurgeDeletedUsersBefore_CascadesSecretACL pins #G13: SecretACL has no
+// deleted_at/FK of its own, so purging a user who was still the grantee of a
+// per-secret ACL left that row permanently orphaned, referencing a user ID
+// nothing else ever destroys. A grant belonging to a DIFFERENT, live user
+// must survive.
+func TestPurgeDeletedUsersBefore_CascadesSecretACL(t *testing.T) {
+	ls := newPurgeTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	old := now.AddDate(0, 0, -40)
+	cutoff := now.AddDate(0, 0, -30)
+
+	require.NoError(t, ls.db.Create(&models.User{ID: 1, Username: "ghost", Email: "g@x"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{ID: 2, Username: "live", Email: "l@x"}).Error)
+	require.NoError(t, ls.db.Create(&models.SecretACL{SecretID: 1, UserID: 1, Permissions: `["secrets.read"]`, GrantedBy: 2}).Error)
+	require.NoError(t, ls.db.Create(&models.SecretACL{SecretID: 1, UserID: 2, Permissions: `["secrets.read"]`, GrantedBy: 2}).Error)
+	require.NoError(t, ls.db.Unscoped().Model(&models.User{}).Where("id = ?", 1).Update("deleted_at", old).Error)
+
+	n, err := ls.PurgeDeletedUsersBefore(ctx, cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+
+	var count int64
+	require.NoError(t, ls.db.Model(&models.SecretACL{}).Where("user_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count, "SecretACL grant held by the purged user must be purged with them")
+	require.NoError(t, ls.db.Model(&models.SecretACL{}).Where("user_id = ?", 2).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "a live user's SecretACL grant must survive")
 }
 
 func TestPurgeDeletedProjectsAndEnvironments(t *testing.T) {
@@ -157,7 +186,7 @@ func TestPurgeDeletedUsersBefore_NothingToPurge(t *testing.T) {
 func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}, &models.SecretACL{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 	now := time.Now()
@@ -189,6 +218,37 @@ func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
 	assert.Equal(t, int64(1), liveVersions)
 }
 
+// TestPurgeDeletedSecretsBefore_CascadesSecretACL pins #G13's other half:
+// SecretACL grants ON a purged secret have no deleted_at/FK of their own
+// either, mirroring the orphaning gap closed for the grantee side by
+// TestPurgeDeletedUsersBefore_CascadesSecretACL. A grant on a different,
+// still-live secret must survive.
+func TestPurgeDeletedSecretsBefore_CascadesSecretACL(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}, &models.SecretACL{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "old"}).Error)
+	require.NoError(t, db.Create(&models.SecretACL{SecretID: 1, UserID: 1, Permissions: `["secrets.read"]`, GrantedBy: 2}).Error)
+	require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).Where("id = ?", 1).Update("deleted_at", now.AddDate(0, 0, -40)).Error)
+
+	require.NoError(t, db.Create(&models.SecretNode{ID: 2, Name: "live"}).Error)
+	require.NoError(t, db.Create(&models.SecretACL{SecretID: 2, UserID: 1, Permissions: `["secrets.read"]`, GrantedBy: 2}).Error)
+
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, now.AddDate(0, 0, -30))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+
+	var count int64
+	require.NoError(t, db.Model(&models.SecretACL{}).Where("secret_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count, "SecretACL grant on the purged secret must be purged with it")
+	require.NoError(t, db.Model(&models.SecretACL{}).Where("secret_id = ?", 2).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "a grant on a live secret must survive")
+}
+
 // TestPurgeDeletedSecretsBefore_RespectsRetentionOverride is #G43:
 // SetSecretRetentionOverride's per-secret window was never actually consulted
 // by the purge sweep — every secret purged strictly on the deployment-wide
@@ -199,7 +259,7 @@ func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
 func TestPurgeDeletedSecretsBefore_RespectsRetentionOverride(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}, &models.SecretACL{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 	now := time.Now()

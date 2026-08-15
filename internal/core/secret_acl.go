@@ -195,17 +195,50 @@ func (c *KeyorixCore) HasSecretACL(ctx context.Context, userID, secretID uint, p
 	return false, nil
 }
 
-// aclGrantsPermission checks if userID has an ACL grant on nodeID covering perm.
+// aclGrantsPermission checks if userID has an ACL grant on nodeID covering
+// perm, AND that userID is still a live member of the grant's project.
 func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID uint, perm string) (bool, error) {
 	acl, err := c.storage.GetSecretACL(ctx, nodeID, userID)
 	if err != nil {
 		if isNotFound(err) {
 			return false, nil
 		}
+		// #G13: a backend that doesn't support SecretACL at all (RemoteStorage,
+		// before this fix only DeleteSecretACLsByUserAndProject was proxied)
+		// must not turn EVERY secret-access check into a hard failure — mirrors
+		// HasSecretACL's own handling of GetSecretAncestors returning the same
+		// sentinel: "this backend doesn't support the feature" degrades to "no
+		// grant", falling through to project-scope RBAC, not a fail-closed error.
+		if errors.Is(err, storage.ErrUnsupportedByBackend) {
+			return false, nil
+		}
 		return false, err
 	}
 	perms := DecodeSecretACLPerms(acl.Permissions)
-	return slices.Contains(perms, perm), nil
+	if !slices.Contains(perms, perm) {
+		return false, nil
+	}
+	// #G13: an ACL grant only remains valid while its grantee is still a member
+	// of the secret's project. Without this, a user removed from the project
+	// (offboarded) retains per-secret access indefinitely via this row alone —
+	// AuthorizeSecret checks ACL grants before the project-scope RBAC fallback
+	// and short-circuits on the first match, so the project-level removal
+	// provides no protection by itself. RemoveProjectMember's
+	// DeleteSecretACLsByUserAndProject call proactively deletes these rows on
+	// removal, but that's cleanup-on-write; this is the corresponding
+	// authorization-time guard, so a gap in that cleanup path (a backend that
+	// doesn't support it, a code path that bypasses RemoveProjectMember, a
+	// TOCTOU window) can't leave a stale grant silently exploitable in the
+	// meantime. Fails closed: a lookup error denies the grant.
+	node, err := c.storage.GetSecret(ctx, nodeID)
+	if err != nil {
+		return false, err
+	}
+	isMember, err := c.storage.IsProjectMember(ctx, userID, node.ProjectID)
+	if err != nil {
+		return false, err
+	}
+	return isMember, nil
 }
 
 // isNotFound reports whether err looks like a "not found" storage error.
