@@ -1009,6 +1009,15 @@ type Storage interface {
 	// and the last-install-administrator invariant before removing one or deleting
 	// the group outright.
 	ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]RoleAssignment, error)
+	// ListAllGroupRoleGrants returns every group→role grant row in the deployment,
+	// including scoped (project/environment) and global (project_id=0) grants, and
+	// including already-expired time-bound grants — the group-grant counterpart to
+	// ListAllUserRoleGrants. Unlike GetGroupRoles/GetGroupRoleGrants (role only, no
+	// scope) or ListGroupRoleAssignments (scope, but silently drops expired rows),
+	// this is the one call that carries a group grant's role, scope, AND expiry
+	// together, unfiltered — what GetPermissionBaseline needs to report a
+	// group-inherited grant's real scope and flag (not hide) an expired one (#G25).
+	ListAllGroupRoleGrants(ctx context.Context) ([]*models.GroupRole, error)
 	AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
 	// AssignRoleWithExpiry.

@@ -2193,6 +2193,19 @@ func (m *MockStorage) ListAllUserRoleGrants(ctx context.Context) ([]*models.User
 	return nil, nil
 }
 
+func (m *MockStorage) ListAllGroupRoleGrants(ctx context.Context) ([]*models.GroupRole, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "ListAllGroupRoleGrants" {
+			args := m.Called(ctx)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.GroupRole), args.Error(1)
+		}
+	}
+	return nil, nil
+}
+
 func (m *MockStorage) ListExpiringUserRoles(ctx context.Context, cutoff time.Time) ([]models.UserRole, error) {
 	args := m.Called(ctx, cutoff)
 	if args.Get(0) == nil {

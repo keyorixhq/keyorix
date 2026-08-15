@@ -322,6 +322,15 @@ func (rs *RemoteStorage) ListAllUserRoleGrants(_ context.Context) ([]*models.Use
 	return nil, remoteUnsupported("ListAllUserRoleGrants")
 }
 
+// ListAllGroupRoleGrants is not supported in remote storage, mirroring
+// ListAllUserRoleGrants: this is a raw, unscoped grant-table dump used by
+// GetPermissionBaseline (a hub-side compliance export), which itself already
+// depends on ListAllUserRoleGrants and so is already unreachable under
+// storage.type: remote.
+func (rs *RemoteStorage) ListAllGroupRoleGrants(_ context.Context) ([]*models.GroupRole, error) {
+	return nil, remoteUnsupported("ListAllGroupRoleGrants")
+}
+
 // GetUserPermissions retrieves all permissions for a user via remote API.
 func (rs *RemoteStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
 	path := fmt.Sprintf("/api/v1/users/%d/permissions", userID)
