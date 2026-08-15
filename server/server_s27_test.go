@@ -3,11 +3,9 @@
 // startup_validation_test.go, transport_tls_test.go, and verify_encryption_wiring_test.go.
 //
 // Covered here:
-//   - startHTTPServer: initializeCoreService failure (bad WebAuthn config) returns error
 //   - startHTTPServer: TLS-enabled path with bad cert → createTLSConfig error
 //   - startHTTPServer: HTTP listener bind failure (port already in use)
-//   - startHTTPServer: anomaly off-hours with OffHoursStart/OffHoursEnd != 0 (but Timezone empty)
-//   - startGRPCServer: initializeCoreService failure (bad config) returns error
+//   - startSchedulers: anomaly off-hours with OffHoursStart/OffHoursEnd != 0 (but Timezone empty)
 //   - startGRPCServer: NewServer failure with invalid gRPC TLS config
 //   - startGRPCServer: net.Listen failure (invalid port string)
 //   - initializeCoreService: login lockout disabled (warning log path)
@@ -19,6 +17,13 @@
 //   - buildSSOProviders: JWKS resolver error (invalid jwks_uri after successful discovery)
 //   - runStartupValidation: enabled path with warnings (errors collection logs)
 //   - resolveOutboundIP: fallback path (127.0.0.1) is exercised indirectly via conn failure
+//
+// #G12: startHTTPServer/startGRPCServer no longer call initializeCoreService
+// themselves (that now happens once in main(), shared by both) — every test
+// below that needs a live server now constructs its own coreService via
+// mustInitCoreService first and passes it in, and coverage for the background
+// schedulers (moved out of startHTTPServer into startSchedulers) is exercised
+// by calling startSchedulers directly instead.
 package main
 
 import (
@@ -36,43 +41,91 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// ── startHTTPServer: initializeCoreService failure returns error ──────────────
+// mustInitCoreService constructs a coreService for a test that needs one to
+// pass to startHTTPServer/startGRPCServer/startSchedulers directly (#G12
+// moved that construction out of those functions and into main(), shared).
+// Fails the test immediately if cfg itself doesn't produce a valid core
+// service — callers testing an initializeCoreService failure path should call
+// initializeCoreService directly instead (see server_s4_test.go /
+// server_s22_test.go / server_s23_test.go for that convention).
+func mustInitCoreService(t *testing.T, cfg *config.Config) *core.KeyorixCore {
+	t.Helper()
+	coreService, _, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService: %v", err)
+	}
+	return coreService
+}
 
-// TestStartHTTPServer_S27_CoreServiceInitFailure verifies that
-// startHTTPServer propagates an initializeCoreService error without
-// hanging. We use a WebAuthn config with an empty RPID (which fails
-// initializeCoreService) to trigger the error path.
-func TestStartHTTPServer_S27_CoreServiceInitFailure(t *testing.T) {
+// TestInitializeCoreService_DualConstruction_RacesExclusiveDEKLock is the #G12
+// regression implementing the review's own detection_idea: two independent
+// initializeCoreService calls for the SAME encrypted deployment must not both
+// succeed — proving why main() now constructs the core service exactly once
+// and shares it between startHTTPServer/startGRPCServer, instead of each
+// calling initializeCoreService (and therefore AcquireExclusiveKeyLock)
+// independently the way the pre-fix code did.
+//
+// encryption.Service.AcquireExclusiveKeyLock is a non-blocking OS advisory
+// flock (internal/encryption/service_rotation.go) held for "the server's
+// whole lifetime" — so a second, independent construction against the same
+// DEK path fails immediately with a lock-acquisition error rather than
+// blocking, which is exactly what let this bug through: whichever of
+// startHTTPServer/startGRPCServer's goroutine ran initializeCoreService
+// second would non-deterministically fail to start at all.
+func TestInitializeCoreService_DualConstruction_RacesExclusiveDEKLock(t *testing.T) {
 	initI18n(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "test-g12-dual-construction")
 
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
-			Database: config.DatabaseConfig{Path: "httptest_s27_fail.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    "0",
+			Database: config.DatabaseConfig{Path: "g12_dual.db"},
+			Encryption: config.EncryptionConfig{
+				Enabled:  true,
+				DEKPath:  "dek_g12.json",
+				SaltPath: "salt_g12.bin",
 			},
-		},
-		// WebAuthn with empty RPID causes initializeCoreService to return an error.
-		WebAuthn: config.WebAuthnConfig{
-			Enabled: true,
-			RPID:    "", // invalid — fails initializeCoreService
 		},
 	}
 
-	ctx := context.Background()
-	err := startHTTPServer(ctx, cfg)
+	// First construction (what main() now does exactly once) succeeds and
+	// holds the exclusive DEK lock for its lifetime.
+	_, encSvc1, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("first initializeCoreService: %v", err)
+	}
+	if encSvc1 == nil {
+		t.Fatal("expected a non-nil encryption.Service for an encrypted deployment")
+	}
+
+	// A second, independent construction against the SAME DEK path — exactly
+	// what the pre-#G12 startGRPCServer did in parallel with startHTTPServer's
+	// own call — must fail: the lock is already held and exclusive.
+	_, encSvc2, err := initializeCoreService(cfg)
 	if err == nil {
-		t.Fatal("startHTTPServer must return an error when initializeCoreService fails")
+		if encSvc2 != nil {
+			encSvc2.Shutdown()
+		}
+		t.Fatal("a second independent initializeCoreService call for the same encrypted deployment must fail to acquire the exclusive DEK lock while the first is still held")
+	}
+
+	// Releasing the first frees the lock for a subsequent (not concurrent)
+	// construction — confirming the failure above was specifically the lock
+	// contention, not some other config problem.
+	encSvc1.Shutdown()
+	_, encSvc3, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService after the first Shutdown() must succeed (lock released): %v", err)
+	}
+	if encSvc3 != nil {
+		encSvc3.Shutdown()
 	}
 }
 
@@ -105,10 +158,12 @@ func TestStartHTTPServer_S27_TLSBadCert(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel to avoid hanging on success
 
-	err := startHTTPServer(ctx, cfg)
+	err := startHTTPServer(ctx, cfg, coreService)
 	if err == nil {
 		t.Fatal("startHTTPServer must return an error for missing TLS cert/key files")
 	}
@@ -137,41 +192,33 @@ func TestStartHTTPServer_S27_ListenerBindFailure(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	// Do NOT cancel ctx — startHTTPServer must fail at bind before reaching <-ctx.Done().
 	ctx := context.Background()
-	err := startHTTPServer(ctx, cfg)
+	err := startHTTPServer(ctx, cfg, coreService)
 	if err == nil {
 		t.Fatal("startHTTPServer must return an error when the port is invalid/out-of-range")
 	}
 }
 
-// ── startHTTPServer: anomaly off-hours with non-zero start/end ───────────────
+// ── startSchedulers: anomaly off-hours with non-zero start/end ───────────────
 
-// TestStartHTTPServer_S27_AnomalyOffHoursNumeric exercises the anomaly
+// TestStartSchedulers_S27_AnomalyOffHoursNumeric exercises the anomaly
 // off-hours branch where OffHoursStart != 0 but Timezone is empty. The empty
-// timezone triggers the tzLabel = "UTC" fallback before calling SetBusinessHours.
-func TestStartHTTPServer_S27_AnomalyOffHoursNumeric(t *testing.T) {
+// timezone triggers the tzLabel = "UTC" fallback before calling
+// SetBusinessHours. #G12: this branch lives in startSchedulers now (moved out
+// of startHTTPServer), so it's exercised directly rather than via an HTTP
+// listener.
+func TestStartSchedulers_S27_AnomalyOffHoursNumeric(t *testing.T) {
 	initI18n(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
 
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_s27_hours.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		AnomalyAlerts: config.AnomalyAlertsConfig{
 			BusinessHours: config.AnomalyBusinessHoursConfig{
@@ -181,53 +228,15 @@ func TestStartHTTPServer_S27_AnomalyOffHoursNumeric(t *testing.T) {
 			},
 		},
 	}
+	coreService := mustInitCoreService(t, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() { done <- startHTTPServer(ctx, cfg) }()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with numeric off-hours did not return")
-	}
-}
-
-// ── startGRPCServer: initializeCoreService failure ───────────────────────────
-
-// TestStartGRPCServer_S27_CoreServiceInitFailure verifies that
-// startGRPCServer propagates an initializeCoreService error.
-func TestStartGRPCServer_S27_CoreServiceInitFailure(t *testing.T) {
-	initI18n(t)
-	dir := t.TempDir()
-	t.Chdir(dir)
-
-	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			Type:     "local",
-			Database: config.DatabaseConfig{Path: "grpctest_s27_fail.db"},
-		},
-		Server: config.ServerConfig{
-			GRPC: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    "0",
-			},
-		},
-		// WebAuthn with empty RPID causes initializeCoreService to return an error.
-		WebAuthn: config.WebAuthnConfig{
-			Enabled: true,
-			RPID:    "",
-		},
-	}
-
-	ctx := context.Background()
-	err := startGRPCServer(ctx, cfg)
-	if err == nil {
-		t.Fatal("startGRPCServer must return an error when initializeCoreService fails")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	// startSchedulers only wires up the scheduler goroutines and returns
+	// immediately; give the anomaly detector's first (immediate) tick a moment
+	// to run so the off-hours branch actually executes before the test exits.
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── startGRPCServer: invalid port string → net.Listen failure ────────────────
@@ -253,10 +262,12 @@ func TestStartGRPCServer_S27_InvalidPort(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := startGRPCServer(ctx, cfg)
+	err := startGRPCServer(ctx, cfg, coreService)
 	if err == nil {
 		t.Fatal("startGRPCServer must return an error for an invalid port")
 	}
@@ -289,10 +300,12 @@ func TestStartGRPCServer_S27_TLSBadCert(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := startGRPCServer(ctx, cfg)
+	err := startGRPCServer(ctx, cfg, coreService)
 	if err == nil {
 		t.Fatal("startGRPCServer must return an error when gRPC TLS cert/key files are missing")
 	}
@@ -559,33 +572,21 @@ func TestInitializeCoreService_S27_SIEMInitError(t *testing.T) {
 	_ = err
 }
 
-// ── startHTTPServer: anomaly business hours with OffHoursEnd != 0 ─────────────
+// ── startSchedulers: anomaly business hours with OffHoursEnd != 0 ─────────────
 
-// TestStartHTTPServer_S27_AnomalyOffHoursEndOnly exercises the anomaly
+// TestStartSchedulers_S27_AnomalyOffHoursEndOnly exercises the anomaly
 // off-hours branch triggered when OffHoursEnd != 0 (but OffHoursStart == 0).
 // This covers the condition `bh.OffHoursEnd != 0` part of the composite check.
-func TestStartHTTPServer_S27_AnomalyOffHoursEndOnly(t *testing.T) {
+// #G12: this branch lives in startSchedulers now.
+func TestStartSchedulers_S27_AnomalyOffHoursEndOnly(t *testing.T) {
 	initI18n(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
 
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: "httptest_s27_offhours.db"},
-		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    itoa(port),
-			},
 		},
 		AnomalyAlerts: config.AnomalyAlertsConfig{
 			BusinessHours: config.AnomalyBusinessHoursConfig{
@@ -595,19 +596,12 @@ func TestStartHTTPServer_S27_AnomalyOffHoursEndOnly(t *testing.T) {
 			},
 		},
 	}
+	coreService := mustInitCoreService(t, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	done := make(chan error, 1)
-	go func() { done <- startHTTPServer(ctx, cfg) }()
-
-	select {
-	case err := <-done:
-		_ = err
-	case <-context.Background().Done():
-		t.Fatal("startHTTPServer with OffHoursEnd set did not return")
-	}
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	time.Sleep(50 * time.Millisecond)
 }
 
 // ── initializeCoreService: evidence multi-target (switch default case) ────────
@@ -765,11 +759,13 @@ func TestStartHTTPServer_S27_AutoCertTLS(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel so the server exits immediately after <-ctx.Done()
 
 	done := make(chan error, 1)
-	go func() { done <- startHTTPServer(ctx, cfg) }()
+	go func() { done <- startHTTPServer(ctx, cfg, coreService) }()
 
 	select {
 	case err := <-done:
@@ -951,21 +947,19 @@ func TestDiscoverOIDC_S27_InvalidJSON(t *testing.T) {
 	}
 }
 
-// ── startHTTPServer: encryption enabled — defer encSvc.Shutdown + audit checkpoint ──
+// ── startSchedulers: encryption enabled — audit checkpoint scheduler ─────────
 
-// TestStartHTTPServer_S27_WithEncryption runs startHTTPServer with storage
-// encryption enabled. This covers two uncovered branches:
-//   - line 837: `if encSvc != nil { defer encSvc.Shutdown() }` — the defer
-//     is registered and fires when startHTTPServer returns.
-//   - lines 1194–1209: the audit-checkpoint switch `default:` case — when
-//     encryption is active, AuditCheckpointsAvailable() returns true and
-//     the audit-checkpoint scheduler is started. The goroutine fires
-//     immediately (runScheduler calls tick() once before the first tick),
-//     covering the WriteAuditCheckpoint callback body.
-//
-// A context timer (300 ms) gives the scheduler goroutine time to run its
-// first tick before the server shuts down.
-func TestStartHTTPServer_S27_WithEncryption(t *testing.T) {
+// TestStartSchedulers_S27_WithEncryption runs startSchedulers with storage
+// encryption enabled, covering the audit-checkpoint switch `default:` case:
+// when encryption is active, AuditCheckpointsAvailable() returns true and the
+// audit-checkpoint scheduler is started. The goroutine fires immediately
+// (runScheduler calls tick() once before the first tick), covering the
+// WriteAuditCheckpoint callback body. #G12: both the audit-checkpoint
+// scheduler AND encSvc's lifecycle moved out of startHTTPServer (into
+// startSchedulers and main() respectively) — encSvc.Shutdown() itself is
+// exercised directly here rather than via startHTTPServer's now-removed
+// defer.
+func TestStartSchedulers_S27_WithEncryption(t *testing.T) {
 	initI18n(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -981,21 +975,22 @@ func TestStartHTTPServer_S27_WithEncryption(t *testing.T) {
 				SaltPath: "salt_s27.bin",
 			},
 		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    "0", // OS picks a free port
-			},
-		},
+	}
+
+	coreService, encSvc, err := initializeCoreService(cfg)
+	if err != nil {
+		t.Fatalf("initializeCoreService: %v", err)
+	}
+	if encSvc != nil {
+		defer encSvc.Shutdown()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(300*time.Millisecond, cancel)
-
-	// startHTTPServer blocks until ctx is cancelled (300 ms).
-	// During that window the audit-checkpoint goroutine runs once.
-	// When startHTTPServer returns, defer encSvc.Shutdown() fires.
-	_ = startHTTPServer(ctx, cfg)
+	defer cancel()
+	startSchedulers(ctx, cfg, coreService)
+	// The audit-checkpoint goroutine's first (immediate) tick needs a moment
+	// to run before the test exits.
+	time.Sleep(300 * time.Millisecond)
 }
 
 // ── startHTTPServer: SCIM enabled with weak token → NewRouter error ──────────
@@ -1026,8 +1021,10 @@ func TestStartHTTPServer_S27_SCIMWeakToken(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	// startHTTPServer must return an error because NewRouter rejects the weak SCIM token.
-	err := startHTTPServer(context.Background(), cfg)
+	err := startHTTPServer(context.Background(), cfg, coreService)
 	if err == nil {
 		t.Fatal("expected startHTTPServer to return an error for a weak SCIM token")
 	}
@@ -1064,9 +1061,11 @@ func TestStartHTTPServer_S27_AutoCertBadCipher(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(200*time.Millisecond, cancel)
-	_ = startHTTPServer(ctx, cfg)
+	_ = startHTTPServer(ctx, cfg, coreService)
 }
 
 // ── startHTTPServer: non-AutoCert TLS with valid cert → ServeTLS path ────────
@@ -1102,9 +1101,11 @@ func TestStartHTTPServer_S27_TLSNonAutoCert(t *testing.T) {
 		},
 	}
 
+	coreService := mustInitCoreService(t, cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(200*time.Millisecond, cancel)
-	_ = startHTTPServer(ctx, cfg)
+	_ = startHTTPServer(ctx, cfg, coreService)
 }
 
 // ── buildSSOProviders: SAML provider where ssoCompleteURL rejects ACSURL ─────
@@ -1162,19 +1163,19 @@ func TestBuildSSOProviders_S27_SAMLInvalidACSURL(t *testing.T) {
 	}
 }
 
-// ── startHTTPServer: active legal hold blocks the retention-purge scheduler ──
+// ── startSchedulers: active legal hold blocks the retention-purge scheduler ──
 
-// TestStartHTTPServer_S27_LegalHoldBlocksPurge exercises the legalHoldBlocks
-// closure's "active hold" branch (lines 915-918) inside startHTTPServer. A
-// legal hold is inserted directly into the storage layer (bypassing the RBAC
-// check in PlaceLegalHold) by calling initializeCoreService once to set up the
-// DB schema and insert the hold, then running startHTTPServer against the same
-// DB with the retention-purge scheduler enabled.
+// TestStartSchedulers_S27_LegalHoldBlocksPurge exercises the legalHoldBlocks
+// closure's "active hold" branch inside startSchedulers. A legal hold is
+// inserted directly into the storage layer (bypassing the RBAC check in
+// PlaceLegalHold), then startSchedulers runs against the same DB with the
+// retention-purge scheduler enabled.
 //
 // On its first tick (immediate, per runScheduler) the purge scheduler calls
 // legalHoldBlocks, which finds an active hold and returns true, logging the
-// "skipped: a legal hold is active" message — covering lines 915.13,918.4.
-func TestStartHTTPServer_S27_LegalHoldBlocksPurge(t *testing.T) {
+// "skipped: a legal hold is active" message. #G12: this scheduler moved out
+// of startHTTPServer into startSchedulers.
+func TestStartSchedulers_S27_LegalHoldBlocksPurge(t *testing.T) {
 	initI18n(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -1185,25 +1186,19 @@ func TestStartHTTPServer_S27_LegalHoldBlocksPurge(t *testing.T) {
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: dbPath},
 		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    "0",
-			},
-		},
 		Purge: config.PurgeConfig{
 			Enabled:  true,
 			Schedule: "1ms",
 		},
 	}
 
-	// Phase 1: initialise the DB schema and insert a legal hold via direct storage access.
-	coreService1, _, err := initializeCoreService(cfg)
+	// Initialise the DB schema and insert a legal hold via direct storage access.
+	coreService, _, err := initializeCoreService(cfg)
 	if err != nil {
-		t.Fatalf("initializeCoreService (phase 1): %v", err)
+		t.Fatalf("initializeCoreService: %v", err)
 	}
 	ctx1 := context.Background()
-	_, err = coreService1.Storage().CreateLegalHold(ctx1, &models.LegalHold{
+	_, err = coreService.Storage().CreateLegalHold(ctx1, &models.LegalHold{
 		Reason:   "s27-test-hold",
 		PlacedAt: time.Now(),
 		Released: false,
@@ -1212,24 +1207,24 @@ func TestStartHTTPServer_S27_LegalHoldBlocksPurge(t *testing.T) {
 		t.Fatalf("CreateLegalHold: %v", err)
 	}
 
-	// Phase 2: run the HTTP server against the same DB. The purge scheduler fires
-	// immediately (interval=1ms), finds the active legal hold, and logs the skip message,
-	// covering lines 915-918.
+	// Run the schedulers against the same DB. The purge scheduler fires
+	// immediately (interval=1ms), finds the active legal hold, and logs the
+	// skip message.
 	ctx2, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(200*time.Millisecond, cancel)
-	_ = startHTTPServer(ctx2, cfg)
+	defer cancel()
+	startSchedulers(ctx2, cfg, coreService)
+	time.Sleep(200 * time.Millisecond)
 }
 
-// ── startHTTPServer: JIT access-expiry sweep removes expired role grants ─────
+// ── startSchedulers: JIT access-expiry sweep removes expired role grants ─────
 
-// TestStartHTTPServer_S27_JITExpiredGrantSwept exercises the JIT expiry
-// scheduler's "n > 0" log branch (lines 1233-1235) by pre-populating the DB
-// with an expired role grant. initializeCoreService sets up the schema; then a
-// role and a user are inserted directly and the role is assigned to the user
-// with a past expiry time. When startHTTPServer runs with
-// JITAccessExpiry.Enabled, the sweeper fires immediately (interval=1ms) and
-// RemoveExpiredRoleGrants returns n=1, triggering the log.Printf call.
-func TestStartHTTPServer_S27_JITExpiredGrantSwept(t *testing.T) {
+// TestStartSchedulers_S27_JITExpiredGrantSwept exercises the JIT expiry
+// scheduler's "n > 0" log branch by pre-populating the DB with an expired
+// role grant, then running startSchedulers with JITAccessExpiry.Enabled: the
+// sweeper fires immediately (interval=1ms) and RemoveExpiredRoleGrants
+// returns n=1, triggering the log.Printf call. #G12: this scheduler moved out
+// of startHTTPServer into startSchedulers.
+func TestStartSchedulers_S27_JITExpiredGrantSwept(t *testing.T) {
 	initI18n(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -1240,25 +1235,19 @@ func TestStartHTTPServer_S27_JITExpiredGrantSwept(t *testing.T) {
 			Type:     "local",
 			Database: config.DatabaseConfig{Path: dbPath},
 		},
-		Server: config.ServerConfig{
-			HTTP: config.ServerInstanceConfig{
-				Enabled: true,
-				Port:    "0",
-			},
-		},
 		JITAccessExpiry: config.JITAccessExpiryConfig{
 			Enabled:  true,
 			Schedule: "1ms",
 		},
 	}
 
-	// Phase 1: initialise DB schema and pre-populate an expired role grant.
-	coreService1, _, err := initializeCoreService(cfg)
+	// Initialise DB schema and pre-populate an expired role grant.
+	coreService, _, err := initializeCoreService(cfg)
 	if err != nil {
-		t.Fatalf("initializeCoreService (phase 1): %v", err)
+		t.Fatalf("initializeCoreService: %v", err)
 	}
 	ctx1 := context.Background()
-	store := coreService1.Storage()
+	store := coreService.Storage()
 
 	role, err := store.CreateRole(ctx1, &models.Role{Name: "s27-jit-role"})
 	if err != nil {
@@ -1279,10 +1268,11 @@ func TestStartHTTPServer_S27_JITExpiredGrantSwept(t *testing.T) {
 		t.Fatalf("AssignRoleWithExpiry: %v", err)
 	}
 
-	// Phase 2: run the server. The JIT expiry sweeper fires at once (interval=1ms),
-	// calls RemoveExpiredRoleGrants, finds n=1, and logs the "removed N expired grant(s)"
-	// message — covering lines 1233.14,1235.6.
+	// Run the schedulers. The JIT expiry sweeper fires at once (interval=1ms),
+	// calls RemoveExpiredRoleGrants, finds n=1, and logs the "removed N
+	// expired grant(s)" message.
 	ctx2, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(300*time.Millisecond, cancel)
-	_ = startHTTPServer(ctx2, cfg)
+	defer cancel()
+	startSchedulers(ctx2, cfg, coreService)
+	time.Sleep(300 * time.Millisecond)
 }

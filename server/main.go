@@ -122,6 +122,38 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("key file security: %v", err)
 	}
 
+	// #G12: construct the core service (and its owned singletons — encryption
+	// Service + exclusive DEK flock, SIEM Forwarder + spool, dynamic-secrets-sweep
+	// flag) exactly ONCE for the whole process, shared by both the HTTP and gRPC
+	// servers. Previously startHTTPServer and startGRPCServer each called
+	// initializeCoreService independently: two exclusive DEK flock acquisitions
+	// raced (only one could actually win it), the gRPC server's own
+	// *encryption.Service was discarded and never Shutdown() (the KEK was never
+	// wiped from memory on that path), and two SIEM Forwarder instances
+	// independently wrote the same on-disk spool file with no cross-instance
+	// coordination.
+	coreService, encSvc, err := initializeCoreService(cfg)
+	if err != nil {
+		log.Fatalf("failed to initialize core service: %v", err)
+	}
+	// Ensure KEK is wiped from memory on shutdown.
+	if encSvc != nil {
+		defer encSvc.Shutdown()
+	}
+	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
+	// queues events in memory (worker.go's Deliver is non-blocking, async), and
+	// nothing would otherwise call Close() to drain that queue before the process
+	// exits, silently losing whatever was in flight at SIGTERM.
+	defer closeAuditForwarder(coreService)
+
+	// Record the evaluated license state once at startup (ADR-065), so the
+	// entitlement (and any degrade reason) is on the audit record.
+	coreService.AuditLicenseState(ctx)
+
+	// Start every background scheduler exactly once, regardless of which of
+	// HTTP/gRPC is enabled (#G12) — see startSchedulers' doc comment.
+	startSchedulers(ctx, cfg, coreService)
+
 	var wg sync.WaitGroup
 
 	// Start HTTP server
@@ -129,7 +161,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := startHTTPServer(ctx, cfg); err != nil {
+			if err := startHTTPServer(ctx, cfg, coreService); err != nil {
 				log.Printf("HTTP server error: %v", err)
 			}
 		}()
@@ -140,7 +172,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := startGRPCServer(ctx, cfg); err != nil {
+			if err := startGRPCServer(ctx, cfg, coreService); err != nil {
 				log.Printf("gRPC server error: %v", err)
 			}
 		}()
@@ -858,34 +890,17 @@ func closeAuditForwarder(coreService *core.KeyorixCore) {
 	}
 }
 
-func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR -- cognitive complexity 188, suppress go:S3776
-	// Initialize core service (and encryption if enabled)
-	coreService, encSvc, err := initializeCoreService(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to initialize core service: %w", err)
-	}
-
-	// Ensure KEK is wiped from memory on shutdown
-	if encSvc != nil {
-		defer encSvc.Shutdown()
-	}
-
-	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
-	// queues events in memory (worker.go's Deliver is non-blocking, async), and
-	// nothing previously called Close() to drain that queue before the process
-	// exited, silently losing whatever was in flight at SIGTERM.
-	defer closeAuditForwarder(coreService)
-
-	// Record the evaluated license state once at startup (ADR-065), so the entitlement
-	// (and any degrade reason) is on the audit record.
-	coreService.AuditLicenseState(ctx)
-
-	// Create HTTP router
-	router, err := httpServer.NewRouter(cfg, coreService)
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP router: %w", err)
-	}
-
+// startSchedulers starts every opt-in/default background scheduler exactly
+// once for the process (#G12). Previously this whole block lived inside
+// startHTTPServer, so a gRPC-only deployment (HTTP disabled) never ran ANY of
+// these — most visibly, SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
+// (set unconditionally from static config in initializeCoreService) told the
+// dynamic-secrets engine a sweeper was active when, for that deployment shape,
+// no process actually ran one. Each job is already single-replica-gated via a
+// Postgres advisory lock (ADR-039), so starting the loop in every process
+// (regardless of which transport it serves) is the existing, intended
+// coordination model — not a new behavior.
+func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
 	// Start anomaly detection scheduler. Single-replica-gated (ADR-039) so N
 	// replicas don't emit N copies of each alert. When anomaly_alerts is enabled,
 	// each detection pass is followed by an alerting pass that pushes newly detected
@@ -1356,6 +1371,14 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error { // NOSONAR
 			})
 		})
 	}
+}
+
+func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+	// Create HTTP router
+	router, err := httpServer.NewRouter(cfg, coreService)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP router: %w", err)
+	}
 
 	// Create HTTP server
 	server := &http.Server{
@@ -1604,18 +1627,7 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 	return nil
 }
 
-func startGRPCServer(ctx context.Context, cfg *config.Config) error {
-	// Initialize the core service so the gRPC auth interceptor can validate
-	// session tokens (mirrors the HTTP server's own core initialization).
-	coreService, _, err := initializeCoreService(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to initialize core service: %w", err)
-	}
-	// #G56: this is a SEPARATE core.KeyorixCore (and therefore a separate SIEM
-	// forwarder instance) from startHTTPServer's — each running server owns and
-	// must flush its own.
-	defer closeAuditForwarder(coreService)
-
+func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {
 	// Create gRPC server
 	grpcServer, err := grpc.NewServer(cfg, coreService)
 	if err != nil {
