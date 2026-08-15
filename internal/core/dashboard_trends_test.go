@@ -19,7 +19,7 @@ func TestDashboardTrends_NoPreviousSnapshot_NoTrend(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "trend_auditor1", "system_auditor", storage.Scope{})
 
-	stats, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor1")
+	stats, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor1", auditorID)
 	require.NoError(t, err)
 
 	assert.Nil(t, stats.ActiveUsersTrend, "no previous snapshot → ActiveUsersTrend must be nil")
@@ -50,7 +50,7 @@ func TestDashboardTrends_WithPreviousSnapshot_ComputesTrend(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	stats, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor2")
+	stats, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor2", auditorID)
 	require.NoError(t, err)
 
 	// After BootstrapSystem there is at least 1 user (admin) + trend_auditor2 = ≥2 users.
@@ -84,7 +84,7 @@ func TestDashboardTrends_SnapshotSavedAfterAdminCall(t *testing.T) {
 	auditorID := seedUserWithRole(t, st, "trend_auditor3", "system_auditor", storage.Scope{})
 
 	// First call: no previous snapshot yet, so PrevActiveUsers must be nil.
-	stats1, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor3")
+	stats1, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor3", auditorID)
 	require.NoError(t, err)
 	assert.Nil(t, stats1.PrevActiveUsers, "first call: no previous snapshot → PrevActiveUsers must be nil")
 
@@ -98,7 +98,7 @@ func TestDashboardTrends_SnapshotSavedAfterAdminCall(t *testing.T) {
 	require.NoError(t, err)
 
 	// Second call: should find the backdated snapshot and populate PrevActiveUsers.
-	stats2, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor3")
+	stats2, err := c.GetDashboardStats(context.Background(), auditorID, "trend_auditor3", auditorID)
 	require.NoError(t, err)
 
 	require.NotNil(t, stats2.PrevActiveUsers, "second call must find the snapshot from the first call")

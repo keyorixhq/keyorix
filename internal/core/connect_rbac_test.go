@@ -299,6 +299,51 @@ func TestCreateConnectRefGrant_PersistsExpiresAt(t *testing.T) {
 	assert.Nil(t, g2.ExpiresAt)
 }
 
+// G33: a machine identity's ConnectRefGrant-referenced role held ONLY at a
+// project scope (no global grant) must be honoured exactly like the equivalent
+// human user's project-scoped role — actorRoleIDs's machine branch used to stop
+// at the global-scope GetMachineRoleIDsAt(ctx, principalID, Scope{}) query,
+// silently dropping every project-scoped machine grant (the same
+// "helper written for humans, never updated for machines" gap the user branch
+// just below it was already fixed for, per CONN-005).
+func TestConnectRefRBAC_MachineIdentityProjectScopedRole(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "proj-a"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 7, Name: "ci-metrics"}).Error)
+	// Granted to the machine ONLY at project 10 — deliberately no global grant.
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 42, RoleID: 7, ProjectID: 10}).Error)
+	seedGrant(t, c, 7, "aws", "metrics/")
+	ctx := context.Background()
+
+	val, err := c.ReadFederatedSecret(ctx, ActorTypeMachine, 42, "aws", "metrics/qps")
+	require.NoError(t, err, "a machine identity's project-scoped role grant must be honoured, exactly like a user's")
+	assert.Equal(t, "v", val)
+
+	// Still deny-by-default outside the granted prefix.
+	_, err = c.ReadFederatedSecret(ctx, ActorTypeMachine, 42, "aws", "db/password")
+	require.Error(t, err)
+}
+
+// actorRoleIDs (G33's detection_idea): a machine identity's project-scoped role
+// grant must resolve into the SAME role-ID set as an equivalent human user
+// holding the identical role at the identical project scope.
+func TestActorRoleIDs_MachineMatchesEquivalentUser_ProjectScoped(t *testing.T) {
+	c, db := connectRBACCore(t)
+	require.NoError(t, db.Create(&models.Project{ID: 10, Name: "proj-a"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 7, Name: "ci-metrics"}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 42, RoleID: 7, ProjectID: 10}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 7, ProjectID: 10}).Error)
+	ctx := context.Background()
+
+	machineRoles, err := c.actorRoleIDs(ctx, ActorTypeMachine, 42)
+	require.NoError(t, err)
+	userRoles, err := c.actorRoleIDs(ctx, ActorTypeUser, 1)
+	require.NoError(t, err)
+
+	assert.True(t, machineRoles[7], "the machine identity's project-scoped role must resolve into actorRoleIDs's result")
+	assert.Equal(t, userRoles, machineRoles, "a machine identity holding the same project-scoped role as a human user must resolve to an identical role-ID set")
+}
+
 func TestConnectRefAllowed_Direct(t *testing.T) {
 	c, db := connectRBACCore(t)
 	seedRoleForUser(t, db, 1, 5, "reader")

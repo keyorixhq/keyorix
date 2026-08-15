@@ -503,6 +503,14 @@ type Storage interface {
 	RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
 	GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope Scope) ([]uint, error)
 	GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error)
+	// GetMachineRoleScopes returns the distinct (project, environment) scopes at
+	// which machineID holds ANY role grant (machine_identity_roles) — the
+	// machine-identity mirror of GetUserRoleScopes (G33): a helper that must
+	// enumerate every scope a principal holds a role at (e.g. actorRoleIDs's
+	// Connect ref-grant match, GetReadableScopes) needs this to discover
+	// project-scoped machine grants the same way it already discovers
+	// project-scoped user grants, rather than resolving only the global scope.
+	GetMachineRoleScopes(ctx context.Context, machineID uint) ([]Scope, error)
 
 	// Machine-identity OIDC bindings (ADR-031) — map an external token's
 	// (issuer, subject) to a machine identity for federated authentication.

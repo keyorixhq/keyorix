@@ -193,6 +193,35 @@ func (ls *LocalStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]
 	return roles, nil
 }
 
+// GetMachineRoleScopes returns the distinct (project, environment) scopes at
+// which machineID holds ANY role grant, directly (machine_identity_roles) —
+// the machine-identity mirror of GetUserRoleScopes (G33). Machine identities
+// have no group-membership concept (unlike users' group_roles), so this is a
+// single-source query. See the storage.Storage interface doc for why this
+// exists: a scope-DISCOVERY step so a caller can enumerate every scope a
+// machine actually holds a grant at, then evaluate GetMachineRoleIDsAt per
+// scope, instead of resolving only the global scope as actorRoleIDs (connect.go)
+// used to before this fix.
+func (ls *LocalStorage) GetMachineRoleScopes(ctx context.Context, machineID uint) ([]storage.Scope, error) {
+	type scopeRow struct {
+		ProjectID     uint
+		EnvironmentID uint
+	}
+	var rows []scopeRow
+	if err := ls.db.WithContext(ctx).Model(&models.MachineIdentityRole{}).
+		Select("project_id, environment_id").
+		Where("machine_identity_id = ?", machineID).
+		Group("project_id, environment_id").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	scopes := make([]storage.Scope, 0, len(rows))
+	for _, r := range rows {
+		scopes = append(scopes, storage.Scope{ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID})
+	}
+	return scopes, nil
+}
+
 // --- OIDC bindings (ADR-031) ---
 
 func (ls *LocalStorage) CreateOIDCBinding(ctx context.Context, b *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error) {
