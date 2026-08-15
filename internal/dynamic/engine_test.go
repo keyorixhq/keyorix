@@ -10,31 +10,31 @@ import (
 )
 
 func TestNew_Backends(t *testing.T) {
-	pg, err := New("postgres")
+	pg, err := New("postgres", false)
 	require.NoError(t, err)
 	assert.Equal(t, "postgres", pg.BackendType())
 
-	my, err := New("mysql")
+	my, err := New("mysql", false)
 	require.NoError(t, err)
 	assert.Equal(t, "mysql", my.BackendType())
 
-	mg, err := New("mongodb")
+	mg, err := New("mongodb", false)
 	require.NoError(t, err)
 	assert.Equal(t, "mongodb", mg.BackendType())
 
-	rd, err := New("redis")
+	rd, err := New("redis", false)
 	require.NoError(t, err)
 	assert.Equal(t, "redis", rd.BackendType())
 
 	for _, bt := range []string{"aws-sts", "gcp", "azure", "kubernetes"} {
-		eng, err := New(bt)
+		eng, err := New(bt, false)
 		require.NoError(t, err)
 		assert.Equal(t, bt, eng.BackendType())
 		assert.True(t, eng.IsEphemeralBackend(), "%s mints self-expiring credentials", bt)
 		assert.True(t, eng.SupportsNativeExpiry(), "%s expiry enforced by the provider", bt)
 	}
 
-	_, err = New("cassandra")
+	_, err = New("cassandra", false)
 	require.Error(t, err, "an unsupported backend is rejected")
 }
 

@@ -146,3 +146,71 @@ func TestNewWebhook_RequiresEndpoint(t *testing.T) {
 	_, err := NewWebhook(WebhookConfig{})
 	require.Error(t, err)
 }
+
+// TestWebhook_DialTimeRefusesDNSRebind is the G48 regression: a hostname that
+// resolves to a PUBLIC address at construction (so NewWebhook succeeds) but to
+// a PRIVATE/link-local address by the time the webhook actually delivers
+// (simulating a DNS-rebinding attacker) must have its delivery refused — the
+// dial-time re-check, not just the one-time construction check, must catch it.
+func TestWebhook_DialTimeRefusesDNSRebind(t *testing.T) {
+	orig := lookupIPAddr
+	defer func() { lookupIPAddr = orig }()
+
+	const rebindHost = "rebind.evidence.example"
+	callCount := 0
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		require.Equal(t, rebindHost, host)
+		callCount++
+		if callCount == 1 {
+			// Construction-time validateEndpoint lookup: answers with a public
+			// address, so NewWebhook succeeds.
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.7")}}, nil
+		}
+		// Every subsequent (dial-time) lookup: the attacker's DNS now answers
+		// with the cloud-metadata address.
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	}
+
+	wh, err := newWebhook(WebhookConfig{Endpoint: "https://" + rebindHost + "/evidence", Token: "ev-tok"}, time.Millisecond)
+	require.NoError(t, err, "construction sees a public address and must succeed")
+	require.GreaterOrEqual(t, callCount, 1)
+
+	err = wh.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), "")
+	require.Error(t, err, "the actual delivery must be refused once dial-time resolution returns a private/link-local address")
+	assert.Contains(t, err.Error(), "netutil")
+}
+
+// TestWebhook_DialTimePinsValidatedIP proves the dial actually connects to the
+// specific IP address the dial-time check just validated (not the hostname
+// again), which is what prevents a second, later DNS answer from mattering.
+// Uses https + InsecureSkipVerify (self-signed test cert) with a hostname
+// that resolves to loopback: isDisallowedIP explicitly permits loopback (for
+// local testing), so the dial-time guard runs and passes without needing
+// AllowPrivateNetworkTarget, which would otherwise disable the guard entirely.
+func TestWebhook_DialTimePinsValidatedIP(t *testing.T) {
+	orig := lookupIPAddr
+	defer func() { lookupIPAddr = orig }()
+
+	var gotHost string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	srvHost, srvPort, err := net.SplitHostPort(srv.Listener.Addr().String())
+	require.NoError(t, err)
+	require.Equal(t, "127.0.0.1", srvHost, "httptest.Server listens on 127.0.0.1 by default")
+
+	lookupIPAddr = func(_ string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP(srvHost)}}, nil
+	}
+
+	wh, err := NewWebhook(WebhookConfig{
+		Endpoint:           "https://dial-pin.evidence.example:" + srvPort + "/evidence",
+		InsecureSkipVerify: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, wh.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), ""))
+	assert.Equal(t, "dial-pin.evidence.example:"+srvPort, gotHost, "the HTTP request's Host header keeps the original hostname even though the TCP dial targeted the resolved IP")
+}

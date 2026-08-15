@@ -18,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -29,35 +30,14 @@ const defaultDynamicTTL = 1 * time.Hour
 // SetDynamicMaxLeaseTTL, e.g. in tests that construct KeyorixCore directly).
 const defaultMaxLeaseTTL = 90 * 24 * time.Hour
 
-// privateNetworkCIDRs is the set of IP ranges rejected by the admin-DSN SSRF guard.
-// Covers RFC-1918, loopback, link-local (including cloud IMDS at 169.254.169.254),
-// shared carrier-grade NAT (RFC 6598), and IPv6 private/link-local ranges.
-var privateNetworkCIDRs = func() []*net.IPNet {
-	var nets []*net.IPNet
-	for _, cidr := range []string{ // NOSONAR -- these are the SSRF-guard blocklist ranges themselves (RFC-1918/1122/6598 + IPv6 equivalents), not a live endpoint; hardcoding them is the point of isPrivateIP
-		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // NOSONAR -- RFC-1918
-		"127.0.0.0/8",    // loopback
-		"169.254.0.0/16", // NOSONAR -- link-local / cloud IMDS
-		"100.64.0.0/10",  // NOSONAR -- shared address space (RFC 6598)
-		"::1/128",        // IPv6 loopback
-		"fc00::/7",       // IPv6 unique local
-		"fe80::/10",      // IPv6 link-local
-	} {
-		_, n, _ := net.ParseCIDR(cidr)
-		if n != nil {
-			nets = append(nets, n)
-		}
-	}
-	return nets
-}()
-
+// isPrivateIP reports whether ip is disallowed as an admin-DSN target — the
+// canonical private/loopback/link-local/IMDS/CGNAT check, shared (via
+// netutil.IsPrivateOrLinkLocal) with every other backend-infrastructure dial
+// site in this codebase (currently also azurekms's kms_key_id), so there is
+// exactly one definition of "private" for these strictly-backend-service
+// targets rather than a per-package reimplementation.
 func isPrivateIP(ip net.IP) bool {
-	for _, cidr := range privateNetworkCIDRs {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return netutil.IsPrivateOrLinkLocal(ip)
 }
 
 // parseDSNHost extracts the host (without port) from an admin DSN in any of the

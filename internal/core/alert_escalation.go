@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -224,6 +226,29 @@ func noEscalationRedirect(_ *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("alert escalation: redirect refused (SSRF prevention)")
 }
 
+// escalationTransport dial-time-validates every webhook/Slack escalation POST
+// against the same disallow policy (isChannelDisallowedIP) validateWebhookURL
+// applies once at NotificationChannel create/update time.
+//
+// G48: ch.URL is validated ONLY when the channel is created or updated
+// (validateWebhookURL in notification_channels.go); postJSONToURL below is
+// called on every escalation, reusing a fresh (or injected) *http.Client each
+// time whose dial performs its own independent DNS resolution. A DNS-
+// rebinding attacker (a name that resolves to a public IP when the channel is
+// saved, then to a private/link-local address by the time an alert escalates)
+// would otherwise bypass that one-time check entirely. Resolving and
+// re-validating on every dial — then connecting to the specific IP just
+// checked, never the hostname again — closes that gap.
+var escalationTransport = &http.Transport{DialContext: (&netutil.Dialer{
+	Disallow: isChannelDisallowedIP,
+	// Reuse the SAME overridable resolver validateWebhookURL uses at channel
+	// create/update time (channelLookupIPAddr, notification_channels.go)
+	// rather than netutil's real-DNS default, so a DNS-rebind between channel
+	// save and alert escalation is directly testable end-to-end through the
+	// identical seam.
+	Resolve: func(ctx context.Context, host string) ([]net.IPAddr, error) { return channelLookupIPAddr(ctx, host) },
+}).DialContext}
+
 // postJSONToURL marshals payload to JSON and sends a best-effort HTTP POST to rawURL.
 func (c *KeyorixCore) postJSONToURL(_ context.Context, rawURL string, payload any) error {
 	body, err := json.Marshal(payload)
@@ -232,7 +257,7 @@ func (c *KeyorixCore) postJSONToURL(_ context.Context, rawURL string, payload an
 	}
 	client := c.httpClient
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: noEscalationRedirect}
+		client = &http.Client{Timeout: 10 * time.Second, Transport: escalationTransport, CheckRedirect: noEscalationRedirect}
 	}
 	// Compute a redacted form of the URL for use in error messages so that
 	// embedded credentials (e.g. https://token:secret@hooks.example.com) are

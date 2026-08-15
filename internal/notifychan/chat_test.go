@@ -1,8 +1,11 @@
 package notifychan
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -158,4 +161,51 @@ func TestChatSink_RetriesTransientThenSucceeds(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, int32(3), hits.Load(), "should retry the two 503s then succeed")
 	assert.Equal(t, 2.0, testutil.ToFloat64(notifyRetries.WithLabelValues("slack"))-retryBefore)
+}
+
+// TestChatSink_DialTimeRefusesDNSRebind is the G48 regression: a hostname
+// that resolves to a PUBLIC address at construction (so NewChat succeeds) but
+// to a PRIVATE/link-local address by the time the sink actually delivers
+// (simulating a DNS-rebinding attacker) must have its delivery refused — the
+// dial-time re-check, not just the one-time construction check, must catch
+// it. chat.go has no AllowPrivateNetworkTarget opt-out, so this guard always
+// applies.
+func TestChatSink_DialTimeRefusesDNSRebind(t *testing.T) {
+	orig := lookupIPAddr
+	defer func() { lookupIPAddr = orig }()
+
+	const rebindHost = "rebind.chat.example"
+	callCount := 0
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		require.Equal(t, rebindHost, host)
+		callCount++
+		if callCount == 1 {
+			// Construction-time validateEndpoint lookup: a public address.
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.7")}}, nil
+		}
+		// Every subsequent (dial-time) lookup: cloud-metadata address.
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	}
+
+	failedBefore := testutil.ToFloat64(notifyDeliveries.WithLabelValues("slack", outcomeFailed))
+
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(origOut)
+
+	sink, err := newChat(ChatConfig{Kind: ChatSlack, WebhookURL: "https://" + rebindHost + "/hook"}, time.Millisecond)
+	require.NoError(t, err, "construction sees a public address and must succeed")
+	require.GreaterOrEqual(t, callCount, 1)
+
+	sink.Deliver(core.NotificationEvent{Title: "x"})
+	sink.Close()
+
+	assert.Equal(t, 1.0, testutil.ToFloat64(notifyDeliveries.WithLabelValues("slack", outcomeFailed))-failedBefore,
+		"delivery must be refused once dial-time resolution returns a private address, even though construction saw a public one")
+	// Assert on the SPECIFIC failure reason — "rebind.chat.example" isn't a
+	// real, resolvable domain, so a weaker assertion (mere failure) would
+	// pass even without the dial-time guard, for the wrong reason (a plain
+	// DNS lookup error).
+	assert.Contains(t, buf.String(), "disallowed address", "the failure must come from the dial-time SSRF guard, not an unrelated DNS error")
 }

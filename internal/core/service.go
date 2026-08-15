@@ -632,12 +632,16 @@ func (c *KeyorixCore) SetDynamicMaxLeaseTTL(ttl time.Duration) {
 }
 
 // dynamicEngine resolves an engine for a backend type via the factory (or the
-// real dynamic.New when none is set).
+// real dynamic.New when none is set). c.dynamicAllowPrivateTargets is threaded
+// through to dynamic.New so an engine that dials the admin DSN itself
+// (postgres, mysql) applies the SAME private/link-local dial-time guard (or
+// the same explicit operator opt-out) enforceDynamicSecretSSRFGuard already
+// applies at config create/issue/renew time (G48).
 func (c *KeyorixCore) dynamicEngine(backendType string) (dynamic.CredentialEngine, error) {
 	if c.dynamicEngineFactory != nil {
 		return c.dynamicEngineFactory(backendType)
 	}
-	return dynamic.New(backendType)
+	return dynamic.New(backendType, c.dynamicAllowPrivateTargets)
 }
 
 // SetTrustRegistryFunc overrides how the update/license signing-key trust registry

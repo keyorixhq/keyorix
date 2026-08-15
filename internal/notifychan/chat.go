@@ -10,11 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 const (
@@ -63,9 +65,26 @@ func newChat(cfg ChatConfig, baseBackoff time.Duration) (*ChatSink, error) {
 	if err := validateEndpoint(cfg.WebhookURL, false); err != nil {
 		return nil, err
 	}
+	// G48: validateEndpoint above validates the webhook URL's host ONCE, at
+	// construction — this client is long-lived (one per configured Slack/Teams
+	// channel) and every delivery reuses it, whose dial performs its own
+	// independent DNS resolution each time. Pin the dial-time resolution to
+	// the same disallow policy (isDisallowedIP) and to the specific IP just
+	// validated, closing the DNS-rebinding gap a validate-once guard leaves
+	// open. Unlike the generic webhook channel, chat has no
+	// AllowPrivateNetworkTarget opt-out (validateEndpoint above is always
+	// called with allowPrivateNetwork=false), so the guard always applies.
+	transport := &http.Transport{DialContext: (&netutil.Dialer{
+		Disallow: isDisallowedIP,
+		// Reuse the SAME overridable resolver validateEndpoint used above
+		// (lookupIPAddr) rather than netutil's real-DNS default, so tests can
+		// exercise dial-time resolution through the identical seam
+		// construction-time validation already uses.
+		Resolve: func(_ context.Context, host string) ([]net.IPAddr, error) { return lookupIPAddr(host) },
+	}).DialContext}
 	s := &ChatSink{
 		cfg:    cfg,
-		client: &http.Client{Timeout: chatTimeout, CheckRedirect: refuseRedirectDowngrade},
+		client: &http.Client{Timeout: chatTimeout, Transport: transport, CheckRedirect: refuseRedirectDowngrade},
 	}
 	s.d = newDeliverer(string(cfg.Kind), chatQueueSize, baseBackoff, s.send)
 	return s, nil

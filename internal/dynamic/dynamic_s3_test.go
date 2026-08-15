@@ -789,7 +789,7 @@ func TestKillUserConnections_NoRows(t *testing.T) {
 	// We open a *sql.DB via sql.Open (which succeeds even for a bad DSN) and then
 	// call killUserConnections. The QueryContext will fail; killUserConnections is
 	// expected to silently return.
-	db, err := openMySQL(context.Background(), "user:pass@tcp(localhost:13306)/db")
+	db, err := openMySQL(context.Background(), "user:pass@tcp(localhost:13306)/db", false)
 	// openMySQL may fail (unreachable host) — if it does, there's no DB to pass.
 	if err != nil {
 		t.Skip("MySQL host unreachable; killUserConnections path covered by integration")

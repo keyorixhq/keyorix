@@ -1,9 +1,12 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -219,6 +222,79 @@ func TestRunAlertEscalation_MatchingAlert_Escalated(t *testing.T) {
 	default:
 		t.Error("webhook was not called")
 	}
+	store.AssertExpectations(t)
+}
+
+// TestRunAlertEscalation_DialTimeRefusesDNSRebind is the G48 regression: a
+// channel URL hostname that resolves to a PUBLIC address when the channel is
+// created/validated (validateWebhookURL, notification_channels.go) but to a
+// PRIVATE/link-local address by the time an alert actually escalates
+// (simulating a DNS-rebinding attacker) must have the escalation POST
+// refused — the dial-time re-check in escalationTransport, not just the
+// one-time create/update-time check, must catch it. c.httpClient is left nil
+// so postJSONToURL uses the real production escalationTransport, and
+// channelLookupIPAddr (the SAME resolver seam validateWebhookURL itself
+// uses) is overridden to simulate the rebind end-to-end.
+func TestRunAlertEscalation_DialTimeRefusesDNSRebind(t *testing.T) {
+	origResolve := channelLookupIPAddr
+	defer func() { channelLookupIPAddr = origResolve }()
+
+	const rebindHost = "rebind.escalation.example"
+	callCount := 0
+	channelLookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		require.Equal(t, rebindHost, host)
+		callCount++
+		if callCount == 1 {
+			// The channel-creation-time validateWebhookURL lookup: a public address.
+			return []net.IPAddr{{IP: net.ParseIP("203.0.113.7")}}, nil
+		}
+		// Every subsequent (escalation dial-time) lookup: an RFC-1918 address.
+		return []net.IPAddr{{IP: net.ParseIP("10.1.2.3")}}, nil
+	}
+
+	store := new(MockStorage)
+	now := time.Now().UTC()
+
+	p := makePolicy(1, "p1", "medium", 30)
+	p.ChannelIDs = "7"
+
+	alert := makeAlert(1, "high", 60)
+	alert.DetectedAt = now.Add(-60 * time.Minute)
+
+	// CreateNotificationChannel runs validateWebhookURL — this is the
+	// construction-time check the rebind must bypass to matter.
+	c := NewKeyorixCore(store)
+	c.now = fixedNow(now)
+	store.On("CreateNotificationChannel", mock.Anything, mock.Anything).Return(nil)
+	created, err := c.CreateNotificationChannel(context.Background(), &models.NotificationChannel{
+		Name: "rebind-channel", Type: "webhook", URL: "https://" + rebindHost + "/hook", Enabled: true,
+	}, "tester")
+	require.NoError(t, err, "channel creation sees a public address and must succeed")
+	require.GreaterOrEqual(t, callCount, 1)
+
+	ch := &models.NotificationChannel{ID: 7, Name: created.Name, Type: created.Type, URL: created.URL, Enabled: true}
+	store.On("ListAlertEscalationPolicies", mock.Anything).Return([]models.AlertEscalationPolicy{p}, nil)
+	store.On("ListUnacknowledgedAnomalyAlertsBefore", mock.Anything, mock.Anything).Return([]models.AnomalyAlert{alert}, nil)
+	store.On("GetNotificationChannel", mock.Anything, uint(7)).Return(ch, nil)
+
+	// c.httpClient is intentionally left nil so postJSONToURL uses the real
+	// production escalationTransport (not a test double), exercising the
+	// actual dial-time guard.
+	var buf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(origOut)
+
+	result, err := c.RunAlertEscalation(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Evaluated)
+	assert.Equal(t, 0, result.Escalated, "the escalation POST must be refused once dial-time resolution returns a private address")
+	assert.Equal(t, 1, result.Skipped)
+	// Assert on the SPECIFIC failure reason — "rebind.escalation.example"
+	// isn't a real, resolvable domain, so a weaker assertion (mere
+	// Escalated==0) would pass even without the dial-time guard, for the
+	// wrong reason (a plain DNS lookup error rather than the SSRF refusal).
+	assert.Contains(t, buf.String(), "disallowed address", "the failure must come from the dial-time SSRF guard, not an unrelated DNS error")
 	store.AssertExpectations(t)
 }
 
