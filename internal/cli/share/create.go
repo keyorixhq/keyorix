@@ -72,7 +72,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			SecretID:   createSecretID,
 			GroupID:    createRecipientID,
 			Permission: createPermission,
-			SharedBy:   1, // CLI user ID
+			SharedBy:   common.ResolveActorID(), // #G67: operator-asserted actor, not a hardcoded placeholder
 			ExpiresAt:  expiresAt,
 		}
 
@@ -88,7 +88,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			RecipientID: createRecipientID,
 			IsGroup:     false,
 			Permission:  createPermission,
-			SharedBy:    1, // CLI user ID
+			SharedBy:    common.ResolveActorID(), // #G67: operator-asserted actor, not a hardcoded placeholder
 			ExpiresAt:   expiresAt,
 		}
 

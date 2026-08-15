@@ -107,7 +107,8 @@ func transitionMachine(ctx context.Context, projectID uint, m *models.MachineIde
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	if _, err := svc.TransitionMachineIdentity(ctx, m.ProjectID, m.ID, targetState, 0); err != nil {
+	// #G67: operator-asserted actor (KEYORIX_CLI_ACTOR), not a hardcoded placeholder.
+	if _, err := svc.TransitionMachineIdentity(ctx, m.ProjectID, m.ID, targetState, common.ResolveActorID()); err != nil {
 		return fmt.Errorf("failed to %s machine identity: %w", action, err)
 	}
 	fmt.Printf("Machine identity %q → %s\n", m.Name, targetState)

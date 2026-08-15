@@ -118,6 +118,7 @@ func TestRunCreate_UserShare_Success(t *testing.T) {
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runCreate now asserts SharedBy from this
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
@@ -151,7 +152,8 @@ func TestRunCreate_GroupShare_Success(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	_, secretID, _ := seedShareData(t, svc)
+	ownerID, secretID, _ := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runCreate now asserts SharedBy from this
 
 	ctx := context.Background()
 	grp, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "teamalpha"})
@@ -183,6 +185,7 @@ func TestRunCreate_WithTTL_Success(t *testing.T) {
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runCreate now asserts SharedBy from this
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
@@ -286,6 +289,7 @@ func TestRunRevoke_Success(t *testing.T) {
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runRevoke now asserts revokedBy from this
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
@@ -390,6 +394,7 @@ func TestRunUpdate_Success(t *testing.T) {
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runUpdate now asserts updatedBy from this
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
@@ -427,6 +432,7 @@ func TestRunUpdate_WithTTL_Success(t *testing.T) {
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runUpdate now asserts updatedBy from this
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
@@ -464,6 +470,7 @@ func TestRunUpdate_ClearExpiry_Success(t *testing.T) {
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runUpdate now asserts updatedBy from this
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{

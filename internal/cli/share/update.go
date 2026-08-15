@@ -65,7 +65,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	req := &core.UpdateShareRequest{
 		ShareID:     updateShareID,
 		Permission:  updatePermission,
-		UpdatedBy:   1, // CLI user ID
+		UpdatedBy:   common.ResolveActorID(), // #G67: operator-asserted actor, not a hardcoded placeholder
 		ExpiresAt:   expiresAt,
 		ClearExpiry: updateClearExpiry,
 	}

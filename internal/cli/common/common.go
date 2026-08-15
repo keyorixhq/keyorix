@@ -67,6 +67,21 @@ func ResolveActorID() uint {
 	return uint(id)
 }
 
+// ResolveActorLabel is ResolveActorID's counterpart for the (older, string-typed)
+// audit-attribution fields some CLI request structs still use (e.g.
+// core.CreateSecretRequest.CreatedBy, which the HTTP path populates with
+// userCtx.Username — a human-readable label, not a raw ID). #G67: those fields
+// previously hardcoded the literal "cli-user" regardless of who ran the command;
+// this still falls back to "cli-user" when KEYORIX_CLI_ACTOR is unset (preserving
+// the existing default label for operators who haven't opted in to self-assertion)
+// but otherwise reflects the actually-asserted actor ID.
+func ResolveActorLabel() string {
+	if id := ResolveActorID(); id != 0 {
+		return strconv.FormatUint(uint64(id), 10)
+	}
+	return "cli-user"
+}
+
 // InitializeCoreService creates a core service instance using the storage factory
 // This function should be used by all CLI commands instead of directly creating storage
 func InitializeCoreService() (*core.KeyorixCore, error) {

@@ -194,7 +194,7 @@ func runUpdateRemote(rc *common.RemoteClient) error {
 func buildUpdateRequest() (*core.UpdateSecretRequest, error) { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	req := &core.UpdateSecretRequest{
 		ID:        updateID,
-		UpdatedBy: "cli-user",
+		UpdatedBy: common.ResolveActorLabel(), // #G67: operator-asserted actor, not a hardcoded placeholder
 	}
 
 	if updateFromFile != "" {
@@ -272,7 +272,7 @@ func interactiveUpdate(current *models.SecretNode) (*core.UpdateSecretRequest, e
 
 	req := &core.UpdateSecretRequest{
 		ID:        updateID,
-		UpdatedBy: "cli-user",
+		UpdatedBy: common.ResolveActorLabel(), // #G67: operator-asserted actor, not a hardcoded placeholder
 	}
 
 	if askBool("Update secret value?") {
