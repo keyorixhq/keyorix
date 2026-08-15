@@ -4,22 +4,27 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	stg "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func newBaselineCore(store *MockStorage) *KeyorixCore {
-	return &KeyorixCore{storage: store}
+	return &KeyorixCore{storage: store, now: time.Now}
 }
 
-// userFilterPageSize matches any UserFilter with the given PageSize (other fields may be zero).
+// userFilterPageSize matches any UserFilter with the given PageSize AND
+// IncludeDeleted: true (other fields may be zero) — GetPermissionBaseline must
+// request soft-deleted users too (#G25), or a soft-deleted grant holder's row
+// never reaches userByID in the first place.
 func userFilterPageSize(n int) interface{} {
 	return mock.MatchedBy(func(f *stg.UserFilter) bool {
-		return f != nil && f.PageSize == n
+		return f != nil && f.PageSize == n && f.IncludeDeleted
 	})
 }
 
@@ -31,6 +36,7 @@ func TestGetPermissionBaseline_Empty(t *testing.T) {
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{}, int64(0), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
@@ -48,6 +54,7 @@ func TestGetPermissionBaseline_DirectGrant_GlobalScope(t *testing.T) {
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{user}, int64(1), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{grant}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
 	store.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "Admin"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(5)).
 		Return([]*models.Permission{{Name: "secrets.read"}, {Name: "secrets.write"}}, nil)
@@ -63,6 +70,8 @@ func TestGetPermissionBaseline_DirectGrant_GlobalScope(t *testing.T) {
 	assert.Equal(t, "alice@example.com", row.Email)
 	assert.Equal(t, "Admin", row.RoleName)
 	assert.Equal(t, "global", row.Scope)
+	assert.False(t, row.GrantExpired)
+	assert.False(t, row.HolderDeleted)
 }
 
 func TestGetPermissionBaseline_DirectGrant_ProjectScope(t *testing.T) {
@@ -76,6 +85,7 @@ func TestGetPermissionBaseline_DirectGrant_ProjectScope(t *testing.T) {
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{user}, int64(1), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{grant}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
 	store.On("GetRole", mock.Anything, uint(7)).Return(&models.Role{ID: 7, Name: "Viewer"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(7)).
 		Return([]*models.Permission{{Name: "secrets.read"}}, nil)
@@ -87,6 +97,32 @@ func TestGetPermissionBaseline_DirectGrant_ProjectScope(t *testing.T) {
 	assert.Equal(t, "project:3", baseline.Rows[0].Scope)
 }
 
+// TestGetPermissionBaseline_DirectGrant_EnvironmentScope covers #G25 gap 3 for
+// the DIRECT-grant path: a grant scoped to one environment within a project
+// must not be reported as applying to the whole project.
+func TestGetPermissionBaseline_DirectGrant_EnvironmentScope(t *testing.T) {
+	store := new(MockStorage)
+	c := newBaselineCore(store)
+	ctx := context.Background()
+
+	user := &models.User{ID: 15, Username: "frank", Email: "frank@example.com"}
+	grant := &models.UserRole{UserID: 15, RoleID: 7, ProjectID: 3, EnvironmentID: 9}
+
+	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
+		Return([]*models.User{user}, int64(1), nil)
+	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{grant}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
+	store.On("GetRole", mock.Anything, uint(7)).Return(&models.Role{ID: 7, Name: "Viewer"}, nil)
+	store.On("GetRolePermissions", mock.Anything, uint(7)).
+		Return([]*models.Permission{{Name: "secrets.read"}}, nil)
+	store.On("GetUserGroups", mock.Anything, uint(15)).Return([]*models.Group{}, nil)
+
+	baseline, err := c.GetPermissionBaseline(ctx)
+	require.NoError(t, err)
+	require.Len(t, baseline.Rows, 1)
+	assert.Equal(t, "project:3/environment:9", baseline.Rows[0].Scope)
+}
+
 func TestGetPermissionBaseline_GroupInheritedGrant(t *testing.T) {
 	store := new(MockStorage)
 	c := newBaselineCore(store)
@@ -94,13 +130,14 @@ func TestGetPermissionBaseline_GroupInheritedGrant(t *testing.T) {
 
 	user := &models.User{ID: 12, Username: "carol", Email: "carol@example.com"}
 	group := &models.Group{ID: 20}
-	role := &models.Role{ID: 9, Name: "Operator"}
+	groupGrant := &models.GroupRole{GroupID: 20, RoleID: 9}
 
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{user}, int64(1), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{groupGrant}, nil)
 	store.On("GetUserGroups", mock.Anything, uint(12)).Return([]*models.Group{group}, nil)
-	store.On("GetGroupRoles", mock.Anything, uint(20)).Return([]*models.Role{role}, nil)
+	store.On("GetRole", mock.Anything, uint(9)).Return(&models.Role{ID: 9, Name: "Operator"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(9)).
 		Return([]*models.Permission{{Name: "audit.read"}}, nil)
 
@@ -112,6 +149,35 @@ func TestGetPermissionBaseline_GroupInheritedGrant(t *testing.T) {
 	assert.Equal(t, "Operator", row.RoleName)
 	assert.Equal(t, "global", row.Scope)
 	assert.Equal(t, "audit.read", row.Permission)
+}
+
+// TestGetPermissionBaseline_GroupInheritedGrant_EnvironmentScope covers #G25
+// gap 3 for the GROUP-inherited path: the old code hardcoded every
+// group-inherited row's scope to "global" regardless of the group_roles row's
+// actual project/environment. A group holding a role scoped to one
+// environment must report that real (narrower) scope, not "global".
+func TestGetPermissionBaseline_GroupInheritedGrant_EnvironmentScope(t *testing.T) {
+	store := new(MockStorage)
+	c := newBaselineCore(store)
+	ctx := context.Background()
+
+	user := &models.User{ID: 16, Username: "grace", Email: "grace@example.com"}
+	group := &models.Group{ID: 21}
+	groupGrant := &models.GroupRole{GroupID: 21, RoleID: 9, ProjectID: 5, EnvironmentID: 2}
+
+	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
+		Return([]*models.User{user}, int64(1), nil)
+	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{groupGrant}, nil)
+	store.On("GetUserGroups", mock.Anything, uint(16)).Return([]*models.Group{group}, nil)
+	store.On("GetRole", mock.Anything, uint(9)).Return(&models.Role{ID: 9, Name: "Operator"}, nil)
+	store.On("GetRolePermissions", mock.Anything, uint(9)).
+		Return([]*models.Permission{{Name: "audit.read"}}, nil)
+
+	baseline, err := c.GetPermissionBaseline(ctx)
+	require.NoError(t, err)
+	require.Len(t, baseline.Rows, 1)
+	assert.Equal(t, "project:5/environment:2", baseline.Rows[0].Scope)
 }
 
 func TestGetPermissionBaseline_RolePermissionsCached(t *testing.T) {
@@ -128,6 +194,7 @@ func TestGetPermissionBaseline_RolePermissionsCached(t *testing.T) {
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{u1, u2}, int64(2), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{grant1, grant2}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
 	store.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "Admin"}, nil)
 	store.On("GetRolePermissions", mock.Anything, uint(5)).
 		Return([]*models.Permission{{Name: "secrets.read"}}, nil)
@@ -146,12 +213,16 @@ func TestGetPermissionBaseline_SkipsGrantsForMissingUsers(t *testing.T) {
 	c := newBaselineCore(store)
 	ctx := context.Background()
 
-	// Grant references userID 99 which is not in the users list (soft-deleted).
+	// Grant references userID 99, which is not returned even by an
+	// IncludeDeleted: true ListUsers call — a genuinely orphaned grant (never a
+	// merely soft-deleted user), which must still be skipped since there's no
+	// username/email to report.
 	grant := &models.UserRole{UserID: 99, RoleID: 5, ProjectID: 0}
 
 	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
 		Return([]*models.User{}, int64(0), nil)
 	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{grant}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{}, nil)
 
 	baseline, err := c.GetPermissionBaseline(ctx)
 	require.NoError(t, err)
@@ -183,8 +254,100 @@ func TestGetPermissionBaseline_ListGrantsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestGetPermissionBaseline_ListGroupGrantsError(t *testing.T) {
+	store := new(MockStorage)
+	c := newBaselineCore(store)
+	ctx := context.Background()
+
+	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
+		Return([]*models.User{}, int64(0), nil)
+	store.On("ListAllUserRoleGrants", mock.Anything).Return([]*models.UserRole{}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return(nil, errors.New("group grants error"))
+
+	_, err := c.GetPermissionBaseline(ctx)
+	require.Error(t, err)
+}
+
 func TestScopeLabel(t *testing.T) {
-	assert.Equal(t, "global", scopeLabel(0))
-	assert.Equal(t, "project:7", scopeLabel(7))
-	assert.Equal(t, "project:100", scopeLabel(100))
+	assert.Equal(t, "global", scopeLabel(0, 0))
+	assert.Equal(t, "project:7", scopeLabel(7, 0))
+	assert.Equal(t, "project:100", scopeLabel(100, 0))
+	assert.Equal(t, "project:7/environment:3", scopeLabel(7, 3))
+}
+
+// TestGetPermissionBaseline_G25Regression is the detection_idea fixture for
+// #G25: a soft-deleted grant holder, an expired time-bound grant, and an
+// environment-scoped group role, all in the same baseline export. Every gap
+// the ad hoc GetPermissionBaseline independently had is exercised at once:
+//
+//   - user A is soft-deleted but still holds a (permanent) direct grant — the
+//     old code silently dropped this row entirely; it must now appear, with
+//     HolderDeleted true.
+//   - user B holds a direct grant whose ExpiresAt is in the past — the old
+//     code included it (deliberately — full history) but with no way to tell
+//     it apart from a live grant; it must now appear with GrantExpired true.
+//   - user C inherits a role via group G, whose grant is scoped to one
+//     project+environment — the old code hardcoded every group-inherited row's
+//     scope to "global"; it must now report the real, narrower scope.
+func TestGetPermissionBaseline_G25Regression(t *testing.T) {
+	store := new(MockStorage)
+	c := newBaselineCore(store)
+	ctx := context.Background()
+
+	deletedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	userA := &models.User{ID: 30, Username: "deleted-holder", Email: "a@example.com",
+		DeletedAt: gorm.DeletedAt{Time: deletedAt, Valid: true}}
+	userB := &models.User{ID: 31, Username: "expired-holder", Email: "b@example.com"}
+	userC := &models.User{ID: 32, Username: "env-scoped-holder", Email: "c@example.com"}
+
+	pastExpiry := time.Now().Add(-1 * time.Hour)
+	directGrantA := &models.UserRole{UserID: 30, RoleID: 40} // permanent, global
+	directGrantB := &models.UserRole{UserID: 31, RoleID: 40, ExpiresAt: &pastExpiry}
+
+	groupG := &models.Group{ID: 50}
+	groupGrant := &models.GroupRole{GroupID: 50, RoleID: 41, ProjectID: 6, EnvironmentID: 8}
+
+	store.On("ListUsers", mock.Anything, userFilterPageSize(100000)).
+		Return([]*models.User{userA, userB, userC}, int64(3), nil)
+	store.On("ListAllUserRoleGrants", mock.Anything).
+		Return([]*models.UserRole{directGrantA, directGrantB}, nil)
+	store.On("ListAllGroupRoleGrants", mock.Anything).Return([]*models.GroupRole{groupGrant}, nil)
+
+	store.On("GetRole", mock.Anything, uint(40)).Return(&models.Role{ID: 40, Name: "Direct"}, nil)
+	store.On("GetRolePermissions", mock.Anything, uint(40)).
+		Return([]*models.Permission{{Name: "secrets.read"}}, nil)
+	store.On("GetRole", mock.Anything, uint(41)).Return(&models.Role{ID: 41, Name: "GroupRole"}, nil)
+	store.On("GetRolePermissions", mock.Anything, uint(41)).
+		Return([]*models.Permission{{Name: "audit.read"}}, nil)
+
+	store.On("GetUserGroups", mock.Anything, uint(30)).Return([]*models.Group{}, nil)
+	store.On("GetUserGroups", mock.Anything, uint(31)).Return([]*models.Group{}, nil)
+	store.On("GetUserGroups", mock.Anything, uint(32)).Return([]*models.Group{groupG}, nil)
+
+	baseline, err := c.GetPermissionBaseline(ctx)
+	require.NoError(t, err)
+	require.Len(t, baseline.Rows, 3)
+
+	byUser := make(map[uint]PermissionBaselineRow, 3)
+	for _, row := range baseline.Rows {
+		byUser[row.UserID] = row
+	}
+
+	rowA, ok := byUser[30]
+	require.True(t, ok, "soft-deleted holder's grant must not be dropped")
+	assert.True(t, rowA.HolderDeleted)
+	assert.False(t, rowA.GrantExpired)
+	assert.Equal(t, "global", rowA.Scope)
+
+	rowB, ok := byUser[31]
+	require.True(t, ok)
+	assert.False(t, rowB.HolderDeleted)
+	assert.True(t, rowB.GrantExpired, "grant with a past ExpiresAt must be flagged expired")
+
+	rowC, ok := byUser[32]
+	require.True(t, ok)
+	assert.False(t, rowC.HolderDeleted)
+	assert.False(t, rowC.GrantExpired)
+	assert.Equal(t, "project:6/environment:8", rowC.Scope,
+		"an environment-scoped group role must not be reported as broader (global)")
 }

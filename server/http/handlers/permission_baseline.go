@@ -54,7 +54,7 @@ func (h *DashboardHandler) GetPermissionBaselineCSV(w http.ResponseWriter, r *ht
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
 
-	_ = cw.Write([]string{"user_id", "username", "email", "role_name", "scope", "permission"})
+	_ = cw.Write([]string{"user_id", "username", "email", "role_name", "scope", "permission", "grant_expired", "holder_deleted"})
 	for _, row := range baseline.Rows {
 		_ = cw.Write([]string{
 			strconv.FormatUint(uint64(row.UserID), 10),
@@ -63,6 +63,8 @@ func (h *DashboardHandler) GetPermissionBaselineCSV(w http.ResponseWriter, r *ht
 			csvSafe(row.RoleName),
 			csvSafe(row.Scope),
 			csvSafe(row.Permission),
+			strconv.FormatBool(row.GrantExpired),
+			strconv.FormatBool(row.HolderDeleted),
 		})
 	}
 }
