@@ -128,7 +128,12 @@ func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *in
 	}
 	if actor.ImpersonatedBy != nil {
 		if err := s.core.ReauthorizeImpersonation(ctx, *actor.ImpersonatedBy, actor.UserID); err != nil {
-			return status.Error(codes.PermissionDenied, err.Error())
+			// Fixed safe string, not err.Error(): matches this function's own
+			// convention two lines above. ReauthorizeImpersonation's errors are
+			// themselves fixed strings today, but one wraps cachedImpersonationCeiling's
+			// error with %w — a raw passthrough here would let that wrapped detail
+			// change out from under this boundary without anyone noticing.
+			return status.Error(codes.PermissionDenied, "impersonation session no longer authorized")
 		}
 	}
 	return nil
