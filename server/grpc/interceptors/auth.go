@@ -49,6 +49,13 @@ type UserContext struct {
 	// does, so it is not bypassable by switching transport.
 	SessionAuth bool `json:"-"`
 	MFAEnabled  bool `json:"-"`
+	// SessionID is the authenticating session's row id (nil unless SessionAuth
+	// is true) — a non-sensitive identifier, deliberately NOT the raw token or
+	// its hash, so a long-lived stream's periodic re-authorization (#G18,
+	// reauthorizeAuditStream) can re-verify THIS SPECIFIC session is still live
+	// (core.SessionStillLive) without retaining the bearer credential itself
+	// beyond the initial validation in authenticateRequest.
+	SessionID *uint `json:"-"`
 }
 
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
@@ -267,6 +274,22 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
 	}
 
+	// #G18: capture the session's row id (not the raw token — see UserContext.SessionID's
+	// doc comment) so a long-lived stream's periodic re-authorization can later re-verify
+	// THIS SPECIFIC session, not just the owning account. A failure here degrades to
+	// SessionID staying nil (the stream-reauth check below then falls back to
+	// account-only verification, matching pre-fix behavior) rather than failing the
+	// request outright — the session was just validated successfully one line above, so
+	// this second lookup failing indicates a rare race with a concurrent revoke, not a
+	// real problem with THIS request.
+	var sessionID *uint
+	if !viaPAT {
+		if sess, sessErr := coreService.Storage().GetSession(ctx, token); sessErr == nil {
+			id := sess.ID
+			sessionID = &id
+		}
+	}
+
 	// Resolve impersonation for a real session token (a PAT is never an
 	// impersonation session). On HTTP the auth middleware tags the context so audit
 	// events record the initiating admin; mirror it here so that accountability is
@@ -311,6 +334,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		// apply the per-project MFA policy (ADR-037). viaSession is false for a PAT, which
 		// stays exempt — exactly as the deployment-wide gate above and HTTP treat it.
 		SessionAuth: viaSession,
+		SessionID:   sessionID,
 		MFAEnabled:  user.MFAEnabled || user.WebAuthnEnabled,
 		// Carry the impersonation attribution so the interceptor can tag the request
 		// context (core.WithImpersonation) — audit parity with HTTP.
