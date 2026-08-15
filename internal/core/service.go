@@ -190,6 +190,16 @@ type KeyorixCore struct {
 	// than K approvals actually recorded first. In-process only, same caveat
 	// as sodGrantMu. Zero value is ready to use. See invitations.go.
 	dualControlApprovalMu sync.Mutex
+	// projectAdminGuardMu serializes guardLastProjectAdmin's read (#G03) with the
+	// role removal/change that follows it, in SetProjectMemberRole and
+	// RemoveProjectMember: without it, two concurrent calls demoting/removing two
+	// DIFFERENT project admins can each read "another admin survives" (the other
+	// hasn't been removed yet) and both proceed, jointly stripping the project of
+	// every roles.assign holder. A single global mutex, not per-project: this
+	// operation is rare (membership changes, not steady-state traffic) so
+	// correctness is worth more than cross-project throughput here. Zero value is
+	// ready to use. See project_members.go.
+	projectAdminGuardMu sync.Mutex
 	// rateLimitUnsupportedWarnOnce guards the #452 operator warning logged the
 	// first time IsLoginRateLimited/IsPasswordResetRateLimited observe that the
 	// active storage backend can never satisfy CountRecentLoginAttempts (as

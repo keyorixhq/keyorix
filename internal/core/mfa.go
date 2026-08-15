@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/pquerna/otp"
@@ -105,24 +106,33 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 		c.auditMFAFailed(ctx, userID, "activate")
 		return nil, fmt.Errorf("invalid code")
 	}
-	if err := c.storage.ActivateMFASecret(ctx, userID); err != nil {
-		return nil, fmt.Errorf("failed to activate MFA: %w", err)
+	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
+	if err != nil {
+		return nil, err
 	}
-	if err := c.storage.SetUserMFAEnabled(ctx, userID, true); err != nil {
-		return nil, fmt.Errorf("failed to enable MFA: %w", err)
+	// #G08: activating the secret, flipping MFAEnabled, and creating recovery codes must
+	// move together — a storage failure between any two of these previously left the
+	// account in an inconsistent state (e.g. MFAEnabled=true with no recovery codes ever
+	// issued, locking the user out with no fallback the moment their device is lost).
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.ActivateMFASecret(ctx, userID); err != nil {
+			return fmt.Errorf("failed to activate MFA: %w", err)
+		}
+		if err := tx.SetUserMFAEnabled(ctx, userID, true); err != nil {
+			return fmt.Errorf("failed to enable MFA: %w", err)
+		}
+		if err := tx.CreateMFARecoveryCodes(ctx, userID, hashes); err != nil {
+			return fmt.Errorf("failed to store recovery codes: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	// Invalidate any sessions minted before MFA was enabled (and evict them from the auth
 	// cache), so a pre-enrolment session cannot outlive the security upgrade — even for
 	// the cache TTL (same hygiene as password change / suspend). Best-effort: enrolment
 	// must not fail on a session-cleanup error.
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
-	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
-	if err != nil {
-		return nil, err
-	}
-	if err := c.storage.CreateMFARecoveryCodes(ctx, userID, hashes); err != nil {
-		return nil, fmt.Errorf("failed to store recovery codes: %w", err)
-	}
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.activated", &uid, nil, nil, "", fmt.Sprintf("user %s activated MFA", user.Username))
 	return codes, nil
@@ -141,10 +151,16 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	if err := c.requireReauth(ctx, user, codeOrPassword, "disable"); err != nil {
 		return err
 	}
-	if err := c.storage.SetUserMFAEnabled(ctx, userID, false); err != nil {
-		return err
-	}
-	if err := c.storage.DeleteMFAForUser(ctx, userID); err != nil {
+	// #G08: flipping MFAEnabled and clearing the secret/recovery codes must move
+	// together — a storage failure between the two previously could leave MFAEnabled
+	// false while stale credential material survived (or vice versa), an inconsistent
+	// state the API nonetheless reported as a clean failure.
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.SetUserMFAEnabled(ctx, userID, false); err != nil {
+			return err
+		}
+		return tx.DeleteMFAForUser(ctx, userID)
+	}); err != nil {
 		return err
 	}
 	// Purge all sessions now that MFA is disabled — the security downgrade must not
@@ -177,10 +193,16 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	if err != nil {
 		return nil, err
 	}
-	if err := c.storage.DeleteMFARecoveryCodes(ctx, userID); err != nil {
-		return nil, fmt.Errorf("failed to clear old recovery codes: %w", err)
-	}
-	if err := c.storage.CreateMFARecoveryCodes(ctx, userID, hashes); err != nil {
+	// #G08: deleting the old codes and inserting the new set must move together — a
+	// storage failure between the two previously could leave the account with ZERO
+	// recovery codes (old set gone, new set never landed), an unsafe state the API
+	// nonetheless reported as a clean failure.
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
+			return fmt.Errorf("failed to clear old recovery codes: %w", err)
+		}
+		return tx.CreateMFARecoveryCodes(ctx, userID, hashes)
+	}); err != nil {
 		return nil, fmt.Errorf("failed to store recovery codes: %w", err)
 	}
 	uid := userID

@@ -42,7 +42,7 @@ func newUpstreamDownstreamForAccessRequests(t *testing.T) (upstream, downstream 
 	t.Cleanup(i18n.ResetForTesting)
 
 	upstream = newTestCore(t)
-	upstreamToken := createTestToken(t, upstream)
+	upstreamToken := createNodeToken(t, upstream)
 
 	projects, err := upstream.ListProjects(context.Background())
 	require.NoError(t, err)

@@ -24,26 +24,52 @@ updates:
           - "github/codeql-action/*"
   # #478: without a gomod entry, Go dependency/toolchain-minimum drift (e.g. #477)
   # has no automated forcing function and depends on someone noticing manually.
+  #
+  # go-patch-minor groups every patch/minor bump into one PR: each PR (regardless
+  # of diff size) pays the same fixed CI cost -- CodeQL/SonarCloud/the full
+  # test-suite scale with the codebase, not the diff -- so N ungrouped routine
+  # bumps cost roughly N times what one grouped PR costs for the same updates.
+  # Patch/minor bumps essentially never conflict with each other and rarely need
+  # individual review. Majors are deliberately left ungrouped/individual: they
+  # can be breaking and deserve their own review/testing pass, not a bundle that
+  # blocks on the slowest one.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      go-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: gomod
     directory: /operator
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      go-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"
   # ADR-070: web/ (the dashboard, ex-keyorix-web) is now a subtree here.
   # web/.github/dependabot.yml — the pnpm-ecosystem entry that covered it as
   # a standalone repo — is deleted along with the rest of web/.github/ in the
   # same commit; without this entry Dependabot would silently stop updating
   # the frontend's dependency tree entirely.
+  #
+  # npm-patch-minor groups routine bumps the same way as go-patch-minor above.
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      npm-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"

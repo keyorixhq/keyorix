@@ -26,7 +26,7 @@ var createCmd = &cobra.Command{
 func init() {
 	createCmd.Flags().StringVar(&createProjectName, "project", "", "Project name (defaults to the active project)")
 	createCmd.Flags().StringVar(&createName, "name", "", "Machine identity name (required)")
-	createCmd.Flags().StringVar(&createType, "type", "other", "Identity type: ci | k8s | service | automation | other")
+	createCmd.Flags().StringVar(&createType, "type", "other", "Identity type: ci | k8s | service | automation | other | node (node: a downstream RemoteStorage node's credential, see #G79)")
 	createCmd.Flags().StringVar(&createDescription, "description", "", "Description")
 	createCmd.Flags().StringVar(&createClassification, "classification", "", "Data classification: public | internal | confidential | restricted")
 }

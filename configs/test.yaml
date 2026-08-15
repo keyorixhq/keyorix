@@ -1,3 +1,9 @@
+# ============================================================================
+# FOR CLI-VERSIONING-TEST FIXTURES ONLY — DO NOT USE IN PRODUCTION (#G36).
+# Every baseline security control below is deliberately disabled so the fixture
+# runs unmodified in CI with no cert/key setup. See server/config/production.yaml
+# for a production-oriented starting point instead.
+# ============================================================================
 
 locale:
   language: en
@@ -9,14 +15,14 @@ storage:
     max_open_conns: 10
     max_idle_conns: 5
   encryption:
-    enabled: false
+    enabled: false  # TEST-ONLY DEFAULT (#G36) — plaintext-at-rest, never for real data.
     dek_path: ""
     salt_path: ""
 
 security:
-  enable_file_permission_check: false
+  enable_file_permission_check: false  # TEST-ONLY DEFAULT (#G36)
   auto_fix_file_permissions: false
-  allow_unsafe_file_permissions: true
+  allow_unsafe_file_permissions: true  # TEST-ONLY DEFAULT (#G36)
 
 soft_delete:
   enabled: true

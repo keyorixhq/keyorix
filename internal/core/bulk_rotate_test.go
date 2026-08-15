@@ -340,7 +340,7 @@ func TestBulkRotateSecrets_CrossProjectGuard(t *testing.T) {
 	}
 
 	id1 := mkSecret("in-project-one", p1.ID, env1.ID)
-	id2 := mkSecret("in-project-two", p2.ID, env2.ID) // belongs to p2, not p1
+	id2 := mkSecret("SENSITIVE-OTHER-TENANT-NAME", p2.ID, env2.ID) // belongs to p2, not p1
 
 	// Request both IDs but scoped to project 1 — id2 must be rejected.
 	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
@@ -354,7 +354,11 @@ func TestBulkRotateSecrets_CrossProjectGuard(t *testing.T) {
 	assert.Equal(t, id1, result.Triggered[0])
 	require.Len(t, result.Failed, 1)
 	assert.Equal(t, id2, result.Failed[0].SecretID)
-	assert.Contains(t, result.Failed[0].Error, "does not belong to this project")
+	// #G31: a cross-tenant secret is refused identically to a nonexistent one —
+	// no name, no distinguishing "does not belong to this project" message that
+	// would confirm something exists at that ID.
+	assert.Empty(t, result.Failed[0].Name, "the other tenant's secret name must never be disclosed")
+	assert.Equal(t, "secret not found", result.Failed[0].Error)
 }
 
 // TestBulkRotateSecrets_FolderNodeSkipped covers the IsSecret == false guard (line 115-121).

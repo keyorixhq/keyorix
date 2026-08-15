@@ -918,7 +918,18 @@ func validateCreationTemplate(backendType, tmpl string) error {
 		return nil
 	}
 	upper := strings.ToUpper(tmpl)
-	dangerous := []string{"GRANT OPTION", "WITH GRANT", " SUPER"}
+	// #G39: this denylist previously covered object-privilege escalation (GRANT
+	// OPTION/WITH GRANT) and MySQL's SUPER, but not Postgres's own role-attribute
+	// escalation keywords (CREATEROLE/CREATEDB/SUPERUSER/REPLICATION/BYPASSRLS,
+	// settable via CREATE ROLE ... or ALTER ROLE ...) or the role-membership
+	// equivalent of "WITH GRANT OPTION" (WITH ADMIN OPTION, PostgreSQL role grants
+	// / MySQL 8 role grants) — a creation_statements template using any of these
+	// could mint a dynamic-secret credential with far more privilege than the
+	// documented "the majority of dangerous configs" this function claims to catch.
+	dangerous := []string{
+		"GRANT OPTION", "WITH GRANT", "WITH ADMIN OPTION",
+		" SUPER", " SUPERUSER", " CREATEROLE", " CREATEDB", " REPLICATION", " BYPASSRLS",
+	}
 	for _, kw := range dangerous {
 		if strings.Contains(upper, kw) {
 			return fmt.Errorf("dynamic secret creation_statements must not contain %q (would grant excessive privileges)", kw)

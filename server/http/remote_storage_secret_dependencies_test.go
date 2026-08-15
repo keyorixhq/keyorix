@@ -29,7 +29,7 @@ func newUpstreamForSecretDependencies(t *testing.T) (upstream *core.KeyorixCore,
 	t.Cleanup(i18n.ResetForTesting)
 
 	upstream = newTestCore(t)
-	token = createTestToken(t, upstream)
+	token = createNodeToken(t, upstream)
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{

@@ -8,6 +8,8 @@ package core
 import (
 	"context"
 	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // BulkDeleteRequest carries the set of secret node IDs to delete.
@@ -37,12 +39,20 @@ type BulkDeleteResult struct {
 
 // BulkDeleteSecrets deletes multiple secrets by ID within a project.
 // Partial success is allowed — individual failures are collected in Failed.
-// Each deletion calls DeleteSecret (the same path as single-secret delete)
-// so audit logging, dependency-invalidation events, and any other cleanup
-// are all applied consistently.
+// Each secret is fetched and deleted via the SAME authorization-checked path the
+// singular delete endpoint uses (GetSecretWithPermissionCheck /
+// DeleteSecretWithPermissionCheck) — not a raw, unauthorized GetSecret/DeleteSecret
+// loop over caller-supplied IDs — so audit logging, dependency-invalidation events,
+// and per-secret authorization (ACL/ownership, not just the coarse project check
+// below) are all applied consistently with the single-secret path (#G31).
 //
-// projectID gates a cross-project guard: a secret belonging to a different
-// project is rejected even if the caller holds a token with broad permissions.
+// projectID gates a mandatory cross-project guard: a secret belonging to a
+// different project is rejected even if the caller holds a token with broad
+// permissions. Unlike the prior version, projectID == 0 is refused outright rather
+// than silently disabling the guard — a bulk delete must always be scoped to a
+// real project. A secret outside the caller's project or authorization is reported
+// identically to a nonexistent one ("secret not found"), never disclosing its name —
+// the caller has no right to learn that ANOTHER tenant's secret exists at all.
 // deletedBy is the authenticated username used in the audit trail.
 func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteRequest, projectID uint, deletedBy string, actorID uint, ip, ua string) (*BulkDeleteResult, error) {
 	if len(req.SecretIDs) == 0 {
@@ -50,6 +60,9 @@ func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteReque
 	}
 	if len(req.SecretIDs) > maxBulkDeleteBatchSize {
 		return nil, fmt.Errorf("secret_ids exceeds the maximum batch size of %d", maxBulkDeleteBatchSize)
+	}
+	if projectID == 0 {
+		return nil, fmt.Errorf("project ID is required")
 	}
 
 	result := &BulkDeleteResult{
@@ -67,10 +80,29 @@ func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteReque
 			continue
 		}
 
-		// Pre-fetch the secret so we have its name and project for the audit
-		// trail even after the row is soft-deleted, and for the cross-project guard.
-		secret, err := c.storage.GetSecret(ctx, id)
-		if err != nil || secret == nil {
+		// Per-secret authorization + fetch — the same check the singular delete
+		// endpoint runs (secrets_crud.go's DeleteSecret handler). A secret the
+		// caller cannot read (wrong project, no ACL/ownership grant, or genuinely
+		// absent) is reported identically as "secret not found": its name must
+		// never leak to a caller who was never authorized to see it.
+		//
+		// actorID == 0 is the embedded/local-CLI caller (bulk_delete.go's
+		// runBulkDeleteEmbedded) — single-user local mode has no RBAC concept at
+		// all, matching the singular CLI `secret delete` command's use of the
+		// bare, unguarded GetSecret/DeleteSecret (delete.go): physical access to
+		// the local DB file is the authorization boundary there, not a userID.
+		// Every authenticated HTTP/gRPC caller always supplies a real actorID
+		// (secrets_bulk_delete.go's handler uses userCtx.UserID), so this
+		// fallback never weakens the multi-tenant per-ID re-authorization #G31
+		// added for that path.
+		var secret *models.SecretNode
+		var err error
+		if actorID == 0 {
+			secret, err = c.GetSecret(ctx, id)
+		} else {
+			secret, err = c.GetSecretWithPermissionCheck(ctx, id, actorID)
+		}
+		if err != nil || secret == nil || secret.ProjectID != projectID {
 			result.Failed = append(result.Failed, BulkOpError{
 				SecretID: id,
 				Error:    "secret not found",
@@ -78,21 +110,15 @@ func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteReque
 			continue
 		}
 
-		// Cross-project guard: bulk delete is project-scoped; a caller must not
-		// reach secrets belonging to another project.
-		if projectID != 0 && secret.ProjectID != projectID {
-			result.Failed = append(result.Failed, BulkOpError{
-				SecretID: id,
-				Name:     secret.Name,
-				Error:    "secret does not belong to this project",
-			})
-			continue
-		}
-
 		secretName := secret.Name
 		secretProjectID := secret.ProjectID
 
-		if err := c.DeleteSecret(ctx, id); err != nil {
+		if actorID == 0 {
+			err = c.DeleteSecret(ctx, id)
+		} else {
+			err = c.DeleteSecretWithPermissionCheck(ctx, id, actorID)
+		}
+		if err != nil {
 			result.Failed = append(result.Failed, BulkOpError{
 				SecretID: id,
 				Name:     secretName,

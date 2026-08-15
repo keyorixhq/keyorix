@@ -9,7 +9,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -24,7 +23,7 @@ var bulkDeleteDBSeq atomic.Int64
 
 // setupBulkDeleteDB opens an in-memory SQLite DB, migrates the necessary models,
 // and returns a core instance plus a factory for creating test secrets.
-func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint) {
+func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint, uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 
@@ -45,6 +44,14 @@ func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint) {
 		&models.SecretAccessLog{},
 		&models.ShareRecord{},
 		&models.SecretACL{},
+		&models.SecretAccessSchedule{},
+		// #G31: BulkDeleteSecrets now goes through GetSecretWithPermissionCheck /
+		// DeleteSecretWithPermissionCheck (the same per-secret authorization the
+		// singular delete endpoint enforces), which needs the RBAC tables and a
+		// live project-membership row for the owner-access short-circuit
+		// (CheckSecretPermission) to resolve.
+		&models.User{}, &models.Role{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -57,6 +64,13 @@ func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint) {
 
 	projectID := p.ID
 	envID := env.ID
+
+	// The bulk-delete tests below authenticate as user 1, the OwnerID every mk()
+	// secret is created with; grant user 1 project membership so
+	// CheckSecretPermission's owner short-circuit resolves.
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "tester", AccountState: "active"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "member"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: projectID}).Error)
 
 	mk := func(name string) uint {
 		s, e := c.storage.CreateSecret(ctx, &models.SecretNode{
@@ -73,11 +87,11 @@ func setupBulkDeleteDB(t *testing.T) (*KeyorixCore, func(name string) uint) {
 		return s.ID
 	}
 
-	return c, mk
+	return c, mk, projectID
 }
 
 func TestBulkDeleteSecrets_Success(t *testing.T) {
-	c, mk := setupBulkDeleteDB(t)
+	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
 	id1 := mk("secret-a")
@@ -85,7 +99,7 @@ func TestBulkDeleteSecrets_Success(t *testing.T) {
 	id3 := mk("secret-c")
 
 	req := BulkDeleteRequest{SecretIDs: []uint{id1, id2, id3}}
-	result, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	result, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.NoError(t, err)
 	assert.Len(t, result.Deleted, 3)
 	assert.Empty(t, result.Failed)
@@ -93,7 +107,7 @@ func TestBulkDeleteSecrets_Success(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_PartialFailure(t *testing.T) {
-	c, mk := setupBulkDeleteDB(t)
+	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
 	id1 := mk("partial-a")
@@ -101,7 +115,7 @@ func TestBulkDeleteSecrets_PartialFailure(t *testing.T) {
 	missingID := uint(99999)
 
 	req := BulkDeleteRequest{SecretIDs: []uint{id1, missingID, id2}}
-	result, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	result, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.NoError(t, err)
 
 	// Two should succeed, one should fail.
@@ -113,11 +127,11 @@ func TestBulkDeleteSecrets_PartialFailure(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_EmptyRequest(t *testing.T) {
-	c, _ := setupBulkDeleteDB(t)
+	c, _, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
 	req := BulkDeleteRequest{SecretIDs: nil}
-	_, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	_, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
@@ -128,7 +142,7 @@ func TestBulkDeleteSecrets_EmptyRequest(t *testing.T) {
 // resource-exhaustion vector, the same class of bug maxBulkAccessRequestBatchSize
 // already guards against elsewhere in this package.
 func TestBulkDeleteSecrets_ExceedsMaxBatchSize(t *testing.T) {
-	c, _ := setupBulkDeleteDB(t)
+	c, _, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
 	ids := make([]uint, maxBulkDeleteBatchSize+1)
@@ -136,26 +150,26 @@ func TestBulkDeleteSecrets_ExceedsMaxBatchSize(t *testing.T) {
 		ids[i] = uint(i + 1)
 	}
 	req := BulkDeleteRequest{SecretIDs: ids}
-	_, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	_, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds the maximum batch size")
 }
 
 func TestBulkDeleteSecrets_AlreadyDeleted(t *testing.T) {
-	c, mk := setupBulkDeleteDB(t)
+	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
 	id := mk("to-delete-twice")
 
 	// First deletion should succeed.
 	req := BulkDeleteRequest{SecretIDs: []uint{id}}
-	result, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	result, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.NoError(t, err)
 	assert.Len(t, result.Deleted, 1)
 	assert.Empty(t, result.Failed)
 
 	// Second attempt on the same (now-deleted) ID must not panic; it should fail gracefully.
-	result2, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	result2, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.NoError(t, err)
 	assert.Empty(t, result2.Deleted)
 	require.Len(t, result2.Failed, 1)
@@ -163,7 +177,7 @@ func TestBulkDeleteSecrets_AlreadyDeleted(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_VerifyCleanup(t *testing.T) {
-	c, mk := setupBulkDeleteDB(t)
+	c, mk, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
 	id1 := mk("cleanup-a")
@@ -171,7 +185,7 @@ func TestBulkDeleteSecrets_VerifyCleanup(t *testing.T) {
 	id3 := mk("cleanup-c-keep") // this one stays
 
 	req := BulkDeleteRequest{SecretIDs: []uint{id1, id2}}
-	result, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	result, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.NoError(t, err)
 	assert.Len(t, result.Deleted, 2)
 
@@ -189,12 +203,12 @@ func TestBulkDeleteSecrets_VerifyCleanup(t *testing.T) {
 }
 
 func TestBulkDeleteSecrets_ZeroID(t *testing.T) {
-	c, _ := setupBulkDeleteDB(t)
+	c, _, projectID := setupBulkDeleteDB(t)
 	ctx := context.Background()
 
 	// SecretID=0 is explicitly rejected before any storage call.
 	req := BulkDeleteRequest{SecretIDs: []uint{0, 1}}
-	result, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	result, err := c.BulkDeleteSecrets(ctx, req, projectID, "tester", 1, "", "")
 	require.NoError(t, err)
 
 	// ID 0 must appear in Failed; ID 1 is not found.
@@ -208,10 +222,11 @@ func TestBulkDeleteSecrets_ZeroID(t *testing.T) {
 	assert.True(t, zeroFailed, "ID 0 must be in the failed list")
 }
 
-// TestBulkDeleteSecrets_CrossProjectGuard covers the cross-project guard branch
-// (bulk_delete.go lines 74-80): a secret that belongs to project B must be
-// rejected when the caller passes projectID=A, even if the caller holds a token
-// with broad permissions.
+// TestBulkDeleteSecrets_CrossProjectGuard is the #G31 detection_idea: bulk-delete a
+// list mixing an in-scope secret ID with another tenant's; the call must never
+// disclose the other tenant's secret name, and the cross-project secret must be
+// refused identically to a nonexistent one (not a distinguishing "does not belong
+// to this project" message revealing that SOMETHING exists at that ID).
 func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
@@ -231,11 +246,14 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 		&models.SecretAccessLog{},
 		&models.ShareRecord{},
 		&models.SecretACL{},
+		&models.SecretAccessSchedule{},
+		&models.User{}, &models.Role{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 
-	// Create two distinct projects.
+	// Create two distinct projects/tenants.
 	proj1, err := c.storage.CreateProject(ctx, &models.Project{Name: "project-one"})
 	require.NoError(t, err)
 	proj2, err := c.storage.CreateProject(ctx, &models.Project{Name: "project-two"})
@@ -246,7 +264,15 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 	env2, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "env2", ProjectID: proj2.ID})
 	require.NoError(t, err)
 
-	// Create a secret in project 1 and a secret in project 2.
+	// The caller (user 1) is a member of project 1 only — NOT project 2, mirroring
+	// a real cross-tenant caller who has no relationship to the other project at all.
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "tester", AccountState: "active"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "member"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: proj1.ID}).Error)
+
+	// Create a secret in project 1 and a secret in project 2 — both owned by user
+	// 1's ID, since a REAL cross-tenant attack scenario is a caller guessing IDs
+	// that happen to belong to another tenant's data, not literal ownership.
 	secretInProj1, err := c.storage.CreateSecret(ctx, &models.SecretNode{
 		Name: "secret-p1", ProjectID: proj1.ID, EnvironmentID: env1.ID,
 		Type: "password", OwnerID: 1, IsSecret: true,
@@ -255,14 +281,14 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 	require.NoError(t, err)
 
 	secretInProj2, err := c.storage.CreateSecret(ctx, &models.SecretNode{
-		Name: "secret-p2", ProjectID: proj2.ID, EnvironmentID: env2.ID,
+		Name: "SENSITIVE-OTHER-TENANT-NAME", ProjectID: proj2.ID, EnvironmentID: env2.ID,
 		Type: "password", OwnerID: 1, IsSecret: true,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 	require.NoError(t, err)
 
 	// Attempt to bulk-delete both secrets while scoped to project 1.
-	// secret-p1 should succeed; secret-p2 must be rejected by the guard.
+	// secret-p1 should succeed; secretInProj2 must be refused, its name never disclosed.
 	req := BulkDeleteRequest{SecretIDs: []uint{secretInProj1.ID, secretInProj2.ID}}
 	result, err := c.BulkDeleteSecrets(ctx, req, proj1.ID, "tester", 1, "127.0.0.1", "test-agent")
 	require.NoError(t, err)
@@ -271,51 +297,42 @@ func TestBulkDeleteSecrets_CrossProjectGuard(t *testing.T) {
 	require.Len(t, result.Deleted, 1, "only the in-scope secret should be deleted")
 	assert.Equal(t, secretInProj1.ID, result.Deleted[0])
 
-	// Exactly one failure: the cross-project secret.
+	// Exactly one failure: the cross-project secret, reported WITHOUT its name and
+	// with the SAME generic message a nonexistent ID gets — no signal that
+	// something exists at that ID, let alone what it's called.
 	require.Len(t, result.Failed, 1, "the out-of-scope secret must appear in Failed")
 	assert.Equal(t, secretInProj2.ID, result.Failed[0].SecretID)
-	assert.Equal(t, "secret-p2", result.Failed[0].Name)
-	assert.Contains(t, result.Failed[0].Error, "does not belong to this project")
+	assert.Empty(t, result.Failed[0].Name, "the other tenant's secret name must never be disclosed")
+	assert.Equal(t, "secret not found", result.Failed[0].Error, "a cross-tenant secret must be refused identically to a nonexistent one")
 	assert.Equal(t, 2, result.Total)
+
+	// The other tenant's secret must survive untouched.
+	stillThere, err := c.storage.GetSecret(ctx, secretInProj2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "SENSITIVE-OTHER-TENANT-NAME", stillThere.Name)
 }
 
-// TestBulkDeleteSecrets_DeleteSecretRuntimeError covers the branch where
-// BulkDeleteSecrets successfully pre-fetches a secret but the underlying
-// DeleteSecret call returns a runtime error (bulk_delete.go lines 86-92).
-// This is exercised via MockStorage so the storage.DeleteSecret can be made
-// to return an error while storage.GetSecret succeeds.
-func TestBulkDeleteSecrets_DeleteSecretRuntimeError(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
+// TestBulkDeleteSecrets_RefusesProjectIDZero is the other half of the #G31 fix:
+// projectID == 0 used to disable the cross-project guard entirely (every ID was
+// accepted regardless of which project it belonged to); it must now be refused
+// outright before any secret is even looked up.
+func TestBulkDeleteSecrets_RefusesProjectIDZero(t *testing.T) {
+	c, mk, _ := setupBulkDeleteDB(t)
 	ctx := context.Background()
+	id := mk("some-secret")
 
-	const secretID = uint(42)
-	secret := &models.SecretNode{
-		ID:        secretID,
-		Name:      "my-secret",
-		ProjectID: 1,
-	}
-	storageErr := fmt.Errorf("disk I/O error")
+	req := BulkDeleteRequest{SecretIDs: []uint{id}}
+	_, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project ID is required")
 
-	ms := new(MockStorage)
-	// First GetSecret call: BulkDeleteSecrets pre-fetch.
-	ms.On("GetSecret", mock.Anything, secretID).Return(secret, nil).Once()
-	// Second GetSecret call: inside DeleteSecret itself.
-	ms.On("GetSecret", mock.Anything, secretID).Return(secret, nil).Once()
-	// DeleteSecret returns a runtime error.
-	ms.On("DeleteSecret", mock.Anything, secretID).Return(storageErr)
-
-	c := NewKeyorixCore(ms)
-
-	req := BulkDeleteRequest{SecretIDs: []uint{secretID}}
-	result, err := c.BulkDeleteSecrets(ctx, req, 0, "tester", 1, "", "")
-	require.NoError(t, err, "BulkDeleteSecrets itself must not error on individual failures")
-
-	assert.Empty(t, result.Deleted, "nothing should be in Deleted when DeleteSecret errors")
-	require.Len(t, result.Failed, 1, "the failed deletion must appear in Failed")
-	assert.Equal(t, secretID, result.Failed[0].SecretID)
-	assert.Equal(t, "my-secret", result.Failed[0].Name)
-	assert.NotEmpty(t, result.Failed[0].Error)
-	assert.Equal(t, 1, result.Total)
-
-	ms.AssertExpectations(t)
+	// The secret must be untouched — the call must have refused before reaching it.
+	still, err := c.storage.GetSecret(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "some-secret", still.Name)
 }
+
+// A per-secret runtime failure mid-batch (as opposed to a not-found/cross-project
+// refusal) not aborting the whole batch is already covered by
+// TestBulkDeleteSecrets_PartialFailure and TestBulkDeleteSecrets_AlreadyDeleted —
+// both exercise a per-ID failure appearing in Failed without a top-level error.

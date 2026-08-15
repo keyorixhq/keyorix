@@ -75,12 +75,12 @@ func TestInitializeCoreService_PasswordPolicy(t *testing.T) {
 	initI18n(t)
 	cfg := newMinimalCfg(t)
 	cfg.PasswordPolicy = config.PasswordPolicyConfig{
-		MinLength:        12,
-		RequireUppercase: true,
-		RequireLowercase: true,
-		RequireDigit:     true,
-		RequireSpecial:   true,
-		HistoryCount:     5,
+		MinLength:        config.IntPtr(12),
+		RequireUppercase: config.BoolPtr(true),
+		RequireLowercase: config.BoolPtr(true),
+		RequireDigit:     config.BoolPtr(true),
+		RequireSpecial:   config.BoolPtr(true),
+		HistoryCount:     config.IntPtr(5),
 		MaxAgeDays:       90,
 	}
 

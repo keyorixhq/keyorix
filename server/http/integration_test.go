@@ -106,6 +106,29 @@ func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	return session.SessionToken
 }
 
+// createNodeToken mints a #G79 node-type machine-identity bearer token — the
+// credential RequireNodeCredential (server/middleware/node_credential.go) now requires
+// to reach the /api/v1/system/* RemoteStorage-sync proxy tree. Bootstraps the system
+// (via createTestToken) to get an admin actor authorized to create the identity and
+// issue its token; only the node token is returned; the admin session itself no longer
+// has any special access to the proxy tree, matching production (no role, including
+// admin, grants node status).
+func createNodeToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+	_ = createTestToken(t, c) // bootstraps admin user/roles/project as a side effect
+	admin, err := c.GetUserByEmail(ctx, "testadmin@example.com")
+	require.NoError(t, err)
+	projects, err := c.Storage().ListProjects(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, projects, "createTestToken must have seeded a default project")
+	mi, err := c.CreateMachineIdentity(ctx, projects[0].ID, "test-node", core.MachineTypeNode, "test node credential", "", admin.ID)
+	require.NoError(t, err)
+	result, err := c.IssueMachineToken(ctx, projects[0].ID, mi.ID, admin.ID, core.IssueMachineTokenParams{Name: "test-node-token"})
+	require.NoError(t, err)
+	return result.PlainToken
+}
+
 // createLimitedToken creates a non-admin user and returns a valid session token.
 // The user has only read permissions (no write/delete), so restricted endpoints return 403.
 func createLimitedToken(t *testing.T, c *core.KeyorixCore) string {

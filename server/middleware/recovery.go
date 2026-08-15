@@ -7,6 +7,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"unicode"
+
+	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
 // stripControl removes control characters (CR/LF, ANSI/C1 escapes, NUL, etc.) from a
@@ -25,6 +27,13 @@ func stripControl(s string) string {
 func Recovery() func(next http.Handler) http.Handler { // NOSONAR -- cognitive complexity 20, suppress go:S3776
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// #G55: wrapping here (the outermost middleware) means every inner
+			// middleware's own writer (Logger, PrometheusMiddleware) chains ON TOP of
+			// this one — any write from the handler cascades back down through every
+			// layer to ww, so ww.Status() reliably reflects "did the handler write
+			// anything before it panicked", regardless of how many middlewares sit
+			// between here and the handler.
+			ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 			defer func() {
 				if err := recover(); err != nil {
 					// Log the panic with stack trace
@@ -57,14 +66,29 @@ func Recovery() func(next http.Handler) http.Handler { // NOSONAR -- cognitive c
 					log.Printf("PANIC CONTEXT: RequestID=%s, User=%s, Method=%s, Path=%s, RemoteAddr=%s",
 						requestID, userInfo, r.Method, logSafeRequestURI(r), r.RemoteAddr)
 
+					// #G55: if the handler already sent a status/wrote part of the body
+					// before panicking, our own WriteHeader below would be a silent no-op
+					// (net/http only honors the FIRST WriteHeader call) and our JSON body
+					// would land AFTER whatever partial content the handler already wrote —
+					// corrupting the response into something that looks complete but isn't,
+					// worse than no response at all. Nothing can cleanly recover a
+					// mid-response panic at this layer; abort the connection instead so the
+					// client sees a reset/truncated response, an unambiguous failure signal,
+					// rather than a silently-corrupted 200. http.ErrAbortHandler is net/http's
+					// own sentinel for exactly this — the server closes the connection without
+					// logging a stack trace for it (already logged in full above).
+					if ww.Status() != 0 {
+						panic(http.ErrAbortHandler)
+					}
+
 					// Send a generic error response. We deliberately NEVER return the
 					// panic value, stack trace, or other internals to the client — this
 					// is a secrets manager, and a panic value can carry sensitive data;
 					// leaking internals (even gated behind a "dev mode" flag) is a foot-
 					// gun one config toggle away from production. Operators get the full
 					// panic + stack from the logs above; clients get only an opaque 500.
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
+					ww.Header().Set("Content-Type", "application/json")
+					ww.WriteHeader(http.StatusInternalServerError)
 
 					response := map[string]interface{}{
 						"error":   "InternalServerError",
@@ -72,14 +96,14 @@ func Recovery() func(next http.Handler) http.Handler { // NOSONAR -- cognitive c
 						"code":    http.StatusInternalServerError,
 					}
 
-					if encodeErr := json.NewEncoder(w).Encode(response); encodeErr != nil {
+					if encodeErr := json.NewEncoder(ww).Encode(response); encodeErr != nil {
 						log.Printf("Failed to encode panic response: %v", encodeErr)
-						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+						http.Error(ww, "Internal Server Error", http.StatusInternalServerError)
 					}
 				}
 			}()
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(ww, r)
 		})
 	}
 }
