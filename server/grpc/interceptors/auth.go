@@ -216,6 +216,28 @@ func withAuditAttribution(ctx context.Context, userCtx *UserContext) context.Con
 	return ctx
 }
 
+// grpcAuthFailure records a failed token-validation attempt against the
+// caller's peer IP (mirrors HTTP's PAT-003 recordTokenAuthFailure, see
+// rate_limit.go) and returns the error authenticateRequest should report:
+// ResourceExhausted once that IP's failure budget is exhausted, otherwise the
+// ordinary "invalid or expired token" Unauthenticated error a single bad
+// request has always gotten. Deliberately NOT called for the cheap
+// extraction failures above (missing metadata/header/token) — mirroring the
+// HTTP precedent, only an actual validated-against-the-store failure (a real
+// candidate token that was checked and rejected) consumes the budget, since
+// that is the expensive, attacker-relevant case (credential brute-forcing),
+// not a malformed or absent header.
+//
+// Called from both the unary (AuthInterceptor) and stream (StreamAuthInterceptor)
+// paths via this shared function, so G41's failed-auth-hammering gap is closed
+// once for both RPC styles rather than needing a chain reorder on either side.
+func grpcAuthFailure(ctx context.Context) error {
+	if !recordGRPCTokenAuthFailure(PeerIP(ctx)) {
+		return status.Error(codes.ResourceExhausted, "too many invalid token attempts")
+	}
+	return status.Errorf(codes.Unauthenticated, "Invalid or expired token")
+}
+
 // authenticateRequest extracts the bearer token from the request metadata and
 // validates it against the core service — the same paths the HTTP API uses. A
 // kx_pat_ token authenticates as its owning user via ValidatePATToken and may
@@ -271,7 +293,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		user, _, err = coreService.ValidateSessionToken(ctx, token)
 	}
 	if err != nil {
-		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
+		return nil, nil, grpcAuthFailure(ctx)
 	}
 
 	// #G18: capture the session's row id (not the raw token — see UserContext.SessionID's
@@ -345,7 +367,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 func validateGRPCMachineToken(ctx context.Context, coreService *core.KeyorixCore, token string) (*UserContext, *core.PATRestriction, error) {
 	machine, roles, restriction, err := coreService.ValidateMachineToken(ctx, token)
 	if err != nil {
-		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
+		return nil, nil, grpcAuthFailure(ctx)
 	}
 	uc := &UserContext{
 		Username:          machine.Name,
