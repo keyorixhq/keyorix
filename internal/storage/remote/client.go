@@ -233,15 +233,18 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 	// a cross-host redirect, and config.BaseURL is scheme/host validated by
 	// Config.Validate's validateBaseURL(c.BaseURL) call (a direct field read,
 	// rejecting non-https except for a loopback host) before this client is
-	// ever constructed.
-	// codeql[go/keyorix-ssrf-unvalidated-outbound-request]: the query traces this
-	// sink's taint back to callers that build `path` from an incoming HTTP request's
-	// r.URL.Query() values (e.g. server/http/handlers/audit.go's filter params) --
-	// an incoming-request field that happens to match the query's url/host/dsn/
-	// webhook/callback field-name heuristic. Those values only ever contribute a
-	// query-string suffix appended to the already-validated c.baseURL above, never
-	// the request's own host/scheme. Not a real unvalidated destination -- a
-	// coincidental name match on net/http.Request.URL.
+	// ever constructed. The query traces this sink's taint back to callers that
+	// build `path` from an incoming HTTP request's r.URL.Query() values (e.g.
+	// server/http/handlers/audit.go's filter params) -- an incoming-request field
+	// that happens to match the query's url/host/dsn/webhook/callback field-name
+	// heuristic. Those values only ever contribute a query-string suffix appended
+	// to the already-validated c.baseURL above, never the request's own
+	// host/scheme. Not a real unvalidated destination -- a coincidental name
+	// match on net/http.Request.URL. The codeql[...] tag MUST be the single
+	// comment line directly above the sink (CodeQL's AlertSuppression.qll
+	// requires the comment's own end line == alert line - 1); splitting the
+	// justification above and keeping this line alone is deliberate, not style.
+	// codeql[go/keyorix-ssrf-unvalidated-outbound-request]
 	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
