@@ -6,6 +6,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strconv"
@@ -72,6 +73,13 @@ func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "InternalError", "Failed to list shares", http.StatusInternalServerError, nil)
 		return
 	}
+	// #G17: ShareView only carries SecretID, so resolve each share's owning
+	// project in one batched lookup before applying the aggregate MFA check —
+	// mirrors the gRPC-side ListUserShares fix in the same finding.
+	if middleware.ProjectsMFABlocked(r, h.coreService, h.shareViewProjectIDs(r.Context(), views)) {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
 
 	// Optional server-side filters.
 	if v := r.URL.Query().Get("secretId"); v != "" {
@@ -116,6 +124,35 @@ func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 	}, "")
 }
 
+// shareViewProjectIDs resolves the distinct projects the given share views'
+// secrets belong to, via one batched GetSecretsByIDs lookup. A resolution
+// failure is logged and treated as an empty set — see the gRPC-side
+// shareProjectIDs (share_service.go) for why this degrades safely rather than
+// blocking the endpoint outright.
+func (h *ShareHandler) shareViewProjectIDs(ctx context.Context, views []core.ShareView) []uint {
+	if len(views) == 0 {
+		return nil
+	}
+	secretIDSet := make(map[uint]bool, len(views))
+	secretIDs := make([]uint, 0, len(views))
+	for _, v := range views {
+		if !secretIDSet[v.SecretID] {
+			secretIDSet[v.SecretID] = true
+			secretIDs = append(secretIDs, v.SecretID)
+		}
+	}
+	secrets, err := h.coreService.Storage().GetSecretsByIDs(ctx, secretIDs)
+	if err != nil {
+		log.Printf("shareViewProjectIDs: failed to resolve project ids for MFA check: %v", err)
+		return nil
+	}
+	projectIDs := make([]uint, 0, len(secrets))
+	for _, sec := range secrets {
+		projectIDs = append(projectIDs, sec.ProjectID)
+	}
+	return projectIDs
+}
+
 // filterShareViews returns the views satisfying keep.
 func filterShareViews(views []core.ShareView, keep func(core.ShareView) bool) []core.ShareView {
 	out := views[:0:0]
@@ -151,6 +188,16 @@ func (h *ShareHandler) ListSharedSecrets(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		log.Printf("Error listing shared secrets: %v", err)
 		h.sendError(w, "InternalError", "Failed to list shared secrets", http.StatusInternalServerError, nil)
+		return
+	}
+	// #G17: each SecretNode already carries its own ProjectID — no extra lookup
+	// needed. Mirrors the gRPC-side ListSharedSecrets fix in the same finding.
+	projectIDs := make([]uint, 0, len(secrets))
+	for _, sec := range secrets {
+		projectIDs = append(projectIDs, sec.ProjectID)
+	}
+	if middleware.ProjectsMFABlocked(r, h.coreService, projectIDs) {
+		middleware.WriteProjectMFARequired(w)
 		return
 	}
 	if secrets == nil {

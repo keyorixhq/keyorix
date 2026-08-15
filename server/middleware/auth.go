@@ -1099,6 +1099,20 @@ func forbiddenResponse(w http.ResponseWriter, message string) {
 // cost and stay exempt — consistent with EnforceMFAEnrollment. Handlers that
 // authorize in-handler (not via RequireScopedPermission) call this too, so the
 // policy is enforced uniformly across every project-scoped path.
+//
+// #G17: fails CLOSED (blocks) on a genuine ProjectRequiresMFA lookup error —
+// matching the gRPC-side enforceProjectMFA fix. A lookup error used to fall
+// through to "not blocked", silently treating the caller as MFA-compliant;
+// left unfixed here while gRPC failed closed, a caller could deliberately
+// trigger the same lookup error and pick whichever transport still failed
+// open, reopening exactly the transport-divergence bypass class this
+// function's own doc comment says it exists to prevent. A "project not
+// found" error is deliberately excluded from the fail-closed path: this
+// scope was already permission-checked by the caller (finishScopedPermissionRequest
+// only reaches here on allowed==true), so a nonexistent project is not an
+// MFA-policy question — blocking it here would mask the handler's own
+// existence check (e.g. a project-health probe for an unknown ID) behind a
+// misleading "MFA required" response instead of its real 404/403.
 func ProjectMFABlocked(r *http.Request, cs *core.KeyorixCore, projectID uint) bool {
 	if projectID == 0 || cs == nil {
 		return false
@@ -1108,7 +1122,35 @@ func ProjectMFABlocked(r *http.Request, cs *core.KeyorixCore, projectID uint) bo
 		return false
 	}
 	req, err := cs.ProjectRequiresMFA(r.Context(), projectID)
-	return err == nil && req
+	if err != nil {
+		return !strings.Contains(err.Error(), "not found")
+	}
+	return req
+}
+
+// ProjectsMFABlocked generalizes ProjectMFABlocked across a set of project IDs
+// disclosed by an aggregate/global-scope response — true if ANY project in the
+// set requires MFA the caller's session lacks (or whose policy can't be
+// verified). See ProjectMFABlocked's doc comment for the exemption rules.
+//
+// #G17: an aggregate endpoint (e.g. GET /rotation-plan, GET /shares,
+// GET /shared-secrets) is gated only by a global RequirePermission check, which
+// never scopes to any one project — so ProjectMFABlocked's own per-project gate
+// is never reached for these routes regardless of which specific projects' data
+// the response actually discloses. Call this with every project ID the response
+// discloses before writing it out.
+func ProjectsMFABlocked(r *http.Request, cs *core.KeyorixCore, projectIDs []uint) bool {
+	seen := make(map[uint]bool, len(projectIDs))
+	for _, id := range projectIDs {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if ProjectMFABlocked(r, cs, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // WriteProjectMFARequired writes the 403 ProjectMFARequired response (exported so

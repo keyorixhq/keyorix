@@ -215,5 +215,17 @@ func (h *SecretHandler) GetDeploymentRotationPlan(w http.ResponseWriter, r *http
 		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
 		return
 	}
+	// #G17: the response aggregates every project's own rotation plan; a
+	// project that individually requires MFA must not be readable via this
+	// global-scope roll-up by a session that lacks it — mirrors the gRPC-side
+	// enforceProjectMFAForProjects fix in the same finding.
+	projectIDs := make([]uint, 0, len(plan.Projects))
+	for _, p := range plan.Projects {
+		projectIDs = append(projectIDs, p.ProjectID)
+	}
+	if middleware.ProjectsMFABlocked(r, h.coreService, projectIDs) {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
 	h.sendSuccess(w, plan, "")
 }
