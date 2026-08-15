@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -110,8 +111,48 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserS
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to list user shares")
 	}
+	// #G17: ShareRecord only carries SecretID, so resolve each share's owning
+	// project in one batched lookup before applying the same aggregate MFA
+	// check GetDeploymentRotationPlan/ListSharedSecrets use — see
+	// enforceProjectMFAForProjects's doc comment for why this global-scope
+	// endpoint needs it despite authorizeGlobal's scope.ProjectID being 0.
+	if err := enforceProjectMFAForProjects(ctx, s.core, user, s.shareProjectIDs(ctx, shares)); err != nil {
+		return nil, err
+	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
 	return sharesToResponse(shares, page, pageSize), nil
+}
+
+// shareProjectIDs resolves the distinct projects the given shares' secrets
+// belong to, via one batched GetSecretsByIDs lookup. A resolution failure is
+// logged and treated as an empty set — enforceProjectMFAForProjects then has
+// nothing to check, which is safe here because ListSharesByUser only returns
+// shares the caller is independently entitled to see; the risk this closes is
+// an MFA-required project's data leaking through the aggregate view, not raw
+// existence, so skipping the extra step-up check on a transient lookup error
+// degrades to the pre-fix behavior rather than blocking the endpoint outright.
+func (s *ShareGRPCService) shareProjectIDs(ctx context.Context, shares []*models.ShareRecord) []uint {
+	if len(shares) == 0 {
+		return nil
+	}
+	secretIDSet := make(map[uint]bool, len(shares))
+	secretIDs := make([]uint, 0, len(shares))
+	for _, sh := range shares {
+		if !secretIDSet[sh.SecretID] {
+			secretIDSet[sh.SecretID] = true
+			secretIDs = append(secretIDs, sh.SecretID)
+		}
+	}
+	secrets, err := s.core.Storage().GetSecretsByIDs(ctx, secretIDs)
+	if err != nil {
+		log.Printf("shareProjectIDs: failed to resolve project ids for MFA check: %v", err)
+		return nil
+	}
+	projectIDs := make([]uint, 0, len(secrets))
+	for _, sec := range secrets {
+		projectIDs = append(projectIDs, sec.ProjectID)
+	}
+	return projectIDs
 }
 
 // ListSharedSecrets lists secrets shared with the calling user.
@@ -130,6 +171,15 @@ func (s *ShareGRPCService) ListSharedSecrets(ctx context.Context, req *pb.ListSh
 	secrets, err := s.core.ListSharedSecrets(ctx, user.UserID)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to list shared secrets")
+	}
+	// #G17: each SecretNode already carries its own ProjectID — no extra lookup
+	// needed, unlike ListUserShares' ShareRecord-based path above.
+	projectIDs := make([]uint, 0, len(secrets))
+	for _, sec := range secrets {
+		projectIDs = append(projectIDs, sec.ProjectID)
+	}
+	if err := enforceProjectMFAForProjects(ctx, s.core, user, projectIDs); err != nil {
+		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
 	out := make([]*pb.Secret, 0, len(secrets))

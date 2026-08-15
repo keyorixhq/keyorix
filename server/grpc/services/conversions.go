@@ -116,8 +116,19 @@ func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, actor *intercept
 // bypassable by switching transport. Non-interactive callers (PAT / machine) are
 // exempt — SessionAuth is false for them — and a global-scoped operation (project
 // 0) is never gated. Called after the permission check at every project-scoped
-// authorization chokepoint. Fails closed only on a positive requirement; a lookup
-// error leaves the prior permission decision in force (matching HTTP).
+// authorization chokepoint.
+//
+// #G17: fails CLOSED, matching every other primitive this file wires into
+// (AuthorizePrincipal, core.Authorize) — a ProjectRequiresMFA lookup error (a
+// transient storage timeout, a cancelled context) used to fall through to
+// `return nil`, silently treating the caller as MFA-compliant regardless of the
+// project's real policy or the session's real factor state. A "project not
+// found" error is deliberately excluded from the fail-closed path: this scope
+// was already permission-checked by the caller (authorizeScoped only reaches
+// this line after AuthorizePrincipal allowed it), so a nonexistent project
+// isn't an MFA-policy question — denying here would mask the RPC's own
+// not-found handling (e.g. GetProjectRotationPlan(unknownID)) behind a
+// misleading "MFA required" status instead of its real NotFound.
 func enforceProjectMFA(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, projectID uint) error {
 	if projectID == 0 || cs == nil || actor == nil {
 		return nil
@@ -125,9 +136,44 @@ func enforceProjectMFA(ctx context.Context, cs *core.KeyorixCore, actor *interce
 	if !actor.SessionAuth || actor.MFAEnabled {
 		return nil
 	}
-	if required, err := cs.ProjectRequiresMFA(ctx, projectID); err == nil && required {
+	required, err := cs.ProjectRequiresMFA(ctx, projectID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil
+		}
+		return status.Error(codes.Internal, "unable to verify project MFA policy; please try again")
+	}
+	if required {
 		return status.Error(codes.PermissionDenied,
 			"this project requires multi-factor authentication; enrol a second factor to access it")
+	}
+	return nil
+}
+
+// enforceProjectMFAForProjects applies enforceProjectMFA across every distinct,
+// non-zero project ID in projectIDs, denying on the first one that requires MFA
+// the actor's session lacks (or whose policy can't be verified).
+//
+// #G17: authorizeGlobal always calls enforceProjectMFA with projectID 0, which
+// no-ops unconditionally — correct for genuinely install-wide data, but several
+// authorizeGlobal-gated RPCs (GetDeploymentRotationPlan, ListUserShares,
+// ListSharedSecrets) return content aggregated from or belonging to SPECIFIC
+// projects, some of which may individually require MFA. A session-authenticated
+// caller without a second factor, blocked from a single MFA-required project's
+// per-project endpoint, could otherwise read that same project's data back out
+// of the aggregate endpoint instead — the step-up control silently routed around
+// by picking the global-scope sibling. Call this after loading the response data,
+// before returning it, with every project ID the response discloses.
+func enforceProjectMFAForProjects(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, projectIDs []uint) error {
+	seen := make(map[uint]bool, len(projectIDs))
+	for _, id := range projectIDs {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if err := enforceProjectMFA(ctx, cs, actor, id); err != nil {
+			return err
+		}
 	}
 	return nil
 }

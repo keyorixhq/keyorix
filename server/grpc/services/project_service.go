@@ -132,6 +132,16 @@ func (s *ProjectGRPCService) GetDeploymentRotationPlan(ctx context.Context, _ *e
 	if err != nil {
 		return nil, mapProjectError(err)
 	}
+	// #G17: the response aggregates every project's own rotation plan; a
+	// project that individually requires MFA must not be readable via this
+	// global-scope roll-up by a session that lacks it.
+	projectIDs := make([]uint, 0, len(plan.Projects))
+	for _, p := range plan.Projects {
+		projectIDs = append(projectIDs, p.ProjectID)
+	}
+	if err := enforceProjectMFAForProjects(ctx, s.core, user, projectIDs); err != nil {
+		return nil, err
+	}
 	return deploymentRotationPlanToProto(plan), nil
 }
 
