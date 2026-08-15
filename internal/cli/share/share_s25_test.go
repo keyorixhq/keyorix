@@ -11,6 +11,7 @@ package share
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,6 +35,7 @@ func TestRunCreate_WithExpires_UserShare(t *testing.T) {
 
 	svc := openShareCore(t)
 	ownerID, secretID, projID := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runCreate now asserts SharedBy from this
 
 	ctx := context.Background()
 	recipient, err := svc.Storage().CreateUser(ctx, &models.User{
@@ -70,7 +72,8 @@ func TestRunCreate_WithExpires_GroupShare(t *testing.T) {
 	t.Setenv("KEYORIX_TOKEN", "")
 
 	svc := openShareCore(t)
-	_, secretID, _ := seedShareData(t, svc)
+	ownerID, secretID, _ := seedShareData(t, svc)
+	t.Setenv("KEYORIX_CLI_ACTOR", fmt.Sprintf("%d", ownerID)) // #G67: runCreate now asserts SharedBy from this
 
 	ctx := context.Background()
 	grp, err := svc.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "expires-grp"})
