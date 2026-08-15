@@ -38,6 +38,10 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope); err != nil {
 		return err
 	}
+	// #G04: same unsynchronized-check-then-write race as AssignUserRole (see
+	// sodGrantMu's doc comment in service.go) — this is its time-bound sibling.
+	c.sodGrantMu.Lock()
+	defer c.sodGrantMu.Unlock()
 	if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 		return err
 	}
@@ -80,6 +84,9 @@ func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, gr
 	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
 		return err
 	}
+	// #G04: see AssignUserRole's identical sodGrantMu use.
+	c.sodGrantMu.Lock()
+	defer c.sodGrantMu.Unlock()
 	if err := c.requireGroupGrantNoSoDViolation(ctx, groupID, roleID); err != nil {
 		return err
 	}

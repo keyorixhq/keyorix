@@ -181,6 +181,11 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, group
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
+	// #G04: validateGroupJoinRoles' per-role requireNoSoDViolation check and the
+	// membership write below must be treated as one step — see sodGrantMu's doc
+	// comment in service.go (AssignUserRole has the identical race).
+	c.sodGrantMu.Lock()
+	defer c.sodGrantMu.Unlock()
 	if actorID != 0 {
 		if err := c.validateGroupJoinRoles(ctx, actorID, userID, groupID); err != nil {
 			return err
