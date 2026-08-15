@@ -149,7 +149,16 @@ func (v *Validator) validateField(errs map[string][]string, fieldName string, fi
 func (v *Validator) applyRule(fieldName string, field reflect.Value, ruleName, param string) error {
 	switch ruleName {
 	case "required":
-		if v.isEmpty(field) {
+		// A nil pointer/interface has nothing to check (ok=false) and is
+		// itself "not provided", so it fails required just like isEmpty's
+		// own Pointer/Interface case does. A non-nil pointer is dereferenced
+		// so it's judged by the SAME emptiness rule as its non-pointer
+		// equivalent (e.g. a non-nil *string pointing at "" or a non-nil
+		// *int pointing at 0 must fail required exactly as a plain ""/0
+		// field would) instead of unconditionally passing just because the
+		// pointer itself is non-nil.
+		resolved, ok := derefForRule(field)
+		if !ok || v.isEmpty(resolved) {
 			return fmt.Errorf("%s", i18n.T("ErrorValidation", nil))
 		}
 	case "min":
@@ -445,6 +454,11 @@ var identifierRegex = regexp.MustCompile(`^[a-zA-Z0-9 _-]+$`)
 // applied globally, since some fields (e.g. free-form secret names) intentionally allow
 // a broader charset.
 func (v *Validator) validateIdentifier(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
