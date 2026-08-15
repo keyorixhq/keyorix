@@ -729,6 +729,9 @@ func TestCheckSecretPermission_ACLFallback_GrantsAccess(t *testing.T) {
 	mockStorage.On("GetSecretACL", mock.Anything, uint(1), uint(8)).Return(&models.SecretACL{
 		SecretID: 1, UserID: 8, Permissions: `["secrets.read"]`,
 	}, nil)
+	// #G13: aclGrantsPermission now re-verifies the grantee is still a member
+	// of the secret's project before honoring the grant.
+	mockStorage.On("IsProjectMember", mock.Anything, uint(8), uint(5)).Return(true, nil)
 
 	c := NewKeyorixCore(mockStorage)
 

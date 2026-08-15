@@ -128,7 +128,7 @@ func TestPurgeDeletedUsersBefore_S27b_ZeroUsersNoOp(t *testing.T) {
 func TestPurgeDeletedUsersBefore_S27b_PurgesUser(t *testing.T) {
 	ls := newS27bStore(t,
 		&models.User{}, &models.UserRole{}, &models.UserGroup{},
-		&models.ShareRecord{}, &models.PersonalAccessToken{}, &models.Session{},
+		&models.ShareRecord{}, &models.PersonalAccessToken{}, &models.Session{}, &models.SecretACL{},
 	)
 	ctx := context.Background()
 	past := time.Now().Add(-24 * time.Hour)

@@ -83,6 +83,12 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 		if e := tx.Where(sqlWhereUserIDIn, stillEligible()).Delete(&models.PersonalAccessToken{}).Error; e != nil {
 			return e
 		}
+		// #G13: SecretACL (the grantee side, user_id) has no deleted_at of its own
+		// and no FK/cascade — a plain purge of just the users row left these grants
+		// permanently orphaned, referencing a user ID nothing else destroys.
+		if e := tx.Where(sqlWhereUserIDIn, stillEligible()).Delete(&models.SecretACL{}).Error; e != nil {
+			return e
+		}
 		if e := tx.Where("user_id IN (?) OR impersonated_by IN (?)", stillEligible(), stillEligible()).Delete(&models.Session{}).Error; e != nil {
 			return e
 		}
@@ -254,6 +260,13 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 		}
 		if e := tx.Where("dependent_secret_id IN (?) OR depends_on_secret_id IN (?)", stillEligible(), stillEligible()).
 			Delete(&models.SecretDependency{}).Error; e != nil {
+			return e
+		}
+		// #G13: SecretACL grants ON the purged secret have no deleted_at/FK of
+		// their own either — the same orphaning gap PurgeDeletedUsersBefore's
+		// SecretACL cleanup closes for the grantee side, mirrored here for the
+		// secret side.
+		if e := tx.Where("secret_id IN (?)", stillEligible()).Delete(&models.SecretACL{}).Error; e != nil {
 			return e
 		}
 		rn := tx.Unscoped().

@@ -45,7 +45,7 @@ func TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{},
-		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}))
+		&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}, &models.SecretACL{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 
@@ -107,7 +107,7 @@ func TestConcurrency_PurgeDeletedUsersBefore_RestoreWinsRace(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.UserRole{}, &models.UserGroup{},
-		&models.ShareRecord{}, &models.PersonalAccessToken{}, &models.Session{}))
+		&models.ShareRecord{}, &models.PersonalAccessToken{}, &models.Session{}, &models.SecretACL{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 

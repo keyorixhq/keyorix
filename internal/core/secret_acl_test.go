@@ -10,9 +10,22 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
+
+// unsupportedACLStorage wraps a real storage.Storage but forces GetSecretACL
+// to return storage.ErrUnsupportedByBackend, simulating a backend (like
+// RemoteStorage's still-unproxied ACL read path) that doesn't support
+// SecretACL at all.
+type unsupportedACLStorage struct {
+	corestorage.Storage
+}
+
+func (unsupportedACLStorage) GetSecretACL(context.Context, uint, uint) (*models.SecretACL, error) {
+	return nil, corestorage.ErrUnsupportedByBackend
+}
 
 // newACLCore returns a KeyorixCore backed by an in-memory SQLite DB with all
 // tables needed for the ACL tests already migrated.
@@ -252,6 +265,76 @@ func TestAuthorizeSecretPrincipal_MachineGetSecretError(t *testing.T) {
 	ok, err := c.AuthorizeSecretPrincipal(ctx, ActorTypeMachine, 1, 999999, "secrets.read")
 	require.Error(t, err)
 	assert.False(t, ok, "an unresolvable secret must never authorize a machine principal")
+}
+
+// TestHasSecretACL_DeniesStaleGrantAfterMembershipRemoved is the #G13
+// regression implementing the review's own detection_idea: remove a project
+// member who holds a SecretACL grant, assert subsequent reads using that
+// grant fail. The UserRole row is deleted directly (bypassing
+// RemoveProjectMember's own DeleteSecretACLsByUserAndProject cleanup call)
+// to isolate the NEW authorization-time guard in aclGrantsPermission from the
+// pre-existing cleanup-on-removal path — proving the grant is denied even
+// when cleanup didn't run (a gap in that path, a backend that doesn't
+// support it, a TOCTOU window), not only when it did.
+func TestHasSecretACL_DeniesStaleGrantAfterMembershipRemoved(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+	sid := mkACLSecret(t, db, "offboarding-secret")
+
+	require.NoError(t, c.GrantSecretACL(ctx, 1, sid, 42, []string{"secrets.read"}))
+	got, err := c.HasSecretACL(ctx, 42, sid, "secrets.read")
+	require.NoError(t, err)
+	require.True(t, got, "sanity: the grant must be honored while the grantee is still a project member")
+
+	// Remove user 42's project membership WITHOUT touching the SecretACL row —
+	// the stale-grant scenario this check exists to close.
+	require.NoError(t, db.Where("user_id = ? AND project_id = ?", 42, 1).Delete(&models.UserRole{}).Error)
+
+	got2, err := c.HasSecretACL(ctx, 42, sid, "secrets.read")
+	require.NoError(t, err)
+	assert.False(t, got2, "a SecretACL grant must not authorize a user who is no longer a member of the secret's project")
+}
+
+// TestAuthorizeSecret_DeniesStaleGrantAfterMembershipRemoved is the
+// AuthorizeSecret-level counterpart: a departed member's stale ACL grant
+// must not fall through to authorize a read, and — since AuthorizeSecret is
+// what backs the transfer-ownership route's permission gate
+// (RequireScopedSecretPermission -> AuthorizeSecretPrincipal ->
+// AuthorizeSecret) — this is also what closes the "transferOwnership
+// satisfied by that same stale grant" half of the detection_idea: a departed
+// member can no longer even reach TransferSecretOwnership via that route,
+// since AuthorizeSecret(..., "secrets.write") now denies them too.
+func TestAuthorizeSecret_DeniesStaleGrantAfterMembershipRemoved(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+	sid := mkACLSecret(t, db, "offboarding-secret-2")
+
+	require.NoError(t, c.GrantSecretACL(ctx, 1, sid, 55, []string{"secrets.read", "secrets.write"}))
+	ok, err := c.AuthorizeSecret(ctx, 55, sid, "secrets.write")
+	require.NoError(t, err)
+	require.True(t, ok, "sanity: the grant must authorize secrets.write while the grantee is still a project member")
+
+	require.NoError(t, db.Where("user_id = ? AND project_id = ?", 55, 1).Delete(&models.UserRole{}).Error)
+
+	ok2, err := c.AuthorizeSecret(ctx, 55, sid, "secrets.write")
+	require.NoError(t, err)
+	assert.False(t, ok2, "a departed member's stale ACL grant must not authorize secrets.write — this is the same check gating TransferSecretOwnership's HTTP route")
+}
+
+// TestHasSecretACL_UnsupportedBackendDegradesToNoGrant verifies that a
+// backend returning storage.ErrUnsupportedByBackend for GetSecretACL (e.g.
+// RemoteStorage's still-unproxied read path) degrades to "no grant" rather
+// than failing every secret-access check closed — mirroring HasSecretACL's
+// existing GetSecretAncestors handling for the same sentinel.
+func TestHasSecretACL_UnsupportedBackendDegradesToNoGrant(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+	sid := mkACLSecret(t, db, "unsupported-backend-secret")
+	c.storage = unsupportedACLStorage{c.storage}
+
+	got, err := c.HasSecretACL(ctx, 42, sid, "secrets.read")
+	require.NoError(t, err, "an unsupported-backend error from GetSecretACL must not propagate as a hard failure")
+	assert.False(t, got)
 }
 
 // TestGrantSecretACL_Upsert verifies that a second grant on the same (secret, user)

@@ -1849,6 +1849,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/rbac/assign-role-to-group-with-expiry", rbacHandler.AssignRoleToGroupWithExpiryProxy)
 			r.Post("/rbac/remove-all-project-role-grants", rbacHandler.RemoveAllProjectRoleGrantsProxy)
 			r.Post("/rbac/clear-project-secret-ownership", rbacHandler.ClearProjectSecretOwnershipProxy)
+			r.Post("/rbac/delete-secret-acls-by-user-and-project", rbacHandler.DeleteSecretACLsByUserAndProjectProxy)
 			r.Post("/rbac/global-admin-role/remove-guarded", rbacHandler.RemoveGlobalAdminRoleGuardedProxy)
 
 			// MFA enrolment/management storage-primitive proxy (finding #524). Lets a
