@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
 import { SecretDetailView } from '../SecretDetailView';
 import { Secret } from '../../../types';
+import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
 
 const mockClassifyMutate = vi.fn();
 const mockRollbackMutate = vi.fn();
@@ -634,6 +635,69 @@ describe('SecretDetailView secret value reveal', () => {
         render(<SecretDetailView secret={makeSecret({ type: 'json' })} />);
         fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
         expect(screen.getByText('not-json')).toBeInTheDocument();
+    });
+
+    // G28: revealed plaintext must not linger indefinitely with no explicit Hide.
+    describe('auto-clear (G28)', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('re-masks the revealed value after the idle timeout elapses, without an explicit Hide click', async () => {
+            mockVersions = [
+                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
+            ];
+            vi.useFakeTimers();
+            render(<SecretDetailView secret={makeSecret()} />);
+
+            fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
+            expect(screen.getByText('sup3r-secret')).toBeInTheDocument();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(DEFAULT_SENSITIVE_IDLE_MS);
+            });
+
+            expect(screen.queryByText('sup3r-secret')).not.toBeInTheDocument();
+            expect(screen.getByText(/Secret value is hidden/i)).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /^Reveal$/i })).toBeInTheDocument();
+        });
+
+        it('re-masks the revealed value when the tab is backgrounded, without an explicit Hide click', () => {
+            mockVersions = [
+                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
+            ];
+            render(<SecretDetailView secret={makeSecret()} />);
+
+            fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
+            expect(screen.getByText('sup3r-secret')).toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            act(() => {
+                document.dispatchEvent(new Event('visibilitychange'));
+            });
+
+            expect(screen.queryByText('sup3r-secret')).not.toBeInTheDocument();
+            expect(screen.getByText(/Secret value is hidden/i)).toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+        });
+
+        it('re-masks the revealed value on window blur, without an explicit Hide click', () => {
+            mockVersions = [
+                { VersionNumber: 1, EncryptedValue: btoa('sup3r-secret'), CreatedAt: '2026-06-10T00:00:00Z' },
+            ];
+            render(<SecretDetailView secret={makeSecret()} />);
+
+            fireEvent.click(screen.getByRole('button', { name: /^Reveal$/i }));
+            expect(screen.getByText('sup3r-secret')).toBeInTheDocument();
+
+            act(() => {
+                window.dispatchEvent(new Event('blur'));
+            });
+
+            expect(screen.queryByText('sup3r-secret')).not.toBeInTheDocument();
+            expect(screen.getByText(/Secret value is hidden/i)).toBeInTheDocument();
+        });
     });
 });
 

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { machineIdentitiesApi, MachineAction, MachineIdentityType } from '../../services/machineIdentities';
+import { SENSITIVE_GC_TIME } from '../../lib/queryClient';
 
 // ADR-023 query keys, namespaced per project.
 export const MACHINE_IDENTITY_KEYS = {
@@ -69,6 +70,9 @@ export function useIssueMachineToken(projectId: number, machineId: number) {
             machineIdentitiesApi.issueToken(projectId, machineId, opts),
         onSuccess: () =>
             queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.tokens(projectId, machineId) }),
+        // G28: the response is a one-time bearer token — don't let react-query's
+        // MutationCache retain it for the default 5 minutes after unmount.
+        gcTime: SENSITIVE_GC_TIME,
     });
 }
 

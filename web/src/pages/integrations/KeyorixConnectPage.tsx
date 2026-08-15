@@ -12,6 +12,7 @@ import {
     useCreateRefGrant,
     useDeleteRefGrant,
 } from '../../features/connect';
+import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 
 const errMessage = (err: unknown, fallback: string): string =>
     (err as { response?: { data?: { message?: string } } }).response?.data?.message ||
@@ -66,6 +67,14 @@ const FederatedReadPanel: React.FC = () => {
     useEffect(() => {
         return () => setValue(null);
     }, []);
+
+    // G28: the revealed value otherwise stays rendered in the DOM indefinitely —
+    // until now, only an explicit "Hide" click or unmount cleared it. Auto-clear
+    // (re-mask) on idle, tab backgrounding, or window blur too.
+    useAutoClearOnIdle(() => {
+        setRevealed(false);
+        setValue(null);
+    }, revealed);
 
     if (isLoading) {
         return (

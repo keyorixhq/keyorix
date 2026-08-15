@@ -40,6 +40,7 @@ import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand, Secret } from '../../types';
 import { copyToClipboard } from '../../utils';
 import { queryKeys } from '../../lib/queryClient';
+import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 import { Button } from '../../components/ui/Button';
 import { Spinner, Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
@@ -951,6 +952,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
             queryClient.removeQueries({ queryKey: queryKeys.secrets.versions(secret.id) });
         };
     }, [secret.id, queryClient]);
+    // G28: revealed plaintext otherwise stays rendered in the DOM indefinitely —
+    // until now, only an explicit "Hide" click or navigating away re-masked it.
+    // Auto-clear on idle, tab backgrounding, or window blur too.
+    useAutoClearOnIdle(() => setShowValue(false), showValue);
     const rotateMutation = useRotateSecret(secret.id);
     const rollbackMutation = useRollbackSecret(secret.id);
     const { data: accessors } = useSecretAccessors(secret.id);

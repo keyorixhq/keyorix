@@ -152,6 +152,24 @@ describe('useIssueMachineToken', () => {
         expect(mock.issueToken).toHaveBeenCalledWith(5, 1, { name: 'ci-token', expiresInDays: 90 });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: MACHINE_IDENTITY_KEYS.tokens(5, 1) });
     });
+
+    // G28: the response is a one-time bearer token (plaintext). Without a short
+    // gcTime override, react-query's MutationCache would retain it for the
+    // default 5 minutes after the last observer unmounts.
+    it('does not retain the issued token in the MutationCache once the component unmounts', async () => {
+        mock.issueToken.mockResolvedValueOnce({ id: 1, token: 'tok_plaintext_abc' });
+        const { wrapper, queryClient } = createWrapper();
+        const { result, unmount } = renderHook(() => useIssueMachineToken(5, 1), { wrapper });
+
+        act(() => {
+            result.current.mutate({ name: 'ci-token' });
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+
+        unmount();
+        await waitFor(() => expect(queryClient.getMutationCache().getAll()).toHaveLength(0));
+    });
 });
 
 describe('useRevokeMachineToken', () => {

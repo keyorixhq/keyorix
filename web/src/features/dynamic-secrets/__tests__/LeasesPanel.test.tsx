@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
 import { LeasesPanel } from '../LeasesPanel';
+import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
 
 let leasesData: any[] = [];
 let leasesLoading = false;
@@ -197,5 +198,50 @@ describe('LeasesPanel', () => {
         expect(screen.getByText('Credential issued')).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Done' }));
         expect(screen.queryByText('Credential issued')).not.toBeInTheDocument();
+    });
+
+    // G28: the one-time credential must not linger indefinitely with no explicit close.
+    describe('auto-clear (G28)', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('auto-closes the credential modal after the idle timeout elapses, without an explicit close', async () => {
+            issueMutate.mockImplementation((_vars, opts) =>
+                opts.onSuccess({ leaseId: 'lease-idle', username: 'app_user', password: 'idle-secret' })
+            );
+            vi.useFakeTimers();
+
+            render(<LeasesPanel configId={5} canManage />);
+            fireEvent.click(screen.getByRole('button', { name: /issue credential/i }));
+            expect(screen.getByText('idle-secret')).toBeInTheDocument();
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(DEFAULT_SENSITIVE_IDLE_MS);
+            });
+
+            expect(screen.queryByText('idle-secret')).not.toBeInTheDocument();
+            expect(screen.queryByText('Credential issued')).not.toBeInTheDocument();
+        });
+
+        it('auto-closes the credential modal when the tab is backgrounded, without an explicit close', () => {
+            issueMutate.mockImplementation((_vars, opts) =>
+                opts.onSuccess({ leaseId: 'lease-bg', username: 'app_user', password: 'bg-secret' })
+            );
+
+            render(<LeasesPanel configId={5} canManage />);
+            fireEvent.click(screen.getByRole('button', { name: /issue credential/i }));
+            expect(screen.getByText('bg-secret')).toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            act(() => {
+                document.dispatchEvent(new Event('visibilitychange'));
+            });
+
+            expect(screen.queryByText('bg-secret')).not.toBeInTheDocument();
+            expect(screen.queryByText('Credential issued')).not.toBeInTheDocument();
+
+            Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+        });
     });
 });

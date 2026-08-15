@@ -5,6 +5,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { IssuedCredential } from '../../services/dynamicSecrets';
 import { useDynamicLeases, useIssueLease, useRevokeLease, useRevokeAllLeases } from './api';
+import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 
 const leaseStatusStyle = (status: string): React.CSSProperties => {
     switch (status) {
@@ -71,6 +72,11 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
 
     const [credential, setCredential] = useState<IssuedCredential | null>(null);
     const [error, setError] = useState('');
+
+    // G28: the credential (often a plaintext password) otherwise stays rendered
+    // in the modal indefinitely until the user explicitly clicks Done/Close —
+    // auto-clear it on idle, tab backgrounding, or window blur too.
+    useAutoClearOnIdle(() => setCredential(null), credential !== null);
 
     const surface = (err: any, fallback: string) =>
         setError(err?.response?.data?.message ?? err?.response?.data?.error ?? fallback);

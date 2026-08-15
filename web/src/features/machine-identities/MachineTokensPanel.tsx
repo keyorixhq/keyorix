@@ -6,6 +6,7 @@ import { Alert } from '../../components/ui/Alert';
 import { IssuedMachineToken } from '../../services/machineIdentities';
 import { classificationMeta, CLASSIFICATION_LEVELS } from '../secrets/classification';
 import { useMachineTokens, useIssueMachineToken, useRevokeMachineToken, useClassifyMachineToken } from './api';
+import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 
 /**
  * Machine-token credentials for one machine identity (ADR-030): issue an opaque
@@ -27,6 +28,11 @@ export const MachineTokensPanel: React.FC<{
     const [error, setError] = useState('');
     const [name, setName] = useState('');
     const [copied, setCopied] = useState(false);
+
+    // G28: the token otherwise stays rendered in the modal indefinitely until the
+    // user explicitly clicks Done/Close — auto-clear it on idle, tab
+    // backgrounding, or window blur too.
+    useAutoClearOnIdle(() => setIssued(null), issued !== null);
 
     const surface = (err: any, fallback: string) =>
         setError(err?.response?.data?.message ?? err?.response?.data?.error ?? fallback);

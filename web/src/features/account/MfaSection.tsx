@@ -13,6 +13,7 @@ import { Spinner } from '../../components/ui/Loading';
 import { Modal } from '../../components/ui/Modal';
 import { copyToClipboard } from '../../utils';
 import { useMfaRecoveryStatus, useEnrollMfa, useActivateMfa, useDisableMfa, useRegenerateRecoveryCodes } from './index';
+import { useAutoClearOnIdle } from '../../hooks/useAutoClearOnIdle';
 
 // LOW_CODES_THRESHOLD is when we nudge the user to regenerate recovery codes.
 const LOW_CODES_THRESHOLD = 3;
@@ -94,6 +95,11 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
         reset();
         onClose();
     };
+
+    // G28: the recovery codes otherwise stay rendered indefinitely until the user
+    // explicitly clicks Done/Cancel — auto-clear (close the modal) on idle, tab
+    // backgrounding, or window blur too.
+    useAutoClearOnIdle(close, codes !== null);
 
     const submit = (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -201,6 +207,11 @@ const ReauthModal: React.FC<{
         setError('');
         onClose();
     };
+
+    // G28: the recovery codes otherwise stay rendered indefinitely until the user
+    // explicitly clicks Done/Cancel — auto-clear (close the modal) on idle, tab
+    // backgrounding, or window blur too.
+    useAutoClearOnIdle(close, codes !== null);
 
     const submit = async (e: React.SubmitEvent<HTMLFormElement>) => {
         e.preventDefault();
