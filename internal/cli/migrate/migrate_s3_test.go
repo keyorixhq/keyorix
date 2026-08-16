@@ -182,8 +182,11 @@ func TestResolveProjectID_ViaEnvVar(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestRequireMigrationAuthority_AuthorizeErrorFirstCall exercises the error
-// return from the first svc.Authorize call by using a canceled context so the
-// storage layer returns a context error.
+// return from the FIRST DB-backed check requireMigrationAuthority performs —
+// which, since the Wave 6 account-liveness gate was added
+// (findings-gaps/cli-project.json#1), is AccountStillUsable, not
+// svc.Authorize — by using a canceled context so the storage layer returns a
+// context error.
 func TestRequireMigrationAuthority_AuthorizeErrorFirstCall(t *testing.T) {
 	c, _ := newBootstrappedCore(t)
 
@@ -191,9 +194,10 @@ func TestRequireMigrationAuthority_AuthorizeErrorFirstCall(t *testing.T) {
 	cancel() // cancel immediately so DB calls fail
 
 	err := requireMigrationAuthority(ctx, c, 1, 1)
-	// A canceled-context error from the DB appears as a failed-to-verify-authority error.
+	// A canceled-context error from the DB appears as a failed-to-verify
+	// account-state error (the first check performed).
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to verify --by authority")
+	assert.Contains(t, err.Error(), "failed to verify --by account state")
 }
 
 // TestRequireMigrationAuthority_AuthorizeErrorSecondCall exercises the error
