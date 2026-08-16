@@ -66,12 +66,13 @@ var listCmd = &cobra.Command{
 			if e.Approved {
 				approval = "approved"
 			}
-			// #G69: Title/Category/Justification are attacker-controlled free
-			// text — Reference alone being %q-quoted (which does escape
-			// control characters) left the other three as an inconsistent,
-			// unsanitized terminal-escape-injection path.
+			// #G69: Title/Category/Justification/Reference are all
+			// attacker-controlled free text. Reference was previously only
+			// %q-quoted — that escapes Go string-literal syntax, which is a
+			// different and weaker guarantee than stripping ANSI/control
+			// bytes, so it's sanitized the same as the other three here too.
 			fmt.Printf("[%s, %s] #%d %s (category=%s, ref=%q)\n", e.Status, approval, e.ID,
-				common.SanitizeForTerminal(e.Title), common.SanitizeForTerminal(e.Category), e.Reference)
+				common.SanitizeForTerminal(e.Title), common.SanitizeForTerminal(e.Category), common.SanitizeForTerminal(e.Reference))
 			fmt.Printf("        expires %s — %s\n", e.ExpiresAt, common.SanitizeForTerminal(e.Justification))
 		}
 		return nil

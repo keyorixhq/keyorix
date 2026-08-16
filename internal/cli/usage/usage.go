@@ -107,7 +107,10 @@ func printReport(report *storage.UsageReport) error {
 		return err
 	}
 	for _, p := range report.Projects {
-		name := p.ProjectName
+		// #G69: ProjectName is attacker-controlled free text — an operator
+		// or self-chosen display name must not be able to embed terminal
+		// escape sequences that overwrite or hide rows in this report.
+		name := common.SanitizeForTerminal(p.ProjectName)
 		if name == "" {
 			name = fmt.Sprintf("(project %d)", p.ProjectID)
 		}

@@ -455,13 +455,15 @@ func printAuditLogTable(logs []logEntry, total int64) {
 		if e.Impersonation && e.ImpersonatedBy != "" {
 			actor = e.ImpersonatedBy + "→" + e.Actor
 		}
-		// #G69: actor and description are attacker-controlled free text (a
-		// username, or a description built from user-supplied metadata) — a
-		// reviewing operator must not have their terminal spoofed/hidden by
-		// the very row they're trying to audit.
+		// #G69: actor, event type, and description are all attacker-
+		// controlled or attacker-influenced free text (a username, an event
+		// type derived from a client-supplied action string, or a
+		// description built from user-supplied metadata) — a reviewing
+		// operator must not have their terminal spoofed/hidden by the very
+		// row they're trying to audit.
 		fmt.Printf("%-6d %-20s %-16s %-9s %-22s %s\n",
 			e.ID, shortTime(e.Timestamp), truncate(common.SanitizeForTerminal(actor), 16), e.ActorType,
-			truncate(e.EventType, 22), common.SanitizeForTerminal(e.Description))
+			truncate(common.SanitizeForTerminal(e.EventType), 22), common.SanitizeForTerminal(e.Description))
 	}
 	fmt.Printf("\nShowing %d of %d total event(s).\n", len(logs), total)
 }
@@ -605,11 +607,12 @@ func buildAuditSearchQuery() (url.Values, error) {
 func printAuditSearchTable(events []searchEvent, total int64) {
 	fmt.Printf("%-6s %-20s %-9s %-22s %-15s %s\n", "ID", "TIME", "KIND", "EVENT", "IP", "DESCRIPTION")
 	for _, e := range events {
-		// #G69: description is attacker-controlled free text — see
+		// #G69: event type, IP address, and description are all attacker-
+		// controlled or attacker-influenced free text — see
 		// printAuditLogTable's identical guard above.
 		fmt.Printf("%-6d %-20s %-9s %-22s %-15s %s\n",
 			e.ID, shortTime(e.EventTime), truncate(e.ActorType, 9),
-			truncate(e.EventType, 22), truncate(e.IPAddress, 15), common.SanitizeForTerminal(e.Description))
+			truncate(common.SanitizeForTerminal(e.EventType), 22), truncate(common.SanitizeForTerminal(e.IPAddress), 15), common.SanitizeForTerminal(e.Description))
 	}
 	fmt.Printf("\nShowing %d of %d total event(s).\n", len(events), total)
 }
