@@ -182,9 +182,50 @@ func (c *KeyorixCore) validateGroupJoinRoles(ctx context.Context, actorID, userI
 	return c.requireGroupJoinNoSoDViolation(ctx, userID, grants)
 }
 
+// domainAllowedForGroupJoin applies domainAllowedForUser's onboarding-domain
+// restriction to AddUserToGroup. A group membership only needs the check when
+// the join would actually confer a live role grant — a purely organizational
+// group with no role grants isn't an onboarding path and isn't gated, mirroring
+// the direct-grant paths (which only ever fire once a role is being assigned).
+//
+// Scope matching mirrors GetUserGroupRoleIDsAt (local_rbac.go): a project-scoped
+// membership (projectID != 0) is reached by the group's global (ProjectID==0)
+// grants and by grants scoped exactly to projectID; a global membership
+// (projectID == 0) is reached by EVERY grant the group holds — each at its own
+// matching project — so it is, if anything, the more dangerous case, not one to
+// skip.
+func (c *KeyorixCore) domainAllowedForGroupJoin(ctx context.Context, userID, groupID, projectID uint) error {
+	if len(c.membershipDomainAllowlist) == 0 {
+		return nil
+	}
+	grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, g := range grants {
+		if projectID == 0 || g.ProjectID == 0 || g.ProjectID == projectID {
+			return c.domainAllowedForUser(ctx, userID)
+		}
+	}
+	return nil
+}
+
 func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID, projectID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+	}
+	// #PM-006: a group membership confers every role the group holds at the
+	// matching scope (see this function's doc comment above), which is exactly
+	// the "grants a project-scope role directly by user ID" case
+	// domainAllowedForUser's doc comment (membership_lifecycle.go) says every
+	// onboarding path must cover — otherwise an install's membership domain
+	// allowlist (SetMembershipDomainAllowlist) can be bypassed entirely by
+	// routing a disallowed-domain user through group membership instead of
+	// InviteMember/AddProjectMember. Runs unconditionally, with no actorID==0
+	// exemption, matching AddProjectMember/InviteMember (this is an onboarding
+	// restriction, not an escalation-by-proxy authority ceiling).
+	if err := c.domainAllowedForGroupJoin(ctx, userID, groupID, projectID); err != nil {
+		return err
 	}
 	// #G04: validateGroupJoinRoles' set-based requireGroupJoinNoSoDViolation check
 	// and the membership write below must be treated as one step — see
