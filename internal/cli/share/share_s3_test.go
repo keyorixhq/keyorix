@@ -86,6 +86,12 @@ func seedShareData(t *testing.T, svc *core.KeyorixCore) (ownerID, secretID, proj
 	require.NoError(t, err)
 	projID = proj.ID
 
+	// ShareSecret/UpdateSharePermission/RevokeShare gate the owner on live project
+	// membership (RBAC-001, requireLiveOwnerAuthority) — CreateProject alone
+	// doesn't grant the creator a project-scoped role, so add it explicitly,
+	// matching real onboarding (a project creator adds themselves as a member).
+	require.NoError(t, svc.AddProjectMember(ctx, ownerID, proj.ID, ownerID, "project_admin"))
+
 	// CreateProject seeds default environments; fetch the first one.
 	envs, err := svc.Storage().ListEnvironmentsByProject(ctx, proj.ID)
 	require.NoError(t, err)
