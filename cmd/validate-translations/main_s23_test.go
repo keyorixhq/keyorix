@@ -44,35 +44,19 @@ func writeJSONFile(t *testing.T, dir, name string, v any) string {
 	return path
 }
 
-// setupTranslationsTest sets up a temp environment for validateTranslations tests.
-//
-// Because loadTranslationFile hardcodes baseDir="internal/i18n/locales" and
-// SecureReadFile joins that with the filePath argument, the only way to avoid a
-// double-nested path is to:
-//   - call validateTranslations("."), so filePath becomes bare "en.json"
-//   - provide the JSON files both at the CWD root (for scanning) and under
-//     internal/i18n/locales/ (for the secure read that loadTranslationFile uses)
-//
-// This function creates both directories, switches CWD to root, and returns root
-// so callers can write JSON files to both locations via writeToScan and writeToRead.
+// setupTranslationsTest creates a temp locales directory for validateTranslations
+// tests. loadTranslationFile scopes its secure read to whatever localesDir is
+// passed to validateTranslations, so a single directory suffices: write JSON
+// files into it and pass it straight to validateTranslations.
 //
 // Usage:
 //
-//	root, scan, secure := setupTranslationsTest(t)
-//	writeJSONFile(t, scan,   "en.json", tf)   // scanned by validateTranslations(".")
-//	writeJSONFile(t, secure, "en.json", tf)   // read by loadTranslationFile("en.json")
-//	summary, err := validateTranslations(".")
-func setupTranslationsTest(t *testing.T) (root, scanDir, secureDir string) {
+//	dir := setupTranslationsTest(t)
+//	writeJSONFile(t, dir, "en.json", tf)
+//	summary, err := validateTranslations(dir)
+func setupTranslationsTest(t *testing.T) (dir string) {
 	t.Helper()
-	root = t.TempDir()
-	// secureDir is where loadTranslationFile actually reads from.
-	secureDir = filepath.Join(root, "internal", "i18n", "locales")
-	require.NoError(t, os.MkdirAll(secureDir, 0700))
-	// scanDir is the directory passed to validateTranslations; using "." means
-	// filePath in loadTranslationFile will be the bare filename only.
-	scanDir = root
-	t.Chdir(root)
-	return root, scanDir, secureDir
+	return t.TempDir()
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +393,50 @@ func TestPrintValidationSummary_S23_StatsCoverage(t *testing.T) {
 // validateTranslations — error branches
 // ---------------------------------------------------------------------------
 
+// TestValidateTranslations_S23_RealLocalesDirDefaultInvocation is a regression
+// test for a bug where loadTranslationFile joined its hardcoded baseDir onto a
+// path that validateTranslations had already joined onto localesDir, doubling
+// it (e.g. internal/i18n/locales/internal/i18n/locales/de.json) and making
+// every invocation fail with "no such file or directory" — including the
+// tool's documented default invocation with no arguments. This test exercises
+// that exact shape: a relative "internal/i18n/locales" argument run from the
+// repo root, against the real locale files, rather than a synthetic temp dir.
+func TestValidateTranslations_S23_RealLocalesDirDefaultInvocation(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	t.Chdir(repoRoot)
+
+	summary, err := validateTranslations("internal/i18n/locales")
+	require.NoError(t, err, "validateTranslations must succeed against the real locales directory using the documented default relative path")
+
+	assert.NotZero(t, summary.TotalLanguages)
+	assert.Equal(t, summary.TotalLanguages, len(summary.Results))
+
+	var enResult *ValidationResult
+	for i := range summary.Results {
+		if summary.Results[i].Language == "en" {
+			enResult = &summary.Results[i]
+		}
+	}
+	require.NotNil(t, enResult, "expected an en.json result among the real locale files")
+	assert.NotZero(t, enResult.MessageCount)
+}
+
+// TestLoadTranslationFile_S23_ScopedToPassedBaseDir is a regression test for
+// the same doubled-path bug at the loadTranslationFile call site directly:
+// loadTranslationFile must read filename relative to whatever baseDir it is
+// given, not a hardcoded "internal/i18n/locales" that ignores the baseDir
+// argument entirely.
+func TestLoadTranslationFile_S23_ScopedToPassedBaseDir(t *testing.T) {
+	dir := t.TempDir()
+	tf := TranslationFile{"hello": {One: "Hello", Other: "Hellos"}}
+	writeJSONFile(t, dir, "en.json", tf)
+
+	got, err := loadTranslationFile(dir, "en.json")
+	require.NoError(t, err)
+	assert.Equal(t, tf, got)
+}
+
 func TestValidateTranslations_S23_DirNotFound(t *testing.T) {
 	_, err := validateTranslations("/nonexistent/path/to/locales")
 	require.Error(t, err)
@@ -426,30 +454,25 @@ func TestValidateTranslations_S23_NoJSONFiles(t *testing.T) {
 }
 
 func TestValidateTranslations_S23_InvalidJSON(t *testing.T) {
-	// We need loadTranslationFile to actually reach the file.
-	// Use "." as localesDir and place JSON in both root and internal/i18n/locales/.
-	_, scanDir, _ := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
-	// Write invalid JSON only to the scan dir; loadTranslationFile will fail
-	// before even reading the secure copy.
-	require.NoError(t, os.WriteFile(filepath.Join(scanDir, "bad.json"), []byte("not-json{{{"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bad.json"), []byte("not-json{{{"), 0600))
 
-	_, err := validateTranslations(".")
+	_, err := validateTranslations(dir)
 	require.Error(t, err)
 	assert.NotEmpty(t, err.Error())
 }
 
 func TestValidateTranslations_S23_SingleValidLanguage(t *testing.T) {
-	_, scanDir, secureDir := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
 	tf := TranslationFile{
 		"hello": {Description: "greeting", One: "Hello", Other: "Hellos"},
 		"bye":   {Description: "farewell", One: "Bye", Other: "Goodbyes"},
 	}
-	writeJSONFile(t, scanDir, "en.json", tf)
-	writeJSONFile(t, secureDir, "en.json", tf)
+	writeJSONFile(t, dir, "en.json", tf)
 
-	summary, err := validateTranslations(".")
+	summary, err := validateTranslations(dir)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, summary.TotalLanguages)
@@ -460,17 +483,15 @@ func TestValidateTranslations_S23_SingleValidLanguage(t *testing.T) {
 }
 
 func TestValidateTranslations_S23_MultipleLanguagesAllValid(t *testing.T) {
-	_, scanDir, secureDir := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
 	enTF := TranslationFile{"greet": {One: "Hi", Other: "His"}}
 	esTF := TranslationFile{"greet": {One: "Hola", Other: "Holas"}}
 
-	writeJSONFile(t, scanDir, "en.json", enTF)
-	writeJSONFile(t, scanDir, "es.json", esTF)
-	writeJSONFile(t, secureDir, "en.json", enTF)
-	writeJSONFile(t, secureDir, "es.json", esTF)
+	writeJSONFile(t, dir, "en.json", enTF)
+	writeJSONFile(t, dir, "es.json", esTF)
 
-	summary, err := validateTranslations(".")
+	summary, err := validateTranslations(dir)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, summary.TotalLanguages)
@@ -480,7 +501,7 @@ func TestValidateTranslations_S23_MultipleLanguagesAllValid(t *testing.T) {
 }
 
 func TestValidateTranslations_S23_MissingKeyInOneLanguage(t *testing.T) {
-	_, scanDir, secureDir := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
 	enTF := TranslationFile{
 		"a": {One: "A", Other: "As"},
@@ -490,12 +511,10 @@ func TestValidateTranslations_S23_MissingKeyInOneLanguage(t *testing.T) {
 		"a": {One: "Ae", Other: "Aes"},
 		// "b" intentionally missing
 	}
-	writeJSONFile(t, scanDir, "en.json", enTF)
-	writeJSONFile(t, scanDir, "es.json", esTF)
-	writeJSONFile(t, secureDir, "en.json", enTF)
-	writeJSONFile(t, secureDir, "es.json", esTF)
+	writeJSONFile(t, dir, "en.json", enTF)
+	writeJSONFile(t, dir, "es.json", esTF)
 
-	summary, err := validateTranslations(".")
+	summary, err := validateTranslations(dir)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, summary.TotalLanguages)
@@ -514,13 +533,12 @@ func TestValidateTranslations_S23_MissingKeyInOneLanguage(t *testing.T) {
 }
 
 func TestValidateTranslations_S23_EmptyMessageInLanguage(t *testing.T) {
-	_, scanDir, secureDir := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
 	tf := TranslationFile{"welcome": {One: "", Other: ""}}
-	writeJSONFile(t, scanDir, "en.json", tf)
-	writeJSONFile(t, secureDir, "en.json", tf)
+	writeJSONFile(t, dir, "en.json", tf)
 
-	summary, err := validateTranslations(".")
+	summary, err := validateTranslations(dir)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, summary.InvalidLanguages)
@@ -529,32 +547,30 @@ func TestValidateTranslations_S23_EmptyMessageInLanguage(t *testing.T) {
 }
 
 func TestValidateTranslations_S23_NonJSONFilesIgnored(t *testing.T) {
-	_, scanDir, secureDir := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
 	tf := TranslationFile{"hi": {One: "Hi", Other: "His"}}
-	writeJSONFile(t, scanDir, "en.json", tf)
-	writeJSONFile(t, secureDir, "en.json", tf)
+	writeJSONFile(t, dir, "en.json", tf)
 	// These should be ignored by the JSON file filter.
-	require.NoError(t, os.WriteFile(filepath.Join(scanDir, "README.md"), []byte("docs"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(scanDir, ".DS_Store"), []byte("mac"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("docs"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("mac"), 0600))
 
-	summary, err := validateTranslations(".")
+	summary, err := validateTranslations(dir)
 	require.NoError(t, err)
 	assert.Equal(t, 1, summary.TotalLanguages)
 }
 
 func TestValidateTranslations_S23_SummaryMessageIDsSorted(t *testing.T) {
-	_, scanDir, secureDir := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
 	tf := TranslationFile{
 		"zebra": {One: "Zebra", Other: "Zebras"},
 		"apple": {One: "Apple", Other: "Apples"},
 		"mango": {One: "Mango", Other: "Mangos"},
 	}
-	writeJSONFile(t, scanDir, "en.json", tf)
-	writeJSONFile(t, secureDir, "en.json", tf)
+	writeJSONFile(t, dir, "en.json", tf)
 
-	summary, err := validateTranslations(".")
+	summary, err := validateTranslations(dir)
 	require.NoError(t, err)
 
 	sorted := make([]string, len(summary.AllMessageIDs))
@@ -598,7 +614,7 @@ func TestPrintValidationSummary_S23_InconsistentKeyStatLine(t *testing.T) {
 // printValidationSummary emits "Present in:" / "Missing in:" lines for an
 // inconsistent key when loadTranslationFile can actually read the files.
 func TestPrintValidationSummary_S23_InconsistentKeyDetail(t *testing.T) {
-	_, scanDir, secureDir := setupTranslationsTest(t)
+	dir := setupTranslationsTest(t)
 
 	enTF := TranslationFile{
 		"hello": {One: "Hello", Other: "Hellos"},
@@ -608,12 +624,10 @@ func TestPrintValidationSummary_S23_InconsistentKeyDetail(t *testing.T) {
 		"hello": {One: "Hola", Other: "Holas"},
 		// "bye" absent → inconsistent
 	}
-	writeJSONFile(t, scanDir, "en.json", enTF)
-	writeJSONFile(t, scanDir, "es.json", esTF)
-	writeJSONFile(t, secureDir, "en.json", enTF)
-	writeJSONFile(t, secureDir, "es.json", esTF)
+	writeJSONFile(t, dir, "en.json", enTF)
+	writeJSONFile(t, dir, "es.json", esTF)
 
-	summary, err := validateTranslations(".")
+	summary, err := validateTranslations(dir)
 	require.NoError(t, err)
 	require.NotEmpty(t, summary.InconsistentKeys)
 

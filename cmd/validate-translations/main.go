@@ -107,9 +107,8 @@ func validateTranslations(localesDir string) (*ValidationSummary, error) { // NO
 
 	for _, filename := range translationFiles {
 		lang := strings.TrimSuffix(filename, ".json")
-		filePath := filepath.Join(cleanDir, filename)
 
-		translationFile, err := loadTranslationFile(filePath)
+		translationFile, err := loadTranslationFile(cleanDir, filename)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load %s: %w", filename, err)
 		}
@@ -158,10 +157,10 @@ func validateTranslations(localesDir string) (*ValidationSummary, error) { // NO
 	return summary, nil
 }
 
-func loadTranslationFile(filePath string) (TranslationFile, error) {
-	// Use secure file reading with base directory validation
-	baseDir := "internal/i18n/locales"
-	data, err := securefiles.SafeReadFile(baseDir, filePath)
+func loadTranslationFile(baseDir, filename string) (TranslationFile, error) {
+	// Use secure file reading with base directory validation, scoped to the
+	// directory actually being scanned so custom locales-directory args work.
+	data, err := securefiles.SafeReadFile(baseDir, filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file securely: %w", err)
 	}
@@ -255,7 +254,7 @@ func printValidationSummary(summary *ValidationSummary) { // NOSONAR -- go:S3776
 			var missingKey []string
 
 			for _, result := range summary.Results {
-				translations, _ := loadTranslationFile(result.FilePath)
+				translations, _ := loadTranslationFile(filepath.Dir(result.FilePath), filepath.Base(result.FilePath))
 				if _, exists := translations[messageID]; exists {
 					hasKey = append(hasKey, result.Language)
 				} else {
