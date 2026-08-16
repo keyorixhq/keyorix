@@ -150,11 +150,22 @@ func (h *SecretHandler) RevokeSecretACL(w http.ResponseWriter, r *http.Request) 
 }
 
 // aclErrorStatus maps a core ACL error to an HTTP status.
+//
+// The "Validation error" case matches core.KeyorixCore's i18n.T("ErrorValidation", nil)
+// prefix (see internal/i18n/locales/en.json), which every input-validation error in
+// internal/core/secret_acl.go is built from (fmt.Errorf("%s: ...", i18n.T("ErrorValidation", nil), ...)).
+// Some of those messages already happen to contain "invalid", "required", or
+// "permission" and matched the case below before this one existed, but others
+// (e.g. GrantSecretACL's "user %d is not a member of this secret's project" check)
+// don't contain any of those substrings and fell through to the 500 default —
+// misreporting a client-correctable 400-class request as an internal server error.
+// Matching the shared "Validation error" prefix directly covers the whole class
+// instead of enumerating every message body.
 func aclErrorStatus(msg string) int {
 	switch {
 	case strings.Contains(msg, "not found"):
 		return http.StatusNotFound
-	case strings.Contains(msg, "invalid"), strings.Contains(msg, "required"), strings.Contains(msg, "permission"):
+	case strings.Contains(msg, "Validation error"), strings.Contains(msg, "invalid"), strings.Contains(msg, "required"), strings.Contains(msg, "permission"):
 		return http.StatusBadRequest
 	case strings.Contains(msg, "not authorized"):
 		return http.StatusForbidden

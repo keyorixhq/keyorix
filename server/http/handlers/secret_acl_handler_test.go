@@ -358,6 +358,39 @@ func TestGrantSecretACL_InvalidPermission(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
+// TestGrantSecretACL_NonMemberUser verifies that granting an ACL to a user who
+// isn't a member of the secret's project is reported as a 4xx client error, not
+// a 500. core.GrantSecretACL's project-membership check returns
+// "Validation error: user %d is not a member of this secret's project" — a
+// message that doesn't contain "invalid", "required", or "permission", so
+// before aclErrorStatus grew a "Validation error" case, this client-correctable
+// request was misreported as an Internal Server Error (handlers-secret-acl-handler-001).
+func TestGrantSecretACL_NonMemberUser(t *testing.T) {
+	t.Parallel()
+	cs, db := freshCoreACL(t)
+	sid := mkACLHandlerSecret(t, db, "grant-nonmember")
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+	// User 555 exists but was never added as a member of project 1 (unlike
+	// freshCoreACL's seeded grant-target users 77/88/99/123).
+	require.NoError(t, db.Create(&models.User{
+		ID:       555,
+		Username: "testgrant_555_nonmember",
+		Email:    "grant555@example.com",
+	}).Error)
+
+	body, _ := json.Marshal(map[string]interface{}{"user_id": 555, "permissions": []string{"secrets.read"}})
+	req := withUserCtxACL(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/secrets/%d/acl", sid), bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", sid),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.GrantSecretACL(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "non-member grant target should be a 4xx client error, not a 500")
+	assert.Contains(t, w.Body.String(), "not a member")
+}
+
 // TestRevokeSecretACL_HappyPath is a standalone targeted test for the revoke success branch.
 func TestRevokeSecretACL_HappyPath(t *testing.T) {
 	t.Parallel()
@@ -549,6 +582,15 @@ func TestAclErrorStatus_BadRequest(t *testing.T) {
 func TestAclErrorStatus_InternalServerError(t *testing.T) {
 	code := aclErrorStatus("database connection failed")
 	assert.Equal(t, http.StatusInternalServerError, code)
+}
+
+// TestAclErrorStatus_ValidationErrorPrefix verifies that the exact error string
+// core.GrantSecretACL's project-membership check produces — which contains
+// neither "invalid", "required", nor "permission" — maps to 400, not the 500
+// default (handlers-secret-acl-handler-001).
+func TestAclErrorStatus_ValidationErrorPrefix(t *testing.T) {
+	code := aclErrorStatus("Validation error: user 42 is not a member of this secret's project")
+	assert.Equal(t, http.StatusBadRequest, code)
 }
 
 // TestGrantRevokeACL_RoundTrip verifies the full grant → list → revoke → list cycle.
