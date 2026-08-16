@@ -314,6 +314,8 @@ func TestShareSecretWithGroup_DepartedOwnerDenied(t *testing.T) {
 		shareRecord := &models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: true, Permission: "read"}
 		ms.On("GetSecret", ctx, uint(1)).Return(secret, nil)
 		ms.On("IsProjectMember", ctx, uint(1), uint(5)).Return(true, nil)
+		// ShareSecretWithGroup also verifies the group is scoped to the secret's project.
+		ms.On("IsGroupProjectScoped", ctx, uint(2), uint(5)).Return(true, nil)
 		ms.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
 		ms.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 
@@ -377,6 +379,14 @@ func TestShareSecretWithGroup_CrossProjectRefused(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	require.NoError(t, err)
+
+	// ShareSecretWithGroup also gates the owner on live project membership
+	// (RBAC-001, requireLiveOwnerAuthority) — give user 1 a project-scoped role,
+	// or every call below fails before ever reaching the group-scope check this
+	// test exercises. models.Role isn't migrated in this fixture (RoleID is an
+	// unenforced FK here, matching the GroupRole grants below), so no Role row
+	// is needed.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 
 	// Group G belongs to a COMPLETELY DIFFERENT project (B, 2) — the exact
 	// exploit scenario from the finding: G has no relationship to project A.
