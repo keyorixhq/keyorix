@@ -461,6 +461,21 @@ func checkAllComponentsSeen(pinned map[string]Component, seen map[string]bool) e
 // the last successfully-imported bundle — the authoritative input to the no-downgrade gate.
 const installedVersionMarker = ".keyorix-installed-version"
 
+// PersistedInstalledVersion returns the version recorded by a previous successful `import`
+// at destDir (see readInstalledVersion): ok is true and version is set when a marker from a
+// prior import anchors the no-downgrade / anti-skip gate for this destination; ok is false
+// when destDir is empty/nonexistent (a genuine first import, with nothing yet to anchor
+// against). A present-but-unreadable marker, or an otherwise non-empty destDir with no
+// marker, is returned as an error (fail closed — see readInstalledVersion).
+//
+// CLI callers use this to decide whether an operator-supplied --installed-version flag can
+// safely be treated as optional for a given import (a marker already anchors the gate) or
+// must be required (no anchor exists yet, so an omitted flag would silently disable
+// downgrade protection for that import — cli-project-001).
+func PersistedInstalledVersion(destDir string) (version string, ok bool, err error) {
+	return readInstalledVersion(destDir)
+}
+
 // readInstalledVersion returns the persisted installed version at destDir. ok is false
 // when no marker exists (a first install); a present-but-unreadable marker is an error
 // (fail closed — don't silently treat a tampered/locked marker as "first install").

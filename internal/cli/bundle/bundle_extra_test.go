@@ -60,7 +60,7 @@ func TestBuildCmd_HasExpectedFlags(t *testing.T) {
 }
 
 func TestImportCmd_HasExpectedFlags(t *testing.T) {
-	for _, name := range []string{"dest", "installed-version", "license"} {
+	for _, name := range []string{"dest", "installed-version", "license", "force"} {
 		assert.NotNil(t, importCmd.Flags().Lookup(name), "import should have --%s", name)
 	}
 }

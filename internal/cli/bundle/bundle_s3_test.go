@@ -275,7 +275,7 @@ func TestVerifyCmd_Success(t *testing.T) {
 	resetDefaultRegistryFn(t)
 	origV := verifyInstalled
 	defer func() { verifyInstalled = origV }()
-	verifyInstalled = ""
+	verifyInstalled = "v0.50.0"
 
 	const keyID = "test-key-s3-2026"
 	bundlePath, pub, _ := buildSignedBundle(t, map[string]string{
@@ -380,18 +380,20 @@ func TestImportCmd_Success_FullPath(t *testing.T) {
 	destDir := t.TempDir()
 	importDest = destDir
 	importLicense = tokenPath
-	importInstalled = ""
+	importInstalled = "v0.50.0" // below the bundle's v0.99.0 — a genuine upgrade
 
 	err := importCmd.RunE(importCmd, []string{bundlePath})
 	require.NoError(t, err)
 }
 
 // TestImportCmd_ExtractFails exercises the ibundle.Extract error path: the
-// license gate passes but the bundle itself is corrupted, so Extract fails.
+// license gate and the installed-version gate both pass (via --force, since a
+// corrupted bundle has no discoverable version), but the bundle itself is
+// corrupted, so Extract fails.
 func TestImportCmd_ExtractFails(t *testing.T) {
 	resetDefaultRegistryFn(t)
-	origD, origL, origI := importDest, importLicense, importInstalled
-	defer func() { importDest = origD; importLicense = origL; importInstalled = origI }()
+	origD, origL, origI, origF := importDest, importLicense, importInstalled, importForce
+	defer func() { importDest = origD; importLicense = origL; importInstalled = origI; importForce = origF }()
 
 	tokenPath, licPub := makeLicenseToken(t)
 
@@ -412,6 +414,7 @@ func TestImportCmd_ExtractFails(t *testing.T) {
 	importDest = t.TempDir()
 	importLicense = tokenPath
 	importInstalled = ""
+	importForce = true
 
 	err := importCmd.RunE(importCmd, []string{bundlePath})
 	require.Error(t, err)
@@ -419,11 +422,13 @@ func TestImportCmd_ExtractFails(t *testing.T) {
 }
 
 // TestImportCmd_MissingBundleFile_AfterLicenseGate exercises the os.Open error
-// path in importCmd.RunE after requireAirgapUpdates passes.
+// path in importCmd.RunE after requireAirgapUpdates and the installed-version
+// gate (bypassed via --force, since a first import into a fresh --dest has
+// nothing to auto-discover a version from) both pass.
 func TestImportCmd_MissingBundleFile_AfterLicenseGate(t *testing.T) {
 	resetDefaultRegistryFn(t)
-	origD, origL, origI := importDest, importLicense, importInstalled
-	defer func() { importDest = origD; importLicense = origL; importInstalled = origI }()
+	origD, origL, origI, origF := importDest, importLicense, importInstalled, importForce
+	defer func() { importDest = origD; importLicense = origL; importInstalled = origI; importForce = origF }()
 
 	tokenPath, licPub := makeLicenseToken(t)
 
@@ -439,6 +444,7 @@ func TestImportCmd_MissingBundleFile_AfterLicenseGate(t *testing.T) {
 	importDest = t.TempDir()
 	importLicense = tokenPath
 	importInstalled = ""
+	importForce = true
 
 	err := importCmd.RunE(importCmd, []string{"/nonexistent/bundle.tar.gz"})
 	require.Error(t, err)
