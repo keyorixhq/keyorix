@@ -54,6 +54,7 @@ const (
 	errUserNotFound              = "User not found"
 	errWebAuthnCredNotFound      = "webauthn credential not found" // #nosec G101 -- error message string, not a hardcoded credential
 	hdrUserAgent                 = "User-Agent"
+	permSecretsManage            = "secrets.manage"
 	permSecretsRead              = "secrets.read"
 	permSecretsWrite             = "secrets.write"
 	testAdminEmail               = "admin@keyorix.com"
