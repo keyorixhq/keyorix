@@ -423,6 +423,61 @@ func TestSetSecretAutoRotate_InKeyorixRotationNoAdminRequired(t *testing.T) {
 		"enabling in-Keyorix rotation (no backend) needs no elevated authority")
 }
 
+// TestSetSecretAutoRotate_UnbindingBackendRequiresAdminAuthority pins the unbind side of
+// #90: an admin decided this secret should auto-rotate against an upstream backend, and
+// clearing that binding is just as security-relevant as creating it. Before this fix, the
+// admin-authority guard fired only when spec.Backend != "" — a plain secrets.write caller
+// (no admin authority) could pass Backend: "" against an already-bound secret and silently
+// strip an admin-configured rotation binding they were never allowed to set up in the
+// first place.
+func TestSetSecretAutoRotate_UnbindingBackendRequiresAdminAuthority(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+	ctx := context.Background()
+	// actor 9 has secrets.write on the secret (enforced by the transport layer, out of
+	// scope here) but NO role at all — the realistic "project editor" persona.
+
+	err := c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true}, 9)
+	require.Error(t, err, "a non-admin actor must not be able to unbind an existing rotation backend")
+	assert.Contains(t, err.Error(), "admin authority")
+
+	var s models.SecretNode
+	require.NoError(t, db.First(&s, 1).Error)
+	assert.Equal(t, "pg", s.RotationBackend, "the existing binding must survive a refused unbind attempt")
+	assert.Equal(t, "app_svc", s.RotationRef)
+}
+
+// TestSetSecretAutoRotate_AdminCanUnbindBackend is the positive control: an actor who DOES
+// hold admin authority can still clear an existing rotation-backend binding.
+func TestSetSecretAutoRotate_AdminCanUnbindBackend(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
+
+	require.NoError(t, c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true}, 9),
+		"an admin caller can clear an existing rotation-backend binding")
+
+	var s models.SecretNode
+	require.NoError(t, db.First(&s, 1).Error)
+	assert.Empty(t, s.RotationBackend, "binding cleared")
+	assert.Empty(t, s.RotationRef, "ref cleared")
+}
+
+// TestSetSecretAutoRotate_UnboundSecretNoAdminRequired confirms the guard stays scoped to
+// an actual unbind: a secret with no backend ever bound, updated with Backend: "" again,
+// is a no-op and needs no elevated authority (mirrors the in-Keyorix-rotation control
+// above, but explicit about the "nothing to unbind" case).
+func TestSetSecretAutoRotate_UnboundSecretNoAdminRequired(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	ctx := context.Background()
+
+	require.NoError(t, c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: false}, 9),
+		"clearing a backend that was never bound is a no-op and needs no elevated authority")
+}
+
 // TestSetSecretAutoRotate_RejectsDangerousRefChars pins the earliest, shared layer of
 // defense against a malicious rotation_ref: SetSecretAutoRotate is the single
 // core-layer choke point every transport (HTTP/gRPC/CLI) goes through to set a
