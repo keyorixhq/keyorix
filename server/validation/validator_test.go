@@ -352,6 +352,108 @@ func TestValidate_PointerAndNonPointer_IdenticalRuleOutcome(t *testing.T) {
 	}
 }
 
+// --- G47: `required` and `identifier` must dereference a pointer field ---
+//
+// Every rule in applyRule/validateXxx is supposed to call derefForRule so a
+// pointer-typed field is judged against its pointed-to value, exactly like
+// its non-pointer equivalent. `required` and `validateIdentifier` were the
+// two rules that skipped this: `required` inspected isEmpty(field) directly,
+// so a non-nil pointer was NEVER considered empty (isEmpty's Pointer case
+// only checks IsNil) and `required` silently passed a non-nil pointer to a
+// blank string. `validateIdentifier` checked field.Kind() != reflect.String
+// directly, so a *string field's Kind() is Pointer, never String, and the
+// charset check was silently skipped entirely for any pointer-typed field.
+
+func TestValidate_Required_NonNilPointerToBlankString_Fails(t *testing.T) {
+	type payload struct {
+		Name *string `json:"name" validate:"required"`
+	}
+	v := NewValidator()
+
+	// Non-pointer equivalent: an explicit blank string must fail required.
+	type payloadNonPtr struct {
+		Name string `json:"name" validate:"required"`
+	}
+	require.Error(t, v.Validate(payloadNonPtr{Name: ""}), "non-pointer equivalent must fail required")
+
+	// A non-nil pointer to a blank string must fail required the same way,
+	// not silently pass just because the pointer itself is non-nil.
+	require.Error(t, v.Validate(payload{Name: strPtr("")}), "non-nil pointer to empty string must fail required")
+	require.Error(t, v.Validate(payload{Name: strPtr("   ")}), "non-nil pointer to whitespace-only string must fail required")
+}
+
+func TestValidate_Required_NonNilPointerToNonBlankString_Passes(t *testing.T) {
+	type payload struct {
+		Name *string `json:"name" validate:"required"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{Name: strPtr("present")}))
+}
+
+func TestValidate_Required_NilPointer_Fails(t *testing.T) {
+	// A nil pointer means "not provided", which must still fail a bare
+	// `required` tag (no `omitempty` present to short-circuit it first) —
+	// this must keep working exactly as before the derefForRule fix.
+	type payload struct {
+		Name *string `json:"name" validate:"required"`
+	}
+	v := NewValidator()
+
+	require.Error(t, v.Validate(payload{Name: nil}), "nil pointer must fail required")
+}
+
+func TestValidate_Required_NonNilPointerToZeroInt_Fails(t *testing.T) {
+	// Same principle for a non-string kind: a non-nil *int pointing at 0
+	// must fail required exactly as a plain int field set to 0 would.
+	type payload struct {
+		Count *int `json:"count" validate:"required"`
+	}
+	v := NewValidator()
+
+	require.Error(t, v.Validate(payload{Count: intPtr(0)}), "non-nil pointer to zero int must fail required")
+	require.NoError(t, v.Validate(payload{Count: intPtr(5)}))
+}
+
+func TestValidate_Identifier_NonNilPointerToInvalidCharset_Fails(t *testing.T) {
+	type payload struct {
+		Name *string `json:"name" validate:"omitempty,identifier"`
+	}
+	v := NewValidator()
+
+	// Non-pointer equivalent: disallowed characters must fail identifier.
+	type payloadNonPtr struct {
+		Name string `json:"name" validate:"omitempty,identifier"`
+	}
+	require.Error(t, v.Validate(payloadNonPtr{Name: "path/traversal"}), "non-pointer equivalent must fail identifier")
+
+	// A non-nil pointer to the same invalid value must fail identically,
+	// not be silently skipped because Kind() is Pointer rather than String.
+	require.Error(t, v.Validate(payload{Name: strPtr("path/traversal")}), "non-nil pointer with disallowed charset must fail identifier")
+	require.Error(t, v.Validate(payload{Name: strPtr("<script>")}), "non-nil pointer with disallowed charset must fail identifier")
+}
+
+func TestValidate_Identifier_NonNilPointerToValidCharset_Passes(t *testing.T) {
+	type payload struct {
+		Name *string `json:"name" validate:"omitempty,identifier"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{Name: strPtr("prod-db_01")}))
+}
+
+func TestValidate_Identifier_NilPointer_Passes(t *testing.T) {
+	// A nil pointer has nothing to validate against the charset rule and
+	// must pass, matching every other charset rule's nil-pointer handling
+	// (validateEmail, validateURL, validateAlpha, etc via derefForRule).
+	type payload struct {
+		Name *string `json:"name" validate:"omitempty,identifier"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{Name: nil}))
+}
+
 func TestValidate_UsesJSONNameForErrorField(t *testing.T) {
 	type payload struct {
 		UserName string `json:"user_name" validate:"required"`

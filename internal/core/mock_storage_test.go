@@ -1922,6 +1922,14 @@ func (m *MockStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]*m
 	return args.Get(0).([]*models.Role), args.Error(1)
 }
 
+func (m *MockStorage) GetMachineRoleScopes(ctx context.Context, machineID uint) ([]storage.Scope, error) {
+	args := m.Called(ctx, machineID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.Scope), args.Error(1)
+}
+
 func (m *MockStorage) CreateOIDCBinding(ctx context.Context, b *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error) {
 	args := m.Called(ctx, b)
 	if args.Get(0) == nil {

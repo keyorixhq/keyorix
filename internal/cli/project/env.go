@@ -80,6 +80,7 @@ func init() {
 	envListCmd.Flags().StringVar(&envProjectFlag, "project", "", descOverrideProject)
 	envCreateCmd.Flags().StringVar(&envProjectFlag, "project", "", descOverrideProject)
 	envDeleteCmd.Flags().StringVar(&envProjectFlag, "project", "", descOverrideProject)
+	envDeleteCmd.Flags().BoolVar(&envDeleteConfirm, "confirm", false, "Confirm deletion without interactive prompt")
 }
 
 func runEnvCreate(cmd *cobra.Command, args []string) error {
@@ -114,6 +115,8 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 
 // --- env delete ---
 
+var envDeleteConfirm bool
+
 var envDeleteCmd = &cobra.Command{
 	Use:   "delete <env-id>",
 	Short: "Delete an environment by ID",
@@ -126,6 +129,13 @@ func runEnvDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid environment ID: %s", args[0])
 	}
+
+	// Deleting an environment (and everything scoped to it) is irreversible, so
+	// require an explicit --confirm — mirrors `notification channel delete`.
+	if !envDeleteConfirm {
+		return fmt.Errorf("add --confirm to confirm deletion of environment %d", id)
+	}
+
 	ctx := context.Background()
 
 	if rc, ok := common.NewRemoteClient(); ok {

@@ -12,7 +12,12 @@
 //
 // Folder inheritance: HasSecretACL also walks the ancestor folder chain via
 // GetSecretAncestors so that a grant on a parent folder node is inherited by all
-// child secret nodes automatically — no extra grant per secret needed.
+// child secret nodes automatically — no extra grant per secret needed. GrantSecretACL
+// accordingly accepts either a leaf secret's ID or a folder's ID as the grant target
+// (see requireSecretOrFolderNode) — every ancestor GetSecretAncestors can ever return
+// is structurally a folder node (CreateSecret/CreateFolder both reject a parent whose
+// IsSecret is true), so a folder-only creation path is required for the inheritance
+// walk in HasSecretACL to ever find a match.
 package core
 
 import (
@@ -63,9 +68,12 @@ func DecodeSecretACLPerms(raw string) []string {
 }
 
 // GrantSecretACL creates or updates a SecretACL grant for (secretID, userID).
-// actorID is the admin performing the grant. perms must be a non-empty subset
-// of validACLPermissions. Requires secrets.manage at the secret's project scope
-// (enforced at the HTTP layer). Emits a secret.acl_granted audit event.
+// secretID may name either a leaf secret or a folder node — a folder-targeted
+// grant is inherited by every descendant secret via HasSecretACL's ancestor walk
+// (see requireSecretOrFolderNode). actorID is the admin performing the grant.
+// perms must be a non-empty subset of validACLPermissions. Requires
+// secrets.manage at the target's project scope (enforced at the HTTP layer).
+// Emits a secret.acl_granted audit event.
 func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, userID uint, perms []string) error {
 	if actorID == 0 {
 		return fmt.Errorf("%s: actor ID is required", i18n.T("ErrorValidation", nil))
@@ -85,8 +93,10 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 		}
 	}
 
-	// Verify the secret exists (this is defence-in-depth; the HTTP layer also resolves it).
-	secret, err := c.requireSecret(ctx, secretID)
+	// Verify the target node exists (this is defence-in-depth; the HTTP layer also
+	// resolves it). Unlike requireSecret, this accepts a folder node too — see
+	// requireSecretOrFolderNode.
+	secret, err := c.requireSecretOrFolderNode(ctx, secretID)
 	if err != nil {
 		return err
 	}
@@ -239,6 +249,25 @@ func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID ui
 		return false, err
 	}
 	return isMember, nil
+}
+
+// requireSecretOrFolderNode resolves id to any live SecretNode — a leaf secret OR
+// a folder container — unlike requireSecret (secret_dependencies.go), which
+// rejects folder nodes and is used by callers (dependency edges, blast-radius,
+// impact preview) that inherently need a concrete secret. GrantSecretACL uses
+// this wider gate deliberately: a folder-targeted grant is how per-folder ACL
+// inheritance (HasSecretACL's ancestor walk over GetSecretAncestors) gets
+// populated in the first place. Every ancestor ID that walk ever visits is
+// structurally a folder node — CreateSecret and CreateFolder both reject a
+// parent whose IsSecret is true — so restricting grant targets to leaf secrets
+// (as requireSecret would) makes the inheritance walk permanently unable to find
+// a match: no SecretACL row could ever exist for an ID the walk visits.
+func (c *KeyorixCore) requireSecretOrFolderNode(ctx context.Context, id uint) (*models.SecretNode, error) {
+	node, err := c.storage.GetSecret(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%s: node %d not found", i18n.T("ErrorNotFound", nil), id)
+	}
+	return node, nil
 }
 
 // isNotFound reports whether err looks like a "not found" storage error.

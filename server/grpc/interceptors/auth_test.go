@@ -513,3 +513,121 @@ func TestAuthInterceptor_ImpersonationSessionStampsAdminInAudit(t *testing.T) {
 	assert.Nil(t, GetUserFromGRPCContext(plainCtx).ImpersonatedBy,
 		"an ordinary session must not be tagged as impersonation")
 }
+
+// ---------------------------------------------------------------------------
+// G41 member 2 — failed-auth hammering must be throttled by source IP.
+//
+// GRPCRateLimitInterceptor (the per-principal budget) runs AFTER Auth in the
+// chain and is keyed off context Auth itself sets, so a caller sending nothing
+// but invalid credentials never reaches it and was previously never throttled
+// at all — unlimited invalid-token attempts per second. The fix is the inline
+// per-IP failure budget in grpcAuthFailure (recordGRPCTokenAuthFailure, see
+// rate_limit.go), invoked from authenticateRequest itself so both the unary and
+// stream auth paths are covered from one place. These tests are the second half
+// of the G41 detection idea: "send N failed-auth unary calls; assert the budget
+// kicks in (not just that failed-auth calls succeed indefinitely)".
+// ---------------------------------------------------------------------------
+
+// bearerCtxFromIPUnknownToken builds a bearer context carrying an invalid
+// (never-issued) token from the given source IP, so every call is guaranteed
+// to hit the real token-validation failure path in authenticateRequest (the
+// same path a credential-brute-forcing attacker would drive).
+func bearerCtxFromIPUnknownToken(ip string) context.Context {
+	return bearerCtxFromIP("kx_pat_definitely-not-issued", ip)
+}
+
+// TestAuthInterceptor_FailedAuthHammering_ThrottledByIP drives
+// grpcTokenAuthFailureBurst+1 invalid-token unary calls from one source IP and
+// asserts the budget kicks in: the first grpcTokenAuthFailureBurst attempts
+// each fail Unauthenticated (an ordinary bad token, same as always), but once
+// the IP's failure budget is exhausted, further attempts fail ResourceExhausted
+// instead — proving the caller is now actually throttled, not merely still
+// being told "invalid token" forever. A second, distinct source IP is
+// unaffected, confirming the budget is per-IP, not global.
+func TestAuthInterceptor_FailedAuthHammering_ThrottledByIP(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.PersonalAccessToken{}))
+
+	interceptor := AuthInterceptor(h.CoreService, false)
+	info := &grpc.UnaryServerInfo{FullMethod: secretMethod}
+	const attackerIP = "198.51.100.10"
+
+	for i := 0; i < grpcTokenAuthFailureBurst; i++ {
+		_, err := interceptor(bearerCtxFromIPUnknownToken(attackerIP), nil, info, okHandler(nil))
+		require.Error(t, err, "invalid-token attempt %d must still fail", i)
+		assert.Equal(t, codes.Unauthenticated, status.Code(err),
+			"attempts within the failure budget report the ordinary invalid-token error")
+	}
+
+	_, err := interceptor(bearerCtxFromIPUnknownToken(attackerIP), nil, info, okHandler(nil))
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err),
+		"once the IP's failure budget is exhausted, further invalid-token attempts must be throttled")
+
+	// A different source IP has its own, unexhausted budget.
+	const otherIP = "198.51.100.11"
+	_, err = interceptor(bearerCtxFromIPUnknownToken(otherIP), nil, info, okHandler(nil))
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err),
+		"a different source IP must not share the exhausted attacker IP's budget")
+}
+
+// TestAuthInterceptor_MissingCredentialsNotCountedAgainstFailureBudget mirrors
+// the HTTP precedent (server/middleware/auth.go's handleAuthRequest): only an
+// actual validated-against-the-store failure (a real candidate token that was
+// checked and rejected) consumes the failure budget — the cheap
+// missing-metadata/missing-header case never reaches coreService at all and
+// must not be throttled, since that would let an attacker exhaust a victim's
+// (or a shared-NAT peer's) budget for free with zero real attempts.
+func TestAuthInterceptor_MissingCredentialsNotCountedAgainstFailureBudget(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+
+	interceptor := AuthInterceptor(h.CoreService, false)
+	info := &grpc.UnaryServerInfo{FullMethod: secretMethod}
+	const ip = "198.51.100.12"
+
+	md := metadata.NewIncomingContext(context.Background(), metadata.MD{})
+	ctx := peer.NewContext(md, &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 5555}})
+	for i := 0; i < grpcTokenAuthFailureBurst*2; i++ {
+		_, err := interceptor(ctx, nil, info, okHandler(nil))
+		require.Error(t, err)
+		assert.Equal(t, codes.Unauthenticated, status.Code(err),
+			"missing-header attempt %d must never escalate to ResourceExhausted", i)
+	}
+
+	// The same IP's budget is still fully available for a REAL invalid-token attempt.
+	_, err := interceptor(bearerCtxFromIPUnknownToken(ip), nil, info, okHandler(nil))
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err),
+		"the failure budget must be untouched by the preceding missing-header calls")
+}
+
+// TestStreamAuthInterceptor_FailedAuthHammering_ThrottledByIP is the streaming
+// counterpart to TestAuthInterceptor_FailedAuthHammering_ThrottledByIP: the
+// same shared authenticateRequest/grpcAuthFailure path is exercised through
+// StreamAuthInterceptor, confirming G41's fix covers stream opens too, not
+// just unary calls.
+func TestStreamAuthInterceptor_FailedAuthHammering_ThrottledByIP(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.PersonalAccessToken{}))
+
+	interceptor := StreamAuthInterceptor(h.CoreService, false)
+	info := &grpc.StreamServerInfo{FullMethod: "/keyorix.v1.AuditService/StreamAuditLogs"}
+	const attackerIP = "198.51.100.20"
+
+	for i := 0; i < grpcTokenAuthFailureBurst; i++ {
+		err := interceptor(nil, &fakeStream{ctx: bearerCtxFromIPUnknownToken(attackerIP)}, info,
+			func(_ interface{}, _ grpc.ServerStream) error { return nil })
+		require.Error(t, err, "invalid-token stream open %d must still fail", i)
+		assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	}
+
+	err := interceptor(nil, &fakeStream{ctx: bearerCtxFromIPUnknownToken(attackerIP)}, info,
+		func(_ interface{}, _ grpc.ServerStream) error { return nil })
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err),
+		"once the IP's failure budget is exhausted, further invalid-token stream opens must be throttled")
+}

@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 func newRLRequest(userID uint) *http.Request {
@@ -71,4 +73,54 @@ func TestPrincipalRateLimit_FallsBackToIPForUnauthenticated(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req)
 	assert.Equal(t, http.StatusTooManyRequests, w2.Code, "a second request from the same IP within burst=1 must be limited")
+}
+
+// TestIPFailureLimiter_SweepAmortized is #G19: ipFailureLimiter.allow used to
+// call sweepLocked() on EVERY invocation (a full O(n) scan of the limiter map
+// under the shared mutex), unlike its sibling principalRateLimiter.allow, which
+// explicitly amortizes the identical sweep to once every
+// principalLimiterSweepEvery calls. Proven deterministically here (idle entries
+// must survive until the amortization boundary, not be swept on the very next
+// call) rather than via a timing-based benchmark, which would be flaky in CI.
+func TestIPFailureLimiter_SweepAmortized(t *testing.T) {
+	l := &ipFailureLimiter{limiters: make(map[string]*principalBucket)}
+
+	// An entry idle well past principalLimiterIdleTTL — eligible for eviction the
+	// moment a sweep actually runs.
+	l.limiters["203.0.113.9"] = &principalBucket{
+		limiter:  rate.NewLimiter(rate.Limit(1), tokenAuthFailureBurst),
+		lastSeen: time.Now().Add(-2 * principalLimiterIdleTTL),
+	}
+
+	// Fewer calls than the amortization interval: the idle entry must survive —
+	// sweepLocked() must not have run yet. Each call uses a distinct IP so the
+	// idle entry itself is never touched/refreshed by allow().
+	for i := 0; i < principalLimiterSweepEvery-1; i++ {
+		l.allow("10.0.0.1")
+	}
+	l.mu.Lock()
+	_, stillPresent := l.limiters["203.0.113.9"]
+	l.mu.Unlock()
+	assert.True(t, stillPresent,
+		"an idle entry must survive until the sweep amortization boundary, not be evicted on every call")
+
+	// One more call crosses the Nth-call boundary: the sweep must now have run.
+	l.allow("10.0.0.2")
+	l.mu.Lock()
+	_, stillPresent = l.limiters["203.0.113.9"]
+	l.mu.Unlock()
+	assert.False(t, stillPresent, "the idle entry must be evicted once the amortized sweep runs")
+}
+
+// TestIPFailureLimiter_StillEnforcesBudget is a basic sanity check that
+// amortizing the sweep didn't change allow()'s actual rate-limiting behavior:
+// a single IP still gets exactly tokenAuthFailureBurst allowances before being
+// throttled.
+func TestIPFailureLimiter_StillEnforcesBudget(t *testing.T) {
+	l := &ipFailureLimiter{limiters: make(map[string]*principalBucket)}
+
+	for i := 0; i < tokenAuthFailureBurst; i++ {
+		require.True(t, l.allow("198.51.100.5"), "call %d within the burst must be allowed", i+1)
+	}
+	assert.False(t, l.allow("198.51.100.5"), "a call past the burst must be denied")
 }

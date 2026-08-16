@@ -741,20 +741,39 @@ func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID
 	return nil
 }
 
-// GetReadableScopes returns every (project, environment) scope at which userID
-// holds the given permission, directly or via group membership. It is used by
-// ListSecrets to enumerate the scopes a project-scoped reader can access when
-// no explicit project_id/environment_id filter is provided and the user lacks a
-// global grant. The global scope ({0,0}) is deliberately excluded — callers
-// check that first and fall back here only when the global check fails.
+// GetReadableScopes returns every (project, environment) scope at which the
+// calling principal (identified by principalID, resolved as a user or a machine
+// identity per actorTypeFromContext(ctx) — see the doc on CheckSecretPermission's
+// userID param for the same ctx-derived-actor-type convention) holds the given
+// permission, directly or via group membership (users only — machine identities
+// have no group concept). It is used by ListSecrets to enumerate the scopes a
+// project-scoped reader can access when no explicit project_id/environment_id
+// filter is provided and the caller lacks a global grant. The global scope
+// ({0,0}) is deliberately excluded — callers check that first and fall back here
+// only when the global check fails.
+//
+// G33: this originally called the user-only c.storage.GetUserRoleScopes +
+// c.Authorize unconditionally, so a machine identity holding a ListSecrets-
+// relevant permission ONLY at a project scope (no global grant) was resolved to
+// zero readable scopes here — the same "helper written for humans, never updated
+// for machines" shape as connect.go's actorRoleIDs and dashboard.go's
+// GetDashboardStats. Machine identities now resolve their project-scoped grants
+// via GetMachineRoleScopes + AuthorizePrincipal instead.
 //
 // PAT restrictions are honoured: a PAT that is itself narrowed to one project
 // will receive at most that project's scopes from this function.
 //
 // Any storage error is returned unchanged; the caller fails closed (returns an
 // empty list to the user rather than a 500).
-func (c *KeyorixCore) GetReadableScopes(ctx context.Context, userID uint, permission string) ([]Scope, error) {
-	allScopes, err := c.storage.GetUserRoleScopes(ctx, userID)
+func (c *KeyorixCore) GetReadableScopes(ctx context.Context, principalID uint, permission string) ([]Scope, error) {
+	actorType := actorTypeFromContext(ctx)
+	var allScopes []Scope
+	var err error
+	if actorType == ActorTypeMachine {
+		allScopes, err = c.storage.GetMachineRoleScopes(ctx, principalID)
+	} else {
+		allScopes, err = c.storage.GetUserRoleScopes(ctx, principalID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to enumerate user scopes: %w", err)
 	}
@@ -765,7 +784,7 @@ func (c *KeyorixCore) GetReadableScopes(ctx context.Context, userID uint, permis
 			// Global scope handled by caller; skip.
 			continue
 		}
-		ok, aerr := c.Authorize(ctx, userID, permission, scope)
+		ok, aerr := c.AuthorizePrincipal(ctx, actorType, principalID, permission, scope)
 		if aerr != nil {
 			// Fail closed: skip scopes we cannot evaluate.
 			continue

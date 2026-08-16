@@ -117,7 +117,7 @@ func TestGetDashboardStats_DegradedOnAuditLogsQueryError(t *testing.T) {
 	auditorID := seedUserWithRole(t, st, "auditor1", "system_auditor", storage.Scope{})
 	c.storage = &failingDashboardAuditStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor1")
+	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor1", auditorID)
 	require.NoError(t, err, "a single failed sub-check must not abort the whole dashboard")
 
 	assert.Zero(t, stats.AuditEvents30d, "the field itself still reads as its safe-default zero value")
@@ -136,7 +136,7 @@ func TestGetDashboardStats_DegradedOnActiveUsersQueryError(t *testing.T) {
 	auditorID := seedUserWithRole(t, st, "auditor2", "system_auditor", storage.Scope{})
 	c.storage = &failingDashboardStatsStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor2")
+	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor2", auditorID)
 	require.NoError(t, err)
 
 	assert.Zero(t, stats.ActiveUsers, "the field itself still reads as its safe-default zero value")
@@ -149,7 +149,7 @@ func TestGetDashboardStats_DegradedOnInactiveUsersQueryError(t *testing.T) {
 	auditorID := seedUserWithRole(t, st, "auditor3", "system_auditor", storage.Scope{})
 	c.storage = &failingDashboardUsersStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor3")
+	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor3", auditorID)
 	require.NoError(t, err)
 
 	assert.Zero(t, stats.InactiveUsers, "the field itself still reads as its safe-default zero value")
@@ -166,7 +166,7 @@ func TestGetDashboardStats_DegradedOnExpiringSecretsQueryError(t *testing.T) {
 	viewerID := seedUserWithRole(t, st, "viewer1", "system_viewer", storage.Scope{})
 	c.storage = &failingExpiringSecretsStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer1")
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer1", viewerID)
 	require.NoError(t, err)
 
 	assert.Empty(t, stats.ExpiringSecrets, "the field itself still reads as its safe-default empty value")
@@ -190,7 +190,7 @@ func TestGetDashboardStats_DegradedOnTotalSecretsQueryError(t *testing.T) {
 	viewerID := seedUserWithRole(t, st, "viewer2", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardTotalSecretsStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer2")
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer2", viewerID)
 	require.NoError(t, err, "a single failed sub-check must not abort the whole dashboard")
 
 	assert.Zero(t, stats.TotalSecrets, "the field itself still reads as its safe-default zero value")
@@ -203,7 +203,7 @@ func TestGetDashboardStats_DegradedOnSharedSecretsQueryError(t *testing.T) {
 	viewerID := seedUserWithRole(t, st, "viewer3", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardSharesByOwnerStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer3")
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer3", viewerID)
 	require.NoError(t, err)
 
 	assert.Zero(t, stats.SharedSecrets, "the field itself still reads as its safe-default zero value")
@@ -216,7 +216,7 @@ func TestGetDashboardStats_DegradedOnSharedWithMeQueryError(t *testing.T) {
 	viewerID := seedUserWithRole(t, st, "viewer4", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardSharesByUserStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer4")
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer4", viewerID)
 	require.NoError(t, err)
 
 	assert.Zero(t, stats.SecretsSharedWithMe, "the field itself still reads as its safe-default zero value")
@@ -229,7 +229,7 @@ func TestGetDashboardStats_DegradedOnRecentActivityQueryError(t *testing.T) {
 	viewerID := seedUserWithRole(t, st, "viewer5", "system_viewer", storage.Scope{})
 	c.storage = &failingDashboardRecentActivityStore{LocalStorage: st}
 
-	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer5")
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer5", viewerID)
 	require.NoError(t, err)
 
 	assert.Empty(t, stats.RecentActivity, "the field itself still reads as its safe-default empty value")
@@ -260,7 +260,7 @@ func TestGetDashboardStats_TotalSecretsIsDeploymentWideForAuditReadCaller(t *tes
 	})
 	require.NoError(t, err)
 
-	stats, err := c.GetDashboardStats(ctx, auditorID, "auditor5")
+	stats, err := c.GetDashboardStats(ctx, auditorID, "auditor5", auditorID)
 	require.NoError(t, err)
 
 	assert.EqualValues(t, 1, stats.TotalSecrets, "auditor5 personally created 0 secrets, but with audit.read the count must be deployment-wide")
@@ -286,7 +286,7 @@ func TestGetDashboardStats_TotalSecretsIsPersonalForBaselineCaller(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	stats, err := c.GetDashboardStats(ctx, viewerID, "viewer6")
+	stats, err := c.GetDashboardStats(ctx, viewerID, "viewer6", viewerID)
 	require.NoError(t, err)
 
 	assert.Zero(t, stats.TotalSecrets, "a baseline caller without audit.read must still see only secrets they personally created, not the deployment-wide count")
@@ -297,7 +297,7 @@ func TestGetDashboardStats_NotDegradedOnSuccess(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	auditorID := seedUserWithRole(t, st, "auditor4", "system_auditor", storage.Scope{})
 
-	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor4")
+	stats, err := c.GetDashboardStats(context.Background(), auditorID, "auditor4", auditorID)
 	require.NoError(t, err)
 
 	assert.False(t, stats.Degraded)

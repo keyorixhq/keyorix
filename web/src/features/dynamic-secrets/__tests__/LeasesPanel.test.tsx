@@ -23,6 +23,13 @@ beforeEach(() => {
     issueMutate.mockReset();
     revokeMutate.mockReset();
     revokeAllMutate.mockReset();
+    // Revoke (single and all) is confirmation-gated (G27); default to confirmed
+    // so existing revoke-flow tests below don't have to opt in individually.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 describe('LeasesPanel cloud credentials', () => {
@@ -180,6 +187,56 @@ describe('LeasesPanel', () => {
         fireEvent.click(copyButtons[0]);
         expect(navigator.clipboard.writeText).toHaveBeenCalledWith('app_user');
         await waitFor(() => expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(1));
+    });
+
+    it('asks for confirmation before revoking a single lease, and does not revoke when declined', () => {
+        leasesData = [{ leaseId: 'lease-1', roleName: 'role', status: 'active' }];
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        render(<LeasesPanel configId={5} canManage />);
+        fireEvent.click(screen.getByTitle('Revoke lease'));
+
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/revoke this lease/i));
+        expect(revokeMutate).not.toHaveBeenCalled();
+    });
+
+    it('revokes a single lease once the confirmation is accepted', () => {
+        leasesData = [{ leaseId: 'lease-1', roleName: 'role', status: 'active' }];
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        render(<LeasesPanel configId={5} canManage />);
+        fireEvent.click(screen.getByTitle('Revoke lease'));
+
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(revokeMutate).toHaveBeenCalledWith('lease-1', expect.anything());
+    });
+
+    it('asks for confirmation before revoking all leases, and does not revoke when declined', () => {
+        leasesData = [
+            { leaseId: 'lease-1', roleName: 'role', status: 'active' },
+            { leaseId: 'lease-2', roleName: 'role2', status: 'active' },
+        ];
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        render(<LeasesPanel configId={5} canManage />);
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke all (2)' }));
+
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/revoke all 2 active lease/i));
+        expect(revokeAllMutate).not.toHaveBeenCalled();
+    });
+
+    it('revokes all leases once the confirmation is accepted', () => {
+        leasesData = [
+            { leaseId: 'lease-1', roleName: 'role', status: 'active' },
+            { leaseId: 'lease-2', roleName: 'role2', status: 'active' },
+        ];
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        render(<LeasesPanel configId={5} canManage />);
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke all (2)' }));
+
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(revokeAllMutate).toHaveBeenCalled();
     });
 
     it('closes the credential modal via the close (X) control and via Done', () => {

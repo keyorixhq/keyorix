@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -139,10 +138,7 @@ func (h *AuthHandler) RecoveryCodesStatus(w http.ResponseWriter, r *http.Request
 // VerifyMFA completes the two-step login: it consumes the challenge from
 // /auth/login, verifies the TOTP (or recovery) code, and returns a session.
 func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
-	if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		ip = ip[:idx]
-	}
+	ip := clientIP(r)
 	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return

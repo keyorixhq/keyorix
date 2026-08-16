@@ -219,15 +219,35 @@ func refMatches(pattern, ref string) bool {
 // holds a grant in, so a user with only project-scoped role grants can match a
 // ConnectRefGrant that references one of those roles. Connect ref grants reference a
 // role by ID — if a user has that role at any scope, they should be permitted.
+//
+// G33: the machine branch below originally queried ONLY the global scope
+// (GetMachineRoleIDsAt(ctx, principalID, Scope{})), unlike the user branch's
+// project-scope sweep just below it — a machine identity holding a
+// ConnectRefGrant-referenced role ONLY at a project scope was silently denied
+// even though the equivalent human user was correctly permitted.
+//
+// The fix uses GetMachineRoles (any-scope, flattened — the same primitive
+// ValidateMachineToken/IssueMachineToken already resolve a machine's role NAMES
+// from) rather than replicating the user branch's enumerate-scopes-then-requery
+// dance: machine identities have no group-membership concept to union in (the
+// reason the user branch needs scopedRoleIDs instead of a flat query in the
+// first place), and — per this function's own CONN-005 doc above — a Connect
+// ref-grant is already resolved role-ID-at-ANY-scope for humans (it carries no
+// project/environment field of its own), so "does the machine hold this role
+// ANYWHERE" is the exact semantics needed, not a per-scope breakdown. This also
+// keeps actorRoleIDs working against a RemoteStorage-backed downstream Connect
+// node (ADR-043): GetMachineRoles is proxied over HTTP (unlike a per-scope
+// enumeration primitive, which — mirroring GetUserRoleScopes's own remote
+// status — would need to be a server-internal-only primitive).
 func (c *KeyorixCore) actorRoleIDs(ctx context.Context, actorType string, principalID uint) (map[uint]bool, error) {
 	set := map[uint]bool{}
 	if actorType == ActorTypeMachine {
-		ids, err := c.storage.GetMachineRoleIDsAt(ctx, principalID, Scope{})
+		roles, err := c.storage.GetMachineRoles(ctx, principalID)
 		if err != nil {
 			return nil, fmt.Errorf("connect ref-grant: load machine roles: %w", err)
 		}
-		for _, id := range ids {
-			set[id] = true
+		for _, r := range roles {
+			set[r.ID] = true
 		}
 		return set, nil
 	}

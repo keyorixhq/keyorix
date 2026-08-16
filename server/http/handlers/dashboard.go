@@ -33,7 +33,7 @@ func (h *DashboardHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := h.coreService.GetDashboardStats(r.Context(), userCtx.UserID, userCtx.Username)
+	stats, err := h.coreService.GetDashboardStats(r.Context(), userCtx.UserID, userCtx.Username, userCtx.PrincipalID())
 	if err != nil {
 		sendError(w, "InternalServerError", "Failed to fetch dashboard stats", http.StatusInternalServerError, nil)
 		return

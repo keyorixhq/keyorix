@@ -28,6 +28,13 @@ beforeEach(() => {
     issueMutate.mockReset();
     revokeMutate.mockReset();
     classifyMutate.mockReset();
+    // Revoke is confirmation-gated (G27); default to confirmed so existing
+    // revoke-flow tests below don't have to opt in individually.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 describe('MachineTokensPanel', () => {
@@ -154,6 +161,26 @@ describe('MachineTokensPanel', () => {
         render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
         // Only one active (non-revoked) token → only one revoke button.
         expect(screen.getAllByTitle('Revoke token')).toHaveLength(1);
+    });
+
+    it('asks for confirmation before revoking, and does not revoke when declined', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+        fireEvent.click(screen.getByTitle('Revoke token'));
+
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/revoke token/i));
+        expect(revokeMutate).not.toHaveBeenCalled();
+    });
+
+    it('revokes the token once the confirmation is accepted', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        render(<MachineTokensPanel projectId={3} machineId={7} canManage />);
+        fireEvent.click(screen.getByTitle('Revoke token'));
+
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(revokeMutate).toHaveBeenCalledWith(11, expect.anything());
     });
 
     // G28: the one-time token must not linger indefinitely with no explicit close.

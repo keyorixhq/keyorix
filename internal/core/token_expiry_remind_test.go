@@ -153,12 +153,12 @@ func TestCheckTokenExpiry_PATDeduplication_SecondCallZero(t *testing.T) {
 	assert.Equal(t, 1, r1.PATWarnings)
 
 	// Second call: same-severity unread notification exists → skip.
-	existingMsg := `"staging-pat"`
 	ms.On("ListNotifications", ctx, uint(13), true, 200).
 		Return([]*models.Notification{{
 			ID:       1,
 			Type:     NotificationPATExpiry,
-			Message:  "Your personal access token " + existingMsg + " expires on 2026-06-13 12:00 UTC.",
+			Message:  `Your personal access token "staging-pat" expires on 2026-06-13 12:00 UTC.`,
+			Link:     patExpiryLink(4),
 			Severity: models.NotificationSeverityWarning,
 		}}, nil).Once()
 
@@ -188,6 +188,7 @@ func TestCheckTokenExpiry_PATUpgradeWarningToCritical(t *testing.T) {
 		ID:       99,
 		Type:     NotificationPATExpiry,
 		Message:  `Your personal access token "expiring-fast" expires on 2026-06-11 08:00 UTC.`,
+		Link:     patExpiryLink(5),
 		Severity: models.NotificationSeverityWarning,
 	}
 	ms.On("ListNotifications", ctx, uint(14), true, 200).
@@ -351,6 +352,7 @@ func TestCheckTokenExpiry_MachineCredDeduplication(t *testing.T) {
 			ID:       55,
 			Type:     NotificationMachineCredExpiry,
 			Message:  existingMsg,
+			Link:     machineCredExpiryLink(4),
 			Severity: models.NotificationSeverityWarning,
 		}}, nil)
 
@@ -387,6 +389,7 @@ func TestCheckTokenExpiry_MachineCredUpgradeWarningToCritical(t *testing.T) {
 		ID:       88,
 		Type:     NotificationMachineCredExpiry,
 		Message:  `Machine credential "soon-cred" expires on 2026-06-11 08:00 UTC.`,
+		Link:     machineCredExpiryLink(5),
 		Severity: models.NotificationSeverityWarning,
 	}
 	ms.On("ListNotifications", ctx, uint(8), true, 200).
@@ -684,8 +687,9 @@ func TestCheckTokenExpiry_MachineCredUpgradeCountsOnceAcrossAdmins(t *testing.T)
 	ms.On("GetRole", ctx, uint(911)).Return(&models.Role{ID: 911, Name: "admin"}, nil)
 
 	existMsg := `Machine credential "escalating-cred" expires on 2026-06-11 08:00 UTC.`
-	existing90 := &models.Notification{ID: 90, Type: NotificationMachineCredExpiry, Message: existMsg, Severity: models.NotificationSeverityWarning}
-	existing91 := &models.Notification{ID: 91, Type: NotificationMachineCredExpiry, Message: existMsg, Severity: models.NotificationSeverityWarning}
+	existLink := machineCredExpiryLink(71)
+	existing90 := &models.Notification{ID: 90, Type: NotificationMachineCredExpiry, Message: existMsg, Link: existLink, Severity: models.NotificationSeverityWarning}
+	existing91 := &models.Notification{ID: 91, Type: NotificationMachineCredExpiry, Message: existMsg, Link: existLink, Severity: models.NotificationSeverityWarning}
 	ms.On("ListNotifications", ctx, uint(90), true, 200).Return([]*models.Notification{existing90}, nil)
 	ms.On("ListNotifications", ctx, uint(91), true, 200).Return([]*models.Notification{existing91}, nil)
 	ms.On("UpdateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(nil)
@@ -722,7 +726,7 @@ func TestCheckTokenExpiry_MachineCredUpgradeFailNotCounted(t *testing.T) {
 	ms.On("GetRole", ctx, uint(951)).Return(&models.Role{ID: 951, Name: "admin"}, nil)
 
 	existMsg := `Machine credential "fail-upgrade-cred" expires on 2026-06-11 08:00 UTC.`
-	existing := &models.Notification{ID: 95, Type: NotificationMachineCredExpiry, Message: existMsg, Severity: models.NotificationSeverityWarning}
+	existing := &models.Notification{ID: 95, Type: NotificationMachineCredExpiry, Message: existMsg, Link: machineCredExpiryLink(72), Severity: models.NotificationSeverityWarning}
 	ms.On("ListNotifications", ctx, uint(95), true, 200).Return([]*models.Notification{existing}, nil)
 	// UpdateNotification returns an error → upgradeReminder returns false.
 	ms.On("UpdateNotification", ctx, mock.AnythingOfType("*models.Notification")).
@@ -732,6 +736,97 @@ func TestCheckTokenExpiry_MachineCredUpgradeFailNotCounted(t *testing.T) {
 	require.NoError(t, err)
 	// Failed upgrade should not count.
 	assert.Equal(t, 0, result.MachineCriticals)
+}
+
+// ── G22 regression: dedup must key on token ID, not display Name ─────────────
+
+// TestCheckTokenExpiry_PATDedupKeyedOnID_NotName is the G22 regression test:
+// two different PATs owned by the SAME user that happen to share a display
+// Name must still get independent reminders. Before the fix,
+// unreadPATExpiryReminder matched on a quoted-name substring in the
+// notification Message, so an existing unread reminder for token A (ID 200)
+// would spuriously match token B (ID 201 — same Name, different ID) and
+// silently suppress B's reminder. The fix keys the dedup check on the token's
+// stable ID (encoded in Link via patExpiryLink), so A's standing reminder no
+// longer masks B's.
+func TestCheckTokenExpiry_PATDedupKeyedOnID_NotName(t *testing.T) {
+	ms := new(MockStorage)
+	c := newTokenExpiryCore(ms)
+	ctx := context.Background()
+
+	const sharedName = "shared-name-token"
+	tokenA := models.PersonalAccessToken{ID: 200, UserID: 500, Name: sharedName, ExpiresAt: tokenExpiresAt(6 * 24 * time.Hour)}
+	tokenB := models.PersonalAccessToken{ID: 201, UserID: 500, Name: sharedName, ExpiresAt: tokenExpiresAt(3 * 24 * time.Hour)}
+
+	ms.On("ListExpiringPATs", ctx, mock.AnythingOfType("time.Time")).
+		Return([]models.PersonalAccessToken{tokenA, tokenB}, nil)
+	ms.On("ListExpiringMachineCredentials", ctx, mock.AnythingOfType("time.Time")).
+		Return([]models.MachineIdentityCredential{}, nil)
+
+	// Token A already has a standing unread reminder from an earlier tick.
+	existingForA := &models.Notification{
+		ID:       9500,
+		Type:     NotificationPATExpiry,
+		Message:  `Your personal access token "shared-name-token" expires on 2026-06-16 12:00 UTC.`,
+		Link:     patExpiryLink(200),
+		Severity: models.NotificationSeverityWarning,
+	}
+	ms.On("ListNotifications", ctx, uint(500), true, 200).
+		Return([]*models.Notification{existingForA}, nil)
+	ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).
+		Return(&models.Notification{}, nil)
+
+	result, err := c.CheckTokenExpiry(ctx)
+	require.NoError(t, err)
+	// Token A: existing same-severity reminder → skipped (not re-counted).
+	// Token B: distinct token ID → NOT suppressed by A's reminder, even though
+	// both tokens share a Name → must still be counted and notified.
+	assert.Equal(t, 1, result.PATWarnings, "token B (same name, different ID) must still get its own reminder")
+	ms.AssertNumberOfCalls(t, "CreateNotification", 1)
+}
+
+// TestCheckTokenExpiry_MachineCredDedupKeyedOnID_NotName mirrors the PAT case
+// above for machine credentials: two credentials with the same Name but
+// different IDs, notified to the same admin, must each get their own reminder.
+func TestCheckTokenExpiry_MachineCredDedupKeyedOnID_NotName(t *testing.T) {
+	ms := new(MockStorage)
+	c := newTokenExpiryCore(ms)
+	ctx := context.Background()
+
+	const sharedName = "shared-name-cred"
+	credA := models.MachineIdentityCredential{ID: 300, MachineIdentityID: 900, Name: sharedName, ExpiresAt: tokenExpiresAt(6 * 24 * time.Hour)}
+	credB := models.MachineIdentityCredential{ID: 301, MachineIdentityID: 901, Name: sharedName, ExpiresAt: tokenExpiresAt(3 * 24 * time.Hour)}
+
+	ms.On("ListExpiringPATs", ctx, mock.AnythingOfType("time.Time")).
+		Return([]models.PersonalAccessToken{}, nil)
+	ms.On("ListExpiringMachineCredentials", ctx, mock.AnythingOfType("time.Time")).
+		Return([]models.MachineIdentityCredential{credA, credB}, nil)
+
+	admin := &models.User{ID: 600}
+	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
+	ms.On("GetUserRoleIDsAt", ctx, uint(600), storage.Scope{}).Return([]uint{6001}, nil)
+	ms.On("GetUserGroupRoleIDsAt", ctx, uint(600), storage.Scope{}).Return([]uint{}, nil)
+	ms.On("GetRole", ctx, uint(6001)).Return(&models.Role{ID: 6001, Name: "admin"}, nil)
+
+	// Credential A already has a standing unread reminder for this admin.
+	existingForA := &models.Notification{
+		ID:       9600,
+		Type:     NotificationMachineCredExpiry,
+		Message:  `Machine credential "shared-name-cred" expires on 2026-06-16 12:00 UTC.`,
+		Link:     machineCredExpiryLink(300),
+		Severity: models.NotificationSeverityWarning,
+	}
+	ms.On("ListNotifications", ctx, uint(600), true, 200).
+		Return([]*models.Notification{existingForA}, nil)
+	ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).
+		Return(&models.Notification{}, nil)
+
+	result, err := c.CheckTokenExpiry(ctx)
+	require.NoError(t, err)
+	// Credential B: distinct credential ID → NOT suppressed by A's reminder,
+	// even though both credentials share a Name → must still be counted.
+	assert.Equal(t, 1, result.MachineWarnings, "credential B (same name, different ID) must still get its own reminder")
+	ms.AssertNumberOfCalls(t, "CreateNotification", 1)
 }
 
 // ── UserFilter import usage ───────────────────────────────────────────────────

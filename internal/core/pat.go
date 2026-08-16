@@ -131,7 +131,7 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 		return nil, nil, nil, fmt.Errorf("invalid token")
 	}
 	if pat.Revoked {
-		return nil, nil, nil, fmt.Errorf("token revoked")
+		return nil, nil, nil, ErrPATRevoked
 	}
 	if IsPATExpired(pat, c.now()) {
 		c.emitPATExpiredNotification(ctx, pat)
@@ -237,10 +237,24 @@ func DecodePATScopes(raw string) []string {
 // check this exists to keep honest); falling back to the last-known (possibly
 // stale, but still a real, previously-enforced) restriction is the correct
 // degraded behavior on a transient storage error.
+//
+// #G18: also surfaces ErrPATRevoked/ErrPATExpired — previously this only ever
+// read Permissions/ProjectID/EnvironmentID/AllowedCIDRs off the freshly-read
+// row and silently discarded Revoked/ExpiresAt, so a cache-hit request kept
+// authenticating with a PAT that had been revoked or had expired since the
+// cache entry was written, for up to validTokenTTL. The caller must now treat
+// these two sentinels as "deny the request", not as a transient lookup
+// failure to degrade past (see serveAuthCacheHit).
 func (c *KeyorixCore) CurrentPATRestriction(ctx context.Context, raw string) (*PATRestriction, error) {
 	pat, err := c.storage.GetPersonalAccessTokenByHash(ctx, sha256Hex(raw))
 	if err != nil {
 		return nil, err
+	}
+	if pat.Revoked {
+		return nil, ErrPATRevoked
+	}
+	if IsPATExpired(pat, c.now()) {
+		return nil, ErrPATExpired
 	}
 	return patRestrictionFrom(pat), nil
 }

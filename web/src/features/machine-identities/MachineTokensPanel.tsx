@@ -125,6 +125,12 @@ export const MachineTokensPanel: React.FC<{
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        if (
+                                            !window.confirm(
+                                                `Revoke token "${t.name || t.prefix}"? Any client using it will lose access immediately.`
+                                            )
+                                        )
+                                            return;
                                         setError('');
                                         revoke.mutate(t.id, {
                                             onError: (err) => surface(err, 'Failed to revoke token.'),

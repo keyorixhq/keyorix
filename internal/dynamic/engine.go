@@ -9,7 +9,16 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
+
+// dialResolve resolves an admin-DSN hostname to its IP addresses for the
+// dial-time SSRF re-check (dialPostgres, openMySQL) — a var (like
+// evidencesink/notifychan's identically-shaped lookupIPAddr) so tests can
+// substitute a fake resolver to simulate a DNS-rebinding target without a
+// real DNS query.
+var dialResolve netutil.Resolver = netutil.DefaultResolver
 
 // Credential is an issued, short-lived credential returned to the caller once.
 // Database backends populate Username/Password; cloud-IAM backends (e.g. AWS STS)
@@ -62,13 +71,20 @@ type CredentialEngine interface {
 	RevokeInvalidatesCredential(adminDSN string) bool
 }
 
-// New returns the engine for a backend type.
-func New(backendType string) (CredentialEngine, error) {
+// New returns the engine for a backend type. allowPrivateNetwork mirrors
+// KeyorixCore.dynamicAllowPrivateTargets (dynamic_secrets.allow_private_network_targets):
+// when false (the default), an engine that dials the admin DSN itself
+// (postgres, mysql) re-validates the resolved target address on every
+// connection and refuses a private/link-local one — closing the DNS-rebinding
+// gap a validate-once-at-config-time guard alone leaves open (G48). The other
+// backends (cloud-IAM engines, Kubernetes' in-cluster/explicit api_server)
+// don't dial an admin_dsn host the same way and ignore this parameter.
+func New(backendType string, allowPrivateNetwork bool) (CredentialEngine, error) {
 	switch backendType {
 	case "postgres":
-		return &PostgresEngine{}, nil
+		return &PostgresEngine{allowPrivateNetwork: allowPrivateNetwork}, nil
 	case "mysql":
-		return &MySQLEngine{}, nil
+		return &MySQLEngine{allowPrivateNetwork: allowPrivateNetwork}, nil
 	case "mongodb":
 		return &MongoEngine{}, nil
 	case "redis":

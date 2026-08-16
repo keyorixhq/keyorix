@@ -27,13 +27,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	keyorixcrypto "github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // wrapAlgorithm is the asymmetric wrap algorithm used to envelope the KEK. RSA
@@ -91,6 +95,67 @@ type client struct {
 	keyVersion string // "" = latest version
 }
 
+// azureKeyVaultHostSuffixes lists the domain suffixes Azure Key Vault and
+// Managed HSM endpoints use across the public cloud and every sovereign cloud
+// (China, US Government, Germany). kms_key_id's host must end in one of
+// these — otherwise a misconfigured, redirected, or attacker-influenced
+// kms_key_id would send DefaultAzureCredential's live bearer token (attached
+// to every WrapKey/UnwrapKey call) to an arbitrary host, exfiltrating it.
+// Before this check, kms_key_id's host was never validated at all — not even
+// once — unlike every other SSRF-relevant host in this codebase.
+var azureKeyVaultHostSuffixes = []string{
+	".vault.azure.net",         // public cloud
+	".vault.azure.cn",          // Azure China (Mooncake)
+	".vault.usgovcloudapi.net", // Azure US Government
+	".vault.microsoftazure.de", // Azure Germany (legacy sovereign cloud)
+	".managedhsm.azure.net",
+	".managedhsm.azure.cn",
+	".managedhsm.usgovcloudapi.net",
+}
+
+// validateKeyVaultHost rejects a vaultURL (as split out by parseKeyID) that
+// isn't https, or whose host doesn't look like a real Azure Key Vault /
+// Managed HSM endpoint. This is the construction-time half of the guard —
+// azureKMSTransport below re-validates on every actual connection.
+func validateKeyVaultHost(vaultURL string) error {
+	u, err := url.Parse(vaultURL)
+	if err != nil {
+		return fmt.Errorf("azure-kms: invalid vault URL %q: %w", vaultURL, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("azure-kms: vault URL %q must use https", vaultURL)
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, suffix := range azureKeyVaultHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("azure-kms: kms_key_id host %q is not a recognized Azure Key Vault or Managed HSM endpoint", u.Hostname())
+}
+
+// azureKMSResolve resolves a Key Vault hostname to its IP addresses — a var
+// (like evidencesink/notifychan's identically-shaped lookupIPAddr) so tests
+// can substitute a fake resolver to simulate a DNS-rebinding target without a
+// real DNS query.
+var azureKMSResolve netutil.Resolver = netutil.DefaultResolver
+
+// azureKMSTransport dial-time-validates every Key Vault request against
+// netutil.IsPrivateOrLinkLocal (loopback included — a Key Vault endpoint has
+// no legitimate reason to resolve anywhere on the Keyorix host's own private
+// network), so a DNS-rebinding attacker cannot bypass validateKeyVaultHost's
+// one-time, construction-time check: the resolved address is re-checked on
+// every connection and the specific validated IP is dialed directly, never
+// the hostname again.
+var azureKMSTransport = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&netutil.Dialer{
+			Disallow: netutil.IsPrivateOrLinkLocal,
+			Resolve:  func(ctx context.Context, host string) ([]net.IPAddr, error) { return azureKMSResolve(ctx, host) },
+		}).DialContext,
+	},
+}
+
 // New builds an Azure-Key-Vault-backed crypto.KMSClient. keyID is the full key
 // identifier URL (https://{vault}.vault.azure.net/keys/{name}[/{version}]); an
 // omitted version uses the key's current version.
@@ -102,11 +167,16 @@ func New(_ context.Context, keyID string) (keyorixcrypto.KMSClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateKeyVaultHost(vaultURL); err != nil {
+		return nil, err
+	}
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return nil, fmt.Errorf("azure-kms: default credential: %w", err)
 	}
-	c, err := azkeys.NewClient(vaultURL, cred, nil)
+	c, err := azkeys.NewClient(vaultURL, cred, &azkeys.ClientOptions{
+		ClientOptions: policy.ClientOptions{Transport: azureKMSTransport},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("azure-kms: create client: %w", err)
 	}

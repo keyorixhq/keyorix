@@ -20,11 +20,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 const (
@@ -72,6 +74,26 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*WebhookSink, err
 		return nil, err
 	}
 	transport := &http.Transport{}
+	// G48: validateEndpoint above validates the host ONCE, at construction — the
+	// WebhookSink and its http.Client are long-lived (one per configured
+	// channel) and every delivery reuses this client, whose dial performs its
+	// own independent DNS resolution each time. A DNS-rebinding attacker (a
+	// name that answers with a public IP at construction, then a
+	// private/link-local IP at dial time) would otherwise bypass
+	// validateEndpoint entirely. Pin the dial-time resolution to the same
+	// disallow policy (isDisallowedIP) and to the specific IP just validated,
+	// unless the operator explicitly opted out via AllowPrivateNetworkTarget.
+	if !cfg.AllowPrivateNetworkTarget {
+		transport.DialContext = (&netutil.Dialer{
+			Disallow: isDisallowedIP,
+			// Reuse the SAME overridable resolver validateEndpoint used above
+			// (lookupIPAddr — a var so tests can substitute a fake one) rather
+			// than netutil's real-DNS default, so dial-time resolution is
+			// exercised through the identical seam construction-time
+			// validation already uses.
+			Resolve: func(_ context.Context, host string) ([]net.IPAddr, error) { return lookupIPAddr(host) },
+		}).DialContext
+	}
 	if cfg.InsecureSkipVerify {
 		// #G30: the endpoint URL IS the bearer credential for this channel (the
 		// token lives in the path, not a header — see delivery.go's

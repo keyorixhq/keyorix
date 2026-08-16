@@ -109,7 +109,7 @@ func TestFakeEngine_IssueFields(t *testing.T) {
 
 // TestNew_UnsupportedBackend validates that an unsupported backend type is rejected.
 func TestNew_UnsupportedBackend(t *testing.T) {
-	_, err := New("cassandra")
+	_, err := New("cassandra", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported")
 	assert.Contains(t, err.Error(), "cassandra")
@@ -131,7 +131,7 @@ func TestNew_AllBackendTypes(t *testing.T) {
 		{"kubernetes", true},
 	}
 	for _, b := range backends {
-		eng, err := New(b.name)
+		eng, err := New(b.name, false)
 		require.NoErrorf(t, err, "backend %q must be constructable", b.name)
 		assert.Equal(t, b.name, eng.BackendType())
 		if b.ephemeral {

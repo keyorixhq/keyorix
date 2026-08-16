@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // MySQLEngine mints short-lived MySQL accounts using the admin DSN and drops them
@@ -22,7 +24,12 @@ import (
 // an identifier/quote-safe alphabet (lowercase+digits), so neither can break out
 // of the surrounding quotes; the creation template is operator-authored (trusted)
 // and is the documented SQL-injection trust boundary.
-type MySQLEngine struct{}
+type MySQLEngine struct {
+	// allowPrivateNetwork mirrors dynamic_secrets.allow_private_network_targets
+	// (see New). When false, every connection re-validates the resolved
+	// target address and refuses a private/link-local one (G48).
+	allowPrivateNetwork bool
+}
 
 func (e *MySQLEngine) BackendType() string      { return "mysql" }
 func (e *MySQLEngine) IsEphemeralBackend() bool { return false }
@@ -68,7 +75,7 @@ func assertSafeUsername(user string) error {
 }
 
 func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
-	db, err := openMySQL(ctx, adminDSN)
+	db, err := openMySQL(ctx, adminDSN, e.allowPrivateNetwork)
 	if err != nil {
 		return Credential{}, "", err
 	}
@@ -111,7 +118,7 @@ func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	db, err := openMySQL(ctx, adminDSN)
+	db, err := openMySQL(ctx, adminDSN, e.allowPrivateNetwork)
 	if err != nil {
 		return err
 	}
@@ -130,15 +137,31 @@ func (e *MySQLEngine) Renew(_ context.Context, _, _ string, _ time.Time) error {
 	return nil
 }
 
-// openMySQL opens and verifies a connection to the target using the admin DSN.
-func openMySQL(ctx context.Context, adminDSN string) (*sql.DB, error) {
-	if _, err := mysql.ParseDSN(adminDSN); err != nil {
+// openMySQL opens and verifies a connection to the target using the admin
+// DSN, pinning the dial to a re-validated target address unless
+// allowPrivateNetwork opts out. Replaces a bare sql.Open("mysql", adminDSN):
+// that path offers no hook to control the underlying TCP dial, and —
+// critically — the actual connection it makes would otherwise re-resolve
+// adminDSN's host independently of whatever check ran when the config was
+// created or the DSN last decrypted, letting a DNS-rebinding attacker swap in
+// a private/link-local address between the two resolutions.
+// mysql.Config.DialFunc gives the same TLS behavior as sql.Open (TLS, when
+// configured via the DSN's tls= param, verifies against the original
+// hostname — DialFunc only controls the raw TCP dial beneath it) while
+// pinning the raw connection to the specific address just validated.
+func openMySQL(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*sql.DB, error) {
+	cfg, err := mysql.ParseDSN(adminDSN)
+	if err != nil {
 		return nil, fmt.Errorf("invalid mysql admin DSN: %w", err)
 	}
-	db, err := sql.Open("mysql", adminDSN)
-	if err != nil {
-		return nil, fmt.Errorf("connect to target: %w", err)
+	if !allowPrivateNetwork {
+		cfg.DialFunc = (&netutil.Dialer{Disallow: netutil.IsPrivateOrLinkLocal, Resolve: dialResolve}).DialContext
 	}
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("invalid mysql admin DSN: %w", err)
+	}
+	db := sql.OpenDB(connector)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect to target: %w", err)

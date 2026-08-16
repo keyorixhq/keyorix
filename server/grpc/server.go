@@ -67,6 +67,21 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// middleware so an authenticated caller cannot bypass the rate limit by
 			// switching transports (GRPC-009). Runs inside Auth so only authenticated
 			// principals are counted; unauthenticated requests are rejected by Auth first.
+			//
+			// This deliberately still runs AFTER Auth, not before (G41 member 2): it is
+			// keyed by grpcRateLimitKey, which resolves principal identity (user/machine
+			// ID) from context Auth itself sets, so running it earlier wouldn't add
+			// coverage — it would silently degrade every authenticated caller's budget to
+			// a shared per-IP one (NAT/proxy collisions) since the principal identity it
+			// keys on wouldn't exist yet. The actual gap this left — an attacker hammering
+			// bad credentials was never throttled, since a failed Auth call never reaches
+			// this interceptor — is closed separately and independently of chain order: a
+			// per-IP failed-auth budget (recordGRPCTokenAuthFailure /
+			// grpcTokenAuthFailureBurst, see interceptors/rate_limit.go) is checked inline
+			// inside authenticateRequest itself, the function both AuthInterceptor and
+			// StreamAuthInterceptor call — mirroring the HTTP stack's own split between
+			// PrincipalRateLimit (post-auth, per-principal) and the inline per-IP
+			// token-failure budget in its auth middleware (server/middleware/auth.go).
 			interceptors.GRPCRateLimitInterceptor(cfg.Server.GRPC.RateLimit),
 		),
 		// The stream chain intentionally carries no metrics interceptor: MetricsInterceptor
@@ -84,6 +99,36 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			interceptors.StreamRecoveryInterceptor(),
 			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamAuthInterceptor(coreService, cfg.Security.RequireMFA),
+			// Per-principal token-bucket rate limit on stream OPEN, the streaming
+			// counterpart to the unary GRPCRateLimitInterceptor above (G41 member 1/3).
+			// StreamAuditLogs was the server's only streaming RPC and, until this, was
+			// entirely exempt from rate limiting: the existing per-principal
+			// CONCURRENCY cap inside it (AuditGRPCService.acquireStreamSlot, max 3
+			// held-open streams) bounds how many streams a principal holds open at
+			// once, but not the RATE at which new ones can be opened — an attacker
+			// could open+close+reopen as fast as the network allowed, each open cheap
+			// (auth plus a couple of DB reads) before the stream settles into its
+			// long-lived tail. Runs after StreamAuthInterceptor for the same reason the
+			// unary rate limiter runs after Auth (see the comment above it); the
+			// failed-auth-hammering gap for streams is closed the same way too, via the
+			// shared authenticateRequest per-IP budget both auth interceptors call.
+			//
+			// Deliberately NOT added here: a stream-side TimeoutInterceptor equivalent.
+			// TimeoutInterceptor's own doc comment and the KeepaliveParams comment below
+			// both already establish, as a considered product decision (not an
+			// oversight), that StreamAuditLogs is legitimately long-lived and must not
+			// be cut off by a blanket per-call duration cap — an operator tailing the
+			// audit log for hours is the intended use, not an anomaly to bound. Giving
+			// it a 60s (or any fixed) timeout would break that feature outright. The
+			// resource-exhaustion concern TimeoutInterceptor exists to address for
+			// unary calls (a hung handler tying up resources indefinitely) is instead
+			// already covered for streams by mechanisms suited to a long-lived call:
+			// the per-principal concurrency cap above, the dedicated re-authorization
+			// ticker inside StreamAuditLogs (revoked credentials can't ride a stream
+			// forever), and the connection-level MaxConnectionAge/MaxConnectionAgeGrace
+			// keepalive below (forces periodic reconnection, so even a stream itself
+			// can't outlive one connection's age indefinitely).
+			interceptors.StreamRateLimitInterceptor(cfg.Server.GRPC.RateLimit),
 		),
 	}
 

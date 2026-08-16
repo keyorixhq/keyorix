@@ -114,3 +114,40 @@ func TestGetReadableScopes_AuthorizeTrue(t *testing.T) {
 	require.Len(t, scopes, 1)
 	assert.Equal(t, uint(1), scopes[0].ProjectID)
 }
+
+// G33: GetReadableScopes must resolve a machine identity's project-scoped role
+// grant the same way it resolves an equivalent human user's. Before this fix it
+// called the user-only c.storage.GetUserRoleScopes + c.Authorize
+// unconditionally, so a machine identity was always resolved to zero readable
+// scopes here regardless of its actual machine_identity_roles grants — a sibling
+// of connect.go's actorRoleIDs and dashboard.go's GetDashboardStats bugs (found
+// during this fix's sibling sweep, same "helper written for humans, never
+// updated for machines" shape).
+func TestGetReadableScopes_MachineIdentityMatchesEquivalentUser(t *testing.T) {
+	ctx := context.Background()
+	c, db := newACLCore(t)
+
+	role := &models.Role{Name: "readable_scope_machine_role"}
+	require.NoError(t, db.Create(role).Error)
+	perm := &models.Permission{Name: "secrets.read", Resource: "secrets", Action: "read"}
+	require.NoError(t, db.Create(perm).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+
+	// Human user 77 and machine identity 200 each hold the SAME role at the SAME
+	// project scope (project 1, seeded by newACLCore).
+	require.NoError(t, db.Create(&models.UserRole{UserID: 77, RoleID: role.ID, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 200, RoleID: role.ID, ProjectID: 1}).Error)
+
+	humanCtx := WithActorType(ctx, ActorTypeUser)
+	machineCtx := WithActorType(ctx, ActorTypeMachine)
+
+	humanScopes, err := c.GetReadableScopes(humanCtx, 77, "secrets.read")
+	require.NoError(t, err)
+	require.Len(t, humanScopes, 1)
+	assert.Equal(t, uint(1), humanScopes[0].ProjectID)
+
+	machineScopes, err := c.GetReadableScopes(machineCtx, 200, "secrets.read")
+	require.NoError(t, err)
+	require.Len(t, machineScopes, 1, "the machine identity's project-scoped role grant must resolve into a readable scope, exactly like the equivalent human user's")
+	assert.Equal(t, uint(1), machineScopes[0].ProjectID)
+}

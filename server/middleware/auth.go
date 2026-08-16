@@ -102,6 +102,15 @@ func cloneUserContextWithRestriction(base *UserContext, restriction *core.PATRes
 	return &clone
 }
 
+// cloneUserContextWithMachineRestriction is cloneUserContextWithRestriction's
+// machine-token counterpart (#G18) — a cache hit must refresh
+// MachineTokenRestriction the same way it already refreshes a PAT's.
+func cloneUserContextWithMachineRestriction(base *UserContext, restriction *core.MachineTokenRestriction) *UserContext {
+	clone := *base
+	clone.MachineTokenRestriction = restriction
+	return &clone
+}
+
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
 // defaulting to user for legacy/empty contexts.
 func (u *UserContext) ActorKind() string {
@@ -291,32 +300,74 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
 }
 
-// serveAuthCacheHit handles the fast-path cache hit: re-fetches the PAT network restriction
-// on every request (#146) then enforces the allowlist and serves next or returns an error.
+// serveAuthCacheHit handles the fast-path cache hit. #146 originally re-fetched
+// only the PAT network restriction on every request; #G18 generalizes that
+// pattern to every revocation-relevant field the positive cache can go stale
+// on, not just the one that happened to get patched: a PAT's Revoked/ExpiresAt
+// (CurrentPATRestriction), a machine token's restriction/Revoked/ExpiresAt/
+// machine-active-state (CurrentMachineTokenRestriction, previously refreshed
+// for a PAT but never for a machine token), and — for an interactive session,
+// which carries no per-request-narrowable restriction to refresh — the owning
+// account's active/not-blocked state (AccountStillUsable). Each of these was
+// previously invisible to a cache HIT and kept serving the stale cached
+// snapshot for up to validTokenTTL after an admin's suspend/revoke should have
+// taken effect immediately, matching every other credential-state check in
+// this file. A DEFINITIVE revocation signal (revoked/expired/inactive) denies
+// the request and evicts the cache entry outright; an INDETERMINATE one (a
+// transient storage error) degrades to the cached snapshot rather than
+// fail-opening or fail-closing on a blip — same philosophy #146 established.
 func serveAuthCacheHit(next http.Handler, w http.ResponseWriter, r *http.Request, token string, entry tokenCacheEntry, coreService *core.KeyorixCore) {
 	if entry.userCtx == nil {
 		// Negative cache — known bad token, skip DB entirely.
 		unauthorizedResponse(w, "Invalid or expired token")
 		return
 	}
-	// The network allowlist is per-request (the same token may arrive from a
-	// different IP), so enforce it even on a cache hit. For a PAT specifically,
-	// the ALLOWLIST ITSELF (not just the request's IP) can change between cache
-	// writes (#146: an admin narrowing a compromised PAT's allowlist mid-incident
-	// must take effect immediately, not up to validTokenTTL later) — re-fetch it
-	// fresh rather than trusting entry.userCtx's cached snapshot. A refresh
-	// failure falls back to the cached restriction (degraded, not fail-open).
 	effective := entry.userCtx
-	if coreService != nil && strings.HasPrefix(token, patTokenPrefix) {
-		if fresh, err := coreService.CurrentPATRestriction(r.Context(), token); err == nil {
-			effective = cloneUserContextWithRestriction(entry.userCtx, fresh)
+	if coreService != nil {
+		switch {
+		case strings.HasPrefix(token, patTokenPrefix):
+			fresh, err := coreService.CurrentPATRestriction(r.Context(), token)
+			switch {
+			case errors.Is(err, core.ErrPATRevoked) || errors.Is(err, core.ErrPATExpired):
+				denyRevokedCacheHit(w, token)
+				return
+			case err == nil:
+				effective = cloneUserContextWithRestriction(entry.userCtx, fresh)
+			}
+		case strings.HasPrefix(token, machineTokenPrefix):
+			fresh, err := coreService.CurrentMachineTokenRestriction(r.Context(), token)
+			switch {
+			case errors.Is(err, core.ErrMachineTokenRevoked) || errors.Is(err, core.ErrMachineTokenExpired):
+				denyRevokedCacheHit(w, token)
+				return
+			case err == nil:
+				effective = cloneUserContextWithMachineRestriction(entry.userCtx, fresh)
+			}
+		default:
+			if usable, err := coreService.AccountStillUsable(r.Context(), entry.userCtx.UserID); err == nil && !usable {
+				denyRevokedCacheHit(w, token)
+				return
+			}
 		}
 	}
+	// The network allowlist is per-request (the same token may arrive from a
+	// different IP), so enforce it even on a cache hit — using effective, which
+	// by this point carries whichever restriction was freshly refreshed above.
 	if !tokenNetworkAllowed(r, effective) {
 		forbiddenResponse(w, "token not permitted from this network")
 		return
 	}
 	next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), effective, coreService)))
+}
+
+// denyRevokedCacheHit rejects a cache-hit request whose credential was
+// determined to have been revoked/expired/deactivated since the cache entry
+// was written, and evicts the entry so subsequent requests skip straight to
+// the negative cache instead of re-discovering this on every request for the
+// rest of the TTL window.
+func denyRevokedCacheHit(w http.ResponseWriter, token string) {
+	InvalidateTokenCacheByHash(tokenKey(token))
+	unauthorizedResponse(w, "Invalid or expired token")
 }
 
 // extractRequestToken returns the token to validate for this request, preferring

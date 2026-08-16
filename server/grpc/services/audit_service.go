@@ -97,11 +97,17 @@ func (s *AuditGRPCService) acquireStreamSlot(actor *interceptors.UserContext) (f
 // stream is authenticated once at open and never re-run by the per-request path, that
 // the underlying principal itself is still active — a user account that was
 // suspended/deprovisioned/deleted, or a machine identity that was suspended/revoked.
-// A stale-but-still-role-holding actor (e.g. a session or PAT that isn't THIS user's
-// only credential) is not distinguishable without the raw token, which the stream
-// context does not retain — the account- and role-level checks close the practical
-// admin-action revocation paths (suspend, deprovision, delete, remove role) #108
-// describes.
+//
+// #G18: account-level checks alone can't see a SPECIFIC session being individually
+// revoked (e.g. "log out this device", or DeleteSessionsForUserExcept from a password
+// change) while the owning account stays fully active — actor.SessionID (a
+// non-sensitive row id captured once at stream-open, deliberately not the raw token
+// or a hash, which the stream context does not retain) now lets this re-verify THAT
+// SPECIFIC session via core.SessionStillLive, closing the gap the account check alone
+// left open. A PAT-authenticated stream's specific-credential revocation remains an
+// open residual (PATRestriction, unlike SessionID, is not currently carried on
+// interceptors.UserContext) — narrower in practice since a PAT is not the realistic
+// credential for a long-lived interactive stream, but not yet closed.
 //
 // #G05: the checks above run against actor.UserID, which during impersonation is
 // the TARGET (the id the stream authenticated with) — never the initiating admin.
@@ -125,6 +131,11 @@ func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *in
 	u, err := s.core.Storage().GetUser(ctx, actor.UserID)
 	if err != nil || !u.IsActive || core.AccountLoginBlocked(u.AccountState) {
 		return status.Error(codes.PermissionDenied, "account is no longer active")
+	}
+	if actor.SessionID != nil {
+		if live, err := s.core.SessionStillLive(ctx, *actor.SessionID); err != nil || !live {
+			return status.Error(codes.PermissionDenied, "session no longer active")
+		}
 	}
 	if actor.ImpersonatedBy != nil {
 		if err := s.core.ReauthorizeImpersonation(ctx, *actor.ImpersonatedBy, actor.UserID); err != nil {

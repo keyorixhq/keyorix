@@ -21,6 +21,11 @@ import (
 // passed its ExpiresAt.  The caller (auth middleware) surfaces it as a 401.
 var ErrPATExpired = errors.New("token expired")
 
+// ErrPATRevoked is returned by ValidatePATToken/CurrentPATRestriction when the
+// presented token has been revoked.  The caller (auth middleware) surfaces it
+// as a 401.
+var ErrPATRevoked = errors.New("token revoked")
+
 // IsPATExpired reports whether pat has a non-nil ExpiresAt that is in the past
 // relative to now.  It is a pure function — injectable for testing.
 func IsPATExpired(pat *models.PersonalAccessToken, now time.Time) bool {
