@@ -160,6 +160,9 @@ func (m Migrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
 func (m Migrator) DropColumn(value interface{}, name string) error {
 	return m.RunWithoutForeignKey(func() error {
 		return m.recreateTable(value, nil, func(ddl *ddl, stmt *gorm.Statement) (*ddl, []interface{}, error) {
+			if stmt.Schema == nil {
+				return nil, nil, fmt.Errorf("failed to drop field with name %v: model with schema is required", name)
+			}
 			if field := stmt.Schema.LookUpField(name); field != nil {
 				name = field.DBName
 			}

@@ -191,6 +191,18 @@ func TestMigrator_AlterColumn_NilSchemaReturnsErrorNotPanic(t *testing.T) {
 	})
 }
 
+func TestMigrator_DropColumn_NilSchemaReturnsErrorNotPanic(t *testing.T) {
+	db := openTestDB(t)
+	require.NoError(t, db.AutoMigrate(&migratorTestModel{}))
+	m := db.Migrator()
+
+	assert.NotPanics(t, func() {
+		err := m.DropColumn("migrator_test_models", "Name")
+		require.Error(t, err, "DropColumn with a schema-less value must return an error, not panic")
+		assert.Contains(t, err.Error(), "schema")
+	})
+}
+
 func TestMigrator_ColumnTypesAndTablesAndCurrentDatabase(t *testing.T) {
 	db := openTestDB(t)
 	require.NoError(t, db.AutoMigrate(&migratorTestModel{}))
