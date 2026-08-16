@@ -43,28 +43,51 @@ var migrationMu sync.Mutex
 // is sufficient there; only Postgres needs the additional cross-process lock.
 const postgresMigrationLockKey = 872341
 
-// withMigrationLock runs fn while holding migrationMu (always) and, when db is a
-// Postgres connection, an additional Postgres session-level advisory lock (closing
-// the cross-replica race #266 describes, not just the in-process one). The
-// advisory lock is released in the same session it was acquired in, so this must
-// run on a single connection for the duration — acquired/released via db.Exec on
-// the same *gorm.DB, which GORM services from one checked-out *sql.Conn per call
-// only within an explicit transaction; to guarantee same-connection acquire/
-// release without depending on that, this wraps fn in db.Transaction.
-func withMigrationLock(db *gorm.DB, isPostgres bool, fn func(*gorm.DB) error) error {
+// withMigrationLock runs fn while holding migrationMu (always) and an additional
+// cross-process lock appropriate to the backend:
+//   - Postgres: a session-level advisory lock (closing the cross-replica race
+//     #266 describes, not just the in-process one). The advisory lock is
+//     released in the same session it was acquired in, so this must run on a
+//     single connection for the duration — acquired/released via db.Exec on the
+//     same *gorm.DB, which GORM services from one checked-out *sql.Conn per call
+//     only within an explicit transaction; to guarantee same-connection acquire/
+//     release without depending on that, this wraps fn in db.Transaction.
+//   - Local SQLite (dbPath != ""): a non-blocking flock(2) sidecar lock on
+//     <dbPath>.migration.lock (#STORAGE-FACTORY-003). migrationMu alone only
+//     serializes goroutines within THIS process; SQLite has no advisory-lock
+//     primitive of its own, so this closes the same cross-process gap the
+//     Postgres branch closes via pg_advisory_lock — a second Keyorix OS process
+//     (another misconfigured replica, or a `keyorix encryption ...` CLI
+//     invocation) pointed at the same local SQLite file fails loud at the start
+//     of migrateDatabase instead of racing this process's DDL statements.
+//     Acquired AFTER migrationMu so only one goroutine in this process ever
+//     attempts it at a time — flock is scoped to the open file description, not
+//     the process, so two concurrent in-process goroutines contending for it
+//     directly (without migrationMu already serializing them) would spuriously
+//     fail one against the other rather than against a genuinely separate OS
+//     process.
+func withMigrationLock(db *gorm.DB, isPostgres bool, dbPath string, fn func(*gorm.DB) error) error {
 	migrationMu.Lock()
 	defer migrationMu.Unlock()
 
-	if !isPostgres {
-		return fn(db)
+	if isPostgres {
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("SELECT pg_advisory_lock(?)", postgresMigrationLockKey).Error; err != nil {
+				return fmt.Errorf("acquire migration advisory lock: %w", err)
+			}
+			defer tx.Exec("SELECT pg_advisory_unlock(?)", postgresMigrationLockKey)
+			return fn(tx)
+		})
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_lock(?)", postgresMigrationLockKey).Error; err != nil {
-			return fmt.Errorf("acquire migration advisory lock: %w", err)
+
+	if dbPath != "" {
+		osLock, err := acquireSQLiteMigrationLock(dbPath)
+		if err != nil {
+			return err
 		}
-		defer tx.Exec("SELECT pg_advisory_unlock(?)", postgresMigrationLockKey)
-		return fn(tx)
-	})
+		defer osLock.release()
+	}
+	return fn(db)
 }
 
 // defaultMaxOpenConns bounds the DB connection pool when the operator hasn't set
@@ -192,7 +215,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		return nil, err
 	}
 
-	if err := withMigrationLock(db, false, f.migrateDatabase); err != nil {
+	if err := withMigrationLock(db, false, dbPath, f.migrateDatabase); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -215,7 +238,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 		return nil, err
 	}
 
-	if err := withMigrationLock(db, true, f.migrateDatabase); err != nil {
+	if err := withMigrationLock(db, true, "", f.migrateDatabase); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -374,8 +397,21 @@ func warnIfDuplicatesExist(db *gorm.DB, table, keyExpr, whereClause, remediation
 // rolePKIsComplete reports whether the given role-assignment table already has the
 // full composite PK: (user_id/group_id, role_id, project_id, environment_id).
 // Detection is dialect-specific:
-//   - SQLite: parse the CREATE TABLE statement from sqlite_master and check whether
-//     the PRIMARY KEY clause mentions "project_id" and "environment_id".
+//   - SQLite: query pragma_table_info(<table>) (the actual parsed schema SQLite
+//     itself resolved, exposed as a table-valued function — the same mechanism
+//     this codebase's Migrator.HasColumn already uses) and check the `pk` column
+//     — nonzero for every column that is actually a member of the table's
+//     primary key — for project_id and environment_id. This was previously a
+//     substring match against everything from the first "primary key" occurrence
+//     in the raw CREATE TABLE text to the end of the statement (#STORAGE-FACTORY-002):
+//     correct only by coincidence of where ALTER TABLE ADD COLUMN happens to place
+//     new columns relative to a trailing table-level PRIMARY KEY constraint, and
+//     it would false-positive (silently skipping the PK rebuild, leaving the
+//     narrower old PK in place) on any DDL where "project_id"/"environment_id"
+//     appear after "primary key" for an unrelated reason — e.g. in a trailing
+//     CHECK or FOREIGN KEY constraint that mentions those columns without them
+//     being PK members. Querying the parsed schema directly makes this immune to
+//     DDL text layout entirely.
 //   - Postgres: query information_schema.key_column_usage for the table's PK and
 //     check that both columns appear among the PK members.
 func rolePKIsComplete(db *gorm.DB, table string) bool {
@@ -396,16 +432,14 @@ func rolePKIsComplete(db *gorm.DB, table string) bool {
 			table, table).Scan(&count)
 		return count >= 2
 	}
-	// SQLite: read the CREATE TABLE SQL and look for project_id in the PK clause.
-	var createSQL string
-	db.Raw("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&createSQL)
-	lower := strings.ToLower(createSQL)
-	pkStart := strings.Index(lower, "primary key")
-	if pkStart == -1 {
-		return false
-	}
-	pkClause := lower[pkStart:]
-	return strings.Contains(pkClause, "project_id") && strings.Contains(pkClause, "environment_id")
+	// SQLite: ask SQLite's own parsed schema which columns are PK members,
+	// rather than text-matching the raw CREATE TABLE statement.
+	var count int64
+	db.Raw(
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE pk > 0 AND name IN ('project_id', 'environment_id')",
+		table,
+	).Scan(&count)
+	return count >= 2
 }
 
 // rebuildRolePKIfNeeded detects whether user_roles / group_roles still carry the
@@ -1866,8 +1900,24 @@ func ensureLegalHoldActiveIndex(db *gorm.DB) error {
 // same type for the same user/project (one per distinct secret/event), so a
 // blanket index across the whole table would silently drop those. Idempotent; works
 // on both SQLite and Postgres (both support partial indexes and IF NOT EXISTS).
+//
+// Like every other ensure*Index helper in this file, this gates the CREATE UNIQUE
+// INDEX on a pre-flight warnIfDuplicatesExist scan (#490, #STORAGE-FACTORY-004):
+// an upgraded install that already accumulated colliding unread reminder rows
+// before this index existed (e.g. via the very TOCTOU this index closes) would
+// otherwise hit an opaque driver-level constraint-violation error deep inside
+// migrateDatabase instead of a clear, actionable one. This was previously the one
+// exception among this file's ensure*Index helpers that skipped the check.
 func ensureReminderNotificationDedupIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_notifications_unread_reminder " +
+	const idxName = "uniq_notifications_unread_reminder"
+	if !indexExists(db, idxName) {
+		if err := warnIfDuplicatesExist(db, "notifications", "user_id, type, project_id",
+			"is_read = false AND type IN ('rotation.reminder', 'secret.expiry_reminder')",
+			"mark one of the conflicting unread reminder notifications as read via the application's notifications API before upgrading"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec(sqlCreateUniqueIdx + idxName + " " +
 		"ON notifications (user_id, type, project_id) " +
 		"WHERE is_read = false AND type IN ('rotation.reminder', 'secret.expiry_reminder')").Error; err != nil {
 		return fmt.Errorf("failed to create partial notifications reminder-dedup index: %w", err)

@@ -247,11 +247,12 @@ func TestApplyPoolSettings_S23_AllThreeBranches(t *testing.T) {
 // TestWithMigrationLock_S23_FnReceivesDB verifies that the *gorm.DB passed to
 // withMigrationLock is forwarded to the callback on the non-Postgres path.
 func TestWithMigrationLock_S23_FnReceivesDB(t *testing.T) {
-	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "miglock-recv.db"))
+	dbPath := filepath.Join(t.TempDir(), "miglock-recv.db")
+	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 
 	var received *gorm.DB
-	require.NoError(t, withMigrationLock(db, false, func(tx *gorm.DB) error {
+	require.NoError(t, withMigrationLock(db, false, dbPath, func(tx *gorm.DB) error {
 		received = tx
 		return nil
 	}))

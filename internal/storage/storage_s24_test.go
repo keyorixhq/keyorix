@@ -29,11 +29,12 @@ import (
 // TestWithMigrationLock_S24_FnErrorPropagates verifies that when isPostgres=false
 // and fn returns an error, withMigrationLock propagates that error to the caller.
 func TestWithMigrationLock_S24_FnErrorPropagates(t *testing.T) {
-	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "miglock-err.db"))
+	dbPath := filepath.Join(t.TempDir(), "miglock-err.db")
+	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 
 	sentinel := errors.New("migration failed sentinel")
-	got := withMigrationLock(db, false, func(_ *gorm.DB) error {
+	got := withMigrationLock(db, false, dbPath, func(_ *gorm.DB) error {
 		return sentinel
 	})
 	require.ErrorIs(t, got, sentinel,
@@ -43,11 +44,12 @@ func TestWithMigrationLock_S24_FnErrorPropagates(t *testing.T) {
 // TestWithMigrationLock_S24_FnHappyPath verifies that when isPostgres=false and
 // fn succeeds, withMigrationLock returns nil.
 func TestWithMigrationLock_S24_FnHappyPath(t *testing.T) {
-	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "miglock-ok.db"))
+	dbPath := filepath.Join(t.TempDir(), "miglock-ok.db")
+	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 
 	called := false
-	got := withMigrationLock(db, false, func(tx *gorm.DB) error {
+	got := withMigrationLock(db, false, dbPath, func(tx *gorm.DB) error {
 		called = true
 		assert.NotNil(t, tx)
 		return nil
@@ -60,14 +62,15 @@ func TestWithMigrationLock_S24_FnHappyPath(t *testing.T) {
 // withMigrationLock concurrently to exercise the migrationMu serialization path
 // without a real postgres server.
 func TestWithMigrationLock_S24_ConcurrentNonPostgres(t *testing.T) {
-	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "miglock-conc.db"))
+	dbPath := filepath.Join(t.TempDir(), "miglock-conc.db")
+	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 
 	const goroutines = 4
 	errs := make(chan error, goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func() {
-			errs <- withMigrationLock(db, false, func(_ *gorm.DB) error { return nil })
+			errs <- withMigrationLock(db, false, dbPath, func(_ *gorm.DB) error { return nil })
 		}()
 	}
 	for i := 0; i < goroutines; i++ {

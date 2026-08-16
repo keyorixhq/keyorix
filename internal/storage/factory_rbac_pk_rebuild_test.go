@@ -62,6 +62,34 @@ func TestRolePKIsComplete_SQLite_NewFourColumnPK(t *testing.T) {
 		"four-column composite PK must be detected as complete")
 }
 
+// TestRolePKIsComplete_SQLite_ColumnsMentionedOutsidePKClause pins
+// #STORAGE-FACTORY-002: the old detection heuristic did `strings.Contains` for
+// "project_id"/"environment_id" against EVERY BYTE of the CREATE TABLE
+// statement from the first "primary key" occurrence onward, not just the
+// parenthesized PK column list — so it would false-positive (report the PK
+// complete when it is not) on any DDL where those column names appear later in
+// the statement for an unrelated reason, such as a trailing CHECK or FOREIGN
+// KEY constraint that references them without them being PK members. This
+// table's actual primary key is only (user_id, role_id); project_id and
+// environment_id are ordinary columns referenced by a trailing CHECK
+// constraint placed after "PRIMARY KEY (user_id, role_id)" in the DDL text.
+func TestRolePKIsComplete_SQLite_ColumnsMentionedOutsidePKClause(t *testing.T) {
+	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "pk-detect-false-positive.db"))
+	require.NoError(t, err)
+
+	require.NoError(t, db.Exec(`CREATE TABLE user_roles (
+		user_id        INTEGER NOT NULL,
+		role_id        INTEGER NOT NULL,
+		project_id     INTEGER NOT NULL DEFAULT 0,
+		environment_id INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (user_id, role_id),
+		CHECK (project_id >= 0 AND environment_id >= 0)
+	)`).Error)
+
+	assert.False(t, rolePKIsComplete(db, "user_roles"),
+		"project_id/environment_id mentioned only in a trailing CHECK constraint (not the PK clause) must not be reported as PK members")
+}
+
 // TestRebuildRolePKSQLite_OldTwoColumnPK_UserRoles exercises the full
 // upgrade path for user_roles when the table has only a (user_id, role_id) PK.
 // After the rebuild, the table must:

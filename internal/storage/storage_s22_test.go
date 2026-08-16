@@ -829,11 +829,12 @@ func TestMigrateDatabase_S22_DynConfig_ElseBranch(t *testing.T) {
 // TestWithMigrationLock_S22_SQLiteCallsFn exercises withMigrationLock with the
 // actual *gorm.DB parameter the function signature expects, on the non-Postgres path.
 func TestWithMigrationLock_S22_SQLiteCallsFn(t *testing.T) {
-	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "miglock2.db"))
+	dbPath := filepath.Join(t.TempDir(), "miglock2.db")
+	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 
 	called := false
-	require.NoError(t, withMigrationLock(db, false, func(_ *gorm.DB) error {
+	require.NoError(t, withMigrationLock(db, false, dbPath, func(_ *gorm.DB) error {
 		called = true
 		return nil
 	}))
@@ -843,11 +844,12 @@ func TestWithMigrationLock_S22_SQLiteCallsFn(t *testing.T) {
 // TestWithMigrationLock_S22_PropagatesError verifies that an error returned by
 // the provided function is propagated out of withMigrationLock.
 func TestWithMigrationLock_S22_PropagatesError(t *testing.T) {
-	db, err := gormOpenForTest(t, filepath.Join(t.TempDir(), "miglock-err.db"))
+	dbPath := filepath.Join(t.TempDir(), "miglock-err.db")
+	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 
 	sentinel := fmt.Errorf("sentinel error from fn")
-	err = withMigrationLock(db, false, func(_ *gorm.DB) error {
+	err = withMigrationLock(db, false, dbPath, func(_ *gorm.DB) error {
 		return sentinel
 	})
 	require.ErrorIs(t, err, sentinel)
