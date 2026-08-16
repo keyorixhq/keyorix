@@ -47,6 +47,9 @@ func runRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invitation %d not found", revokeID)
 	}
+	if err := requireInviteAuthority(ctx, service, actorID, inv.ProjectID); err != nil {
+		return err
+	}
 	if err := service.RevokeInvitation(ctx, inv.ProjectID, revokeID, actorID); err != nil {
 		return fmt.Errorf("failed to revoke invitation: %w", err)
 	}

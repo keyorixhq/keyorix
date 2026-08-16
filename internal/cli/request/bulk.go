@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/spf13/cobra"
 )
 
@@ -139,9 +140,11 @@ var rejectionTemplatesCmd = &cobra.Command{
 }
 
 var (
-	tmplName   string
-	tmplReason string
-	tmplBy     string
+	tmplName     string
+	tmplReason   string
+	tmplBy       string
+	tmplListBy   string
+	tmplDeleteBy string
 )
 
 var tmplListCmd = &cobra.Command{
@@ -171,6 +174,12 @@ func init() {
 	_ = tmplAddCmd.MarkFlagRequired("reason")
 	_ = tmplAddCmd.MarkFlagRequired("by")
 
+	tmplListCmd.Flags().StringVar(&tmplListBy, "by", "", "Acting admin email address (required, for authorization)")
+	_ = tmplListCmd.MarkFlagRequired("by")
+
+	tmplDeleteCmd.Flags().StringVar(&tmplDeleteBy, "by", "", "Acting admin email address (required, for authorization and audit)")
+	_ = tmplDeleteCmd.MarkFlagRequired("by")
+
 	rejectionTemplatesCmd.AddCommand(tmplListCmd)
 	rejectionTemplatesCmd.AddCommand(tmplAddCmd)
 	rejectionTemplatesCmd.AddCommand(tmplDeleteCmd)
@@ -182,6 +191,14 @@ func runTmplList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
+
+	viewerID, err := resolveUserID(ctx, service, tmplListBy)
+	if err != nil {
+		return err
+	}
+	if err := requireTemplateAuthority(ctx, service, viewerID); err != nil {
+		return err
+	}
 
 	templates, err := service.ListRejectionReasonTemplates(ctx)
 	if err != nil {
@@ -208,6 +225,9 @@ func runTmplAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := requireTemplateAuthority(ctx, service, creatorID); err != nil {
+		return err
+	}
 
 	t, err := service.CreateRejectionReasonTemplate(ctx, creatorID, tmplName, tmplReason)
 	if err != nil {
@@ -228,10 +248,43 @@ func runTmplDelete(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	if err := service.DeleteRejectionReasonTemplate(ctx, uint(id)); err != nil {
+	deleterID, err := resolveUserID(ctx, service, tmplDeleteBy)
+	if err != nil {
+		return err
+	}
+	if err := requireTemplateAuthority(ctx, service, deleterID); err != nil {
+		return err
+	}
+
+	if err := service.DeleteRejectionReasonTemplate(ctx, deleterID, uint(id)); err != nil {
 		return fmt.Errorf("failed to delete template: %w", err)
 	}
 	fmt.Printf("Template %d deleted.\n", id)
+	return nil
+}
+
+// requireTemplateAuthority verifies that actorID — the user resolved from
+// --by — actually holds the authority the equivalent HTTP routes require for
+// rejection-reason-template management: POST/GET/DELETE
+// /rejection-reason-templates are all gated on a global roles.assign (see
+// router.go; unlike access-request review, templates are not project-scoped,
+// so the check here uses the global Scope{}). The local CLI has no
+// session/middleware to enforce this, so --by resolving ANY email — with zero
+// authority check — would let an operator add, list, or delete rejection
+// reason templates by naming an arbitrary or unprivileged account.
+// CreateRejectionReasonTemplate/ListRejectionReasonTemplates/
+// DeleteRejectionReasonTemplate themselves do not check permissions (the HTTP
+// handler's job is done by router middleware), so this must be verified here,
+// at the CLI entrypoint, before the resolved actor is credited with the
+// action. Sibling of requireReviewAuthority/requireInviteAuthority (#264/#491).
+func requireTemplateAuthority(ctx context.Context, svc *core.KeyorixCore, actorID uint) error {
+	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{})
+	if err != nil {
+		return fmt.Errorf("failed to verify --by authority: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("--by actor does not hold roles.assign; refusing to attribute this action to them")
+	}
 	return nil
 }
 

@@ -152,6 +152,12 @@ func TestRunTmplList_EmptySuccess(t *testing.T) {
 	_, _, svc := seedBulkApproveDB(t)
 	_ = svc // DB is seeded; RejectionReasonTemplate table exists
 
+	// #G72: runTmplList now requires --by and verifies roles.assign; the
+	// bootstrap admin seeded by seedBulkApproveDB is authorized.
+	origBy := tmplListBy
+	defer func() { tmplListBy = origBy }()
+	tmplListBy = "admin@example.com"
+
 	require.NoError(t, runTmplList(nil, nil))
 }
 
@@ -167,6 +173,12 @@ func TestRunTmplList_WithData(t *testing.T) {
 		Name: "not-qualified", Reason: "Does not meet requirements.",
 	})
 	require.NoError(t, err)
+
+	// #G72: runTmplList now requires --by and verifies roles.assign; the
+	// bootstrap admin seeded by seedBulkApproveDB is authorized.
+	origBy := tmplListBy
+	defer func() { tmplListBy = origBy }()
+	tmplListBy = "admin@example.com"
 
 	require.NoError(t, runTmplList(nil, nil))
 }
@@ -202,6 +214,12 @@ func TestRunTmplDelete_SuccessPath(t *testing.T) {
 	tmpl := &models.RejectionReasonTemplate{Name: "to-del", Reason: "gone"}
 	err := svc.Storage().CreateRejectionReasonTemplate(ctx, tmpl)
 	require.NoError(t, err)
+
+	// #G72: runTmplDelete now requires --by and verifies roles.assign; the
+	// bootstrap admin seeded by seedBulkApproveDB is authorized.
+	origBy := tmplDeleteBy
+	defer func() { tmplDeleteBy = origBy }()
+	tmplDeleteBy = "admin@example.com"
 
 	err = runTmplDelete(nil, []string{strconv.FormatUint(uint64(tmpl.ID), 10)})
 	require.NoError(t, err)

@@ -121,12 +121,16 @@ func (h *CatalogHandler) ListRejectionReasonTemplates(w http.ResponseWriter, r *
 // DeleteRejectionReasonTemplate handles
 // DELETE /api/v1/rejection-reason-templates/{id}
 func (h *CatalogHandler) DeleteRejectionReasonTemplate(w http.ResponseWriter, r *http.Request) {
+	actor, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid template ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.DeleteRejectionReasonTemplate(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.DeleteRejectionReasonTemplate(r.Context(), actor.UserID, uint(id)); err != nil {
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		if strings.Contains(msg, errNotFound) {

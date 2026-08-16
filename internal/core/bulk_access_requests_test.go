@@ -382,8 +382,9 @@ func TestDeleteRejectionReasonTemplate_Success(t *testing.T) {
 	k := newBulkTestCore(t)
 	m := k.storage.(*MockStorage)
 	m.On("DeleteRejectionReasonTemplate", mock.Anything, uint(5)).Return(nil)
+	m.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	err := k.DeleteRejectionReasonTemplate(context.Background(), 5)
+	err := k.DeleteRejectionReasonTemplate(context.Background(), 1, 5)
 	require.NoError(t, err)
 }
 
@@ -393,7 +394,25 @@ func TestDeleteRejectionReasonTemplate_NotFound(t *testing.T) {
 	m.On("DeleteRejectionReasonTemplate", mock.Anything, uint(99)).
 		Return(errors.New("not found"))
 
-	err := k.DeleteRejectionReasonTemplate(context.Background(), 99)
+	err := k.DeleteRejectionReasonTemplate(context.Background(), 1, 99)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+// #G72: DeleteRejectionReasonTemplate previously took no actor at all, so a
+// deletion could never be attributed to anyone in the audit trail. Verify the
+// audit event now records the acting user, mirroring DeleteGroup's
+// actorID-attributed pattern (internal/core/groups.go).
+func TestDeleteRejectionReasonTemplate_WritesAuditEvent(t *testing.T) {
+	k := newBulkTestCore(t)
+	m := k.storage.(*MockStorage)
+	m.On("DeleteRejectionReasonTemplate", mock.Anything, uint(7)).Return(nil)
+	m.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventRejectionReasonTemplateDeleted &&
+			e.UserID != nil && *e.UserID == 42
+	})).Return(nil)
+
+	err := k.DeleteRejectionReasonTemplate(context.Background(), 42, 7)
+	require.NoError(t, err)
+	m.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 }

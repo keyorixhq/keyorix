@@ -42,6 +42,9 @@ var resendCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("invitation %d not found", resendID)
 		}
+		if err := requireInviteAuthority(ctx, service, actorID, inv.ProjectID); err != nil {
+			return err
+		}
 		prov, err := service.ResendInvitationLink(ctx, inv.ProjectID, resendID, actorID)
 		if err != nil {
 			return fmt.Errorf("failed to resend invitation link: %w", err)
