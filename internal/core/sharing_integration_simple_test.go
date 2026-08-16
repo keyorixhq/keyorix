@@ -69,6 +69,8 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		require.NoError(t, db.Create(&models.UserRole{UserID: uint(i), RoleID: 1, ProjectID: 1}).Error)
 	}
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
+	// ShareSecretWithGroup verifies the group is scoped to the secret's project (1).
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1, ProjectID: 1}).Error)
 
 	// Initialize storage
 	storage := store.NewLocalStorage(db)

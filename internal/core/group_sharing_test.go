@@ -9,9 +9,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestKeyorixCore_ShareSecretWithGroup(t *testing.T) {
@@ -61,6 +64,8 @@ func TestKeyorixCore_ShareSecretWithGroup(t *testing.T) {
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
 	// ShareSecretWithGroup verifies the owner is still a live project member (RBAC-001).
 	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
+	// ShareSecretWithGroup verifies the group is scoped to the secret's project.
+	mockStorage.On("IsGroupProjectScoped", ctx, uint(2), uint(0)).Return(true, nil)
 	mockStorage.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 
@@ -335,4 +340,73 @@ func TestShareSecretWithGroup_NonOwnerDenied(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not authorized")
 	ms.AssertNotCalled(t, "CreateShareRecord", mock.Anything, mock.Anything)
+}
+
+// TestShareSecretWithGroup_CrossProjectRefused is the regression test for
+// findings-core/core-sharing.json#2: ShareSecretWithGroup used to grant
+// standing access to an arbitrary GroupID with no check tying that group to
+// the secret's project — unlike ShareSecret's direct-user path, which already
+// rejects cross-project recipients. The exploit: a secret owner shares with a
+// group that belongs to a completely different project, permanently exposing
+// the secret to every current and future member of that unrelated group, with
+// no project boundary enforced anywhere downstream (CheckGroupPermissions
+// checks group membership only, never project affiliation). Uses the real
+// sqlite-backed LocalStorage (no mocks) so the assertions exercise the actual
+// group-role-scope query, not a hand-rolled double.
+func TestShareSecretWithGroup_CrossProjectRefused(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
+		&models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.GroupRole{},
+	))
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@t.com"}).Error)
+
+	now := time.Now()
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	ctx := context.Background()
+
+	// Secret S lives in project A (1).
+	secret, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	require.NoError(t, err)
+
+	// Group G belongs to a COMPLETELY DIFFERENT project (B, 2) — the exact
+	// exploit scenario from the finding: G has no relationship to project A.
+	require.NoError(t, db.Create(&models.Group{ID: 20, Name: "other-project-group"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 20, RoleID: 1, ProjectID: 2}).Error)
+
+	_, err = c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{
+		SecretID: secret.ID, GroupID: 20, Permission: "read", SharedBy: 1,
+	})
+	require.Error(t, err, "sharing a secret with a group from an unrelated project must be refused")
+
+	shares, lerr := c.storage.ListSharesBySecret(ctx, secret.ID)
+	require.NoError(t, lerr)
+	assert.Empty(t, shares, "the refused cross-project group share must not have been persisted")
+
+	// A group with NO project scope at all must be refused too — there is no
+	// legitimate tie to project A to fall back on.
+	require.NoError(t, db.Create(&models.Group{ID: 21, Name: "unscoped-group"}).Error)
+	_, err = c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{
+		SecretID: secret.ID, GroupID: 21, Permission: "read", SharedBy: 1,
+	})
+	require.Error(t, err, "a group with no project scope at all must be refused")
+
+	// Sharing with a group that IS scoped to the secret's own project (A, 1)
+	// must still work.
+	require.NoError(t, db.Create(&models.Group{ID: 22, Name: "same-project-group"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 22, RoleID: 1, ProjectID: 1}).Error)
+	rec, err := c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{
+		SecretID: secret.ID, GroupID: 22, Permission: "read", SharedBy: 1,
+	})
+	require.NoError(t, err, "sharing with a group scoped to the secret's own project must succeed")
+	assert.Equal(t, uint(22), rec.RecipientID)
 }

@@ -972,6 +972,13 @@ type Storage interface {
 	// project itself (project_id = projectID), directly or via a group — i.e. real
 	// membership. A global/install-wide role (project_id = 0) does NOT count.
 	IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error)
+	// IsGroupProjectScoped reports whether groupID itself holds a LIVE role grant
+	// scoped to the project (group_roles.project_id = projectID) — the group-share
+	// counterpart to IsProjectMember, used to reject group shares whose recipient
+	// group has no legitimate tie to the secret's project. A global/install-wide
+	// group role grant (project_id = 0) does NOT count, matching IsProjectMember's
+	// own global exclusion.
+	IsGroupProjectScoped(ctx context.Context, groupID, projectID uint) (bool, error)
 	GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	// GetUserRoleScopes returns the distinct (project, environment) scopes at which
 	// userID holds ANY role, directly or via a live (non-deleted) group. It is the

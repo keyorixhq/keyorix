@@ -43,6 +43,20 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 		return nil, fmt.Errorf("not authorized to share this secret")
 	}
 
+	// Reject cross-project grants: the target group must itself be scoped to the
+	// secret's project (i.e. hold a live role grant at that project), mirroring
+	// the cross-project rejection ShareSecret's direct-user path performs for
+	// individual recipients. Without this, sharing with a group pulls in every
+	// current and future member of that group — including members with no tie
+	// to this project at all — into standing access to the secret; see
+	// CheckGroupPermissions, which enforces group membership but never the
+	// accessing user's project affiliation, so nothing downstream catches this.
+	if isScoped, serr := c.storage.IsGroupProjectScoped(ctx, req.GroupID, secret.ProjectID); serr != nil {
+		return nil, fmt.Errorf("failed to verify group project scope: %w", serr)
+	} else if !isScoped {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
+	}
+
 	// A time-bound share must expire in the future (see ShareSecret).
 	if req.ExpiresAt != nil && !req.ExpiresAt.After(c.now()) {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future")
