@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -26,9 +27,20 @@ type OwnershipRecord struct {
 	Description string `json:"description"`
 }
 
-// ownershipDescRe parses the description written by transferOwnership:
+// ownershipDescRe is a LEGACY fallback for secret.owner_transferred rows written
+// before this file started reading the structured ownershipTransferDetail out of
+// the event's Diff field (see secret_ownership.go). Those older rows have no Diff
+// and only carry the human-readable description:
 //
 //	transferred ownership of secret "NAME" from user OLD_ID to user NEW_ID
+//
+// Do NOT rely on this for new events: the secret NAME is attacker-controllable
+// (rename) and is interpolated into that same string ahead of the numeric IDs, so
+// a maliciously-named secret can forge what a leftmost regex match reports as the
+// from/to owner. transferOwnership now writes FromUserID/ToUserID as structured
+// JSON in Diff specifically so parsing never has to trust free text again; this
+// regex only exists to keep pre-fix historical rows from silently losing their
+// parsed IDs.
 var ownershipDescRe = regexp.MustCompile(`from user (\d+) to user (\d+)`)
 
 // GetSecretOwnershipHistory returns the chain of ownership transfers for secretID
@@ -63,8 +75,14 @@ func (c *KeyorixCore) GetSecretOwnershipHistory(ctx context.Context, secretID, a
 		if e.UserID != nil {
 			rec.ChangedBy = *e.UserID
 		}
-		// Parse "from user X to user Y" from the description.
-		if m := ownershipDescRe.FindStringSubmatch(e.Description); len(m) == 3 {
+		// Prefer the structured from/to IDs written to Diff (see
+		// ownershipTransferDetail) — never derived from attacker-controllable text.
+		var d ownershipTransferDetail
+		if e.Diff != "" && json.Unmarshal([]byte(e.Diff), &d) == nil {
+			rec.FromID = d.FromUserID
+			rec.ToID = d.ToUserID
+		} else if m := ownershipDescRe.FindStringSubmatch(e.Description); len(m) == 3 {
+			// LEGACY fallback for rows written before Diff carried structured IDs.
 			fromID, err1 := strconv.ParseUint(m[1], 10, 32)
 			toID, err2 := strconv.ParseUint(m[2], 10, 32)
 			if err1 == nil && err2 == nil {

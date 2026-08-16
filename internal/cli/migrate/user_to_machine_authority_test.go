@@ -112,3 +112,57 @@ func TestRequireMigrationAuthority_BootstrapAdminAllowed(t *testing.T) {
 
 	require.NoError(t, requireMigrationAuthority(ctx, c, bootstrapAdmin.ID, 1))
 }
+
+// Wave 6 (findings-gaps/cli-project.json#1): an actor holding every permission
+// grant the operation requires (roles.assign + users.write, exactly the
+// AuthorizedActorAllowed fixture below) but whose ACCOUNT has since been
+// suspended must still be refused. Suspension flips account_state, it does not
+// revoke the actor's role assignments — Authorize alone would happily return
+// true for a suspended admin. requireMigrationAuthority must additionally gate
+// on account liveness (AccountStillUsable), the same check the real
+// login/session path enforces, so a suspended admin reachable via some other
+// still-valid credential (an unrevoked session or PAT) cannot attribute a
+// privileged migration to themselves.
+func TestRequireMigrationAuthority_SuspendedActorRejected(t *testing.T) {
+	c, st := newTestMigrateCore(t)
+	ctx := context.Background()
+
+	bootstrapAdmin, err := st.GetUserByEmail(ctx, "admin@example.com")
+	require.NoError(t, err)
+
+	actor := seedUserWithRole(t, st, "u2m-suspended-admin", "admin", core.Scope{})
+
+	// Sanity: before suspension, the fully-privileged actor is allowed — proves
+	// the subsequent rejection is caused by account state, not by the role
+	// fixture being wrong.
+	require.NoError(t, requireMigrationAuthority(ctx, c, actor, 1))
+
+	// Suspend the actor (another admin remains active, so this isn't blocked by
+	// the last-admin guard). Role/permission grants are untouched by suspension.
+	require.NoError(t, c.SuspendUser(ctx, bootstrapAdmin.ID, actor))
+
+	err = requireMigrationAuthority(ctx, c, actor, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "suspended")
+}
+
+// Wave 6 positive control: a deactivated (IsActive=false) actor — the other
+// half of AccountStillUsable's gate, distinct from account_state suspension —
+// must also be refused even though it still holds every required grant.
+func TestRequireMigrationAuthority_DeactivatedActorRejected(t *testing.T) {
+	c, st := newTestMigrateCore(t)
+	ctx := context.Background()
+
+	actor := seedUserWithRole(t, st, "u2m-deactivated-admin", "admin", core.Scope{})
+	require.NoError(t, requireMigrationAuthority(ctx, c, actor, 1))
+
+	u, err := st.GetUser(ctx, actor)
+	require.NoError(t, err)
+	u.IsActive = false
+	_, err = st.UpdateUser(ctx, u)
+	require.NoError(t, err)
+
+	err = requireMigrationAuthority(ctx, c, actor, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "suspended or deactivated")
+}

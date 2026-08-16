@@ -97,7 +97,25 @@ func runUserToMachine(cmd *cobra.Command, args []string) error {
 // assumes the caller already authorized — the HTTP handler's job is done by
 // router middleware), so this must be verified here, at the CLI entrypoint,
 // before the resolved actor is credited with the action.
+//
+// Role/permission possession alone is not enough: a suspended or deactivated
+// admin's role assignments remain in the database (suspension flips
+// IsActive/AccountState, it does not revoke grants), so Authorize would still
+// return true for them. Without an explicit liveness check here, a suspended
+// admin reachable through some other still-valid credential (an unrevoked
+// session or PAT) could attribute a privileged migration to themselves. This
+// mirrors the account-state gate the real login/session-validation path
+// enforces (AccountStillUsable, used by ValidateSessionToken's cache-hit
+// re-check per ADR-025) rather than inventing a new one.
 func requireMigrationAuthority(ctx context.Context, svc *core.KeyorixCore, actorID, projectID uint) error {
+	usable, err := svc.AccountStillUsable(ctx, actorID)
+	if err != nil {
+		return fmt.Errorf("failed to verify --by account state: %w", err)
+	}
+	if !usable {
+		return fmt.Errorf("--by actor's account is suspended or deactivated; refusing to attribute this migration to them")
+	}
+
 	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{ProjectID: projectID})
 	if err != nil {
 		return fmt.Errorf("failed to verify --by authority: %w", err)

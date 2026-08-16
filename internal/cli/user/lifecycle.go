@@ -95,6 +95,9 @@ var revokeSessionsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := requireUserAuthority(ctx, service, adminID, permUsersWrite); err != nil {
+			return err
+		}
 		n, err := service.RevokeUserSessions(ctx, adminID, revokeSessionsUserID)
 		if err != nil {
 			return fmt.Errorf("failed: %w", err)
@@ -145,6 +148,9 @@ func runLifecycle(userID uint, by, pastTense string, apply func(*core.KeyorixCor
 
 	adminID, err := resolveAdminID(ctx, service, by)
 	if err != nil {
+		return err
+	}
+	if err := requireUserAuthority(ctx, service, adminID, permUsersWrite); err != nil {
 		return err
 	}
 

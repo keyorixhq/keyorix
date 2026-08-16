@@ -61,5 +61,20 @@ func (h *SecretHandler) DiffSecretVersions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The route is gated on secrets.read (see router.go), but the dedicated ACL
+	// endpoint (GET /{id}/acl) is intentionally gated tighter, on secrets.manage
+	// — ACL membership (who has explicit access to this secret) is more
+	// sensitive than the version-metadata diff itself. core.DiffSecretVersions
+	// includes ACLUserIDs as a convenience snapshot for callers who already hold
+	// manage rights (e.g. the embedded-mode CLI), so strip it here — matching
+	// the same in-handler tiered-visibility pattern ListSecrets uses — for any
+	// caller who only cleared the read-level route gate. Degraded exists solely
+	// to qualify ACLUserIDs' trustworthiness, so it is meaningless (and
+	// potentially confusing) once ACLUserIDs itself is hidden.
+	if allowed, aerr := h.coreService.AuthorizeSecretPrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), permSecretsManage); aerr != nil || !allowed {
+		diff.ACLUserIDs = nil
+		diff.Degraded = false
+	}
+
 	h.sendSuccess(w, diff, "")
 }

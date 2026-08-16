@@ -272,7 +272,10 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		"prefix":         result.Credential.TokenPrefix,
 		"expires_at":     result.Credential.ExpiresAt,
 		"classification": result.Credential.Classification,
-		"allowed_cidrs":  body.AllowedCIDRs,
+		// Echo the PERSISTED restriction (decoded from the stored credential), not
+		// the raw request body — encodePATCIDRs normalizes/dedups/validates CIDRs
+		// server-side, so the two can legitimately differ.
+		"allowed_cidrs": core.DecodePATCIDRs(result.Credential.AllowedCIDRs),
 	}, msg)
 }
 

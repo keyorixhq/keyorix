@@ -17,6 +17,22 @@ func newImpersonationCore(store *MockStorage) *KeyorixCore {
 	return &KeyorixCore{storage: store, now: func() time.Time { return fixed }}
 }
 
+// deniedEventMatcher builds a mock.MatchedBy predicate asserting that a
+// refused StartImpersonation attempt was audited as a distinct
+// impersonation.start_failed event (Success=false), attributed to both the
+// admin who attempted it (ImpersonatedBy) and the target they tried to reach
+// (ActingAs), with descSubstr present in the human-readable reason.
+func deniedEventMatcher(adminID, targetID uint, descSubstr string) func(*models.AuditEvent) bool {
+	return func(e *models.AuditEvent) bool {
+		return e.EventType == EventImpersonationStartFailed &&
+			e.Success != nil && !*e.Success &&
+			e.Impersonation &&
+			e.ImpersonatedBy != nil && *e.ImpersonatedBy == adminID &&
+			e.ActingAs != nil && *e.ActingAs == targetID &&
+			strings.Contains(e.Description, descSubstr)
+	}
+}
+
 func TestStartImpersonation_Success(t *testing.T) {
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
@@ -50,9 +66,21 @@ func TestStartImpersonation_Success(t *testing.T) {
 func TestStartImpersonation_RejectsSelf(t *testing.T) {
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
-	if _, _, err := c.StartImpersonation(context.Background(), 5, 5, ""); err == nil {
+	ctx := context.Background()
+	// A refused attempt must still be audited (Success=false) — otherwise a
+	// blocked privilege-escalation attempt (or repeated probing) is invisible
+	// to security monitoring, which only ever sees successful impersonations.
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventImpersonationStartFailed &&
+			e.Success != nil && !*e.Success &&
+			e.Impersonation &&
+			e.ImpersonatedBy != nil && *e.ImpersonatedBy == 5 &&
+			e.ActingAs != nil && *e.ActingAs == 5
+	})).Return(nil)
+	if _, _, err := c.StartImpersonation(ctx, 5, 5, ""); err == nil {
 		t.Fatal("expected an error impersonating yourself")
 	}
+	store.AssertExpectations(t)
 }
 
 // A request carrying a least-privilege PAT restriction may not start impersonation —
@@ -62,11 +90,18 @@ func TestStartImpersonation_RejectsRestrictedPAT(t *testing.T) {
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := WithPATRestriction(context.Background(), &PATRestriction{Permissions: []string{"users.*"}})
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventImpersonationStartFailed &&
+			e.Success != nil && !*e.Success &&
+			e.ImpersonatedBy != nil && *e.ImpersonatedBy == 1 &&
+			e.ActingAs != nil && *e.ActingAs == 2
+	})).Return(nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
 	if err == nil || !strings.Contains(err.Error(), "restricted access token") {
 		t.Fatalf("expected a restricted-token rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	store.AssertExpectations(t)
 }
 
 // #G07: an UNRESTRICTED PAT (or any other non-interactive credential) must not
@@ -77,11 +112,18 @@ func TestStartImpersonation_RejectsNonSessionAuth(t *testing.T) {
 	store := new(MockStorage)
 	c := newImpersonationCore(store)
 	ctx := WithSessionAuth(context.Background(), false)
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventImpersonationStartFailed &&
+			e.Success != nil && !*e.Success &&
+			e.ImpersonatedBy != nil && *e.ImpersonatedBy == 1 &&
+			e.ActingAs != nil && *e.ActingAs == 2
+	})).Return(nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
 	if err == nil || !strings.Contains(err.Error(), "interactive session") {
 		t.Fatalf("expected a non-session-auth rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	store.AssertExpectations(t)
 }
 
 // A genuine interactive session (the untagged/default case, and the explicit
@@ -107,11 +149,22 @@ func TestStartImpersonation_RejectsInactiveTarget(t *testing.T) {
 	ctx := context.Background()
 	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "admin"}, nil)
 	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, Username: "alice", IsActive: false}, nil)
+	// The refusal must be audited too — an attempt against a suspended/inactive
+	// account is exactly the kind of probing a defender needs visibility into.
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventImpersonationStartFailed &&
+			e.Success != nil && !*e.Success &&
+			e.Impersonation &&
+			e.ImpersonatedBy != nil && *e.ImpersonatedBy == 1 &&
+			e.ActingAs != nil && *e.ActingAs == 2 &&
+			strings.Contains(e.Description, "suspended or inactive")
+	})).Return(nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
 	if err == nil || !strings.Contains(err.Error(), "suspended or inactive") {
 		t.Fatalf("expected an inactive-target rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	store.AssertExpectations(t)
 }
 
 // A non-admin caller cannot impersonate a global admin (privilege escalation guard).
@@ -131,11 +184,20 @@ func TestStartImpersonation_RejectsAdminTargetForNonAdminCaller(t *testing.T) {
 	// #G05: the ceiling now compares the target's ACTUAL bundled permissions
 	// (not the "admin" role name itself) against what the caller can exercise.
 	store.On("GetRolePermissions", ctx, uint(7)).Return([]*models.Permission{{Name: "system.write"}}, nil)
+	// The admin-rank-ceiling denial (#165/#G05) is the most security-critical
+	// refusal of all — a blocked privilege-escalation attempt against a
+	// higher-authority target must be audited, not silently swallowed.
+	deniedMatcher := deniedEventMatcher(1, 2, "rank ceiling")
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(deniedMatcher)).Return(nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
 	if err == nil || !strings.Contains(err.Error(), "which you do not also hold") {
 		t.Fatalf("expected an admin-target rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	// GetRoleByName is set up speculatively by this test but the current ceiling
+	// implementation doesn't always exercise it, so assert the specific audit
+	// call was made rather than the full (and unrelated to this fix) mock set.
+	store.AssertCalled(t, "LogAuditEvent", ctx, mock.MatchedBy(deniedMatcher))
 }
 
 // A non-admin caller cannot impersonate a target who holds an admin-tier role
@@ -156,11 +218,14 @@ func TestStartImpersonation_RejectsProjectScopedAdminTargetForNonAdminCaller(t *
 	store.On("GetUserRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), projScope).Return([]uint{}, nil)
 	store.On("GetRolePermissions", ctx, uint(8)).Return([]*models.Permission{{Name: "roles.assign"}}, nil)
+	deniedMatcher := deniedEventMatcher(1, 2, "rank ceiling")
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(deniedMatcher)).Return(nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
 	if err == nil || !strings.Contains(err.Error(), "which you do not also hold") {
 		t.Fatalf("expected a project-scoped admin-target rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	store.AssertCalled(t, "LogAuditEvent", ctx, mock.MatchedBy(deniedMatcher))
 }
 
 // A caller who ALSO holds project_admin at the target's exact project scope may
@@ -213,11 +278,14 @@ func TestStartImpersonation_RejectsCustomAdminTierRoleTargetForNonAdminCaller(t 
 	store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{}, nil)
 	store.On("GetRolePermissions", ctx, uint(9)).Return([]*models.Permission{{Name: "system.write"}}, nil)
+	deniedMatcher := deniedEventMatcher(1, 2, "rank ceiling")
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(deniedMatcher)).Return(nil)
 	_, _, err := c.StartImpersonation(ctx, 1, 2, "")
 	if err == nil || !strings.Contains(err.Error(), "which you do not also hold") {
 		t.Fatalf("expected a custom-admin-tier-role rejection, got %v", err)
 	}
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	store.AssertCalled(t, "LogAuditEvent", ctx, mock.MatchedBy(deniedMatcher))
 }
 
 // #G05 detection_idea: revoke the impersonator's users.impersonate mid-session

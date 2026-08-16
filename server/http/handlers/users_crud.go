@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -370,6 +372,48 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 // was correct), just one core.Login itself declines to mint a session for —
 // the response reports mfa_enabled/webauthn_enabled with no session, so the
 // spoke's own Login can apply the identical MFA gate it always has.
+// maxProxiedUserAgentLen bounds how much of a caller-supplied User-Agent
+// string VerifyCredentials will carry into the session record / audit trail,
+// applied AFTER control-character stripping — generous enough for any real
+// browser UA, small enough that a spoofed value can't bloat those rows.
+const maxProxiedUserAgentLen = 512
+
+// sanitizeProxiedIP validates a caller-supplied IP-address string before it's
+// trusted as security telemetry (VerifyCredentials's body.IPAddress — see its
+// doc for why that field exists at all). A value that isn't a syntactically
+// valid IP address is dropped to "" rather than passed through, so it can't
+// carry newlines/control characters for audit-log forging or an arbitrarily
+// long/misleading string; net.ParseIP already rejects anything with trailing
+// or embedded junk.
+func sanitizeProxiedIP(s string) string {
+	s = strings.TrimSpace(s)
+	if net.ParseIP(s) == nil {
+		return ""
+	}
+	return s
+}
+
+// sanitizeProxiedUserAgent strips control characters (CR/LF and other C0/C1
+// codes, tab normalized to a space) from a caller-supplied User-Agent string
+// and caps its length, for the same reason sanitizeProxiedIP validates the
+// IP above — mirrors internal/core/audit.go's sanitizeAuditText, which
+// cleans the audit Description but never touches this field.
+func sanitizeProxiedUserAgent(s string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	if len(cleaned) > maxProxiedUserAgentLen {
+		cleaned = cleaned[:maxProxiedUserAgentLen]
+	}
+	return cleaned
+}
+
 func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) {
 	_, ok := mustGetUser(w, r)
 	if !ok {
@@ -389,11 +433,26 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "ValidationError", "username and password are required", http.StatusBadRequest, nil)
 		return
 	}
+	// body.IPAddress/body.UserAgent are the ORIGINAL end user's values, relayed
+	// here by a trusted "spoke" deployment (see the handler doc above) —
+	// unlike every other handler in this file, they're deliberately NOT
+	// derived from THIS request's own r.RemoteAddr/r.UserAgent(), because the
+	// hub would otherwise only ever see the spoke server's own connection
+	// info. But "the spoke is trusted to relay this" is not the same as "the
+	// request body is trusted verbatim": sanitize before either value reaches
+	// core.Login (session record) or the audit trail below, so a caller
+	// (compromised credential, or a buggy spoke) can't forge the hub's own
+	// audit log or session metadata with control characters / arbitrary
+	// unbounded text / a value that isn't even a real IP address. Mirrors
+	// internal/core/audit.go's sanitizeAuditText, which cleans the audit
+	// Description but never touches the IPAddress/UserAgent fields.
+	ip := sanitizeProxiedIP(body.IPAddress)
+	ua := sanitizeProxiedUserAgent(body.UserAgent)
 	session, u, err := h.coreService.Login(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
 		Password:  body.Password,
-		UserAgent: body.UserAgent,
-		IPAddress: body.IPAddress,
+		UserAgent: ua,
+		IPAddress: ip,
 	})
 	if err != nil && !errors.Is(err, core.ErrMFARequired) {
 		// Deliberately no log.Printf here (unlike every other handler in this
@@ -404,7 +463,7 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		// LogAuthFailure exactly — username + IP, no per-reason detail — so the
 		// hub's own audit trail still sees brute-force attempts proxied through
 		// a spoke, without widening the oracle.
-		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, body.IPAddress) })
+		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) })
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
@@ -433,7 +492,7 @@ func (h *UserHandler) VerifyCredentials(w http.ResponseWriter, r *http.Request) 
 		// direct one — best-effort, non-blocking, mirroring the real /auth/login
 		// handler (server/http/handlers/auth.go).
 		goSafe(func() {
-			h.coreService.LogAuthLogin(context.Background(), u.ID, u.Username, body.IPAddress, body.UserAgent)
+			h.coreService.LogAuthLogin(context.Background(), u.ID, u.Username, ip, ua)
 		})
 	}
 	sendSuccess(w, resp, "")

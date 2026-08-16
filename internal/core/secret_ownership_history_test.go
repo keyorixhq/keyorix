@@ -7,10 +7,14 @@ import (
 	"time"
 
 	stg "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func newOwnershipCore(store *MockStorage) *KeyorixCore {
@@ -151,6 +155,86 @@ func TestGetSecretOwnershipHistory_AuditLogsError(t *testing.T) {
 
 	_, err := c.GetSecretOwnershipHistory(ctx, 100, 42)
 	require.Error(t, err)
+}
+
+// newOwnershipHistoryFixture builds a real in-memory-SQLite-backed core (not a
+// mock) with users 1 (owner) and 2 (eligible new owner), and a secret owned by
+// user 1 — the same shape as newOwnershipFixture (secret_ownership_test.go) but
+// additionally migrating models.AuditEvent, since this fixture exercises the real
+// TransferSecretOwnership -> writeAuditEventDiff -> GetSecretOwnershipHistory
+// round trip instead of mocking storage.
+func newOwnershipHistoryFixture(t *testing.T) (*KeyorixCore, uint) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.AuditEvent{}))
+	for _, u := range []models.User{
+		{ID: 1, Username: "owner", Email: "o@test.com"},
+		{ID: 2, Username: "alice", Email: "a@test.com"},
+	} {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1, ProjectID: 1}).Error)
+	st := store.NewLocalStorage(db)
+	c := &KeyorixCore{storage: st, now: time.Now}
+	secret, err := st.CreateSecret(context.Background(), &models.SecretNode{
+		Name: "db", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	return c, secret.ID
+}
+
+// TestGetSecretOwnershipHistory_MaliciousSecretNameCannotForgeTransferIDs is the
+// regression test for the description-regex forgery: a secret renamed to text
+// that LOOKS like a fake "from user X to user Y" clause must not be able to make
+// GetSecretOwnershipHistory report those forged IDs for a REAL transfer. Before
+// the fix, GetSecretOwnershipHistory parsed FromID/ToID with a leftmost regex
+// match over the free-text Description — which also embeds the secret's
+// (attacker-controllable, via rename) NAME ahead of the real IDs — so a
+// maliciously-named secret could hijack the leftmost match. After the fix, the
+// real IDs are read from a structured Diff field the malicious name can never
+// reach.
+func TestGetSecretOwnershipHistory_MaliciousSecretNameCannotForgeTransferIDs(t *testing.T) {
+	ctx := context.Background()
+	c, secretID := newOwnershipHistoryFixture(t)
+
+	// Attacker (the current owner, user 1, who has rename rights on their own
+	// secret) renames it to a name containing a fake ownership-transfer clause
+	// naming completely different users (1 -> 999) than the real transfer below
+	// (1 -> 2) will use.
+	secret, err := c.storage.GetSecret(ctx, secretID)
+	require.NoError(t, err)
+	secret.Name = `evil" from user 1 to user 999 fake`
+	_, err = c.storage.UpdateSecret(ctx, secret)
+	require.NoError(t, err)
+
+	// A REAL transfer now happens: user 1 (current owner) hands the secret to
+	// user 2.
+	_, err = c.TransferSecretOwnership(ctx, secretID, 2, 1)
+	require.NoError(t, err)
+
+	records, err := c.GetSecretOwnershipHistory(ctx, secretID, 2)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	rec := records[0]
+	// The real transfer was 1 -> 2. If the parser were still regex-scanning the
+	// description leftmost-first, it would report 1 -> 999 (from the forged
+	// clause embedded in the name) instead.
+	assert.Equal(t, uint(1), rec.FromID, "must report the REAL previous owner, not the forged ID from the secret name")
+	assert.Equal(t, uint(2), rec.ToID, "must report the REAL new owner, not the forged ID from the secret name")
+	assert.NotEqual(t, uint(999), rec.ToID, "must not be fooled by the fake 'to user 999' clause embedded in the malicious secret name")
 }
 
 // Ensure the filter produced by GetSecretOwnershipHistory uses the correct action type.
