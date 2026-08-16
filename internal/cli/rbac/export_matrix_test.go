@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -724,6 +725,65 @@ func TestExportMatrix_EmbeddedInitStorageError(t *testing.T) {
 	err := runExportMatrix(exportMatrixCmd, nil)
 	// The error may come from config.Load or factory.CreateStorage.
 	require.Error(t, err, "missing config must cause InitializeStorage error")
+}
+
+// TestExportMatrix_OutputFileRestrictiveModeRegardlessOfUmask — regression test for
+// G68: `rbac export-matrix --output` must write its file at mode 0600 even when the
+// process umask would otherwise leave it group/world-readable (a permissive 0022
+// umask, common on many systems, previously produced a 0644 file via the old bare
+// os.Create call). The matrix carries every user/role/permission/scope tuple
+// (usernames, emails) in the deployment, so a readable-by-default export is a real
+// disclosure risk.
+func TestExportMatrix_OutputFileRestrictiveModeRegardlessOfUmask(t *testing.T) {
+	setupEmbeddedMode(t)
+
+	dir := t.TempDir()
+	outPath := dir + "/matrix-perm-check.json"
+
+	prevFormat := exportMatrixFormat
+	prevProject := exportMatrixProject
+	prevOutput := exportMatrixOutput
+	t.Cleanup(func() {
+		exportMatrixFormat = prevFormat
+		exportMatrixProject = prevProject
+		exportMatrixOutput = prevOutput
+	})
+
+	exportMatrixFormat = "json"
+	exportMatrixProject = ""
+	exportMatrixOutput = outPath
+
+	oldUmask := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(oldUmask) })
+
+	err := runExportMatrix(exportMatrixCmd, nil)
+	require.NoError(t, err)
+
+	info, err := os.Stat(outPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"export-matrix --output file must be mode 0600 regardless of process umask")
+}
+
+// TestOpenSecureOutputFile_EnforcesModeOnPreexistingDestination — if --output points
+// at an already-existing, world-readable file (e.g. an old export from before this
+// fix, or one created by another tool under a permissive umask), openSecureOutputFile
+// must tighten its mode to 0600 rather than leaving it as-is: O_TRUNC alone keeps a
+// pre-existing file's mode untouched, so the 0600 passed to OpenFile only takes
+// effect at creation time.
+func TestOpenSecureOutputFile_EnforcesModeOnPreexistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/existing.json"
+	require.NoError(t, os.WriteFile(path, []byte("stale"), 0o644))
+
+	f, err := openSecureOutputFile(path)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"pre-existing destination mode must be tightened to 0600")
 }
 
 // TestExportMatrix_EmbeddedProjectFound — project filter resolves successfully when

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -64,12 +65,34 @@ type remoteMatrixRow struct {
 	ExpiresAt       *time.Time `json:"expires_at"`
 }
 
+// openSecureOutputFile opens path for the --output file. The permission
+// matrix is deployment-wide access-control data (usernames, emails, every
+// user/role/permission/scope tuple) — sensitive enough that it must never
+// land on disk world/group-readable, regardless of the process umask (G68).
+// O_TRUNC alone keeps a pre-existing file's mode untouched, so the perm
+// argument to OpenFile only takes effect when the file is freshly created;
+// the explicit Chmod below enforces 0600 even when --output points at an
+// already-existing (possibly world-readable) path. O_NOFOLLOW refuses to
+// write through a final-component symlink. Mirrors
+// securefiles.SecureWriteFile/SecureWriteFileSync.
+func openSecureOutputFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- operator-supplied CLI output path, not attacker input
+	if err != nil {
+		return nil, err
+	}
+	if cerr := f.Chmod(0o600); cerr != nil {
+		_ = f.Close()
+		return nil, cerr
+	}
+	return f, nil
+}
+
 func runExportMatrix(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	out := io.Writer(os.Stdout)
 	if exportMatrixOutput != "" {
-		f, err := os.Create(filepath.Clean(exportMatrixOutput))
+		f, err := openSecureOutputFile(exportMatrixOutput)
 		if err != nil {
 			return fmt.Errorf("failed to open output file: %w", err)
 		}
