@@ -43,6 +43,11 @@ func (m *MockStorage) WithAuditCheckpointLock(_ context.Context, fn func() error
 	return fn()
 }
 
+// WithBootstrapLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithBootstrapLock(_ context.Context, fn func() error) error {
+	return fn()
+}
+
 // WithTransaction runs fn directly against the mock (no real transaction in tests).
 func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
 	return fn(m)

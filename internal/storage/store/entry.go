@@ -189,11 +189,17 @@ type LocalStorage struct {
 	// (ADR-039 HA). A pointer for the same reason as auditChainMu — a transaction-scoped
 	// LocalStorage must share its parent's mutex.
 	auditCheckpointMu *sync.Mutex
+	// bootstrapMu serializes BootstrapSystem's whole check-then-create sequence
+	// within this process (#339/ADR-039 HA). The PostgreSQL advisory lock in
+	// WithBootstrapLock extends this across processes/replicas. A pointer for the
+	// same reason as auditChainMu/auditCheckpointMu — a transaction-scoped
+	// LocalStorage must share its parent's mutex.
+	bootstrapMu *sync.Mutex
 }
 
 // NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
-	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}, auditCheckpointMu: &sync.Mutex{}}
+	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}, auditCheckpointMu: &sync.Mutex{}, bootstrapMu: &sync.Mutex{}}
 }
 
 // DB returns the underlying *gorm.DB. Exposed for test helpers that need direct

@@ -193,18 +193,31 @@ const systemInitializedKey = "system_initialized" // #nosec G101 -- metadata key
 //   - three default environments (development, staging, production)
 //
 // Idempotent: if the install is already initialised, returns the current state
-// with AlreadyInitialized=true and performs no writes. bootstrapMu serializes the
-// whole check-then-create sequence so two concurrent first calls can't both pass
-// the check and double-seed (the storage layer alone doesn't make this atomic).
+// with AlreadyInitialized=true and performs no writes. The whole check-then-create
+// sequence runs under storage.WithBootstrapLock (#339, #core-auth-03): without it,
+// two concurrent callers who both already hold the valid bootstrap token (different
+// usernames) could each observe total==0 before either CreateUser lands, producing
+// two "first admins" — and, in an HA deployment (ADR-039), those two callers can
+// land on different replicas, where a plain in-process mutex provides no
+// coordination at all. The token check above already closes the unauthenticated
+// race; the lock closes the authenticated one, across every replica.
 func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest) (*BootstrapResult, error) { // NOSONAR -- cognitive complexity 28, suppress go:S3776
-	// Serialize the whole "is this a fresh install" check through admin creation
-	// (#339): without this, two concurrent callers who both already hold the valid
-	// bootstrap token (different usernames) could each observe total==0 before
-	// either CreateUser lands, producing two "first admins". The token check above
-	// already closes the unauthenticated race; this closes the authenticated one.
-	c.bootstrapMu.Lock()
-	defer c.bootstrapMu.Unlock()
+	var result *BootstrapResult
+	err := c.storage.WithBootstrapLock(ctx, func() error {
+		res, berr := c.bootstrapSystemLocked(ctx, req)
+		result = res
+		return berr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
 
+// bootstrapSystemLocked performs the actual check-then-create sequence. The
+// caller MUST hold storage.WithBootstrapLock for the duration of this call (see
+// BootstrapSystem).
+func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapRequest) (*BootstrapResult, error) {
 	// The permanent marker is authoritative once set — see systemInitializedKey.
 	if _, found, err := c.storage.GetSystemMetadata(ctx, systemInitializedKey); err != nil {
 		return nil, fmt.Errorf("failed to check system initialisation state: %w", err)
