@@ -1,6 +1,7 @@
 package http
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -220,7 +221,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		inner := metricsHandler
 		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			auth := req.Header.Get("Authorization")
-			if len(auth) < 8 || auth[:7] != "Bearer " || auth[7:] != tok {
+			if len(auth) < 8 || auth[:7] != "Bearer " || subtle.ConstantTimeCompare([]byte(auth[7:]), []byte(tok)) != 1 {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
