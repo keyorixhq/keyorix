@@ -224,7 +224,7 @@ func TestGetCompliancePosture_DegradedOnClassificationCountQueryErrors(t *testin
 // dropped from ProjectsNeverReviewed/ProjectsWithOpenCampaign/PendingItems/ProjectsOverdue.
 func TestGetCompliancePosture_DegradedOnAccessReviewCampaignsQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 	// models.AccessReviewCampaign deliberately NOT migrated.
 
 	p, err := c.GetCompliancePosture(context.Background())
@@ -239,7 +239,7 @@ func TestGetCompliancePosture_DegradedOnAccessReviewCampaignsQueryError(t *testi
 // emergency access from the report.
 func TestGetCompliancePosture_DegradedOnBreakGlassQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 	// models.BreakGlassActivation deliberately NOT migrated.
 
 	p, err := c.GetCompliancePosture(context.Background())

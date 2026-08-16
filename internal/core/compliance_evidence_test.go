@@ -63,7 +63,7 @@ func TestGenerateComplianceEvidence_DegradesOnRotationOverdueQueryError(t *testi
 // #362: campaigns, per project — models.AccessReviewCampaign deliberately not migrated.
 func TestGenerateComplianceEvidence_DegradesOnCampaignsQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 
 	ev, err := c.GenerateComplianceEvidence(context.Background())
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestGenerateComplianceEvidence_DegradesOnCampaignsQueryError(t *testing.T) 
 // activation is the most severe of this family.
 func TestGenerateComplianceEvidence_DegradesOnBreakGlassQueryError(t *testing.T) {
 	c, db := compliancePostureCoreWithProject(t)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.AuditEvent{}))
 
 	ev, err := c.GenerateComplianceEvidence(context.Background())
 	require.NoError(t, err)

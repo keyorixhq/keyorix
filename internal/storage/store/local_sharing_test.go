@@ -235,7 +235,7 @@ func TestDeleteProject_RevokesActiveSharesForProjectSecrets(t *testing.T) {
 // (PurgeDeletedProjectsBefore, see TestPurgeDeletedProjectsBefore_CascadesRoleGrants).
 func TestDeleteProject_LeavesRoleGrantsUntouched(t *testing.T) {
 	db := sharingConcurrentDB(t)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.UserRole{}, &models.GroupRole{}, &models.DynamicSecretConfig{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{}, &models.DynamicSecretConfig{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 
