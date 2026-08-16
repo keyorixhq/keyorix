@@ -2,8 +2,10 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -138,6 +140,21 @@ func TestMapMachineError_Default_Internal(t *testing.T) {
 	st, _ := status.FromError(err)
 	if st.Code() != codes.Internal {
 		t.Errorf("expected Internal, got %v", st.Code())
+	}
+}
+
+// TestMapMachineError_PrivilegeCeilingDenied guards against the MACH-001
+// misclassification: requireMachinePrivilegeCeiling's message ("...requires
+// administrative authority") contains none of the switch's fixed substrings
+// ("permission", "denied", "required", etc — note "requires" != "required"),
+// so before the errors.Is(core.ErrMachinePrivilegeCeilingDenied) check was added
+// it fell through to the default codes.Internal bucket instead of
+// codes.PermissionDenied, even though the request was correctly denied.
+func TestMapMachineError_PrivilegeCeilingDenied(t *testing.T) {
+	err := mapMachineError(fmt.Errorf("%w: issuing a token for a machine identity that holds administrative roles requires administrative authority", core.ErrMachinePrivilegeCeilingDenied))
+	st, _ := status.FromError(err)
+	if st.Code() != codes.PermissionDenied {
+		t.Errorf("expected PermissionDenied, got %v", st.Code())
 	}
 }
 

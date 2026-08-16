@@ -458,7 +458,7 @@ func (c *KeyorixCore) requireMachinePrivilegeCeiling(ctx context.Context, actorI
 		return fmt.Errorf("failed to verify actor authority: %w", err)
 	}
 	if !isAdmin {
-		return fmt.Errorf("issuing a token for a machine identity that holds administrative roles requires administrative authority")
+		return fmt.Errorf("%w: issuing a token for a machine identity that holds administrative roles requires administrative authority", ErrMachinePrivilegeCeilingDenied)
 	}
 	return nil
 }

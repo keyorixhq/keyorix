@@ -93,4 +93,16 @@ var (
 	// err.Error() (which the dynamic %s/%d detail appended to each of these
 	// errors would make spoofable by anything that can influence that detail).
 	ErrAuditCheckpointRefused = errors.New("refusing to checkpoint")
+
+	// ErrMachinePrivilegeCeilingDenied is returned by requireMachinePrivilegeCeiling
+	// (MACH-001) when a non-admin actor tries to issue a token for a machine identity
+	// that holds admin-tier roles — the token would inherit those roles, so issuing
+	// one is equivalent to granting the actor administrative authority. Callers use
+	// errors.Is against this sentinel (server/grpc/services.mapMachineError) instead
+	// of substring-matching err.Error(), so this deliberate, terminal authorization
+	// denial is classified as codes.PermissionDenied rather than falling through to
+	// codes.Internal and being mistaken by clients/monitoring for a transient failure.
+	// Deliberately worded without "permission"/"denied"/etc so it can't accidentally
+	// satisfy mapMachineError's substring switch and mask a reliance on errors.Is.
+	ErrMachinePrivilegeCeilingDenied = errors.New("machine identity privilege ceiling exceeded")
 )

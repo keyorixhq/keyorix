@@ -24,6 +24,15 @@ import (
 // grants users.read + roles.assign (the perms the machine RPCs require), and
 // returns the MachineIdentityService over a real core.
 func newMachineTestRig(t *testing.T) *MachineIdentityGRPCService {
+	svc, _ := newMachineTestRigWithDB(t)
+	return svc
+}
+
+// newMachineTestRigWithDB is newMachineTestRig plus the underlying db, for
+// tests (like the MACH-001 regression below) that need to seed additional
+// fixtures — e.g. granting a machine identity an admin-tier role directly,
+// which core.AssignMachineRole itself would refuse from a non-admin actor.
+func newMachineTestRigWithDB(t *testing.T) (*MachineIdentityGRPCService, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
@@ -52,7 +61,7 @@ func newMachineTestRig(t *testing.T) *MachineIdentityGRPCService {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 2}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error) // global grant
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
-	return NewMachineIdentityService(coreService)
+	return NewMachineIdentityService(coreService), db
 }
 
 func TestMachineIdentityService_Lifecycle(t *testing.T) {
@@ -131,4 +140,41 @@ func TestMachineIdentityService_AuthzAndValidation(t *testing.T) {
 	_, err = svc.TransitionMachineIdentity(admin, &pb.TransitionMachineIdentityRequest{ProjectId: 1, MachineId: 1, Action: "explode"})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestMachineIdentityService_IssueMachineToken_PrivilegeCeilingDeniedIsPermissionDenied
+// guards MACH-001's gRPC classification: a non-global-admin actor with
+// roles.assign (so they pass the RPC's own authz gate) who tries to issue a
+// token for a machine identity holding an admin-tier role must be rejected
+// with codes.PermissionDenied — the caller (user 1) has roles.assign via the
+// "machine-admin" role seeded by newMachineTestRig, but that role name is not
+// in adminRoleNames, so IsGlobalAdmin(1) is false and
+// requireMachinePrivilegeCeiling (MACH-001) refuses. Before mapMachineError
+// learned to check core.ErrMachinePrivilegeCeilingDenied via errors.Is, this
+// denial's message ("...requires administrative authority") matched none of
+// mapMachineError's substrings and fell through to codes.Internal instead.
+func TestMachineIdentityService_IssueMachineToken_PrivilegeCeilingDeniedIsPermissionDenied(t *testing.T) {
+	svc, db := newMachineTestRigWithDB(t)
+	ctx := authCtx(1, "admin")
+
+	m, err := svc.CreateMachineIdentity(ctx, &pb.CreateMachineIdentityRequest{
+		ProjectId: 1, Name: "admin-bot", IdentityType: "ci",
+	})
+	require.NoError(t, err)
+
+	// Grant the machine identity an admin-tier role (a name recognized by
+	// adminRoleNames — see internal/core/authz.go), so a token issued for it
+	// would inherit admin authority. User 1's own "machine-admin" role (seeded
+	// by newMachineTestRig) is NOT in adminRoleNames, so IsGlobalAdmin(1) is
+	// false and requireMachinePrivilegeCeiling (MACH-001) must refuse.
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{
+		MachineIdentityID: uint(m.GetId()), RoleID: 2,
+	}).Error)
+
+	_, err = svc.IssueMachineToken(ctx, &pb.IssueMachineTokenRequest{
+		ProjectId: 1, MachineId: m.GetId(), Name: "escalate",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }

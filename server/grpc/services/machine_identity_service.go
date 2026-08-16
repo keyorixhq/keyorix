@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -29,6 +30,16 @@ func NewMachineIdentityService(coreService *core.KeyorixCore) *MachineIdentityGR
 }
 
 func mapMachineError(err error) error {
+	// MACH-001: a privilege-ceiling denial (requireMachinePrivilegeCeiling) is a
+	// deliberate, terminal authorization refusal, not an internal error. Check the
+	// typed sentinel via errors.Is BEFORE the substring switch below — the message
+	// text is prose ("requires administrative authority") that doesn't match any of
+	// the switch's fixed substrings and would otherwise fall through to the default
+	// codes.Internal bucket, which clients/monitoring commonly treat as transient
+	// and retryable, unlike codes.PermissionDenied.
+	if errors.Is(err, core.ErrMachinePrivilegeCeilingDenied) {
+		return status.Error(codes.PermissionDenied, "access denied")
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):
