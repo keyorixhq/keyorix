@@ -68,11 +68,32 @@ func (c *KeyorixCore) CreateRotationPolicy(ctx context.Context, actorID uint, re
 		return nil, err
 	}
 
+	// When an environment is given, resolve its true owning project and use that
+	// to populate/validate ProjectID — never trust a caller-supplied ProjectID on
+	// its own. Without this, a policy could be created (or, historically, an
+	// environment-scoped policy's ProjectID could be left nil) with a
+	// ProjectID/EnvironmentID pair that don't actually belong together;
+	// scopedPolicySecrets then resolves the policy's secret scope from these two
+	// fields, so a mismatched or missing ProjectID lets an environment-scoped
+	// policy's secret lookup drift onto (or span) a different project entirely.
+	// Mirrors CreateFolder's parent.ProjectID != projectID consistency check.
+	effectiveProjectID := req.ProjectID
+	if req.EnvironmentID != nil {
+		env, err := c.storage.GetEnvironment(ctx, *req.EnvironmentID)
+		if err != nil {
+			return nil, fmt.Errorf("environment %d not found: %w", *req.EnvironmentID, err)
+		}
+		if req.ProjectID != nil && *req.ProjectID != env.ProjectID {
+			return nil, fmt.Errorf("environment %d does not belong to project %d", *req.EnvironmentID, *req.ProjectID)
+		}
+		effectiveProjectID = &env.ProjectID
+	}
+
 	policy := &models.RotationPolicy{
 		Name:            req.Name,
 		Description:     req.Description,
 		Scope:           req.Scope,
-		ProjectID:       req.ProjectID,
+		ProjectID:       effectiveProjectID,
 		EnvironmentID:   req.EnvironmentID,
 		IntervalDays:    req.IntervalDays,
 		AlertDaysBefore: req.AlertDaysBefore,
@@ -203,6 +224,16 @@ func (c *KeyorixCore) scopedPolicySecrets(ctx context.Context, policy *models.Ro
 		// overdue status, backend) for every environment of the project. nil = all envs.
 		environmentID = reqEnvID
 	} else {
+		// Environment-scoped policy: scope by BOTH the environment and its owning
+		// project. EnvironmentID alone is not sufficient — LocalStorage.ListSecrets
+		// only applies its project-ownership JOIN when ProjectID is non-nil, so an
+		// environment-only filter matches every secret with that environment ID
+		// across every project (environment IDs are not globally unique in
+		// intent, just numerically). CreateRotationPolicy always populates
+		// ProjectID from the environment's true owning project, so this is safe
+		// for policies created after that fix; it's a no-op (still environment-
+		// only) for any pre-existing policy whose ProjectID is nil.
+		projectID = policy.ProjectID
 		environmentID = policy.EnvironmentID
 	}
 
