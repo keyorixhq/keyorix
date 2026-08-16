@@ -268,6 +268,85 @@ func TestNew_RejectsNonKeyVaultHost(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a recognized Azure Key Vault")
 }
 
+// fakePermissiveKeys always returns the same plaintext from UnwrapKey
+// regardless of the version requested — modeling a rogue/misbehaving
+// component sitting between this client and Key Vault (or an SDK bug) that
+// does not itself enforce that the requested version matches what the
+// ciphertext was actually wrapped under. Used to prove that the envelope's
+// own MAC — not just Key Vault's/the fake's version-consistency enforcement
+// — is what refuses a Version field tampered independently of the
+// ciphertext (G77 member 1).
+type fakePermissiveKeys struct {
+	plaintext []byte
+}
+
+func (f fakePermissiveKeys) WrapKey(_ context.Context, _ string, _ string, _ azkeys.KeyOperationParameters, _ *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error) {
+	return azkeys.WrapKeyResponse{}, fmt.Errorf("fakePermissiveKeys: WrapKey not implemented")
+}
+
+func (f fakePermissiveKeys) UnwrapKey(_ context.Context, _ string, _ string, _ azkeys.KeyOperationParameters, _ *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error) {
+	return azkeys.UnwrapKeyResponse{KeyOperationResult: azkeys.KeyOperationResult{Result: f.plaintext}}, nil
+}
+
+// TestAzureKMS_DecryptRefusesTamperedVersion is the G77 member-1 regression:
+// the version-pinning envelope's Version field must be bound to the
+// ciphertext it travels with, so tampering it independently is detected
+// rather than silently trusted as key-selection metadata.
+func TestAzureKMS_DecryptRefusesTamperedVersion(t *testing.T) {
+	secret := []byte("real-secret-kek-material")
+	blob, err := encodeEnvelope("v1", []byte("original-ciphertext"), secret)
+	require.NoError(t, err)
+
+	// Tamper Version independently of Ciphertext — exactly the finding's
+	// scenario: someone able to modify the on-disk blob rewrites the version
+	// tag. They cannot recompute a matching MAC because it's keyed on secret,
+	// which is never persisted anywhere (it only ever exists in Key Vault and
+	// transiently in process memory).
+	env, ok, err := decodeEnvelope(blob)
+	require.NoError(t, err)
+	require.True(t, ok)
+	env.Version = "v2-attacker-chosen"
+	tamperedBody, err := json.Marshal(env)
+	require.NoError(t, err)
+	tamperedBlob := append([]byte(envelopeMagic), tamperedBody...)
+
+	// Even in the worst case — UnwrapKey with the tampered version still
+	// "succeeds" (a rogue component in front of Key Vault, or a permissive
+	// SDK/mock that doesn't itself enforce the version/ciphertext binding)
+	// and returns the true plaintext — Decrypt must still refuse: the MAC was
+	// computed over the ORIGINAL version and won't match one recomputed over
+	// the tampered version.
+	c := &client{keys: fakePermissiveKeys{plaintext: secret}, keyName: "kek", keyVersion: ""}
+	_, err = c.Decrypt(context.Background(), tamperedBlob)
+	require.Error(t, err, "Decrypt must refuse an envelope whose Version was tampered independently of the ciphertext/MAC")
+	assert.Contains(t, err.Error(), "integrity check")
+}
+
+// fakeKeysWrongKID returns a WrapKey response whose KID names a DIFFERENT key
+// than the one requested — modeling an SDK bug, a Key Vault misconfiguration,
+// or an untrusted component sitting in front of Key Vault.
+type fakeKeysWrongKID struct{}
+
+func (f fakeKeysWrongKID) WrapKey(_ context.Context, _ string, _ string, params azkeys.KeyOperationParameters, _ *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error) {
+	kid := azkeys.ID("https://vault.vault.azure.net/keys/some-other-key/v1")
+	return azkeys.WrapKeyResponse{KeyOperationResult: azkeys.KeyOperationResult{KID: &kid, Result: params.Value}}, nil
+}
+
+func (f fakeKeysWrongKID) UnwrapKey(_ context.Context, _ string, _ string, _ azkeys.KeyOperationParameters, _ *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error) {
+	return azkeys.UnwrapKeyResponse{}, fmt.Errorf("fakeKeysWrongKID: UnwrapKey not implemented")
+}
+
+// TestAzureKMS_EncryptRefusesMismatchedKID is the G77 member-2 regression:
+// Encrypt must not trust the wrap response's KID without checking it names
+// the configured key — a mismatch must be refused, not silently pinned.
+func TestAzureKMS_EncryptRefusesMismatchedKID(t *testing.T) {
+	c := &client{keys: fakeKeysWrongKID{}, keyName: "kek", keyVersion: ""}
+	_, err := c.Encrypt(context.Background(), []byte("kek-material"))
+	require.Error(t, err, "Encrypt must refuse a wrap response whose KID names a different key than configured")
+	assert.Contains(t, err.Error(), "some-other-key")
+	assert.Contains(t, err.Error(), "kek")
+}
+
 func TestParseKeyID(t *testing.T) {
 	tests := []struct {
 		name                             string

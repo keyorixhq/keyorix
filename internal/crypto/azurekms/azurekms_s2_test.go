@@ -127,7 +127,7 @@ func TestDecrypt_UnwrapKeyError_IsPrefixed(t *testing.T) {
 // for a version-pinned (magic-prefix) envelope blob.
 func TestDecrypt_UnwrapKeyError_PinnedEnvelope(t *testing.T) {
 	// Produce a valid envelope blob first.
-	blob, err := encodeEnvelope("v1", []byte("ciphertext"))
+	blob, err := encodeEnvelope("v1", []byte("ciphertext"), []byte("plaintext"))
 	require.NoError(t, err)
 
 	c := &client{

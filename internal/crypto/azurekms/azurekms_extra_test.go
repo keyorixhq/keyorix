@@ -12,7 +12,8 @@ import (
 // TestEncodeDecodeEnvelope_RoundTrip verifies the envelope encodes and decodes symmetrically.
 func TestEncodeDecodeEnvelope_RoundTrip(t *testing.T) {
 	ct := []byte("fake-ciphertext")
-	blob, err := encodeEnvelope("v1", ct)
+	pt := []byte("fake-plaintext")
+	blob, err := encodeEnvelope("v1", ct, pt)
 	if err != nil {
 		t.Fatalf("encodeEnvelope: %v", err)
 	}
@@ -28,6 +29,9 @@ func TestEncodeDecodeEnvelope_RoundTrip(t *testing.T) {
 	}
 	if string(env.Ciphertext) != string(ct) {
 		t.Errorf("ciphertext: got %q, want %q", env.Ciphertext, ct)
+	}
+	if string(env.MAC) != string(versionMAC(pt, "v1")) {
+		t.Errorf("mac: got %x, want %x", env.MAC, versionMAC(pt, "v1"))
 	}
 }
 
