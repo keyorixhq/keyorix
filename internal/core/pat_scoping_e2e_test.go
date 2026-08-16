@@ -62,7 +62,7 @@ func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
 		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-read", nil, []string{"secrets.read"}, 0, 0, nil)
 		require.NoError(t, err)
 
-		user, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
+		user, _, restriction, _, err := c.ValidatePATToken(ctx, res.PlainToken)
 		require.NoError(t, err)
 		require.Equal(t, admin.ID, user.ID)
 		require.NotNil(t, restriction)
@@ -80,7 +80,7 @@ func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
 	t.Run("project-scoped PAT is confined to its project", func(t *testing.T) {
 		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-proj3", nil, nil, 3, 0, nil)
 		require.NoError(t, err)
-		_, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
+		_, _, restriction, _, err := c.ValidatePATToken(ctx, res.PlainToken)
 		require.NoError(t, err)
 		require.NotNil(t, restriction)
 		rctx := WithPATRestriction(ctx, restriction)
@@ -101,7 +101,7 @@ func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
 	t.Run("environment-scoped PAT is confined to its environment", func(t *testing.T) {
 		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-env7", nil, nil, 0, 7, nil) // env 7 only
 		require.NoError(t, err)
-		_, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
+		_, _, restriction, _, err := c.ValidatePATToken(ctx, res.PlainToken)
 		require.NoError(t, err)
 		require.NotNil(t, restriction)
 		require.Equal(t, uint(7), restriction.EnvironmentID)
@@ -123,7 +123,7 @@ func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
 	t.Run("unrestricted PAT resolves to no restriction and keeps full inheritance", func(t *testing.T) {
 		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-full", nil, nil, 0, 0, nil)
 		require.NoError(t, err)
-		_, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
+		_, _, restriction, _, err := c.ValidatePATToken(ctx, res.PlainToken)
 		require.NoError(t, err)
 		assert.Nil(t, restriction, "no scopes + no project = unrestricted (back-compat)")
 	})

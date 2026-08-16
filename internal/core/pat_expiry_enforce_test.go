@@ -112,7 +112,7 @@ func TestValidatePATToken_ExpiredPAT_ReturnsErrPATExpired(t *testing.T) {
 	ms.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).
 		Return(&models.Notification{ID: 99}, nil)
 
-	_, _, _, err := c.ValidatePATToken(ctx, raw)
+	_, _, _, _, err := c.ValidatePATToken(ctx, raw)
 
 	require.ErrorIs(t, err, ErrPATExpired)
 	ms.AssertCalled(t, "CreateNotification", ctx, mock.AnythingOfType("*models.Notification"))
@@ -131,12 +131,10 @@ func TestValidatePATToken_ValidNonExpiredPAT_Succeeds(t *testing.T) {
 		Return(&models.PersonalAccessToken{ID: 7, UserID: 2, ExpiresAt: &future}, nil)
 	ms.On("GetUser", ctx, uint(2)).
 		Return(&models.User{ID: 2, Username: "alice", IsActive: true}, nil)
-	ms.On("TouchPersonalAccessToken", ctx, uint(7), mock.AnythingOfType("time.Time"), patTouchInterval).
-		Return(nil)
 	ms.On("GetUserRoles", ctx, uint(2)).
 		Return([]*models.Role{{Name: "project_viewer"}}, nil)
 
-	user, roles, _, err := c.ValidatePATToken(ctx, raw)
+	user, roles, _, _, err := c.ValidatePATToken(ctx, raw)
 
 	require.NoError(t, err)
 	assert.Equal(t, uint(2), user.ID)

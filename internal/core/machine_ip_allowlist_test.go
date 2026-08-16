@@ -94,7 +94,7 @@ func TestValidateMachineToken_ReturnsCIDRRestriction(t *testing.T) {
 	c := NewKeyorixCore(store)
 	c.now = func() time.Time { return fixed }
 
-	_, _, restriction, err := c.ValidateMachineToken(context.Background(), raw)
+	_, _, restriction, _, err := c.ValidateMachineToken(context.Background(), raw)
 	require.NoError(t, err)
 	require.NotNil(t, restriction)
 	assert.Equal(t, []string{"10.0.0.0/8", "192.168.1.0/24"}, restriction.AllowedCIDRs)

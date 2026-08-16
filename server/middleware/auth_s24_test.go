@@ -75,11 +75,11 @@ type oidcDisabledFakeValidator struct{}
 func (oidcDisabledFakeValidator) ValidateSessionToken(_ context.Context, _ string) (*models.User, []string, error) {
 	return nil, nil, http.ErrNotSupported
 }
-func (oidcDisabledFakeValidator) ValidatePATToken(_ context.Context, _ string) (*models.User, []string, *core.PATRestriction, error) {
-	return nil, nil, nil, http.ErrNotSupported
+func (oidcDisabledFakeValidator) ValidatePATToken(_ context.Context, _ string) (*models.User, []string, *core.PATRestriction, uint, error) {
+	return nil, nil, nil, 0, http.ErrNotSupported
 }
-func (oidcDisabledFakeValidator) ValidateMachineToken(_ context.Context, _ string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, error) {
-	return nil, nil, nil, http.ErrNotSupported
+func (oidcDisabledFakeValidator) ValidateMachineToken(_ context.Context, _ string) (*models.MachineIdentity, []string, *core.MachineTokenRestriction, uint, error) {
+	return nil, nil, nil, 0, http.ErrNotSupported
 }
 func (oidcDisabledFakeValidator) ValidateOIDCToken(_ context.Context, _ string) (*models.MachineIdentity, []string, error) {
 	return nil, nil, http.ErrNotSupported

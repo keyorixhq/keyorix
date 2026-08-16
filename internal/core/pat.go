@@ -116,33 +116,43 @@ func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) (t
 	return pat.TokenHash, nil
 }
 
-// ValidatePATToken resolves a raw PAT to its owning user, role names, and any
+// ValidatePATToken resolves a raw PAT to its owning user, role names, any
 // least-privilege restriction (ADR-042; nil when the token is unrestricted),
-// mirroring the shape of ValidateSessionToken so the auth middleware can use
-// either. It rejects revoked/expired tokens and inactive users, and best-effort
-// throttled-updates last_used_at. The caller (middleware) is expected to gate on
-// the patPrefix.
-func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models.User, []string, *PATRestriction, error) {
+// and the PAT's row id, mirroring the shape of ValidateSessionToken so the
+// auth middleware can use either. It rejects revoked/expired tokens and
+// inactive users. The caller (middleware) is expected to gate on the
+// patPrefix.
+//
+// #G60: this deliberately does NOT touch last_used_at itself. A PAT's network
+// allowlist (the restriction's AllowedCIDRs) is evaluated by the CALLER
+// (server/middleware, server/grpc/interceptors), strictly after this function
+// returns — stamping last_used_at in here would record the token as "used"
+// even for a request the caller is about to reject outright for arriving
+// from a disallowed network, making the timestamp lie about whether the
+// token actually succeeded from that request's source. The returned PAT id
+// lets the caller invoke TouchPATLastUsed itself, once its own restriction
+// check has actually passed.
+func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models.User, []string, *PATRestriction, uint, error) {
 	if !strings.HasPrefix(raw, patPrefix) {
-		return nil, nil, nil, fmt.Errorf("not a personal access token")
+		return nil, nil, nil, 0, fmt.Errorf("not a personal access token")
 	}
 	pat, err := c.storage.GetPersonalAccessTokenByHash(ctx, sha256Hex(raw))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("invalid token")
+		return nil, nil, nil, 0, fmt.Errorf("invalid token")
 	}
 	if pat.Revoked {
-		return nil, nil, nil, ErrPATRevoked
+		return nil, nil, nil, 0, ErrPATRevoked
 	}
 	if IsPATExpired(pat, c.now()) {
 		c.emitPATExpiredNotification(ctx, pat)
-		return nil, nil, nil, ErrPATExpired
+		return nil, nil, nil, 0, ErrPATExpired
 	}
 	user, err := c.storage.GetUser(ctx, pat.UserID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("user not found")
+		return nil, nil, nil, 0, fmt.Errorf("user not found")
 	}
 	if !user.IsActive {
-		return nil, nil, nil, fmt.Errorf("user inactive")
+		return nil, nil, nil, 0, fmt.Errorf("user inactive")
 	}
 	// A suspended/blocked account must not authenticate via a PAT either. SuspendUser sets
 	// account_state but deliberately leaves is_active untouched (and kills sessions), so
@@ -150,23 +160,33 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	// personal access tokens fully working. Mirror ValidateSessionToken's account-state
 	// gate so suspension is immediately effective on every credential type.
 	if AccountLoginBlocked(user.AccountState) {
-		return nil, nil, nil, fmt.Errorf("account is not active")
+		return nil, nil, nil, 0, fmt.Errorf("account is not active")
 	}
-
-	// Best-effort, throttled last-used stamp — never fails the request.
-	_ = c.storage.TouchPersonalAccessToken(ctx, pat.ID, c.now(), patTouchInterval)
 
 	restriction := patRestrictionFrom(pat)
 
 	roles, err := c.storage.GetUserRoles(ctx, user.ID)
 	if err != nil {
-		return user, []string{}, restriction, nil
+		return user, []string{}, restriction, pat.ID, nil
 	}
 	roleNames := make([]string, len(roles))
 	for i, r := range roles {
 		roleNames[i] = r.Name
 	}
-	return user, roleNames, restriction, nil
+	return user, roleNames, restriction, pat.ID, nil
+}
+
+// TouchPATLastUsed records that PAT patID was just used, subject to the same
+// patTouchInterval throttle the inline stamp always used. Split out of
+// ValidatePATToken (#G60) so the caller only stamps last_used_at AFTER its
+// own network-restriction (CIDR allowlist) check has passed — see
+// ValidatePATToken's doc comment for why touching unconditionally during
+// validation was misleading. Best-effort: never fails the caller's request.
+func (c *KeyorixCore) TouchPATLastUsed(ctx context.Context, patID uint) {
+	if patID == 0 {
+		return
+	}
+	_ = c.storage.TouchPersonalAccessToken(ctx, patID, c.now(), patTouchInterval)
 }
 
 // encodePATScopes normalises and JSON-encodes a permission allowlist for storage.
