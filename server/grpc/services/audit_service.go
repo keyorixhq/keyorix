@@ -39,7 +39,8 @@ const auditStreamBatch = 100
 // principal may hold open — an unbounded caller could otherwise open arbitrarily many
 // streams, each subscribed to the audit broker, amplifying the fan-out cost of every
 // audit write across the whole install (auditBroker.signal iterates every subscriber
-// under one lock).
+// under one lock). Enforced per-process via streamCounts below; see that field's
+// doc comment for the documented multi-replica residual.
 const auditStreamMaxPerPrincipal = 3
 
 // AuditGRPCService implements pb.AuditServiceServer.
@@ -47,8 +48,32 @@ type AuditGRPCService struct {
 	pb.UnimplementedAuditServiceServer
 	core *core.KeyorixCore
 
+	// streamCounts's residual (findings-server/grpc-audit-service.json#4, scoped
+	// down, documented rather than built): this cap is enforced per PROCESS, not
+	// per principal cluster-wide. A horizontally-scaled deployment running N gRPC
+	// replicas behind a load balancer gives one principal up to
+	// auditStreamMaxPerPrincipal*N total concurrent streams (up to 3 per replica,
+	// each replica's AuditGRPCService holding its own independent map) instead of
+	// the documented 3 — proportionally increasing auditBroker.signal's per-event
+	// fan-out cost, but NOT bypassing authorization: every stream still requires a
+	// live, actively-reauthorized audit.read credential (see
+	// reauthorizeAuditStream), so this is a soft cost/proportionality bound, not an
+	// access-control gap. Closing it for real means either (a) a lock held for the
+	// stream's entire (potentially very long) lifetime, which would serialize
+	// stream open/close across the WHOLE cluster rather than just the enrolling
+	// principal, or (b) a new crash-safe heartbeat/lease table (migration +
+	// storage-layer methods + orphan-expiry handling + cross-replica test
+	// harness) layered onto this already heavily-hardened, security-sensitive
+	// stream path (see the #G05/#G18/#108/MT-007 history above) — both
+	// disproportionate to a low-severity, multi-replica-only cost concern with a
+	// low per-replica bound (3) already in place. If this needs closing later,
+	// reuse the Postgres-advisory-lock + process-mutex, SQLite-is-single-process
+	// pattern already established for exactly this split in
+	// internal/storage/store/local_bootstrap_lock.go and
+	// local_audit_checkpoint_lock.go, keyed per-principal rather than globally so
+	// concurrent unrelated principals don't contend.
 	streamCountsMu sync.Mutex
-	streamCounts   map[string]int // "kind:id" -> concurrently open StreamAuditLogs calls
+	streamCounts   map[string]int // "kind:id" -> concurrently open StreamAuditLogs calls, PROCESS-LOCAL (see residual above)
 }
 
 // Compile-time assertion that the service satisfies the generated interface.
