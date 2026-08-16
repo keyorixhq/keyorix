@@ -25,6 +25,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"time"
@@ -118,10 +119,50 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 	_ = c.storage.RecordLoginAttempt(ctx, CanonicalIP(ip), c.now())
 }
 
-// PruneLoginAttempts removes attempts older than the window; called by the
-// maintenance sweep. Returns the number removed.
-func (c *KeyorixCore) PruneLoginAttempts(ctx context.Context) (int64, error) {
-	return c.storage.PruneLoginAttempts(ctx, c.now().Add(-LoginWindow))
+// PruneLoginAttempts removes login/password-reset rate-limit rows older than
+// `before`. `before` is clamped so the effective cutoff can never be LATER
+// than `now - LoginWindow` — the maintenance sweep's own invariant (server/
+// main.go always calls this with a zero `before`, which resolves to exactly
+// that cutoff) — so a caller can only narrow the deletion window, never widen
+// it into an unbounded wipe. This is the sole enforcement point for the
+// bound: server/http/handlers/login_attempts_proxy.go's PruneLoginAttemptsProxy
+// (the only other caller, decoding an attacker-influenced `before` from an
+// HTTP request body) routes through this method rather than calling
+// c.storage.PruneLoginAttempts directly, specifically so it cannot bypass the
+// clamp (CORE-RATE-003: an unbounded `before` let any principal holding
+// system.write wipe the entire login_attempts table on demand — every IP's
+// failed-attempt count and the only record a brute-force campaign was ever
+// attempted from any address — with no trace).
+//
+// actorID is the acting principal's user ID (0 for the scheduler / a
+// non-user principal — e.g. a node/machine credential — matching
+// writeRBACAudit's "0 = no authenticated principal" convention; the
+// context's ActorType tag, set by the caller, still distinguishes
+// system/machine/user attribution on the emitted event). Returns the number
+// of rows removed. When anything is actually removed, emits a
+// `data.login_attempts_pruned` audit event recording the actor, row count,
+// and effective cutoff — mirroring PurgeExpiredSoftDeletes/
+// PurgeExpiredComplianceRecords, which this primitive previously had no
+// equivalent of at all.
+func (c *KeyorixCore) PruneLoginAttempts(ctx context.Context, before time.Time, actorID uint) (int64, error) {
+	cutoff := c.now().Add(-LoginWindow)
+	if !before.IsZero() && before.Before(cutoff) {
+		cutoff = before
+	}
+
+	n, err := c.storage.PruneLoginAttempts(ctx, cutoff)
+	if err != nil {
+		return n, err
+	}
+	if n > 0 {
+		var actor *uint
+		if actorID != 0 {
+			actor = &actorID
+		}
+		c.writeAuditEvent(ctx, "data.login_attempts_pruned", actor, nil,
+			fmt.Sprintf("login-attempts prune removed %d row(s) older than %s", n, cutoff.UTC().Format(time.RFC3339)))
+	}
+	return n, nil
 }
 
 // passwordResetRateLimitPrefix namespaces password-reset attempts within the

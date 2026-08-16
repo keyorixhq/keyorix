@@ -58,8 +58,9 @@ func (m *MockStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Tim
 func (m *MockStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
-func (m *MockStorage) PruneLoginAttempts(_ context.Context, _ time.Time) (int64, error) {
-	return 0, nil
+func (m *MockStorage) PruneLoginAttempts(ctx context.Context, before time.Time) (int64, error) {
+	a := m.Called(ctx, before)
+	return a.Get(0).(int64), a.Error(1)
 }
 
 // Permission Management
