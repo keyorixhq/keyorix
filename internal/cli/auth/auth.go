@@ -101,6 +101,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("server URL is required")
 	}
 
+	// #G74: about to persist a real API key against this server URL — warn
+	// before it's written if the URL isn't HTTPS (and not a loopback target),
+	// since the token will be sent in cleartext on every subsequent request.
+	common.WarnIfInsecureEndpoint(server)
+
 	// Update configuration
 	cfg.Storage.Type = "remote"
 	if cfg.Storage.Remote == nil {

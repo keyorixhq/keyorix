@@ -100,12 +100,28 @@ func ResolveRemote() (endpoint, token string, ok bool) { // NOSONAR -- cognitive
 
 	// A non-HTTPS endpoint sends the bearer token in cleartext — warn loudly (a loopback
 	// target for local testing is fine).
-	if endpoint != "" && !endpointIsSecure(endpoint) {
-		fmt.Fprintf(os.Stderr, "⚠️  Remote endpoint %q is not HTTPS — the access token is sent in cleartext and is MITM-capturable.\n", endpoint)
-	}
+	WarnIfInsecureEndpoint(endpoint)
 
 	ok = endpoint != "" && token != ""
 	return
+}
+
+// WarnIfInsecureEndpoint prints the same cleartext-transmission warning that
+// ResolveRemote emits when a security-relevant remote endpoint is not HTTPS
+// (and not a loopback target used for local testing). ResolveRemote's own
+// check only fires when a *previously persisted* remote config is later read
+// back — it can't protect a credential that is about to be written or sent
+// for the first time. #G74: callers that persist an API key against a
+// user-supplied server URL (e.g. 'auth login', 'config set-remote') or that
+// transmit real credentials directly (e.g. 'system init --server' bootstrap)
+// must call this before committing to that URL, not rely on ResolveRemote
+// catching it afterwards. Returns true if a warning was printed.
+func WarnIfInsecureEndpoint(endpoint string) bool {
+	if endpoint == "" || endpointIsSecure(endpoint) {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "⚠️  Remote endpoint %q is not HTTPS — the access token is sent in cleartext and is MITM-capturable.\n", endpoint)
+	return true
 }
 
 // ValidateRemoteEndpointURL checks that a configured remote server endpoint is a

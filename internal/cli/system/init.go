@@ -270,6 +270,12 @@ func runRemoteInit() error { // NOSONAR -- cognitive complexity 16, suppress go:
 	server := strings.TrimRight(initServer, "/")
 	url := server + "/system/init"
 
+	// #G74: about to POST the admin username/email/password and bootstrap
+	// token to this server as JSON — warn before it's sent if the URL isn't
+	// HTTPS (and not a loopback target), since those credentials would
+	// otherwise leave the machine in cleartext, MITM-capturable.
+	common.WarnIfInsecureEndpoint(server)
+
 	token := initBootstrapToken
 	if token == "" {
 		token = strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
