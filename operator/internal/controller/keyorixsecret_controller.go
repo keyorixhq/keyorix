@@ -220,29 +220,6 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		secretName = ks.Name
 	}
 
-	// spec.target.name is mutable — if it changed since the last successful sync, the
-	// Secret materialised under the OLD name is now orphaned: no later reconcile ever
-	// revisits it by name again (Reconcile only ever looks at the CURRENT secretName),
-	// so it would otherwise sit in the cluster forever with its last-synced, possibly
-	// since-rotated, plaintext value, still owned by this (now-repurposed) CR, mountable
-	// by any workload with ordinary Secret-read RBAC in the namespace. Wipe it BEFORE
-	// doing anything else this reconcile, using the same ownership-and-label-checked
-	// wipeTargetSecret used for the confirmed-gone path below — it's a no-op if nothing
-	// exists under the old name, or if this is the CR's first-ever reconcile
-	// (LastTargetName is unset).
-	//
-	// If the wipe itself fails, orphanWipeErr is threaded through to succeed() below:
-	// status.LastTargetName is deliberately NOT advanced to the new name in that case,
-	// so the next reconcile retries the orphan wipe instead of forgetting about it.
-	var orphanWipeErr error
-	if ks.Status.LastTargetName != "" && ks.Status.LastTargetName != secretName {
-		if wipeErr := r.wipeTargetSecret(ctx, &ks, ks.Status.LastTargetName); wipeErr != nil {
-			orphanWipeErr = wipeErr
-			logger.Error(wipeErr, "failed to wipe orphaned target Secret after spec.target.name changed",
-				"oldTargetName", ks.Status.LastTargetName, "newTargetName", secretName)
-		}
-	}
-
 	desired, err := r.buildDesired(ctx, &ks)
 	if err != nil {
 		logger.Error(err, "failed to assemble secret data")
@@ -265,7 +242,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// status reason so it's clear from .status which of the two happened.
 			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamAccessRevoked", err)
 		default:
-			return r.fail(ctx, &ks, err, orphanWipeErr)
+			return r.fail(ctx, &ks, err)
 		}
 	}
 
@@ -273,7 +250,43 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.applySecret(ctx, &ks, secretName, desired); err != nil {
 		logger.Error(err, "failed to apply target Secret")
-		return r.fail(ctx, &ks, err, orphanWipeErr)
+		return r.fail(ctx, &ks, err)
+	}
+
+	// spec.target.name is mutable — if it changed since the last successful sync, the
+	// Secret materialised under the OLD name is now orphaned: no later reconcile ever
+	// revisits it by name again (Reconcile only ever looks at the CURRENT secretName),
+	// so it would otherwise sit in the cluster forever with its last-synced, possibly
+	// since-rotated, plaintext value, still owned by this (now-repurposed) CR, mountable
+	// by any workload with ordinary Secret-read RBAC in the namespace.
+	//
+	// Wipe it only now, AFTER the NEW-named target Secret above has been confirmed built
+	// and applied successfully — never before. Wiping the OLD Secret first (as this used
+	// to do) turned a rename that then failed to sync (a typo'd ref, a revoked upstream
+	// token, a transient outage) into a full availability outage: the old Secret gone,
+	// the new one never created, so every workload mounting the old name lost it with no
+	// rollback. Deferring the wipe to last means the worst case is instead a brief window
+	// where BOTH the old- and new-named Secrets exist at once, which is harmless: they're
+	// two independently-named Secrets (a single owning CR can own any number of objects
+	// via OwnerReference — there's no one-child invariant to violate), applySecret above
+	// already refuses to adopt/overwrite anything it doesn't manage, and wipeTargetSecret
+	// below only ever touches a Secret this same CR actually controls. It's a no-op if
+	// nothing exists under the old name, or if this is the CR's first-ever reconcile
+	// (LastTargetName is unset).
+	//
+	// If the wipe itself fails, orphanWipeErr is threaded through to succeed() below:
+	// status.LastTargetName is deliberately NOT advanced to the new name in that case,
+	// so the next reconcile retries the orphan wipe instead of forgetting about it. Note
+	// this can no longer coincide with a fail() call in the same reconcile — by the time
+	// the orphan wipe runs, the new target's own sync has already succeeded — so unlike
+	// fail(), succeed() is the only place orphanWipeErr is ever threaded through.
+	var orphanWipeErr error
+	if ks.Status.LastTargetName != "" && ks.Status.LastTargetName != secretName {
+		if wipeErr := r.wipeTargetSecret(ctx, &ks, ks.Status.LastTargetName); wipeErr != nil {
+			orphanWipeErr = wipeErr
+			logger.Error(wipeErr, "failed to wipe orphaned target Secret after spec.target.name changed",
+				"oldTargetName", ks.Status.LastTargetName, "newTargetName", secretName)
+		}
 	}
 
 	if err := r.succeed(ctx, &ks, hash, secretName, orphanWipeErr); err != nil {
@@ -411,23 +424,19 @@ const (
 	tokenSecretValue = "true"
 )
 
-// fail records a SyncError on the Ready condition and requeues with backoff.
-// fail records an ordinary sync failure. orphanWipeErr, when non-nil, means
-// this SAME reconcile also detected a spec.target.name change and failed to
-// wipe the Secret orphaned under the old name (see Reconcile's orphanWipeErr
-// doc) — #G54: before this, that failure was silently dropped whenever the
-// reconcile ALSO failed later (buildDesired/applySecret), so .status would
-// show only the later failure with no indication a stale, possibly
-// revoked/rotated Secret is still sitting in the cluster under the old name,
-// mountable by any workload with ordinary Secret-read RBAC. Mirrors
-// failGone's identical "WipeFailed" reason/message augmentation.
-func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause, orphanWipeErr error) (ctrl.Result, error) {
-	reason, msg := "SyncError", cause.Error()
-	if orphanWipeErr != nil {
-		reason += "OrphanWipeFailed"
-		msg = fmt.Sprintf("%s — additionally, wiping the Secret orphaned by a spec.target.name change failed, it may still contain stale/rotated data under the old name: %v", cause.Error(), orphanWipeErr)
-	}
-	r.setReady(ks, metav1.ConditionFalse, reason, msg)
+// fail records an ordinary sync failure (SyncError) on the Ready condition and requeues
+// with backoff.
+//
+// This intentionally does NOT take an orphanWipeErr the way succeed() does: the
+// spec.target.name orphan-wipe (see Reconcile) now runs only AFTER buildDesired and
+// applySecret have already succeeded, so a call to fail() — which only ever happens
+// BEFORE that point, when buildDesired or applySecret itself errors — can never
+// coincide with an orphan-wipe attempt in the same reconcile. An earlier version of this
+// function did carry a same-reconcile orphanWipeErr (#G54), back when the orphan wipe
+// ran first and could fail independently of a later buildDesired/applySecret failure;
+// reordering the wipe to run last removed that combination entirely.
+func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
+	r.setReady(ks, metav1.ConditionFalse, "SyncError", cause.Error())
 	if err := r.Status().Update(ctx, ks); err != nil {
 		return ctrl.Result{}, err
 	}
