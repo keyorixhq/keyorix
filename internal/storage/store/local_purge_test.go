@@ -118,6 +118,41 @@ func TestPurgeDeletedUsersBefore_CascadesSecretACL(t *testing.T) {
 	assert.Equal(t, int64(1), count, "a live user's SecretACL grant must survive")
 }
 
+// TestPurgeDeletedUsersBefore_CascadesShareRecordOwnerSide pins #store-purge-2:
+// the ShareRecord cleanup only matched recipient_id (shares the purged user
+// RECEIVED), never owner_id (shares the purged user GRANTED to someone else).
+// A share the purged user created for a still-active recipient survived the
+// purge as a dangling row with no owner left to attribute, audit, or revoke
+// it, while the recipient's access grant stayed fully live. A share owned AND
+// received by unrelated live users must still survive untouched.
+func TestPurgeDeletedUsersBefore_CascadesShareRecordOwnerSide(t *testing.T) {
+	ls := newPurgeTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	old := now.AddDate(0, 0, -40)
+	cutoff := now.AddDate(0, 0, -30)
+
+	require.NoError(t, ls.db.Create(&models.User{ID: 1, Username: "ghost-owner", Email: "g@x"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{ID: 2, Username: "recipient", Email: "r@x"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{ID: 3, Username: "live-owner", Email: "lo@x"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{ID: 4, Username: "live-recipient", Email: "lr@x"}).Error)
+	// Purged user 1 is the OWNER (not recipient) of a share granted to still-active user 2.
+	require.NoError(t, ls.db.Create(&models.ShareRecord{SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false}).Error)
+	// Control: a share entirely among live users must survive.
+	require.NoError(t, ls.db.Create(&models.ShareRecord{SecretID: 2, OwnerID: 3, RecipientID: 4, IsGroup: false}).Error)
+	require.NoError(t, ls.db.Unscoped().Model(&models.User{}).Where("id = ?", 1).Update("deleted_at", old).Error)
+
+	n, err := ls.PurgeDeletedUsersBefore(ctx, cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+
+	var count int64
+	require.NoError(t, ls.db.Unscoped().Model(&models.ShareRecord{}).Where("owner_id = ? AND is_group = ?", 1, false).Count(&count).Error)
+	assert.Zero(t, count, "a share the purged user GRANTED must be purged with them, not left dangling")
+	require.NoError(t, ls.db.Unscoped().Model(&models.ShareRecord{}).Where("secret_id = ?", 2).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "a share entirely among live users must survive")
+}
+
 func TestPurgeDeletedProjectsAndEnvironments(t *testing.T) {
 	ls := newPurgeTestStore(t)
 	ctx := context.Background()
